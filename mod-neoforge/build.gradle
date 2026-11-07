@@ -18,7 +18,8 @@ def prepareIntegrationServer = tasks.register('prepareIntegrationServer') {
     description = 'Prepares isolated sandbox directory, eula.txt, and server.properties for headless integration server'
     group = 'run'
 
-    outputs.dir(integrationServerDir)
+    outputs.file(integrationServerDir.map { it.file('eula.txt') })
+    outputs.file(integrationServerDir.map { it.file('server.properties') })
 
     doLast {
         def targetDir = integrationServerDir.get().asFile
