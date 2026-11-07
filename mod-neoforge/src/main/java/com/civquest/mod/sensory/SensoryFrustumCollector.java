@@ -128,7 +128,9 @@ public class SensoryFrustumCollector {
                 .setIsSleeping(settler.isSleeping())
                 .setIsInWater(settler.isInWater())
                 .setIsOnFire(settler.isOnFire())
-                .setNavigationState(NavigationState.NAVIGATION_STATE_IDLE);
+                .setNavigationState(settler.getNavigator() != null
+                        ? settler.getNavigator().getNavigationState()
+                        : NavigationState.NAVIGATION_STATE_IDLE);
 
         if (settler.getFoodData() != null) {
             statusBuilder.setFoodLevel(settler.getFoodData().getFoodLevel());

@@ -1,5 +1,6 @@
 package com.civquest.mod;
 
+import com.civquest.mod.actuator.SettlerNavigator;
 import com.civquest.mod.grpc.v1.DeathEvent;
 import com.civquest.mod.grpc.v1.TelemetryFrame;
 import com.civquest.mod.sensory.SensoryFrustumCollector;
@@ -40,6 +41,7 @@ public class SettlerEntity extends FakePlayer {
     private ChunkPos forcedChunkPos;
     private StreamRegistry streamRegistry;
     private SensoryFrustumCollector sensoryCollector;
+    private final SettlerNavigator navigator;
     private Consumer<SettlerEntity> deathListener;
     private Consumer<SettlerEntity> removalListener;
     private final AtomicBoolean cleanedUp = new AtomicBoolean(false);
@@ -48,6 +50,7 @@ public class SettlerEntity extends FakePlayer {
         super(level, profile);
         this.agentId = agentId;
         this.clanId = clanId;
+        this.navigator = new SettlerNavigator(this);
     }
 
     /**
@@ -65,6 +68,9 @@ public class SettlerEntity extends FakePlayer {
         super.tick();
         if (!this.level().isClientSide) {
             try {
+                if (this.navigator != null) {
+                    this.navigator.tick();
+                }
                 // Execute player tick logic (which FakePlayer stubbed out, including FoodData tick at 20 Hz)
                 this.doTick();
             } catch (Exception e) {
@@ -264,5 +270,9 @@ public class SettlerEntity extends FakePlayer {
 
     public void setRemovalListener(Consumer<SettlerEntity> removalListener) {
         this.removalListener = removalListener;
+    }
+
+    public SettlerNavigator getNavigator() {
+        return navigator;
     }
 }

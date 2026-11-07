@@ -1,5 +1,7 @@
 package com.civquest.mod;
 
+import com.civquest.mod.actuator.IntentActuator;
+import com.civquest.mod.grpc.v1.AgentIntent;
 import com.civquest.mod.grpc.v1.DamageEvent;
 import com.civquest.mod.grpc.v1.SpawnAgentRequest;
 import com.civquest.mod.grpc.v1.TelemetryFrame;
@@ -25,6 +27,7 @@ import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.RejectedExecutionException;
 import java.util.function.Supplier;
 
 /**
@@ -37,18 +40,28 @@ public class SettlerEntityManager {
     private final ConcurrentHashMap<String, SettlerEntity> settlers = new ConcurrentHashMap<>();
     private volatile StreamRegistry streamRegistry;
     private final SensoryFrustumCollector sensoryCollector;
+    private final IntentActuator intentActuator;
 
     public SettlerEntityManager() {
-        this(null, new SensoryFrustumCollector());
+        this(null, new SensoryFrustumCollector(), new IntentActuator());
     }
 
     public SettlerEntityManager(StreamRegistry streamRegistry) {
-        this(streamRegistry, new SensoryFrustumCollector());
+        this(streamRegistry, new SensoryFrustumCollector(), new IntentActuator());
     }
 
     public SettlerEntityManager(StreamRegistry streamRegistry, SensoryFrustumCollector sensoryCollector) {
+        this(streamRegistry, sensoryCollector, new IntentActuator());
+    }
+
+    public SettlerEntityManager(StreamRegistry streamRegistry, SensoryFrustumCollector sensoryCollector, IntentActuator intentActuator) {
         this.streamRegistry = streamRegistry;
         this.sensoryCollector = sensoryCollector != null ? sensoryCollector : new SensoryFrustumCollector();
+        this.intentActuator = intentActuator != null ? intentActuator : new IntentActuator();
+    }
+
+    public IntentActuator getIntentActuator() {
+        return intentActuator;
     }
 
     public SensoryFrustumCollector getSensoryCollector() {
@@ -327,6 +340,58 @@ public class SettlerEntityManager {
                             settler.getAgentId(), e.getMessage(), e);
                 }
             }
+        }
+    }
+
+    public CompletableFuture<Void> handleIntent(MinecraftServer server, AgentIntent intent) {
+        if (intent == null) {
+            return CompletableFuture.completedFuture(null);
+        }
+
+        Runnable task = () -> {
+            try {
+                String agentId = intent.getAgentId();
+                if (agentId == null || agentId.isBlank()) {
+                    LOGGER.warn("Received AgentIntent without agent_id");
+                    return;
+                }
+
+                SettlerEntity settler = settlers.get(agentId);
+                if (settler == null || settler.isRemoved() || !settler.isAlive()) {
+                    LOGGER.warn("Received intent {} for unknown or inactive settler '{}'",
+                            intent.getActionCase(), agentId);
+                    return;
+                }
+
+                intentActuator.actuate(settler, intent);
+            } catch (Throwable t) {
+                LOGGER.error("Error executing intent {} for settler '{}': {}",
+                        intent.getActionCase(), intent.getAgentId(), t.getMessage(), t);
+            }
+        };
+
+        if (server != null) {
+            if (!server.isRunning()) {
+                LOGGER.warn("Dropping intent {}: MinecraftServer is not running", intent.getActionCase());
+                return CompletableFuture.failedFuture(new IllegalStateException("MinecraftServer is not running"));
+            }
+            try {
+                return server.submit(task);
+            } catch (RejectedExecutionException e) {
+                LOGGER.warn("Rejected execution when submitting intent {}: {}", intent.getActionCase(), e.getMessage());
+                return CompletableFuture.failedFuture(e);
+            }
+        } else {
+            // Headless test environment without MinecraftServer
+            String agentId = intent.getAgentId();
+            SettlerEntity settler = (agentId != null) ? settlers.get(agentId) : null;
+            if (settler != null && settler.level() != null) {
+                LOGGER.warn("Dropping intent {}: no MinecraftServer running to execute world-modifying task safely",
+                        intent.getActionCase());
+                return CompletableFuture.failedFuture(new IllegalStateException("No MinecraftServer present for world-bound settler"));
+            }
+            task.run();
+            return CompletableFuture.completedFuture(null);
         }
     }
 

@@ -144,6 +144,14 @@ public class CivQuestBridgeServiceImpl extends CivQuestBridgeServiceGrpc.CivQues
 
                 LOGGER.debug("Received AgentIntent: agent_id={}, action_case={}",
                         value.getAgentId(), value.getActionCase());
+
+                MinecraftServer server = getServer();
+                settlerEntityManager.handleIntent(server, value)
+                        .whenComplete((res, err) -> {
+                            if (err != null) {
+                                LOGGER.warn("Intent actuation failed: {}", err.getMessage());
+                            }
+                        });
             }
 
             private void terminateWithPermissionDenied(String boundAgentId, String requestedAgentId) {
