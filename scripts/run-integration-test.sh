@@ -190,9 +190,10 @@ echo "==> Server runner launched with PID $GRADLE_PID"
 # ------------------------------------------------------------------------------
 # Wait for discovery metadata
 # ------------------------------------------------------------------------------
-echo "==> Waiting for discovery metadata at $META_PATH (timeout 60s)..."
+TIMEOUT_SECS="${INTEGRATION_TIMEOUT_SECS:-180}"
+echo "==> Waiting for discovery metadata at $META_PATH (timeout ${TIMEOUT_SECS}s)..."
 READY=0
-for i in $(seq 1 60); do
+for i in $(seq 1 "$TIMEOUT_SECS"); do
     if [ -f "$META_PATH" ]; then
         STATUS=$(jq -r '.status // empty' "$META_PATH" 2>/dev/null || true)
         if [ "$STATUS" = "READY" ]; then
@@ -212,7 +213,7 @@ for i in $(seq 1 60); do
 done
 
 if [ "$READY" -ne 1 ]; then
-    echo "ERROR: Timed out waiting 60s for server discovery metadata READY status."
+    echo "ERROR: Timed out waiting ${TIMEOUT_SECS}s for server discovery metadata READY status."
     exit 1
 fi
 

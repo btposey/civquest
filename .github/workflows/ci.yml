@@ -157,6 +157,9 @@ jobs:
           go-version: '1.23'
           cache-dependency-path: 'orchestrator-go/go.sum'
 
+      - name: Pre-warm Mod Build
+        run: ./gradlew :mod-neoforge:prepareIntegrationServer :mod-neoforge:compileJava
+
       - name: Run End-to-End In-Game Integration Test
         run: |
           chmod +x gradlew scripts/run-integration-test.sh || true
