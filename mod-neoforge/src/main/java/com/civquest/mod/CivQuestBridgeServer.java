@@ -15,12 +15,17 @@ import java.io.IOException;
 import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.AtomicMoveNotSupportedException;
+import java.nio.file.FileSystems;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.nio.file.StandardOpenOption;
+import java.nio.file.attribute.PosixFilePermission;
+import java.nio.file.attribute.PosixFilePermissions;
+import java.security.SecureRandom;
+import java.util.HexFormat;
 import java.util.Locale;
-import java.util.UUID;
+import java.util.Set;
 import java.util.concurrent.TimeUnit;
 
 /**
@@ -32,11 +37,20 @@ public class CivQuestBridgeServer {
 
     public static final String PROP_GRPC_BIND = "civquest.grpc.bind";
     public static final String PROP_GRPC_SHARED_KEY = "civquest.grpc.shared_key";
+    public static final String ENV_GRPC_SHARED_KEY = "CIVQUEST_GRPC_SHARED_KEY";
+    public static final String PROP_GRPC_ADVERTISED_HOST = "civquest.grpc.advertised_host";
+    public static final String ENV_GRPC_ADVERTISED_HOST = "CIVQUEST_GRPC_ADVERTISED_HOST";
     public static final String PROP_DISCOVERY_PATH = "civquest.discovery.path";
     public static final String PROP_GRPC_ENABLED = "civquest.grpc.enabled";
 
     public static final String DEFAULT_BIND = "127.0.0.1:0";
     public static final String DEFAULT_DISCOVERY_PATH = "civquest-server-meta.json";
+
+    private static final SecureRandom SECURE_RANDOM = new SecureRandom();
+    private static final boolean IS_POSIX =
+            FileSystems.getDefault().supportedFileAttributeViews().contains("posix");
+    private static final Set<PosixFilePermission> POSIX_0600 =
+            PosixFilePermissions.fromString("rw-------");
 
     private final String configuredHost;
     private final int configuredPort;
@@ -51,6 +65,7 @@ public class CivQuestBridgeServer {
     private int boundPort = -1;
     private String boundHost;
     private String transport = "tcp";
+    private Thread shutdownHookThread;
 
     public CivQuestBridgeServer() {
         this.enabled = Boolean.parseBoolean(System.getProperty(PROP_GRPC_ENABLED, "true"));
@@ -80,13 +95,7 @@ public class CivQuestBridgeServer {
 
         this.configuredHost = parsedHost;
         this.configuredPort = parsedPort;
-
-        String key = System.getProperty(PROP_GRPC_SHARED_KEY);
-        if (key == null || key.isBlank()) {
-            this.sharedKey = UUID.randomUUID().toString();
-        } else {
-            this.sharedKey = key.trim();
-        }
+        this.sharedKey = resolveSharedKey(null);
 
         String discPath = System.getProperty(PROP_DISCOVERY_PATH, DEFAULT_DISCOVERY_PATH).trim();
         this.discoveryPath = Path.of(discPath);
@@ -96,8 +105,54 @@ public class CivQuestBridgeServer {
         this.enabled = true;
         this.configuredHost = (host == null || host.isBlank()) ? "127.0.0.1" : host.trim();
         this.configuredPort = port;
-        this.sharedKey = (sharedKey == null || sharedKey.isBlank()) ? UUID.randomUUID().toString() : sharedKey.trim();
+        this.sharedKey = resolveSharedKey(sharedKey);
         this.discoveryPath = discoveryPath != null ? discoveryPath : Path.of(DEFAULT_DISCOVERY_PATH);
+    }
+
+    public static String generateSecureSharedKey() {
+        byte[] bytes = new byte[32];
+        SECURE_RANDOM.nextBytes(bytes);
+        return HexFormat.of().formatHex(bytes);
+    }
+
+    private static String resolveSharedKey(String explicitKey) {
+        if (explicitKey != null && !explicitKey.isBlank()) {
+            return explicitKey.trim();
+        }
+        String key = System.getProperty(PROP_GRPC_SHARED_KEY);
+        if (key == null || key.isBlank()) {
+            key = System.getenv(ENV_GRPC_SHARED_KEY);
+        }
+        if (key != null && !key.isBlank()) {
+            return key.trim();
+        }
+        return generateSecureSharedKey();
+    }
+
+    private static boolean isWildcardHost(String host) {
+        if (host == null) {
+            return false;
+        }
+        String trimmed = host.trim();
+        return "0.0.0.0".equals(trimmed) || "::".equals(trimmed) || "[::]".equals(trimmed);
+    }
+
+    public String resolveAdvertisedHost() {
+        if (isWildcardHost(configuredHost)) {
+            String advertised = System.getProperty(PROP_GRPC_ADVERTISED_HOST);
+            if (advertised == null || advertised.isBlank()) {
+                advertised = System.getenv(ENV_GRPC_ADVERTISED_HOST);
+            }
+            if (advertised != null && !advertised.isBlank()) {
+                return advertised.trim();
+            }
+            return "127.0.0.1";
+        }
+        return boundHost != null ? boundHost : configuredHost;
+    }
+
+    public String getAdvertisedHost() {
+        return resolveAdvertisedHost();
     }
 
     public synchronized void start() throws IOException {
@@ -124,11 +179,20 @@ public class CivQuestBridgeServer {
                 .start();
 
         this.boundPort = server.getPort();
+        if (this.boundPort <= 0 || this.boundPort > 65535) {
+            throw new IllegalStateException("Failed to bind gRPC server: invalid port " + this.boundPort);
+        }
         this.boundHost = configuredHost;
         this.transport = "tcp";
 
         healthStatusManager.setStatus("", HealthCheckResponse.ServingStatus.SERVING);
         healthStatusManager.setStatus(CivQuestBridgeServiceGrpc.SERVICE_NAME, HealthCheckResponse.ServingStatus.SERVING);
+
+        this.shutdownHookThread = new Thread(() -> {
+            LOGGER.info("CivQuestBridgeServer JVM shutdown hook triggered");
+            stop();
+        }, "civquest-grpc-shutdown-hook");
+        Runtime.getRuntime().addShutdownHook(shutdownHookThread);
 
         writeDiscoveryFile("READY");
         LOGGER.info("CivQuestBridgeServer listening on {}:{} (PID: {})",
@@ -136,6 +200,15 @@ public class CivQuestBridgeServer {
     }
 
     public synchronized void stop() {
+        if (shutdownHookThread != null && Thread.currentThread() != shutdownHookThread) {
+            try {
+                Runtime.getRuntime().removeShutdownHook(shutdownHookThread);
+            } catch (IllegalStateException ignored) {
+                // JVM is already shutting down
+            }
+            shutdownHookThread = null;
+        }
+
         if (server == null || server.isShutdown()) {
             return;
         }
@@ -168,6 +241,7 @@ public class CivQuestBridgeServer {
         }
 
         long pid = ProcessHandle.current().pid();
+        long timestampMs = System.currentTimeMillis();
         String json = String.format(Locale.ROOT,
                 "{\n" +
                 "  \"status\": \"%s\",\n" +
@@ -175,27 +249,37 @@ public class CivQuestBridgeServer {
                 "  \"grpc_port\": %d,\n" +
                 "  \"grpc_host\": \"%s\",\n" +
                 "  \"server_pid\": %d,\n" +
-                "  \"shared_key\": \"%s\"\n" +
+                "  \"shared_key\": \"%s\",\n" +
+                "  \"timestamp_ms\": %d\n" +
                 "}\n",
                 escapeJson(status),
                 escapeJson(transport),
                 boundPort,
-                escapeJson(boundHost != null ? boundHost : configuredHost),
+                escapeJson(resolveAdvertisedHost()),
                 pid,
-                escapeJson(sharedKey)
+                escapeJson(sharedKey),
+                timestampMs
         );
 
+        Path target = discoveryPath.toAbsolutePath().normalize();
+        Path parent = target.getParent();
+        Path tempFile = null;
         try {
-            Path target = discoveryPath.toAbsolutePath().normalize();
-            Path parent = target.getParent();
             if (parent != null && !Files.exists(parent)) {
                 Files.createDirectories(parent);
             }
-            Path tempFile = Files.createTempFile(
+            tempFile = Files.createTempFile(
                     parent != null ? parent : Path.of("."),
                     "civquest-meta-",
                     ".tmp"
             );
+            if (IS_POSIX) {
+                try {
+                    Files.setPosixFilePermissions(tempFile, POSIX_0600);
+                } catch (IOException | UnsupportedOperationException e) {
+                    LOGGER.debug("Could not set POSIX permissions on temp file: {}", e.getMessage());
+                }
+            }
             Files.writeString(tempFile, json, StandardCharsets.UTF_8,
                     StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING);
             try {
@@ -203,9 +287,23 @@ public class CivQuestBridgeServer {
             } catch (AtomicMoveNotSupportedException e) {
                 Files.move(tempFile, target, StandardCopyOption.REPLACE_EXISTING);
             }
+            if (IS_POSIX) {
+                try {
+                    Files.setPosixFilePermissions(target, POSIX_0600);
+                } catch (IOException | UnsupportedOperationException e) {
+                    LOGGER.debug("Could not set POSIX permissions on target file: {}", e.getMessage());
+                }
+            }
             LOGGER.info("Wrote discovery metadata ({}) to {}", status, target);
         } catch (IOException e) {
             LOGGER.error("Failed to write discovery metadata file: {}", e.getMessage(), e);
+        } finally {
+            if (tempFile != null) {
+                try {
+                    Files.deleteIfExists(tempFile);
+                } catch (IOException ignored) {
+                }
+            }
         }
     }
 

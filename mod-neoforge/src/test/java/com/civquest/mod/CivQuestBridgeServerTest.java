@@ -26,8 +26,11 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 import java.io.IOException;
+import java.nio.file.DirectoryStream;
+import java.nio.file.FileSystems;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.attribute.PosixFilePermissions;
 import java.util.UUID;
 import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.BlockingQueue;
@@ -72,7 +75,8 @@ public class CivQuestBridgeServerTest {
     @DisplayName("Ephemeral port binding and metadata discovery generation")
     void testEphemeralPortAndDiscovery() throws IOException {
         assertTrue(bridgeServer.isRunning());
-        assertTrue(bridgeServer.getBoundPort() > 0, "Bound port must be ephemeral dynamic port > 0");
+        assertTrue(bridgeServer.getBoundPort() > 0 && bridgeServer.getBoundPort() <= 65535,
+                "Bound port must be valid dynamic port 1-65535");
         assertEquals("127.0.0.1", bridgeServer.getBoundHost());
         assertEquals(sharedKey, bridgeServer.getSharedKey());
 
@@ -85,11 +89,23 @@ public class CivQuestBridgeServerTest {
         assertTrue(jsonContent.contains("\"grpc_host\": \"127.0.0.1\""), "Must contain host");
         assertTrue(jsonContent.contains("\"server_pid\": " + ProcessHandle.current().pid()), "Must contain current PID");
         assertTrue(jsonContent.contains("\"shared_key\": \"" + sharedKey + "\""), "Must contain shared key");
+        assertTrue(jsonContent.contains("\"timestamp_ms\": "), "Must contain timestamp_ms");
+
+        if (FileSystems.getDefault().supportedFileAttributeViews().contains("posix")) {
+            assertEquals(PosixFilePermissions.fromString("rw-------"),
+                    Files.getPosixFilePermissions(discoveryPath),
+                    "Discovery file must have 0600 POSIX permissions");
+        }
+
+        // Verify no lingering temp files
+        try (DirectoryStream<Path> stream = Files.newDirectoryStream(tempDir, "civquest-meta-*.tmp")) {
+            assertFalse(stream.iterator().hasNext(), "No temp files should remain in discovery dir");
+        }
     }
 
     @Test
-    @DisplayName("Health check succeeds unauthenticated for readiness probes")
-    void testHealthCheckUnauthenticated() {
+    @DisplayName("Unary health check succeeds unauthenticated but streaming watch is rejected")
+    void testHealthCheckUnauthenticatedAndWatchRestricted() throws InterruptedException {
         HealthGrpc.HealthBlockingStub healthStub = HealthGrpc.newBlockingStub(channel);
         HealthCheckResponse response = healthStub.check(HealthCheckRequest.getDefaultInstance());
 
@@ -99,6 +115,29 @@ public class CivQuestBridgeServerTest {
                 HealthCheckRequest.newBuilder().setService(CivQuestBridgeServiceGrpc.SERVICE_NAME).build()
         );
         assertEquals(HealthCheckResponse.ServingStatus.SERVING, serviceResponse.getStatus());
+
+        // Unauthenticated Health/Watch must be rejected (H-3)
+        HealthGrpc.HealthStub asyncHealthStub = HealthGrpc.newStub(channel);
+        BlockingQueue<Throwable> watchErrors = new ArrayBlockingQueue<>(1);
+        asyncHealthStub.watch(HealthCheckRequest.getDefaultInstance(), new StreamObserver<>() {
+            @Override
+            public void onNext(HealthCheckResponse value) {
+            }
+
+            @Override
+            public void onError(Throwable t) {
+                watchErrors.offer(t);
+            }
+
+            @Override
+            public void onCompleted() {
+            }
+        });
+
+        Throwable error = watchErrors.poll(5, TimeUnit.SECONDS);
+        assertNotNull(error, "Health/Watch without auth must fail");
+        assertInstanceOf(StatusRuntimeException.class, error);
+        assertEquals(Status.Code.UNAUTHENTICATED, ((StatusRuntimeException) error).getStatus().getCode());
     }
 
     @Test
@@ -123,6 +162,54 @@ public class CivQuestBridgeServerTest {
                 invalidStub.spawnAgentEntity(SpawnAgentRequest.newBuilder().setAgentId("agent-1").build())
         );
         assertEquals(Status.Code.UNAUTHENTICATED, ex2.getStatus().getCode());
+    }
+
+    @Test
+    @DisplayName("Case-insensitive Bearer prefix authentication succeeds")
+    void testAuthCaseInsensitive() {
+        String[] prefixes = {"bearer ", "BEARER ", "Bearer ", "  bearer  "};
+        for (String prefix : prefixes) {
+            Metadata authHeaders = new Metadata();
+            authHeaders.put(SharedKeyAuthInterceptor.AUTHORIZATION_METADATA_KEY, prefix + sharedKey);
+
+            CivQuestBridgeServiceGrpc.CivQuestBridgeServiceBlockingStub authStub =
+                    CivQuestBridgeServiceGrpc.newBlockingStub(channel)
+                            .withInterceptors(MetadataUtils.newAttachHeadersInterceptor(authHeaders));
+
+            SpawnAgentResponse spawnResp = authStub.spawnAgentEntity(SpawnAgentRequest.newBuilder()
+                    .setAgentId("agent-" + UUID.randomUUID())
+                    .setDisplayName("TestAgent")
+                    .setClanId("clan-1")
+                    .build());
+            assertTrue(spawnResp.getSuccess(), "Auth should succeed with prefix: '" + prefix + "'");
+        }
+    }
+
+    @Test
+    @DisplayName("Default generated key is 64-character lowercase hex (256-bit SecureRandom)")
+    void testDefaultSecureKeyGeneration() {
+        CivQuestBridgeServer defaultServer = new CivQuestBridgeServer("127.0.0.1", 0, null, tempDir.resolve("auto-meta.json"));
+        assertNotNull(defaultServer.getSharedKey());
+        assertEquals(64, defaultServer.getSharedKey().length(), "Generated key must be 64 characters");
+        assertTrue(defaultServer.getSharedKey().matches("^[0-9a-f]{64}$"), "Key must be lowercase hex");
+    }
+
+    @Test
+    @DisplayName("Wildcard 0.0.0.0 binds resolve advertised host correctly")
+    void testAdvertisedHostForWildcard() throws IOException {
+        Path metaPath = tempDir.resolve("wildcard-meta.json");
+        CivQuestBridgeServer wildcardServer = new CivQuestBridgeServer("0.0.0.0", 0, "test-key", metaPath);
+        assertEquals("127.0.0.1", wildcardServer.getAdvertisedHost(), "Default wildcard host must be 127.0.0.1");
+
+        System.setProperty(CivQuestBridgeServer.PROP_GRPC_ADVERTISED_HOST, "192.168.1.123");
+        try {
+            assertEquals("192.168.1.123", wildcardServer.getAdvertisedHost());
+            wildcardServer.writeDiscoveryFile("READY");
+            String content = Files.readString(metaPath);
+            assertTrue(content.contains("\"grpc_host\": \"192.168.1.123\""));
+        } finally {
+            System.clearProperty(CivQuestBridgeServer.PROP_GRPC_ADVERTISED_HOST);
+        }
     }
 
     @Test
