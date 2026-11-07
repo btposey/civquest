@@ -2,8 +2,34 @@ package db
 
 import (
 	"encoding/binary"
+	"errors"
+	"fmt"
 	"math"
 )
+
+// VectorDimension defines the standard 768-dimensional embedding size (e.g. nomic-embed-text).
+const VectorDimension = 768
+
+// Sentinel errors for vector operations.
+var (
+	ErrInvalidVectorDimension = errors.New("vector embedding must have exactly 768 dimensions")
+	ErrNonFiniteVector        = errors.New("vector contains non-finite elements (NaN or Inf)")
+)
+
+// ValidateVector validates that a vector has exactly VectorDimension (768) elements
+// and that all elements are finite (neither NaN nor infinite).
+func ValidateVector(v []float32) error {
+	if len(v) != VectorDimension {
+		return fmt.Errorf("%w: got %d, expected %d", ErrInvalidVectorDimension, len(v), VectorDimension)
+	}
+	for i, val := range v {
+		f := float64(val)
+		if math.IsNaN(f) || math.IsInf(f, 0) {
+			return fmt.Errorf("%w at index %d", ErrNonFiniteVector, i)
+		}
+	}
+	return nil
+}
 
 // Float32SliceToBytes converts a slice of float32 into little-endian IEEE-754 bytes.
 // Stored as BLOB in episodic_memories_vec (768 float32 values = 3072 bytes).
@@ -32,7 +58,8 @@ func BytesToFloat32Slice(buf []byte) []float32 {
 }
 
 // DotProduct calculates the scalar dot product of two float32 slices.
-// Utilizes 4-way loop unrolling for pipelined CPU execution per ADR-013.
+// Utilizes 4-way superscalar loop unrolling with independent accumulators to maximize instruction-level
+// parallelism (ILP) and CPU pipeline utilization per ADR-013.
 func DotProduct(a, b []float32) float32 {
 	n := len(a)
 	if n != len(b) || n == 0 {
@@ -54,6 +81,7 @@ func DotProduct(a, b []float32) float32 {
 }
 
 // NormSquared computes the squared Euclidean norm of a vector.
+// Utilizes 4-way superscalar loop unrolling with independent accumulators per ADR-013.
 func NormSquared(v []float32) float32 {
 	n := len(v)
 	if n == 0 {
@@ -75,9 +103,10 @@ func NormSquared(v []float32) float32 {
 }
 
 // CosineSimilarity computes the cosine similarity between two float32 slices.
-// Leverages independent accumulators and 4-way loop unrolling to maximize CPU pipeline
-// and SIMD register utilization per ADR-013 without competing for GPU VRAM.
-// Returns a value in [-1.0, 1.0], or 0.0 if vectors differ in size or either norm is zero.
+// Leverages independent accumulators and 4-way superscalar loop unrolling to maximize CPU pipeline
+// execution and instruction-level parallelism (ILP) per ADR-013 without competing for GPU VRAM.
+// Returns a value in [-1.0, 1.0], or 0.0 if vectors differ in size, either norm is zero,
+// or non-finite (NaN / Inf) values are encountered.
 func CosineSimilarity(a, b []float32) float32 {
 	n := len(a)
 	if n != len(b) || n == 0 {
@@ -121,16 +150,32 @@ func CosineSimilarity(a, b []float32) float32 {
 		normB += bi * bi
 	}
 
+	// Guard accumulators against NaN and Inf
+	dotF := float64(dot)
+	normAF := float64(normA)
+	normBF := float64(normB)
+	if math.IsNaN(dotF) || math.IsInf(dotF, 0) ||
+		math.IsNaN(normAF) || math.IsInf(normAF, 0) ||
+		math.IsNaN(normBF) || math.IsInf(normBF, 0) {
+		return 0
+	}
+
 	if normA <= 0 || normB <= 0 {
 		return 0
 	}
 
-	denom := float32(math.Sqrt(float64(normA)) * math.Sqrt(float64(normB)))
-	if denom <= 0 {
+	denom := float32(math.Sqrt(normAF) * math.Sqrt(normBF))
+	denomF := float64(denom)
+	if math.IsNaN(denomF) || math.IsInf(denomF, 0) || denom <= 0 {
 		return 0
 	}
 
 	sim := dot / denom
+	simF := float64(sim)
+	if math.IsNaN(simF) || math.IsInf(simF, 0) {
+		return 0
+	}
+
 	// Clamp to [-1.0, 1.0] to account for floating point imprecision
 	if sim > 1.0 {
 		return 1.0

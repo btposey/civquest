@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -24,13 +25,18 @@ var (
 
 // AgentDB manages SQLite connections and schemas for an autonomous agent's
 // memory.db and map_graph.db in $XDG_DATA_HOME/civquest/agents/<agent_name>/.
+// Read operations proceed concurrently with up to 10 connections in WAL mode,
+// while write transactions are serialized in Go user space via dedicated write mutexes
+// (memWriteMu and mapWriteMu) to completely prevent SQLITE_BUSY contention.
 type AgentDB struct {
-	mu       sync.RWMutex
-	dataDir  string
-	memoryDB *sql.DB
-	mapDB    *sql.DB
-	isClosed bool
-	hasVec0  bool
+	mu         sync.RWMutex
+	memWriteMu sync.Mutex
+	mapWriteMu sync.Mutex
+	dataDir    string
+	memoryDB   *sql.DB
+	mapDB      *sql.DB
+	isClosed   bool
+	hasVec0    bool
 }
 
 // OpenAgentDB opens and automatically runs schema migrations on memory.db and map_graph.db
@@ -78,7 +84,11 @@ func OpenAgentDB(agentDataDir string) (*AgentDB, error) {
 
 // OpenAgentDBForAgent is a convenience constructor resolving the agent data directory
 // via the provided XDG resolver (or default resolver if nil).
+// Validates agentName to prevent directory traversal and injection attacks.
 func OpenAgentDBForAgent(resolver *xdg.Resolver, agentName string) (*AgentDB, error) {
+	if err := xdg.ValidateAgentName(agentName); err != nil {
+		return nil, err
+	}
 	if resolver == nil {
 		resolver = xdg.NewResolver()
 	}
@@ -93,7 +103,7 @@ func openAndConfigureDB(dbPath string) (*sql.DB, error) {
 		return nil, err
 	}
 
-	// SQLite connection pooling for WAL mode
+	// SQLite connection pooling for WAL mode: concurrent reads with up to 10 connections
 	db.SetMaxOpenConns(10)
 	db.SetMaxIdleConns(5)
 	db.SetConnMaxLifetime(time.Hour)
@@ -117,12 +127,20 @@ func openAndConfigureDB(dbPath string) (*sql.DB, error) {
 }
 
 func (a *AgentDB) migrateMemoryDB(ctx context.Context) error {
+	tx, err := a.memoryDB.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("beginning memory migration tx: %w", err)
+	}
+	defer func() {
+		_ = tx.Rollback()
+	}()
+
 	queries := []string{
 		`CREATE TABLE IF NOT EXISTS episodic_memories (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
 			world_tick INTEGER NOT NULL,
-			event_category TEXT NOT NULL,
-			saliency_score REAL NOT NULL,
+			event_category TEXT NOT NULL CHECK(event_category IN ('COMBAT', 'TRADE', 'CHAT', 'DEATH', 'DISCOVERY', 'BETRAYAL')),
+			saliency_score REAL NOT NULL CHECK(saliency_score >= 0.0 AND saliency_score <= 1.0),
 			actors_json TEXT NOT NULL,
 			location_coords TEXT NOT NULL,
 			summary_text TEXT NOT NULL,
@@ -135,9 +153,9 @@ func (a *AgentDB) migrateMemoryDB(ctx context.Context) error {
 			entity_uuid TEXT PRIMARY KEY,
 			entity_name TEXT NOT NULL,
 			entity_type TEXT CHECK(entity_type IN ('PLAYER', 'SETTLER')),
-			disposition_score REAL DEFAULT 0.0,
-			familiarity REAL DEFAULT 0.0,
-			kinship_role TEXT DEFAULT 'NONE',
+			disposition_score REAL DEFAULT 0.0 CHECK(disposition_score >= -100.0 AND disposition_score <= 100.0),
+			familiarity REAL DEFAULT 0.0 CHECK(familiarity >= 0.0 AND familiarity <= 1.0),
+			kinship_role TEXT DEFAULT 'NONE' CHECK(kinship_role IN ('NONE', 'SPOUSE', 'PARENT', 'CHILD', 'WIDOWED')),
 			last_interaction_tick INTEGER
 		);`,
 		`CREATE INDEX IF NOT EXISTS idx_relationships_type ON relationships(entity_type);`,
@@ -152,41 +170,58 @@ func (a *AgentDB) migrateMemoryDB(ctx context.Context) error {
 	}
 
 	for _, q := range queries {
-		if _, err := a.memoryDB.ExecContext(ctx, q); err != nil {
+		if _, err := tx.ExecContext(ctx, q); err != nil {
 			return fmt.Errorf("executing memory migration query: %w", err)
 		}
 	}
 
-	// Migrate episodic_memories_vec: Check if table already exists
-	var tableName string
-	err := a.memoryDB.QueryRowContext(ctx, "SELECT name FROM sqlite_schema WHERE name = 'episodic_memories_vec'").Scan(&tableName)
-	if errors.Is(err, sql.ErrNoRows) {
-		// Attempt virtual table vec0 first if sqlite-vec is available
-		_, vErr := a.memoryDB.ExecContext(ctx, `CREATE VIRTUAL TABLE episodic_memories_vec USING vec0(
-			memory_id INTEGER PRIMARY KEY,
-			embedding FLOAT[768]
-		);`)
-		if vErr == nil {
+	// Check if episodic_memories_vec table already exists and whether it uses vec0
+	var schemaSQL string
+	err = tx.QueryRowContext(ctx, "SELECT sql FROM sqlite_schema WHERE name = 'episodic_memories_vec'").Scan(&schemaSQL)
+	if err == nil {
+		if strings.Contains(strings.ToLower(schemaSQL), "vec0") {
 			a.hasVec0 = true
-		} else {
+		}
+	} else if errors.Is(err, sql.ErrNoRows) {
+		// Attempt virtual table vec0 first if sqlite-vec module is registered
+		var modName string
+		mErr := tx.QueryRowContext(ctx, "SELECT name FROM pragma_module_list WHERE name = 'vec0'").Scan(&modName)
+		if mErr == nil && modName == "vec0" {
+			_, vErr := tx.ExecContext(ctx, `CREATE VIRTUAL TABLE episodic_memories_vec USING vec0(
+				memory_id INTEGER PRIMARY KEY,
+				embedding FLOAT[768]
+			);`)
+			if vErr == nil {
+				a.hasVec0 = true
+			}
+		}
+		if !a.hasVec0 {
 			// Fallback to relational table with IEEE-754 binary BLOB embedding
 			fallbackQuery := `CREATE TABLE episodic_memories_vec (
 				memory_id INTEGER PRIMARY KEY,
 				embedding BLOB NOT NULL,
 				FOREIGN KEY (memory_id) REFERENCES episodic_memories(id) ON DELETE CASCADE
 			);`
-			if _, rErr := a.memoryDB.ExecContext(ctx, fallbackQuery); rErr != nil {
+			if _, rErr := tx.ExecContext(ctx, fallbackQuery); rErr != nil {
 				return fmt.Errorf("creating episodic_memories_vec fallback table: %w", rErr)
 			}
 		}
-	} else if err != nil {
+	} else {
 		return fmt.Errorf("checking episodic_memories_vec table: %w", err)
 	}
 
-	return nil
+	return tx.Commit()
 }
 
 func (a *AgentDB) migrateMapDB(ctx context.Context) error {
+	tx, err := a.mapDB.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("beginning map migration tx: %w", err)
+	}
+	defer func() {
+		_ = tx.Rollback()
+	}()
+
 	queries := []string{
 		`CREATE TABLE IF NOT EXISTS map_nodes (
 			id TEXT PRIMARY KEY,
@@ -195,7 +230,7 @@ func (a *AgentDB) migrateMapDB(ctx context.Context) error {
 			z REAL NOT NULL,
 			label TEXT NOT NULL,
 			category TEXT NOT NULL,
-			safety_score REAL DEFAULT 1.0,
+			safety_score REAL DEFAULT 1.0 CHECK(safety_score >= 0.0 AND safety_score <= 1.0),
 			discovered_tick INTEGER NOT NULL
 		);`,
 		`CREATE INDEX IF NOT EXISTS idx_map_nodes_category ON map_nodes(category);`,
@@ -203,8 +238,8 @@ func (a *AgentDB) migrateMapDB(ctx context.Context) error {
 			id TEXT PRIMARY KEY,
 			from_node_id TEXT NOT NULL,
 			to_node_id TEXT NOT NULL,
-			distance REAL NOT NULL,
-			danger_level REAL DEFAULT 0.0,
+			distance REAL NOT NULL CHECK(distance >= 0.0),
+			danger_level REAL DEFAULT 0.0 CHECK(danger_level >= 0.0),
 			is_paved BOOLEAN DEFAULT FALSE,
 			FOREIGN KEY (from_node_id) REFERENCES map_nodes(id) ON DELETE CASCADE,
 			FOREIGN KEY (to_node_id) REFERENCES map_nodes(id) ON DELETE CASCADE
@@ -214,12 +249,12 @@ func (a *AgentDB) migrateMapDB(ctx context.Context) error {
 	}
 
 	for _, q := range queries {
-		if _, err := a.mapDB.ExecContext(ctx, q); err != nil {
+		if _, err := tx.ExecContext(ctx, q); err != nil {
 			return fmt.Errorf("executing map migration query: %w", err)
 		}
 	}
 
-	return nil
+	return tx.Commit()
 }
 
 // DataDir returns the path to the agent's data directory.
@@ -251,8 +286,18 @@ func (a *AgentDB) HasVec0() bool {
 // ==================== EPISODIC MEMORIES ====================
 
 // InsertEpisodicMemory inserts an episodic memory and its corresponding vector embedding
-// atomically in memory.db. Returns the generated memory ID.
+// atomically in memory.db. Validates that non-empty embeddings have exactly 768 finite dimensions.
+// Returns the generated memory ID.
 func (a *AgentDB) InsertEpisodicMemory(ctx context.Context, memory EpisodicMemory, embedding []float32) (int64, error) {
+	if len(embedding) > 0 {
+		if err := ValidateVector(embedding); err != nil {
+			return 0, err
+		}
+	}
+
+	a.memWriteMu.Lock()
+	defer a.memWriteMu.Unlock()
+
 	a.mu.RLock()
 	defer a.mu.RUnlock()
 	if a.isClosed {
@@ -298,9 +343,64 @@ func (a *AgentDB) InsertEpisodicMemory(ctx context.Context, memory EpisodicMemor
 	return memID, nil
 }
 
-// SearchEpisodicMemories calculates cosine similarity between the query embedding
-// and stored episodic memories using the SIMD/unrolled CPU kernel (ADR-013),
-// returning the top-K highest ranking matches.
+// GetEpisodicMemory retrieves an episodic memory by its ID, or returns nil, nil if not found.
+func (a *AgentDB) GetEpisodicMemory(ctx context.Context, id int64) (*EpisodicMemory, error) {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+	if a.isClosed {
+		return nil, ErrClosed
+	}
+
+	query := `
+		SELECT id, world_tick, event_category, saliency_score, actors_json, location_coords, summary_text, chronicled
+		FROM episodic_memories
+		WHERE id = ?;
+	`
+	var mem EpisodicMemory
+	err := a.memoryDB.QueryRowContext(ctx, query, id).Scan(
+		&mem.ID, &mem.WorldTick, &mem.EventCategory, &mem.SaliencyScore,
+		&mem.ActorsJSON, &mem.LocationCoords, &mem.SummaryText, &mem.Chronicled,
+	)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("querying episodic memory: %w", err)
+	}
+	return &mem, nil
+}
+
+// MarkMemoryChronicled updates the chronicled flag to true for an episodic memory.
+// Returns ErrNotFound if the specified memory ID does not exist.
+func (a *AgentDB) MarkMemoryChronicled(ctx context.Context, id int64) error {
+	a.memWriteMu.Lock()
+	defer a.memWriteMu.Unlock()
+
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+	if a.isClosed {
+		return ErrClosed
+	}
+
+	res, err := a.memoryDB.ExecContext(ctx, "UPDATE episodic_memories SET chronicled = TRUE WHERE id = ?;", id)
+	if err != nil {
+		return fmt.Errorf("marking memory chronicled: %w", err)
+	}
+	rows, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("checking rows affected: %w", err)
+	}
+	if rows == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// SearchEpisodicMemories retrieves the top-K highest ranking episodic memories.
+// If vec0 virtual tables are available, it executes an indexed sqlite-vec MATCH query.
+// Otherwise, it streams stored vector embeddings and evaluates cosine similarity using
+// the host CPU superscalar unrolled kernel (ADR-013), maintaining a bounded top-K collection
+// and subsequently hydrating winning memory attributes.
 func (a *AgentDB) SearchEpisodicMemories(ctx context.Context, queryEmbedding []float32, limit int) ([]EpisodicMemoryMatch, error) {
 	a.mu.RLock()
 	defer a.mu.RUnlock()
@@ -311,64 +411,151 @@ func (a *AgentDB) SearchEpisodicMemories(ctx context.Context, queryEmbedding []f
 	if len(queryEmbedding) == 0 {
 		return nil, ErrEmptyQueryEmbedding
 	}
+	if err := ValidateVector(queryEmbedding); err != nil {
+		return nil, err
+	}
 	if limit <= 0 {
 		limit = 10
 	}
 
-	rows, err := a.memoryDB.QueryContext(ctx, `
-		SELECT 
-			m.id, m.world_tick, m.event_category, m.saliency_score,
-			m.actors_json, m.location_coords, m.summary_text, m.chronicled,
-			v.embedding
-		FROM episodic_memories m
-		INNER JOIN episodic_memories_vec v ON m.id = v.memory_id
-	`)
+	// 1. Dual-mode vec0 virtual table query path
+	if a.hasVec0 {
+		queryBytes := Float32SliceToBytes(queryEmbedding)
+		rows, err := a.memoryDB.QueryContext(ctx, `
+			SELECT 
+				m.id, m.world_tick, m.event_category, m.saliency_score,
+				m.actors_json, m.location_coords, m.summary_text, m.chronicled,
+				v.distance
+			FROM episodic_memories_vec v
+			JOIN episodic_memories m ON m.id = v.memory_id
+			WHERE v.embedding MATCH ? AND k = ?
+			ORDER BY v.distance ASC;
+		`, queryBytes, limit)
+		if err == nil {
+			defer rows.Close()
+			var matches []EpisodicMemoryMatch
+			for rows.Next() {
+				var mem EpisodicMemory
+				var dist float64
+				if err := rows.Scan(
+					&mem.ID, &mem.WorldTick, &mem.EventCategory, &mem.SaliencyScore,
+					&mem.ActorsJSON, &mem.LocationCoords, &mem.SummaryText, &mem.Chronicled,
+					&dist,
+				); err != nil {
+					return nil, fmt.Errorf("scanning vec0 match row: %w", err)
+				}
+				sim := float32(1.0 - dist)
+				if sim < -1.0 {
+					sim = -1.0
+				} else if sim > 1.0 {
+					sim = 1.0
+				}
+				matches = append(matches, EpisodicMemoryMatch{
+					Memory:     mem,
+					Similarity: sim,
+				})
+			}
+			if err := rows.Err(); err != nil {
+				return nil, fmt.Errorf("iterating vec0 match rows: %w", err)
+			}
+			if matches == nil {
+				return []EpisodicMemoryMatch{}, nil
+			}
+			return matches, nil
+		}
+		// If vec0 execution encountered an error, fall through to CPU search
+	}
+
+	// 2. Relational fallback mode with bounded CPU cosine similarity scan
+	rows, err := a.memoryDB.QueryContext(ctx, "SELECT memory_id, embedding FROM episodic_memories_vec;")
 	if err != nil {
-		return nil, fmt.Errorf("querying episodic memories with embeddings: %w", err)
+		return nil, fmt.Errorf("querying episodic memory embeddings: %w", err)
 	}
 	defer rows.Close()
 
-	var matches []EpisodicMemoryMatch
+	type candidate struct {
+		id  int64
+		sim float32
+	}
+	var candidates []candidate
 
 	for rows.Next() {
-		var mem EpisodicMemory
+		var id int64
 		var embBytes []byte
-
-		if err := rows.Scan(
-			&mem.ID, &mem.WorldTick, &mem.EventCategory, &mem.SaliencyScore,
-			&mem.ActorsJSON, &mem.LocationCoords, &mem.SummaryText, &mem.Chronicled,
-			&embBytes,
-		); err != nil {
-			return nil, fmt.Errorf("scanning episodic memory row: %w", err)
+		if err := rows.Scan(&id, &embBytes); err != nil {
+			return nil, fmt.Errorf("scanning memory vector: %w", err)
 		}
-
 		targetVec := BytesToFloat32Slice(embBytes)
 		if len(targetVec) == 0 {
 			continue
 		}
-
 		sim := CosineSimilarity(queryEmbedding, targetVec)
-		matches = append(matches, EpisodicMemoryMatch{
-			Memory:     mem,
-			Similarity: sim,
-		})
+		candidates = append(candidates, candidate{id: id, sim: sim})
 	}
-
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("iterating memory rows: %w", err)
+		return nil, fmt.Errorf("iterating vector rows: %w", err)
 	}
 
-	if len(matches) == 0 {
+	if len(candidates) == 0 {
 		return []EpisodicMemoryMatch{}, nil
 	}
 
-	// Sort descending by cosine similarity score
-	sort.Slice(matches, func(i, j int) bool {
-		return matches[i].Similarity > matches[j].Similarity
+	// Sort candidates descending by similarity score, breaking ties deterministically by ID ascending
+	sort.Slice(candidates, func(i, j int) bool {
+		if candidates[i].sim != candidates[j].sim {
+			return candidates[i].sim > candidates[j].sim
+		}
+		return candidates[i].id < candidates[j].id
 	})
 
-	if len(matches) > limit {
-		matches = matches[:limit]
+	if len(candidates) > limit {
+		candidates = candidates[:limit]
+	}
+
+	// Hydrate full memory attributes only for winning top-K IDs
+	idList := make([]any, len(candidates))
+	placeholders := make([]string, len(candidates))
+	for i, c := range candidates {
+		idList[i] = c.id
+		placeholders[i] = "?"
+	}
+
+	fetchQuery := fmt.Sprintf(`
+		SELECT id, world_tick, event_category, saliency_score, actors_json, location_coords, summary_text, chronicled
+		FROM episodic_memories
+		WHERE id IN (%s);
+	`, strings.Join(placeholders, ", "))
+
+	memRows, err := a.memoryDB.QueryContext(ctx, fetchQuery, idList...)
+	if err != nil {
+		return nil, fmt.Errorf("fetching winning memories: %w", err)
+	}
+	defer memRows.Close()
+
+	memMap := make(map[int64]EpisodicMemory, len(candidates))
+	for memRows.Next() {
+		var mem EpisodicMemory
+		if err := memRows.Scan(
+			&mem.ID, &mem.WorldTick, &mem.EventCategory, &mem.SaliencyScore,
+			&mem.ActorsJSON, &mem.LocationCoords, &mem.SummaryText, &mem.Chronicled,
+		); err != nil {
+			return nil, fmt.Errorf("scanning winning memory row: %w", err)
+		}
+		memMap[mem.ID] = mem
+	}
+	if err := memRows.Err(); err != nil {
+		return nil, fmt.Errorf("iterating winning memory rows: %w", err)
+	}
+
+	// Reassemble matches in the exact order of candidates
+	matches := make([]EpisodicMemoryMatch, 0, len(candidates))
+	for _, c := range candidates {
+		if mem, ok := memMap[c.id]; ok {
+			matches = append(matches, EpisodicMemoryMatch{
+				Memory:     mem,
+				Similarity: c.sim,
+			})
+		}
 	}
 
 	return matches, nil
@@ -378,6 +565,9 @@ func (a *AgentDB) SearchEpisodicMemories(ctx context.Context, queryEmbedding []f
 
 // UpsertRelationship creates or updates an agent's relationship entry with a player or settler.
 func (a *AgentDB) UpsertRelationship(ctx context.Context, rel Relationship) error {
+	a.memWriteMu.Lock()
+	defer a.memWriteMu.Unlock()
+
 	a.mu.RLock()
 	defer a.mu.RUnlock()
 	if a.isClosed {
@@ -485,6 +675,9 @@ func (a *AgentDB) ListRelationships(ctx context.Context) ([]Relationship, error)
 
 // DeleteRelationship removes a relationship entry by UUID.
 func (a *AgentDB) DeleteRelationship(ctx context.Context, entityUUID string) error {
+	a.memWriteMu.Lock()
+	defer a.memWriteMu.Unlock()
+
 	a.mu.RLock()
 	defer a.mu.RUnlock()
 	if a.isClosed {
@@ -502,6 +695,9 @@ func (a *AgentDB) DeleteRelationship(ctx context.Context, entityUUID string) err
 
 // UpsertSkill inserts or updates an agent skill level and XP.
 func (a *AgentDB) UpsertSkill(ctx context.Context, skill Skill) error {
+	a.memWriteMu.Lock()
+	defer a.memWriteMu.Unlock()
+
 	a.mu.RLock()
 	defer a.mu.RUnlock()
 	if a.isClosed {
@@ -604,6 +800,9 @@ func (a *AgentDB) ListSkills(ctx context.Context) ([]Skill, error) {
 
 // AddMapNode registers or updates a topological waypoint node.
 func (a *AgentDB) AddMapNode(ctx context.Context, node MapNode) error {
+	a.mapWriteMu.Lock()
+	defer a.mapWriteMu.Unlock()
+
 	a.mu.RLock()
 	defer a.mu.RUnlock()
 	if a.isClosed {
@@ -662,8 +861,41 @@ func (a *AgentDB) GetMapNode(ctx context.Context, id string) (*MapNode, error) {
 	return &node, nil
 }
 
+// DeleteMapNode removes a map node by ID. Cascade deletion automatically removes incident edges.
+// Returns ErrNotFound if the node does not exist.
+func (a *AgentDB) DeleteMapNode(ctx context.Context, id string) error {
+	a.mapWriteMu.Lock()
+	defer a.mapWriteMu.Unlock()
+
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+	if a.isClosed {
+		return ErrClosed
+	}
+
+	if id == "" {
+		return errors.New("node ID cannot be empty")
+	}
+
+	res, err := a.mapDB.ExecContext(ctx, "DELETE FROM map_nodes WHERE id = ?;", id)
+	if err != nil {
+		return fmt.Errorf("deleting map node: %w", err)
+	}
+	rows, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("checking rows affected: %w", err)
+	}
+	if rows == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
 // AddMapEdge registers or updates a traversable edge between two topological nodes.
 func (a *AgentDB) AddMapEdge(ctx context.Context, edge MapEdge) error {
+	a.mapWriteMu.Lock()
+	defer a.mapWriteMu.Unlock()
+
 	a.mu.RLock()
 	defer a.mu.RUnlock()
 	if a.isClosed {
@@ -697,7 +929,64 @@ func (a *AgentDB) AddMapEdge(ctx context.Context, edge MapEdge) error {
 	return nil
 }
 
-// GetMapGraph retrieves the complete topological map graph consisting of all nodes and edges.
+// GetMapEdge retrieves a map edge by ID, or returns nil, nil if not found.
+func (a *AgentDB) GetMapEdge(ctx context.Context, id string) (*MapEdge, error) {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+	if a.isClosed {
+		return nil, ErrClosed
+	}
+
+	query := `
+		SELECT id, from_node_id, to_node_id, distance, danger_level, is_paved
+		FROM map_edges
+		WHERE id = ?;
+	`
+	var edge MapEdge
+	err := a.mapDB.QueryRowContext(ctx, query, id).Scan(
+		&edge.ID, &edge.FromNodeID, &edge.ToNodeID, &edge.Distance, &edge.DangerLevel, &edge.IsPaved,
+	)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("querying map edge: %w", err)
+	}
+	return &edge, nil
+}
+
+// DeleteMapEdge removes a map edge by ID.
+// Returns ErrNotFound if the edge does not exist.
+func (a *AgentDB) DeleteMapEdge(ctx context.Context, id string) error {
+	a.mapWriteMu.Lock()
+	defer a.mapWriteMu.Unlock()
+
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+	if a.isClosed {
+		return ErrClosed
+	}
+
+	if id == "" {
+		return errors.New("edge ID cannot be empty")
+	}
+
+	res, err := a.mapDB.ExecContext(ctx, "DELETE FROM map_edges WHERE id = ?;", id)
+	if err != nil {
+		return fmt.Errorf("deleting map edge: %w", err)
+	}
+	rows, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("checking rows affected: %w", err)
+	}
+	if rows == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// GetMapGraph retrieves the complete topological map graph consisting of all nodes and edges
+// within a read-only snapshot transaction to prevent torn snapshots.
 func (a *AgentDB) GetMapGraph(ctx context.Context) ([]MapNode, []MapEdge, error) {
 	a.mu.RLock()
 	defer a.mu.RUnlock()
@@ -705,8 +994,16 @@ func (a *AgentDB) GetMapGraph(ctx context.Context) ([]MapNode, []MapEdge, error)
 		return nil, nil, ErrClosed
 	}
 
+	tx, err := a.mapDB.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	if err != nil {
+		return nil, nil, fmt.Errorf("beginning read-only map graph tx: %w", err)
+	}
+	defer func() {
+		_ = tx.Rollback()
+	}()
+
 	// Fetch all nodes
-	nodeRows, err := a.mapDB.QueryContext(ctx, `
+	nodeRows, err := tx.QueryContext(ctx, `
 		SELECT id, x, y, z, label, category, safety_score, discovered_tick
 		FROM map_nodes
 		ORDER BY id ASC;
@@ -729,7 +1026,7 @@ func (a *AgentDB) GetMapGraph(ctx context.Context) ([]MapNode, []MapEdge, error)
 	}
 
 	// Fetch all edges
-	edgeRows, err := a.mapDB.QueryContext(ctx, `
+	edgeRows, err := tx.QueryContext(ctx, `
 		SELECT id, from_node_id, to_node_id, distance, danger_level, is_paved
 		FROM map_edges
 		ORDER BY id ASC;
@@ -751,6 +1048,10 @@ func (a *AgentDB) GetMapGraph(ctx context.Context) ([]MapNode, []MapEdge, error)
 		return nil, nil, fmt.Errorf("iterating map edge rows: %w", err)
 	}
 
+	if err := tx.Commit(); err != nil {
+		return nil, nil, fmt.Errorf("committing map graph read tx: %w", err)
+	}
+
 	if nodes == nil {
 		nodes = []MapNode{}
 	}
@@ -761,8 +1062,14 @@ func (a *AgentDB) GetMapGraph(ctx context.Context) ([]MapNode, []MapEdge, error)
 	return nodes, edges, nil
 }
 
-// Close cleanly terminates both memory.db and map_graph.db connections.
+// Close cleanly terminates both memory.db and map_graph.db connections,
+// first acquiring write mutexes to ensure in-flight write transactions drain safely.
 func (a *AgentDB) Close() error {
+	a.memWriteMu.Lock()
+	defer a.memWriteMu.Unlock()
+	a.mapWriteMu.Lock()
+	defer a.mapWriteMu.Unlock()
+
 	a.mu.Lock()
 	defer a.mu.Unlock()
 

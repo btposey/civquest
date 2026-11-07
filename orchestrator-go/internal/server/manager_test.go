@@ -251,6 +251,19 @@ func TestManager_RunnerScriptTraversal(t *testing.T) {
 func TestManager_StopContextCancellation(t *testing.T) {
 	r, mgr := setupMockServer(t)
 
+	// Use a mock script with realistic graceful shutdown delay (sleep 0.5s) upon SIGTERM,
+	// so the process remains running during immediate context cancellation inspection.
+	mockSlowScript := `#!/usr/bin/env bash
+trap "echo [mock-server] caught SIGTERM >> server.log; sleep 0.5; exit 0" SIGTERM
+echo "[mock-server] Initializing Minecraft 1.21.1 NeoForge server..."
+while true; do
+    sleep 0.05
+done
+`
+	if err := os.WriteFile(r.ServerRunScriptPath(), []byte(mockSlowScript), 0755); err != nil {
+		t.Fatalf("write slow mock script failed: %v", err)
+	}
+
 	pid, err := mgr.Start()
 	if err != nil {
 		t.Fatalf("start failed: %v", err)

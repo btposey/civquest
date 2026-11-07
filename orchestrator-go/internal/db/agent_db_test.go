@@ -2,7 +2,9 @@ package db
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
 	"sync"
@@ -82,10 +84,14 @@ func TestAutoMigrationAndSchema(t *testing.T) {
 		}
 	}
 
-	// Test migration idempotency by opening again
+	// Test migration idempotency and hasVec0 detection by reopening
+	hasVec0Original := agentDB.HasVec0()
 	agentDB2, err := OpenAgentDB(agentDir)
 	if err != nil {
 		t.Fatalf("re-opening AgentDB failed: %v", err)
+	}
+	if agentDB2.HasVec0() != hasVec0Original {
+		t.Errorf("expected hasVec0=%v on reopen, got %v", hasVec0Original, agentDB2.HasVec0())
 	}
 	_ = agentDB2.Close()
 
@@ -101,6 +107,131 @@ func TestAutoMigrationAndSchema(t *testing.T) {
 	if agentDBXDG.DataDir() != expectedPath {
 		t.Errorf("expected DataDir %s, got %s", expectedPath, agentDBXDG.DataDir())
 	}
+
+	// Test OpenAgentDBForAgent path traversal rejection
+	maliciousNames := []string{
+		"../escape",
+		"../../etc/passwd",
+		"agent/nested",
+		"agent\\windows",
+		"",
+		"   ",
+		".",
+		"..",
+		"agent_name_that_exceeds_the_maximum_allowed_length_of_32_characters",
+		"-leading_hyphen",
+	}
+	for _, badName := range maliciousNames {
+		_, pErr := OpenAgentDBForAgent(resolver, badName)
+		if pErr == nil {
+			t.Errorf("expected error for invalid/malicious agentName %q, got nil", badName)
+		}
+	}
+
+	// Verify SQL CHECK constraints
+	t.Run("check constraints on episodic_memories", func(t *testing.T) {
+		// Invalid event_category
+		badCatMem := EpisodicMemory{
+			WorldTick:      100,
+			EventCategory:  "UNKNOWN_CATEGORY",
+			SaliencyScore:  0.5,
+			ActorsJSON:     "[]",
+			LocationCoords: "0,0,0",
+			SummaryText:    "Invalid category test",
+		}
+		if _, cErr := agentDB.InsertEpisodicMemory(ctx, badCatMem, nil); cErr == nil {
+			t.Errorf("expected error inserting memory with invalid event_category, got nil")
+		}
+
+		// Saliency score < 0
+		lowSaliencyMem := EpisodicMemory{
+			WorldTick:      100,
+			EventCategory:  "COMBAT",
+			SaliencyScore:  -0.1,
+			ActorsJSON:     "[]",
+			LocationCoords: "0,0,0",
+			SummaryText:    "Negative saliency",
+		}
+		if _, cErr := agentDB.InsertEpisodicMemory(ctx, lowSaliencyMem, nil); cErr == nil {
+			t.Errorf("expected error inserting memory with negative saliency score, got nil")
+		}
+
+		// Saliency score > 1.0
+		highSaliencyMem := EpisodicMemory{
+			WorldTick:      100,
+			EventCategory:  "COMBAT",
+			SaliencyScore:  1.5,
+			ActorsJSON:     "[]",
+			LocationCoords: "0,0,0",
+			SummaryText:    "Too high saliency",
+		}
+		if _, cErr := agentDB.InsertEpisodicMemory(ctx, highSaliencyMem, nil); cErr == nil {
+			t.Errorf("expected error inserting memory with saliency > 1.0, got nil")
+		}
+	})
+
+	t.Run("check constraints on relationships", func(t *testing.T) {
+		// Invalid disposition score > 100
+		badRel := Relationship{
+			EntityUUID:       "00000000-0000-0000-0000-000000000099",
+			EntityName:       "BadRel",
+			EntityType:       "PLAYER",
+			DispositionScore: 105.0,
+			Familiarity:      0.5,
+			KinshipRole:      "NONE",
+		}
+		if rErr := agentDB.UpsertRelationship(ctx, badRel); rErr == nil {
+			t.Errorf("expected error for disposition score > 100, got nil")
+		}
+
+		// Invalid familiarity > 1.0
+		badRel.DispositionScore = 50.0
+		badRel.Familiarity = 1.2
+		if rErr := agentDB.UpsertRelationship(ctx, badRel); rErr == nil {
+			t.Errorf("expected error for familiarity > 1.0, got nil")
+		}
+
+		// Invalid kinship role
+		badRel.Familiarity = 0.5
+		badRel.KinshipRole = "BEST_FRIEND"
+		if rErr := agentDB.UpsertRelationship(ctx, badRel); rErr == nil {
+			t.Errorf("expected error for invalid kinship role, got nil")
+		}
+	})
+
+	t.Run("check constraints on map_nodes and map_edges", func(t *testing.T) {
+		// Invalid safety score > 1.0
+		badNode := MapNode{
+			ID:          "node-bad",
+			X:           10,
+			Y:           64,
+			Z:           10,
+			Label:       "Bad",
+			Category:    "CIVIC",
+			SafetyScore: 1.5,
+		}
+		if nErr := agentDB.AddMapNode(ctx, badNode); nErr == nil {
+			t.Errorf("expected error for map node safety_score > 1.0, got nil")
+		}
+
+		// Valid node for edge test
+		goodNodeA := MapNode{ID: "node-a", X: 0, Y: 64, Z: 0, Label: "A", Category: "CIVIC", SafetyScore: 1.0}
+		goodNodeB := MapNode{ID: "node-b", X: 10, Y: 64, Z: 0, Label: "B", Category: "CIVIC", SafetyScore: 1.0}
+		_ = agentDB.AddMapNode(ctx, goodNodeA)
+		_ = agentDB.AddMapNode(ctx, goodNodeB)
+
+		// Negative distance edge
+		badEdge := MapEdge{
+			ID:          "edge-bad",
+			FromNodeID:  "node-a",
+			ToNodeID:    "node-b",
+			Distance:    -10.0,
+			DangerLevel: 0.0,
+		}
+		if eErr := agentDB.AddMapEdge(ctx, badEdge); eErr == nil {
+			t.Errorf("expected error for map edge distance < 0, got nil")
+		}
+	})
 }
 
 func TestEpisodicMemoryCRUDAndKNN(t *testing.T) {
@@ -158,11 +289,11 @@ func TestEpisodicMemoryCRUDAndKNN(t *testing.T) {
 	mem2 := EpisodicMemory{
 		WorldTick:      1200,
 		EventCategory:  "TRADE",
-		SaliencyScore:  0.75,
+		SaliencyScore:  0.80,
 		ActorsJSON:     `["player_steve"]`,
-		LocationCoords: "110,64,195",
-		SummaryText:    "Traded 16 emeralds for enchanted iron sword with Steve.",
-		Chronicled:     true,
+		LocationCoords: "150,64,220",
+		SummaryText:    "Bartered 12 emeralds for enchanted iron chestplate.",
+		Chronicled:     false,
 	}
 	id2, err := agentDB.InsertEpisodicMemory(ctx, mem2, vecTrade)
 	if err != nil {
@@ -182,6 +313,44 @@ func TestEpisodicMemoryCRUDAndKNN(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to insert mem3: %v", err)
 	}
+
+	// Test GetEpisodicMemory
+	t.Run("GetEpisodicMemory", func(t *testing.T) {
+		got, gErr := agentDB.GetEpisodicMemory(ctx, id1)
+		if gErr != nil {
+			t.Fatalf("GetEpisodicMemory failed: %v", gErr)
+		}
+		if got == nil {
+			t.Fatalf("expected memory with ID %d, got nil", id1)
+		}
+		if got.SummaryText != mem1.SummaryText || got.EventCategory != "COMBAT" {
+			t.Errorf("mismatched memory content: %+v", got)
+		}
+
+		missing, mErr := agentDB.GetEpisodicMemory(ctx, 999999)
+		if mErr != nil {
+			t.Fatalf("unexpected error on missing memory: %v", mErr)
+		}
+		if missing != nil {
+			t.Errorf("expected nil for non-existent memory, got %+v", missing)
+		}
+	})
+
+	// Test MarkMemoryChronicled
+	t.Run("MarkMemoryChronicled", func(t *testing.T) {
+		if cErr := agentDB.MarkMemoryChronicled(ctx, id1); cErr != nil {
+			t.Fatalf("MarkMemoryChronicled failed: %v", cErr)
+		}
+		got, _ := agentDB.GetEpisodicMemory(ctx, id1)
+		if got == nil || !got.Chronicled {
+			t.Errorf("expected memory %d to have chronicled=true", id1)
+		}
+
+		// Non-existent ID returns ErrNotFound
+		if cErr := agentDB.MarkMemoryChronicled(ctx, 999999); !errors.Is(cErr, ErrNotFound) {
+			t.Errorf("expected ErrNotFound for non-existent memory, got %v", cErr)
+		}
+	})
 
 	// Query with vector similar to combat
 	queryCombat := make([]float32, 768)
@@ -245,11 +414,40 @@ func TestEpisodicMemoryCRUDAndKNN(t *testing.T) {
 		t.Fatalf("expected id4 > id3, got %d <= %d", id4, id3)
 	}
 
-	// Test empty query embedding error
-	_, err = agentDB.SearchEpisodicMemories(ctx, nil, 5)
-	if err != ErrEmptyQueryEmbedding {
-		t.Errorf("expected ErrEmptyQueryEmbedding, got %v", err)
-	}
+	// Test invalid embedding validations
+	t.Run("vector dimension and non-finite validation", func(t *testing.T) {
+		// Insert with invalid dimension (100 instead of 768)
+		_, err = agentDB.InsertEpisodicMemory(ctx, memNoVec, make([]float32, 100))
+		if !errors.Is(err, ErrInvalidVectorDimension) {
+			t.Errorf("expected ErrInvalidVectorDimension on insert, got %v", err)
+		}
+
+		// Insert with NaN element
+		nanVec := make([]float32, 768)
+		nanVec[50] = float32(math.NaN())
+		_, err = agentDB.InsertEpisodicMemory(ctx, memNoVec, nanVec)
+		if !errors.Is(err, ErrNonFiniteVector) {
+			t.Errorf("expected ErrNonFiniteVector on insert, got %v", err)
+		}
+
+		// Search with empty vector
+		_, err = agentDB.SearchEpisodicMemories(ctx, nil, 5)
+		if err != ErrEmptyQueryEmbedding {
+			t.Errorf("expected ErrEmptyQueryEmbedding, got %v", err)
+		}
+
+		// Search with invalid dimension
+		_, err = agentDB.SearchEpisodicMemories(ctx, make([]float32, 100), 5)
+		if !errors.Is(err, ErrInvalidVectorDimension) {
+			t.Errorf("expected ErrInvalidVectorDimension on search, got %v", err)
+		}
+
+		// Search with NaN element
+		_, err = agentDB.SearchEpisodicMemories(ctx, nanVec, 5)
+		if !errors.Is(err, ErrNonFiniteVector) {
+			t.Errorf("expected ErrNonFiniteVector on search, got %v", err)
+		}
+	})
 }
 
 func TestRelationshipCRUD(t *testing.T) {
@@ -300,69 +498,64 @@ func TestRelationshipCRUD(t *testing.T) {
 		DispositionScore:    40.0,
 		Familiarity:         0.60,
 		KinshipRole:         "SPOUSE",
-		LastInteractionTick: 1200,
+		LastInteractionTick: 600,
 	}
 	if err := agentDB.UpsertRelationship(ctx, alexRel); err != nil {
 		t.Fatalf("failed to insert Alex relationship: %v", err)
 	}
 
-	// Retrieve Steve
-	gotSteve, err := agentDB.GetRelationship(ctx, steveUUID)
+	// Fetch Alex relationship
+	gotAlex, err := agentDB.GetRelationship(ctx, alexUUID)
 	if err != nil {
-		t.Fatalf("failed to get Steve relationship: %v", err)
+		t.Fatalf("failed to fetch Alex relationship: %v", err)
 	}
-	if gotSteve == nil {
-		t.Fatalf("expected Steve relationship to be found")
+	if gotAlex == nil {
+		t.Fatalf("expected Alex relationship, got nil")
 	}
-	if gotSteve.EntityName != "Steve" || gotSteve.EntityType != "PLAYER" || gotSteve.DispositionScore != 15.0 {
-		t.Errorf("mismatched Steve fields: %+v", gotSteve)
+	if gotAlex.KinshipRole != "SPOUSE" || gotAlex.DispositionScore != 40.0 {
+		t.Errorf("mismatch in Alex relationship fields: %+v", gotAlex)
 	}
 
-	// Update Steve (improved disposition and familiarity)
-	steveRel.DispositionScore = 55.0
-	steveRel.Familiarity = 0.80
-	steveRel.LastInteractionTick = 2000
+	// Update Steve relationship
+	steveRel.DispositionScore = 25.0
+	steveRel.LastInteractionTick = 700
 	if err := agentDB.UpsertRelationship(ctx, steveRel); err != nil {
 		t.Fatalf("failed to update Steve relationship: %v", err)
 	}
 
-	updatedSteve, err := agentDB.GetRelationship(ctx, steveUUID)
+	// List relationships
+	rels, err := agentDB.ListRelationships(ctx)
 	if err != nil {
-		t.Fatalf("failed to get updated Steve: %v", err)
+		t.Fatalf("ListRelationships failed: %v", err)
 	}
-	if updatedSteve.DispositionScore != 55.0 || updatedSteve.Familiarity != 0.80 || updatedSteve.LastInteractionTick != 2000 {
-		t.Errorf("updated Steve fields not reflected: %+v", updatedSteve)
+	if len(rels) != 2 {
+		t.Fatalf("expected 2 relationships, got %d", len(rels))
 	}
-
-	// List relationships: Steve (tick 2000) should be first, Alex (tick 1200) second
-	list, err := agentDB.ListRelationships(ctx)
-	if err != nil {
-		t.Fatalf("failed to list relationships: %v", err)
-	}
-	if len(list) != 2 {
-		t.Fatalf("expected 2 relationships, got %d", len(list))
-	}
-	if list[0].EntityUUID != steveUUID || list[1].EntityUUID != alexUUID {
-		t.Errorf("unexpected list ordering: %+v", list)
-	}
-
-	// Invalid entity type validation
-	invalidRel := Relationship{
-		EntityUUID: "invalid-type-uuid",
-		EntityName: "Zombie",
-		EntityType: "MONSTER", // Invalid, only PLAYER or SETTLER permitted
-	}
-	if err := agentDB.UpsertRelationship(ctx, invalidRel); err == nil {
-		t.Errorf("expected error for invalid entity_type MONSTER, got nil")
+	// Steve should be first due to last_interaction_tick = 700 vs Alex 600
+	if rels[0].EntityUUID != steveUUID {
+		t.Errorf("expected Steve to be first, got %s", rels[0].EntityName)
 	}
 
 	// Delete relationship
 	if err := agentDB.DeleteRelationship(ctx, steveUUID); err != nil {
-		t.Fatalf("failed to delete Steve: %v", err)
+		t.Fatalf("failed to delete Steve relationship: %v", err)
 	}
-	afterDel, err := agentDB.GetRelationship(ctx, steveUUID)
-	if err != nil || afterDel != nil {
-		t.Errorf("expected Steve to be deleted, got err=%v, rel=%+v", err, afterDel)
+
+	deletedRel, err := agentDB.GetRelationship(ctx, steveUUID)
+	if err != nil {
+		t.Fatalf("error checking deleted relationship: %v", err)
+	}
+	if deletedRel != nil {
+		t.Fatalf("expected nil for deleted relationship, got %+v", deletedRel)
+	}
+
+	// Validation checks
+	invalidRel := Relationship{
+		EntityUUID: "some-uuid",
+		EntityType: "MONSTER", // invalid entity_type
+	}
+	if err := agentDB.UpsertRelationship(ctx, invalidRel); err == nil {
+		t.Errorf("expected error for invalid entity_type, got nil")
 	}
 }
 
@@ -381,75 +574,74 @@ func TestSkillCRUD(t *testing.T) {
 
 	ctx := context.Background()
 
-	// Check non-existent skill
-	s, err := agentDB.GetSkill(ctx, "WOODCUTTING")
+	// Initial check on non-existent skill
+	sk, err := agentDB.GetSkill(ctx, "blacksmithing")
 	if err != nil {
-		t.Fatalf("unexpected error on missing skill: %v", err)
+		t.Fatalf("unexpected error querying non-existent skill: %v", err)
 	}
-	if s != nil {
-		t.Fatalf("expected nil for missing skill, got %+v", s)
+	if sk != nil {
+		t.Fatalf("expected nil for missing skill, got %+v", sk)
 	}
 
-	// Insert primary skill
-	farmSkill := Skill{
-		SkillName:      "FARMING",
+	// Insert primary career skill
+	bs := Skill{
+		SkillName:      "blacksmithing",
 		Category:       "PRIMARY",
-		XP:             250,
+		XP:             150,
 		Level:          2,
-		WorkstationPos: "120,64,150",
+		WorkstationPos: "102,65,204",
 	}
-	if err := agentDB.UpsertSkill(ctx, farmSkill); err != nil {
-		t.Fatalf("failed to insert FARMING: %v", err)
+	if err := agentDB.UpsertSkill(ctx, bs); err != nil {
+		t.Fatalf("failed to insert blacksmithing: %v", err)
 	}
 
 	// Insert secondary hobby skill
-	fishSkill := Skill{
-		SkillName:      "FISHING",
+	fish := Skill{
+		SkillName:      "fishing",
 		Category:       "SECONDARY_HOBBY",
-		XP:             50,
+		XP:             20,
 		Level:          1,
-		WorkstationPos: "180,62,110",
+		WorkstationPos: "",
 	}
-	if err := agentDB.UpsertSkill(ctx, fishSkill); err != nil {
-		t.Fatalf("failed to insert FISHING: %v", err)
+	if err := agentDB.UpsertSkill(ctx, fish); err != nil {
+		t.Fatalf("failed to insert fishing: %v", err)
 	}
 
-	// Retrieve FARMING
-	gotFarm, err := agentDB.GetSkill(ctx, "FARMING")
+	// Update blacksmithing XP and level
+	bs.XP = 320
+	bs.Level = 3
+	if err := agentDB.UpsertSkill(ctx, bs); err != nil {
+		t.Fatalf("failed to update blacksmithing: %v", err)
+	}
+
+	// Fetch updated skill
+	gotBS, err := agentDB.GetSkill(ctx, "blacksmithing")
 	if err != nil {
-		t.Fatalf("failed to get FARMING: %v", err)
+		t.Fatalf("failed to get blacksmithing: %v", err)
 	}
-	if gotFarm == nil || gotFarm.XP != 250 || gotFarm.Level != 2 || gotFarm.WorkstationPos != "120,64,150" {
-		t.Fatalf("unexpected FARMING skill values: %+v", gotFarm)
-	}
-
-	// Update FARMING progression (level up to 3)
-	farmSkill.Level = 3
-	farmSkill.XP = 1000
-	if err := agentDB.UpsertSkill(ctx, farmSkill); err != nil {
-		t.Fatalf("failed to update FARMING: %v", err)
-	}
-
-	updatedFarm, err := agentDB.GetSkill(ctx, "FARMING")
-	if err != nil || updatedFarm.Level != 3 || updatedFarm.XP != 1000 {
-		t.Fatalf("FARMING update not applied: %+v (err=%v)", updatedFarm, err)
+	if gotBS == nil || gotBS.Level != 3 || gotBS.XP != 320 {
+		t.Fatalf("unexpected skill values: %+v", gotBS)
 	}
 
 	// List skills
 	skills, err := agentDB.ListSkills(ctx)
 	if err != nil {
-		t.Fatalf("failed to list skills: %v", err)
+		t.Fatalf("ListSkills failed: %v", err)
 	}
 	if len(skills) != 2 {
 		t.Fatalf("expected 2 skills, got %d", len(skills))
 	}
-
-	// Test invalid category
-	badSkill := Skill{
-		SkillName: "BLACKSMITHING",
-		Category:  "TERTIARY", // Invalid
+	// PRIMARY should come before SECONDARY_HOBBY
+	if skills[0].SkillName != "blacksmithing" {
+		t.Errorf("expected blacksmithing first, got %s", skills[0].SkillName)
 	}
-	if err := agentDB.UpsertSkill(ctx, badSkill); err == nil {
+
+	// Validation checks
+	invalidSkill := Skill{
+		SkillName: "invalid",
+		Category:  "THIRD_HOBBY",
+	}
+	if err := agentDB.UpsertSkill(ctx, invalidSkill); err == nil {
 		t.Errorf("expected error for invalid skill category, got nil")
 	}
 }
@@ -472,10 +664,10 @@ func TestMapGraphCRUD(t *testing.T) {
 	// Initial empty graph
 	nodes, edges, err := agentDB.GetMapGraph(ctx)
 	if err != nil {
-		t.Fatalf("GetMapGraph failed: %v", err)
+		t.Fatalf("GetMapGraph on empty DB failed: %v", err)
 	}
 	if len(nodes) != 0 || len(edges) != 0 {
-		t.Fatalf("expected empty map graph, got %d nodes and %d edges", len(nodes), len(edges))
+		t.Fatalf("expected empty graph, got %d nodes, %d edges", len(nodes), len(edges))
 	}
 
 	// Add nodes
@@ -529,6 +721,23 @@ func TestMapGraphCRUD(t *testing.T) {
 		t.Fatalf("failed to add edge: %v", err)
 	}
 
+	// Test GetMapEdge
+	gotEdge, err := agentDB.GetMapEdge(ctx, "edge-gate-tavern")
+	if err != nil {
+		t.Fatalf("GetMapEdge failed: %v", err)
+	}
+	if gotEdge == nil || gotEdge.Distance != 53.85 || !gotEdge.IsPaved {
+		t.Fatalf("unexpected edge data: %+v", gotEdge)
+	}
+
+	missingEdge, err := agentDB.GetMapEdge(ctx, "nonexistent-edge")
+	if err != nil {
+		t.Fatalf("unexpected error on missing edge: %v", err)
+	}
+	if missingEdge != nil {
+		t.Fatalf("expected nil for missing edge, got %+v", missingEdge)
+	}
+
 	// Retrieve graph
 	nodes, edges, err = agentDB.GetMapGraph(ctx)
 	if err != nil {
@@ -549,14 +758,42 @@ func TestMapGraphCRUD(t *testing.T) {
 	if err := agentDB.AddMapNode(ctx, n1); err != nil {
 		t.Fatalf("failed to update node safety score: %v", err)
 	}
-	updatedNode, _ := agentDB.GetMapNode(ctx, "node-gate")
-	if updatedNode.SafetyScore != 0.6 {
-		t.Errorf("expected updated safety score 0.6, got %f", updatedNode.SafetyScore)
+
+	gotNodeUpdated, _ := agentDB.GetMapNode(ctx, "node-gate")
+	if gotNodeUpdated.SafetyScore != 0.6 {
+		t.Errorf("expected updated safety score 0.6, got %f", gotNodeUpdated.SafetyScore)
+	}
+
+	// Test DeleteMapEdge
+	if dErr := agentDB.DeleteMapEdge(ctx, "edge-gate-tavern"); dErr != nil {
+		t.Fatalf("DeleteMapEdge failed: %v", dErr)
+	}
+	if dErr := agentDB.DeleteMapEdge(ctx, "edge-gate-tavern"); !errors.Is(dErr, ErrNotFound) {
+		t.Errorf("expected ErrNotFound on second DeleteMapEdge, got %v", dErr)
+	}
+
+	// Re-add edge to test cascade delete when deleting node
+	if aErr := agentDB.AddMapEdge(ctx, e1); aErr != nil {
+		t.Fatalf("re-adding edge failed: %v", aErr)
+	}
+
+	// Test DeleteMapNode with cascade
+	if dErr := agentDB.DeleteMapNode(ctx, "node-gate"); dErr != nil {
+		t.Fatalf("DeleteMapNode failed: %v", dErr)
+	}
+	if dErr := agentDB.DeleteMapNode(ctx, "node-gate"); !errors.Is(dErr, ErrNotFound) {
+		t.Errorf("expected ErrNotFound on second DeleteMapNode, got %v", dErr)
+	}
+
+	// Incident edge should be cascaded away
+	eAfter, _ := agentDB.GetMapEdge(ctx, "edge-gate-tavern")
+	if eAfter != nil {
+		t.Errorf("expected edge-gate-tavern to be cascade deleted, got %+v", eAfter)
 	}
 }
 
-func TestConcurrencyAndWAL(t *testing.T) {
-	tempDir, err := os.MkdirTemp("", "civquest_wal_test_*")
+func TestConcurrentReadWrite(t *testing.T) {
+	tempDir, err := os.MkdirTemp("", "civquest_concurrent_test_*")
 	if err != nil {
 		t.Fatalf("failed to create temp dir: %v", err)
 	}
@@ -714,11 +951,19 @@ func TestCloseAndClosedErrors(t *testing.T) {
 		t.Fatalf("second Close failed: %v", err)
 	}
 
+	dummyVec := make([]float32, 768)
+
 	// Verify operations on closed AgentDB return ErrClosed
-	if _, err := agentDB.InsertEpisodicMemory(ctx, EpisodicMemory{}, []float32{1.0}); err != ErrClosed {
+	if _, err := agentDB.InsertEpisodicMemory(ctx, EpisodicMemory{}, dummyVec); err != ErrClosed {
 		t.Errorf("expected ErrClosed on InsertEpisodicMemory, got %v", err)
 	}
-	if _, err := agentDB.SearchEpisodicMemories(ctx, []float32{1.0}, 5); err != ErrClosed {
+	if _, err := agentDB.GetEpisodicMemory(ctx, 1); err != ErrClosed {
+		t.Errorf("expected ErrClosed on GetEpisodicMemory, got %v", err)
+	}
+	if err := agentDB.MarkMemoryChronicled(ctx, 1); err != ErrClosed {
+		t.Errorf("expected ErrClosed on MarkMemoryChronicled, got %v", err)
+	}
+	if _, err := agentDB.SearchEpisodicMemories(ctx, dummyVec, 5); err != ErrClosed {
 		t.Errorf("expected ErrClosed on SearchEpisodicMemories, got %v", err)
 	}
 	if err := agentDB.UpsertRelationship(ctx, Relationship{EntityUUID: "u", EntityType: "PLAYER"}); err != ErrClosed {
@@ -748,8 +993,17 @@ func TestCloseAndClosedErrors(t *testing.T) {
 	if _, err := agentDB.GetMapNode(ctx, "n"); err != ErrClosed {
 		t.Errorf("expected ErrClosed on GetMapNode, got %v", err)
 	}
+	if err := agentDB.DeleteMapNode(ctx, "n"); err != ErrClosed {
+		t.Errorf("expected ErrClosed on DeleteMapNode, got %v", err)
+	}
 	if err := agentDB.AddMapEdge(ctx, MapEdge{ID: "e", FromNodeID: "a", ToNodeID: "b"}); err != ErrClosed {
 		t.Errorf("expected ErrClosed on AddMapEdge, got %v", err)
+	}
+	if _, err := agentDB.GetMapEdge(ctx, "e"); err != ErrClosed {
+		t.Errorf("expected ErrClosed on GetMapEdge, got %v", err)
+	}
+	if err := agentDB.DeleteMapEdge(ctx, "e"); err != ErrClosed {
+		t.Errorf("expected ErrClosed on DeleteMapEdge, got %v", err)
 	}
 	if _, _, err := agentDB.GetMapGraph(ctx); err != ErrClosed {
 		t.Errorf("expected ErrClosed on GetMapGraph, got %v", err)
