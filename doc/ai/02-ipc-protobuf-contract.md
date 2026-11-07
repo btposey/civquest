@@ -28,14 +28,15 @@ service CivQuestBridgeService {
 Every 4 Minecraft server ticks (5 Hz), or immediately upon an urgent event (such as `LivingDamageEvent` or `DeathEvent`), the Minecraft mod constructs and sends a `TelemetryFrame` containing:
 - `world_tick`: Absolute server tick counter.
 - `time_of_day`: 0 to 24000 tick cycle (1000 = morning, 6000 = noon, 13000 = dusk, 18000 = midnight).
-- `weather`: "CLEAR", "RAIN", "THUNDER".
-- `status`: Comprehensive agent status (health, food, saturation, position, yaw/pitch, navigation state, complete inventory, leashed entities).
+- `weather`: Typed enum `Weather` (`WEATHER_CLEAR`, `WEATHER_RAIN`, `WEATHER_THUNDER`).
+- `status`: Comprehensive agent status (health, food, saturation, position, yaw/pitch, typed `NavigationState`, complete inventory, leashed entities).
 - `visible_entities`: Mobs, players, animals within $R = 24$ blocks with line-of-sight checks. Includes hostility flags, held items, and Creeper `fuse_ticks`.
-- `interesting_blocks`: Blocks within $R = 16$ matching `#civquest:interesting_blocks` (mature crops, beds, workstations, beehives, chests, lecterns, hazards).
+- `interesting_blocks`: Blocks within $R = 16$ matching `#civquest:interesting_blocks` (mature crops, beds, workstations, beehives, chests, lecterns, hazards). Contains `block_state_string`.
 - `incoming_chats`: Local chat messages from nearby players or clan members.
-- `last_damage_taken`: Attacker ID, damage amount, and damage source ("mob", "arrow", "fall", "lava", etc.).
+- `last_damage_taken`: Attacker ID, damage amount, and typed `DamageSourceType` (`MOB`, `PLAYER`, `ARROW`, `FALL`, `EXPLOSION`, `LAVA`).
 - `pending_trade`: In-game player trade proposals and offered items.
 - `death_event`: Sent upon fatal damage, triggering the permanent teardown sequence.
+- `last_processed_sequence_id`: Acknowledges the last processed or completed `AgentIntent` sequence ID.
 
 ## 3. Intents (Agent -> Server)
 
@@ -45,7 +46,7 @@ The Go agent sends continuous or discrete `AgentIntent` messages containing a se
 3. `InteractBlockIntent`: Coordinate, interaction type (`HARVEST_BREAK`, `PLACE_BLOCK`, `SLEEP_IN_BED`, `WAKE_UP`, `USE_WORKSTATION`, `RING_BELL`, `SHEAR_OR_BOTTLE_BEEHIVE`, `PAVE_ROAD_PATH`).
 4. `UseItemIntent`: Inventory slot, eating/drinking flag, equip armor/offhand flag.
 5. `CraftItemIntent`: Recipe ID, workstation position, batch count.
-6. `SendChatIntent`: Message string, target channel (`LOCAL`, `CLAN_BROADCAST`).
+6. `SendChatIntent`: Message string, target channel (`CHAT_CHANNEL_LOCAL`, `CHAT_CHANNEL_CLAN_BROADCAST`).
 7. `RespondTradeIntent`: Deal acceptance flag, counter offer items, spoken reply.
 8. `CaravanIntent`: Leashing, unleashing, hitching to fence, chest loading/unloading.
 9. `BuildBlockIntent`: Voxel coordinate, target blockstate string (e.g. `minecraft:stone_brick_stairs[facing=north]`), scaffold marker.
