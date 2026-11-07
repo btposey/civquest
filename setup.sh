@@ -25,19 +25,29 @@ esac
 echo "[+] Detected OS: ${OS}, Architecture: ${ARCH} (${ARCH_GO})"
 
 # ------------------------------------------------------------------------------
-# 1. Check Java JDK (Java 21 required for NeoForge 21.1+)
+# 1. Manage Java JDK via SDKMAN (Java 21 Temurin)
 # ------------------------------------------------------------------------------
-echo "[+] Checking Java JDK..."
-if command -v java >/dev/null 2>&1; then
-    JAVA_VER="$(java -version 2>&1 | awk -F '"' '/version/ {print $2}' | cut -d'.' -f1)"
-    if [ "${JAVA_VER}" -ge 21 ]; then
-        echo "    ✓ Found Java ${JAVA_VER} ($(java -version 2>&1 | head -n 1))"
-    else
-        echo "    [!] Warning: Java version is ${JAVA_VER}. Minecraft 1.21.1 / NeoForge requires Java 21+."
-    fi
-else
-    echo "    [-] Java not found! Please install OpenJDK 21."
+echo "[+] Setting up Java JDK via SDKMAN..."
+export SDKMAN_DIR="${HOME}/.sdkman"
+if [ ! -s "${SDKMAN_DIR}/bin/sdkman-init.sh" ]; then
+    echo "    Installing SDKMAN..."
+    curl -s "https://get.sdkman.io" | bash
 fi
+
+# Temporarily disable nounset for SDKMAN functions compatibility
+set +u
+# shellcheck source=/dev/null
+source "${SDKMAN_DIR}/bin/sdkman-init.sh"
+
+TARGET_JDK="21.0.13.0+9-tem"
+if [ ! -d "${SDKMAN_DIR}/candidates/java/${TARGET_JDK}" ]; then
+    echo "    Installing ${TARGET_JDK} via SDKMAN..."
+    sdk install java "${TARGET_JDK}" </dev/null
+fi
+sdk default java "${TARGET_JDK}" </dev/null || true
+set -u
+
+echo "    ✓ Java managed via SDKMAN ($(java -version 2>&1 | head -n 1))"
 
 # ------------------------------------------------------------------------------
 # 2. Check Go (Go 1.23+ required)
@@ -105,17 +115,17 @@ fi
 # 6. Setup sqlite-vec Extension Library
 # ------------------------------------------------------------------------------
 echo "[+] Setting up sqlite-vec vector extension..."
-SQLITE_VEC_VERSION="v0.1.6"
+SQLITE_VEC_VERSION="0.1.6"
 SQLITE_VEC_DIR="${HOME}/.local/lib/civquest"
 mkdir -p "${SQLITE_VEC_DIR}"
 
 if [ ! -f "${SQLITE_VEC_DIR}/vec0.so" ]; then
-    echo "    Downloading sqlite-vec ${SQLITE_VEC_VERSION}..."
+    echo "    Downloading sqlite-vec v${SQLITE_VEC_VERSION}..."
     VEC_TAR="sqlite-vec-${SQLITE_VEC_VERSION}-loadable-linux-x86_64.tar.gz"
     if [ "${ARCH_GO}" = "arm64" ]; then
         VEC_TAR="sqlite-vec-${SQLITE_VEC_VERSION}-loadable-linux-aarch64.tar.gz"
     fi
-    curl -sSL -o "/tmp/${VEC_TAR}" "https://github.com/asg017/sqlite-vec/releases/download/${SQLITE_VEC_VERSION}/${VEC_TAR}"
+    curl -sSL -o "/tmp/${VEC_TAR}" "https://github.com/asg017/sqlite-vec/releases/download/v${SQLITE_VEC_VERSION}/${VEC_TAR}"
     tar -xzf "/tmp/${VEC_TAR}" -C "${SQLITE_VEC_DIR}"
     rm -f "/tmp/${VEC_TAR}"
     echo "    ✓ Installed vec0.so to ${SQLITE_VEC_DIR}/vec0.so"
