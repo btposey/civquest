@@ -9,6 +9,8 @@ import net.neoforged.neoforge.event.RegisterGameTestsEvent;
 import net.neoforged.neoforge.event.server.ServerStartedEvent;
 import net.neoforged.neoforge.event.server.ServerStartingEvent;
 import net.neoforged.neoforge.event.server.ServerStoppingEvent;
+import net.neoforged.neoforge.network.event.RegisterPayloadHandlersEvent;
+import net.neoforged.neoforge.network.registration.PayloadRegistrar;
 import org.slf4j.Logger;
 
 @Mod(CivQuestMod.MOD_ID)
@@ -20,11 +22,25 @@ public class CivQuestMod {
     public CivQuestMod(IEventBus modEventBus) {
         LOGGER.info("CivQuest mod initializing");
         modEventBus.addListener(this::onRegisterGameTests);
+        modEventBus.addListener(this::onRegisterPayloadHandlers);
 
         this.bridgeServer = new CivQuestBridgeServer();
         NeoForge.EVENT_BUS.addListener(this::onServerStarting);
         NeoForge.EVENT_BUS.addListener(this::onServerStarted);
         NeoForge.EVENT_BUS.addListener(this::onServerStopping);
+    }
+
+    private void onRegisterPayloadHandlers(RegisterPayloadHandlersEvent event) {
+        LOGGER.info("Registering CivQuest network payloads");
+        PayloadRegistrar registrar = event.registrar("1");
+        registrar.playToClient(
+                ClientboundSettlerSkinPacket.TYPE,
+                ClientboundSettlerSkinPacket.STREAM_CODEC,
+                (payload, context) -> {
+                    LOGGER.debug("Received ClientboundSettlerSkinPacket on client: agentId='{}', uuid='{}'",
+                            payload.agentId(), payload.settlerUuid());
+                }
+        );
     }
 
     private void onRegisterGameTests(RegisterGameTestsEvent event) {
@@ -46,5 +62,9 @@ public class CivQuestMod {
 
     public CivQuestBridgeServer getBridgeServer() {
         return bridgeServer;
+    }
+
+    public SettlerEntityManager getSettlerEntityManager() {
+        return bridgeServer.getSettlerEntityManager();
     }
 }
