@@ -539,6 +539,21 @@ func (r *Resolver) InitClanDirectories(clanID string) error {
 	return nil
 }
 
+// ValidateIdentifier validates that an identifier conforms to the allowlist (1-32 alphanumeric, _, - characters)
+// and protects against path traversal attempts.
+func ValidateIdentifier(id string) error {
+	return validateIdentifier(id)
+}
+
+// ValidateAgentName validates an agent name using the identifier allowlist rules, returning ErrInvalidAgentName
+// if validation fails.
+func ValidateAgentName(agentName string) error {
+	if err := validateIdentifier(agentName); err != nil {
+		return fmt.Errorf("%w: %s", ErrInvalidAgentName, err)
+	}
+	return nil
+}
+
 func validateIdentifier(id string) error {
 	trimmed := strings.TrimSpace(id)
 	if trimmed == "" {
