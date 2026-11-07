@@ -15,6 +15,7 @@ Welcome to the CivQuest AI Progressive Discovery documentation suite. These docu
 | [07-supervisor-and-cli.md](file:///home/brian/Workspaces/btposey/civquest/doc/ai/07-supervisor-and-cli.md) | `civctl` CLI command suite, supervisor daemon, process lifecycle, and UNIX sockets | CLI & DevOps engineers |
 | [08-versioning-and-branching-strategy.md](file:///home/brian/Workspaces/btposey/civquest/doc/ai/08-versioning-and-branching-strategy.md) | Minecraft & NeoForge version matrix, version branches, and backporting discipline | Release & maintenance engineers |
 | [09-adversarial-review-and-pr-lifecycle.md](file:///home/brian/Workspaces/btposey/civquest/doc/ai/09-adversarial-review-and-pr-lifecycle.md) | Multi-agent adversarial review, hypothesis criticism, and Go/No-Go PR quality gates | All agents & reviewers |
+| [10-integration-testing-harness.md](file:///home/brian/Workspaces/btposey/civquest/doc/ai/10-integration-testing-harness.md) | Multi-tier test architecture, headless server runner, and Go integration probe | Test architects & CI engineers |
 
 ## Recommended Reading Path
 - If you are implementing **Minecraft Mod features**: Read `01` -> `02` -> `03` -> `08`.

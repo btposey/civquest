@@ -9,11 +9,11 @@ import (
 
 func TestTelemetryFrameSerialization(t *testing.T) {
 	frame := &civquestv1.TelemetryFrame{
-		WorldTick:                 1200,
-		TimeOfDay:                 6000,
-		Weather:                   civquestv1.Weather_WEATHER_CLEAR,
-		BiomeId:                   "minecraft:plains",
-		LastProcessedSequenceId:   42,
+		WorldTick:               1200,
+		TimeOfDay:               6000,
+		Weather:                 civquestv1.Weather_WEATHER_CLEAR,
+		BiomeId:                 "minecraft:plains",
+		LastProcessedSequenceId: 42,
 		Status: &civquestv1.AgentStatus{
 			AgentId:         "settler-001",
 			EntityId:        42,
