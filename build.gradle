@@ -1,0 +1,5 @@
+tasks.register('integrationTest') {
+    group = 'verification'
+    description = 'Executes end-to-end integration test runner orchestrating headless server and Go probe'
+    dependsOn ':mod-neoforge:integrationTest'
+}
