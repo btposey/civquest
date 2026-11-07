@@ -1,0 +1,53 @@
+# Git ignore for CivQuest
+
+# Java & Gradle
+.gradle/
+build/
+bin/
+*.class
+*.jar
+*.war
+*.ear
+mod-neoforge/build/
+mod-neoforge/.gradle/
+mod-neoforge/run/
+mod-neoforge/bin/
+
+# Go
+orchestrator-go/bin/
+orchestrator-go/dist/
+*.exe
+*.test
+*.prof
+
+# IDE & Editors
+.idea/
+*.iml
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Runtime XDG data & local databases (if run in repo during dev)
+*.log
+*.sock
+*.db-journal
+*.db-wal
+*.db-shm
+
+# Run/test server artifacts
+run/
+logs/
+crash-reports/
+
+# OS and environment
+.env
+.env.local
+
+# Beads / Dolt files (added by bd init)
+.dolt/
+*.db
+.beads-credential-key
+.beads/proxieddb/
+*.gate.lock*
