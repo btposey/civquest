@@ -84,10 +84,6 @@ func WriteInventoryCache(targetPath string, cache *InventoryCache) error {
 		_ = tmpFile.Close()
 		return fmt.Errorf("writing temporary inventory cache: %w", err)
 	}
-	if err := tmpFile.Sync(); err != nil {
-		_ = tmpFile.Close()
-		return fmt.Errorf("syncing temporary inventory cache: %w", err)
-	}
 	if err := tmpFile.Close(); err != nil {
 		return fmt.Errorf("closing temporary inventory cache: %w", err)
 	}

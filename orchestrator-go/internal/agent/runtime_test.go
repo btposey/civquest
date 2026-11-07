@@ -3,10 +3,13 @@ package agent_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net"
 	"os"
+	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -16,6 +19,7 @@ import (
 	"github.com/btposey/civquest/orchestrator-go/internal/xdg"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/test/bufconn"
 )
 
@@ -338,6 +342,14 @@ func TestRuntime_UnixDomainSocket(t *testing.T) {
 
 	// Connect to UNIX socket and read status payload
 	sockPath := rt.SocketPath()
+	fi, err := os.Stat(sockPath)
+	if err != nil {
+		t.Fatalf("failed to stat socket file %s: %v", sockPath, err)
+	}
+	if fi.Mode().Perm() != 0600 {
+		t.Errorf("expected socket permissions 0600, got %#o", fi.Mode().Perm())
+	}
+
 	conn, err := net.DialTimeout("unix", sockPath, time.Second)
 	if err != nil {
 		t.Fatalf("failed dialing agent unix socket %s: %v", sockPath, err)
@@ -551,4 +563,329 @@ func TestInventoryCache_FileHelpers(t *testing.T) {
 	if agent.InventoryEqual(cache.Items, modified) {
 		t.Errorf("expected InventoryEqual to be false for modified count")
 	}
+}
+
+func TestRuntime_ConcurrentStartStop(t *testing.T) {
+	_, client, cleanup := setupTestBridge(t)
+	defer cleanup()
+
+	tmpDir := t.TempDir()
+	resolver := xdg.NewResolver(xdg.WithCustomRoot(tmpDir))
+	_ = resolver.InitAgentDirectories("aria")
+
+	rt, err := agent.NewRuntime(agent.Config{
+		AgentID:      "aria",
+		ClanID:       "pioneers",
+		Resolver:     resolver,
+		BridgeClient: client,
+	})
+	if err != nil {
+		t.Fatalf("failed creating runtime: %v", err)
+	}
+
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		_ = rt.Start(context.Background())
+	}()
+
+	// Multiple concurrent goroutines calling Stop() and inspecting runtime state
+	const numStoppers = 8
+	for i := 0; i < numStoppers; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			time.Sleep(2 * time.Millisecond)
+			_ = rt.Status()
+			_ = rt.Position()
+			_ = rt.LatestFrame()
+			rt.Stop()
+		}()
+	}
+
+	wg.Wait()
+	if rt.Status() != "STOPPED" {
+		t.Errorf("expected STOPPED status, got %s", rt.Status())
+	}
+}
+
+type mockFailingStream struct {
+	sendCount atomic.Int32
+	ctx       context.Context
+}
+
+func (m *mockFailingStream) Send(intent *civquestv1.AgentIntent) error {
+	if m.sendCount.Add(1) > 1 {
+		return errors.New("simulated broken pipe during send")
+	}
+	return nil
+}
+
+func (m *mockFailingStream) Recv() (*civquestv1.TelemetryFrame, error) {
+	<-m.ctx.Done()
+	return nil, m.ctx.Err()
+}
+
+func (m *mockFailingStream) Header() (metadata.MD, error) { return nil, nil }
+func (m *mockFailingStream) Trailer() metadata.MD         { return nil }
+func (m *mockFailingStream) CloseSend() error             { return nil }
+func (m *mockFailingStream) Context() context.Context     { return m.ctx }
+func (m *mockFailingStream) SendMsg(any) error            { return nil }
+func (m *mockFailingStream) RecvMsg(any) error            { return nil }
+
+type mockFailingConnector struct {
+	stream *mockFailingStream
+}
+
+func (c *mockFailingConnector) ConnectAgent(ctx context.Context, opts ...grpc.CallOption) (civquestv1.CivQuestBridgeService_ConnectAgentClient, error) {
+	c.stream.ctx = ctx
+	return c.stream, nil
+}
+
+func TestRuntime_SendLoopErrorHandling(t *testing.T) {
+	tmpDir := t.TempDir()
+	resolver := xdg.NewResolver(xdg.WithCustomRoot(tmpDir))
+	_ = resolver.InitAgentDirectories("aria")
+
+	failingStream := &mockFailingStream{}
+	connector := &mockFailingConnector{stream: failingStream}
+
+	rt, err := agent.NewRuntime(agent.Config{
+		AgentID:         "aria",
+		ClanID:          "pioneers",
+		Resolver:        resolver,
+		StreamConnector: connector,
+	})
+	if err != nil {
+		t.Fatalf("failed creating runtime: %v", err)
+	}
+
+	runErrCh := make(chan error, 1)
+	go func() {
+		runErrCh <- rt.Start(context.Background())
+	}()
+
+	// Wait until runtime reaches RUNNING state
+	for start := time.Now(); time.Since(start) < 2*time.Second; time.Sleep(10 * time.Millisecond) {
+		if rt.Status() == "RUNNING" {
+			break
+		}
+	}
+	if rt.Status() != "RUNNING" {
+		t.Fatalf("runtime failed to reach RUNNING state: status=%s", rt.Status())
+	}
+
+	// Enqueue intent which triggers send failure in sendLoop
+	if err := rt.QueueIntent(&civquestv1.AgentIntent{
+		Action: &civquestv1.AgentIntent_Navigate{
+			Navigate: &civquestv1.NavigateIntent{
+				Target: &civquestv1.Vec3{X: 1, Y: 2, Z: 3},
+			},
+		},
+	}); err != nil {
+		t.Fatalf("failed to queue intent: %v", err)
+	}
+
+	// sendLoop error must cancel stream context and exit Start() cleanly without hanging
+	select {
+	case runErr := <-runErrCh:
+		if runErr == nil {
+			t.Fatal("expected non-nil error when sendLoop fails, got nil")
+		}
+		if !strings.Contains(runErr.Error(), "simulated broken pipe during send") {
+			t.Errorf("expected simulated broken pipe error, got: %v", runErr)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("timed out waiting for runtime to terminate after sendLoop error")
+	}
+
+	if rt.Status() != "STOPPED" {
+		t.Errorf("expected STOPPED status after send failure, got %s", rt.Status())
+	}
+}
+
+func TestRuntime_InventoryCacheClearing(t *testing.T) {
+	mockSvc, client, cleanup := setupTestBridge(t)
+	defer cleanup()
+
+	tmpDir := t.TempDir()
+	resolver := xdg.NewResolver(xdg.WithCustomRoot(tmpDir))
+	_ = resolver.InitAgentDirectories("aria")
+
+	rt, err := agent.NewRuntime(agent.Config{
+		AgentID:      "aria",
+		ClanID:       "pioneers",
+		Resolver:     resolver,
+		BridgeClient: client,
+	})
+	if err != nil {
+		t.Fatalf("failed creating runtime: %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	runErrCh := make(chan error, 1)
+	go func() {
+		runErrCh <- rt.Start(ctx)
+	}()
+
+	select {
+	case <-mockSvc.streamReady:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for stream readiness")
+	}
+
+	// 1. Send frame with 1 item
+	_ = mockSvc.SendFrame(&civquestv1.TelemetryFrame{
+		WorldTick: 100,
+		Status: &civquestv1.AgentStatus{
+			AgentId:   "aria",
+			Health:    20.0,
+			FoodLevel: 20,
+			Inventory: []*civquestv1.ItemStackProto{
+				{Slot: 0, ItemId: "minecraft:golden_apple", Count: 3},
+			},
+		},
+	})
+
+	cachePath := resolver.AgentInventoryCachePath("aria")
+	var cache *agent.InventoryCache
+	for start := time.Now(); time.Since(start) < 2*time.Second; time.Sleep(10 * time.Millisecond) {
+		cache, err = agent.ReadInventoryCache(cachePath)
+		if err == nil && len(cache.Items) == 1 {
+			break
+		}
+	}
+	if err != nil || cache == nil || len(cache.Items) != 1 {
+		t.Fatalf("expected 1 cached item initially, got %+v (err: %v)", cache, err)
+	}
+
+	// 2. Send frame with empty inventory (Status != nil, Inventory is nil)
+	_ = mockSvc.SendFrame(&civquestv1.TelemetryFrame{
+		WorldTick: 105,
+		Status: &civquestv1.AgentStatus{
+			AgentId:   "aria",
+			Health:    20.0,
+			FoodLevel: 20,
+			Inventory: nil,
+		},
+	})
+
+	var clearedCache *agent.InventoryCache
+	for start := time.Now(); time.Since(start) < 2*time.Second; time.Sleep(10 * time.Millisecond) {
+		clearedCache, err = agent.ReadInventoryCache(cachePath)
+		if err == nil && clearedCache.WorldTick == 105 && len(clearedCache.Items) == 0 {
+			break
+		}
+	}
+	if err != nil || clearedCache == nil || len(clearedCache.Items) != 0 {
+		t.Fatalf("expected cleared inventory cache with 0 items, got %+v (err: %v)", clearedCache, err)
+	}
+
+	cancel()
+	_ = <-runErrCh
+}
+
+func TestRuntime_InvalidAgentIDValidation(t *testing.T) {
+	tmpDir := t.TempDir()
+	resolver := xdg.NewResolver(xdg.WithCustomRoot(tmpDir))
+
+	invalidNames := []string{
+		"../../bad",
+		"..",
+		".",
+		"",
+		"bad/name",
+		"bad:name",
+		"bad*name",
+		"this_name_exceeds_the_maximum_32_characters_allowed",
+	}
+
+	for _, name := range invalidNames {
+		t.Run("invalid_"+name, func(t *testing.T) {
+			_, err := agent.NewRuntime(agent.Config{
+				AgentID:  name,
+				Resolver: resolver,
+			})
+			if err == nil {
+				t.Fatalf("expected error for invalid agent ID %q, got nil", name)
+			}
+			if !errors.Is(err, xdg.ErrInvalidAgentName) {
+				t.Errorf("expected error wrapping ErrInvalidAgentName for %q, got: %v", name, err)
+			}
+		})
+	}
+}
+
+func TestRuntime_DefensiveCopies(t *testing.T) {
+	mockSvc, client, cleanup := setupTestBridge(t)
+	defer cleanup()
+
+	tmpDir := t.TempDir()
+	resolver := xdg.NewResolver(xdg.WithCustomRoot(tmpDir))
+	_ = resolver.InitAgentDirectories("aria")
+
+	rt, err := agent.NewRuntime(agent.Config{
+		AgentID:      "aria",
+		ClanID:       "pioneers",
+		Resolver:     resolver,
+		BridgeClient: client,
+	})
+	if err != nil {
+		t.Fatalf("failed creating runtime: %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	runErrCh := make(chan error, 1)
+	go func() {
+		runErrCh <- rt.Start(ctx)
+	}()
+
+	select {
+	case <-mockSvc.streamReady:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for stream readiness")
+	}
+
+	_ = mockSvc.SendFrame(&civquestv1.TelemetryFrame{
+		WorldTick: 50,
+		Status: &civquestv1.AgentStatus{
+			Position: &civquestv1.Vec3{X: 10, Y: 20, Z: 30},
+		},
+	})
+
+	for start := time.Now(); time.Since(start) < 2*time.Second; time.Sleep(10 * time.Millisecond) {
+		if rt.WorldTick() == 50 {
+			break
+		}
+	}
+
+	// Mutating Position() copy must not alter runtime internal state
+	pos := rt.Position()
+	if pos == nil || pos.X != 10 {
+		t.Fatalf("unexpected position: %+v", pos)
+	}
+	pos.X = 999.0
+	pos2 := rt.Position()
+	if pos2.X != 10 {
+		t.Errorf("internal position was mutated: expected 10, got %f", pos2.X)
+	}
+
+	// Mutating LatestFrame() copy must not alter runtime internal state
+	frame := rt.LatestFrame()
+	if frame == nil || frame.WorldTick != 50 {
+		t.Fatalf("unexpected latest frame: %+v", frame)
+	}
+	frame.WorldTick = 9999
+	frame2 := rt.LatestFrame()
+	if frame2.WorldTick != 50 {
+		t.Errorf("internal latestFrame was mutated: expected 50, got %d", frame2.WorldTick)
+	}
+
+	cancel()
+	_ = <-runErrCh
 }

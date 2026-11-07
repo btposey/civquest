@@ -20,6 +20,7 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/proto"
 )
 
 // Sentinel errors.
@@ -87,7 +88,9 @@ type AgentRuntime struct {
 
 	// Diagnostics & Socket
 	socketPath string
+	listenerMu sync.Mutex
 	listener   net.Listener
+	socketWg   sync.WaitGroup
 	pid        int
 	startTime  time.Time
 
@@ -98,6 +101,7 @@ type AgentRuntime struct {
 	lastProcessedSeqID int64
 	isDead             bool
 	deathEvent         *civquestv1.DeathEvent
+	hasCachedInventory bool
 	lastCachedItems    []CachedItem
 
 	// Callbacks
@@ -117,8 +121,8 @@ func NewRuntime(cfg Config) (*AgentRuntime, error) {
 	if agentID == "" && cfg.IdentityConfig != nil {
 		agentID = cfg.IdentityConfig.Name
 	}
-	if agentID == "" {
-		return nil, fmt.Errorf("agent_id must not be empty")
+	if err := xdg.ValidateAgentName(agentID); err != nil {
+		return nil, fmt.Errorf("invalid agent_id %q: %w", agentID, err)
 	}
 
 	clanID := cfg.ClanID
@@ -235,12 +239,17 @@ func (r *AgentRuntime) FoodLevel() int32 {
 	return 0
 }
 
-// Position returns the agent's current 3D world position coordinates.
+// Position returns a defensive copy of the agent's current 3D world position coordinates.
 func (r *AgentRuntime) Position() *civquestv1.Vec3 {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
-	if r.latestFrame != nil && r.latestFrame.Status != nil {
-		return r.latestFrame.Status.Position
+	if r.latestFrame != nil && r.latestFrame.Status != nil && r.latestFrame.Status.Position != nil {
+		p := r.latestFrame.Status.Position
+		return &civquestv1.Vec3{
+			X: p.X,
+			Y: p.Y,
+			Z: p.Z,
+		}
 	}
 	return nil
 }
@@ -272,11 +281,14 @@ func (r *AgentRuntime) LastProcessedSequenceID() int64 {
 	return r.lastProcessedSeqID
 }
 
-// LatestFrame returns a copy of the most recently received sensory TelemetryFrame.
+// LatestFrame returns a defensive copy of the most recently received sensory TelemetryFrame.
 func (r *AgentRuntime) LatestFrame() *civquestv1.TelemetryFrame {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
-	return r.latestFrame
+	if r.latestFrame == nil {
+		return nil
+	}
+	return proto.Clone(r.latestFrame).(*civquestv1.TelemetryFrame)
 }
 
 // IsDead returns true if a terminal DeathEvent has been observed.
@@ -344,18 +356,38 @@ func (r *AgentRuntime) Start(parentCtx context.Context) error {
 		return fmt.Errorf("no StreamConnector or BridgeClient provided to AgentRuntime")
 	}
 
+	r.mu.Lock()
+	select {
+	case <-r.done:
+		r.mu.Unlock()
+		return ErrRuntimeStopped
+	default:
+	}
 	r.ctx, r.cancel = context.WithCancel(parentCtx)
-	defer r.cancel()
+	ctx := r.ctx
+	cancel := r.cancel
+	r.mu.Unlock()
+
+	defer cancel()
 
 	// 1. Initialize and start UNIX Domain Socket listener
 	if err := r.startSocketServer(); err != nil {
+		if errors.Is(err, ErrRuntimeStopped) {
+			return nil
+		}
 		return fmt.Errorf("failed to start agent socket server: %w", err)
 	}
-	defer r.stopSocketServer()
 
 	// 2. Establish bidirectional gRPC stream with Minecraft NeoForge server
-	stream, err := r.connector.ConnectAgent(r.ctx)
+	streamCtx, streamCancel := context.WithCancel(ctx)
+	defer streamCancel()
+
+	stream, err := r.connector.ConnectAgent(streamCtx)
 	if err != nil {
+		r.Stop()
+		if errors.Is(ctx.Err(), context.Canceled) {
+			return nil
+		}
 		return fmt.Errorf("failed to establish ConnectAgent gRPC stream: %w", err)
 	}
 
@@ -365,45 +397,50 @@ func (r *AgentRuntime) Start(parentCtx context.Context) error {
 		SequenceId: r.sequenceID.Add(1),
 	}
 	if err := stream.Send(handshake); err != nil {
+		r.Stop()
+		if errors.Is(ctx.Err(), context.Canceled) {
+			return nil
+		}
 		return fmt.Errorf("failed to send handshake intent: %w", err)
 	}
 
 	r.mu.Lock()
 	r.status = "RUNNING"
+	r.startTime = time.Now().UTC()
 	r.mu.Unlock()
 
 	// 4. Run intent sender goroutine
 	sendErrCh := make(chan error, 1)
-	go r.sendLoop(stream, sendErrCh)
+	go r.sendLoop(streamCtx, streamCancel, stream, sendErrCh)
 
 	// 5. Run telemetry receiver loop (blocks until stream terminates or death occurs)
-	recvErr := r.recvLoop(stream)
+	recvErr := r.recvLoop(streamCtx, stream)
 
 	// Trigger clean shutdown
 	r.Stop()
 
-	// Drain sender error if any
-	var sendErr error
-	select {
-	case sendErr = <-sendErrCh:
-	default:
-	}
+	// Deterministically await sendLoop completion
+	sendErr := <-sendErrCh
 
 	// Normal termination conditions:
-	// - Context cancellation / Stop()
-	// - DeathEvent received (permadeath clean exit code 0)
-	// - Clean stream EOF
+	// - Permadeath event (clean exit code 0)
 	if r.IsDead() {
 		return nil
 	}
-	if r.ctx.Err() != nil || errors.Is(recvErr, io.EOF) || errors.Is(recvErr, context.Canceled) || status.Code(recvErr) == codes.Canceled {
+
+	// Check sendErr first to ensure send errors (e.g. broken pipe) are reported even if recv was canceled
+	if sendErr != nil && !errors.Is(sendErr, io.EOF) && !errors.Is(sendErr, context.Canceled) && status.Code(sendErr) != codes.Canceled {
+		return fmt.Errorf("intent stream send error: %w", sendErr)
+	}
+
+	// Normal cancellation / termination conditions:
+	// - Parent context cancellation / Stop()
+	// - Clean stream EOF
+	if ctx.Err() != nil || errors.Is(recvErr, io.EOF) || errors.Is(recvErr, context.Canceled) || status.Code(recvErr) == codes.Canceled {
 		return nil
 	}
 	if recvErr != nil {
 		return fmt.Errorf("telemetry stream error: %w", recvErr)
-	}
-	if sendErr != nil && !errors.Is(sendErr, io.EOF) && !errors.Is(sendErr, context.Canceled) && status.Code(sendErr) != codes.Canceled {
-		return fmt.Errorf("intent stream send error: %w", sendErr)
 	}
 
 	return nil
@@ -416,11 +453,12 @@ func (r *AgentRuntime) Stop() {
 		if !r.isDead {
 			r.status = "STOPPED"
 		}
+		cancel := r.cancel
 		r.mu.Unlock()
 
 		close(r.done)
-		if r.cancel != nil {
-			r.cancel()
+		if cancel != nil {
+			cancel()
 		}
 
 		r.stopSocketServer()
@@ -433,22 +471,25 @@ func (r *AgentRuntime) Stop() {
 }
 
 // sendLoop reads queued AgentIntents and writes them to the gRPC stream.
-func (r *AgentRuntime) sendLoop(stream civquestv1.CivQuestBridgeService_ConnectAgentClient, errCh chan<- error) {
+func (r *AgentRuntime) sendLoop(ctx context.Context, cancel context.CancelFunc, stream civquestv1.CivQuestBridgeService_ConnectAgentClient, errCh chan<- error) {
+	var sendErr error
+	defer func() {
+		errCh <- sendErr
+	}()
+
 	for {
 		select {
-		case <-r.ctx.Done():
-			errCh <- nil
+		case <-ctx.Done():
 			return
 		case <-r.done:
-			errCh <- nil
 			return
 		case intent, ok := <-r.intentQueue:
 			if !ok {
-				errCh <- nil
 				return
 			}
 			if err := stream.Send(intent); err != nil {
-				errCh <- err
+				sendErr = err
+				cancel()
 				return
 			}
 		}
@@ -456,11 +497,11 @@ func (r *AgentRuntime) sendLoop(stream civquestv1.CivQuestBridgeService_ConnectA
 }
 
 // recvLoop processes incoming 5 Hz TelemetryFrames from the server.
-func (r *AgentRuntime) recvLoop(stream civquestv1.CivQuestBridgeService_ConnectAgentClient) error {
+func (r *AgentRuntime) recvLoop(ctx context.Context, stream civquestv1.CivQuestBridgeService_ConnectAgentClient) error {
 	for {
 		select {
-		case <-r.ctx.Done():
-			return r.ctx.Err()
+		case <-ctx.Done():
+			return ctx.Err()
 		case <-r.done:
 			return nil
 		default:
@@ -501,16 +542,22 @@ func (r *AgentRuntime) processFrame(frame *civquestv1.TelemetryFrame) {
 	r.mu.Unlock()
 
 	// Update inventory cache file atomically if inventory changed
-	if frame.Status != nil && frame.Status.Inventory != nil {
-		newCache := NewInventoryCache(r.agentID, frame.WorldTick, frame.Status.Inventory)
+	if frame.Status != nil {
+		var inv []*civquestv1.ItemStackProto
+		if frame.Status.Inventory != nil {
+			inv = frame.Status.Inventory
+		}
+		newCache := NewInventoryCache(r.agentID, frame.WorldTick, inv)
 		r.mu.RLock()
-		changed := !InventoryEqual(r.lastCachedItems, newCache.Items)
+		cachedBefore := r.hasCachedInventory
+		itemsMatch := InventoryEqual(r.lastCachedItems, newCache.Items)
 		r.mu.RUnlock()
 
-		if changed {
+		if !cachedBefore || !itemsMatch {
 			cachePath := r.resolver.AgentInventoryCachePath(r.agentID)
 			if err := WriteInventoryCache(cachePath, newCache); err == nil {
 				r.mu.Lock()
+				r.hasCachedInventory = true
 				r.lastCachedItems = newCache.Items
 				r.mu.Unlock()
 			}
@@ -537,41 +584,67 @@ func (r *AgentRuntime) startSocketServer() error {
 	if err != nil {
 		return fmt.Errorf("listening on unix socket %s: %w", r.socketPath, err)
 	}
-	r.listener = l
+	_ = os.Chmod(r.socketPath, 0600)
 
-	go r.serveSocket()
+	r.listenerMu.Lock()
+	select {
+	case <-r.done:
+		r.listenerMu.Unlock()
+		_ = l.Close()
+		_ = os.Remove(r.socketPath)
+		return ErrRuntimeStopped
+	default:
+		r.listener = l
+	}
+	r.listenerMu.Unlock()
+
+	r.socketWg.Add(1)
+	go r.serveSocket(l)
 	return nil
 }
 
 // stopSocketServer closes the listener and unlinks the socket file.
 func (r *AgentRuntime) stopSocketServer() {
-	if r.listener != nil {
-		_ = r.listener.Close()
-		r.listener = nil
+	r.listenerMu.Lock()
+	l := r.listener
+	r.listener = nil
+	r.listenerMu.Unlock()
+
+	if l != nil {
+		_ = l.Close()
 	}
+
+	r.socketWg.Wait()
+
 	if r.socketPath != "" {
 		_ = os.Remove(r.socketPath)
 	}
 }
 
 // serveSocket accepts incoming connections and serves live JSON status snapshots.
-func (r *AgentRuntime) serveSocket() {
+func (r *AgentRuntime) serveSocket(l net.Listener) {
+	defer r.socketWg.Done()
 	defer close(r.socketDone)
 
 	for {
-		conn, err := r.listener.Accept()
+		conn, err := l.Accept()
 		if err != nil {
 			// Listener was closed
 			return
 		}
 
-		go r.handleSocketConn(conn)
+		r.socketWg.Add(1)
+		go func(c net.Conn) {
+			defer r.socketWg.Done()
+			r.handleSocketConn(c)
+		}(conn)
 	}
 }
 
 // handleSocketConn serializes and returns the current status snapshot to a socket client.
 func (r *AgentRuntime) handleSocketConn(conn net.Conn) {
 	defer conn.Close()
+	_ = conn.SetDeadline(time.Now().Add(1 * time.Second))
 
 	r.mu.RLock()
 	statusSnapshot := r.status

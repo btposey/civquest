@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -58,6 +59,10 @@ func run(parentCtx context.Context, args []string, stdout, stderr io.Writer, r *
 		agentID = *agentIDFlag
 	}
 
+	if err := xdg.ValidateAgentName(agentID); err != nil {
+		return fmt.Errorf("invalid agent identifier %q: %w", agentID, err)
+	}
+
 	if r == nil {
 		r = xdg.DefaultResolver()
 	}
@@ -73,6 +78,9 @@ func run(parentCtx context.Context, args []string, stdout, stderr io.Writer, r *
 	} else {
 		cfg, err = r.LoadAgentConfig(agentID)
 		if err != nil {
+			if !errors.Is(err, os.ErrNotExist) {
+				return fmt.Errorf("loading agent config for %s: %w", agentID, err)
+			}
 			// If not found in config dir, generate a default profile for this run
 			cfg = xdg.DefaultAgentIdentityConfig(agentID)
 			cfg.ClanID = "pioneers"

@@ -208,3 +208,45 @@ func TestCivquestAgent_LegacyNameFlag(t *testing.T) {
 		t.Errorf("expected legacy avatar name in stdout, got:\n%s", outStr)
 	}
 }
+
+func TestCivquestAgent_InvalidAgentIDValidation(t *testing.T) {
+	tmpDir := t.TempDir()
+	resolver := xdg.NewResolver(xdg.WithCustomRoot(tmpDir))
+
+	var stdout, stderr bytes.Buffer
+	err := run(context.Background(), []string{
+		"--agent-id", "../../bad_name",
+	}, &stdout, &stderr, resolver)
+
+	if err == nil {
+		t.Fatal("expected error for invalid agent ID, got nil")
+	}
+	if !strings.Contains(err.Error(), "invalid agent identifier") {
+		t.Errorf("expected invalid agent identifier error message, got: %v", err)
+	}
+}
+
+func TestCivquestAgent_CorruptedConfigRefusal(t *testing.T) {
+	tmpDir := t.TempDir()
+	resolver := xdg.NewResolver(xdg.WithCustomRoot(tmpDir))
+
+	configPath := resolver.AgentConfigPath("aria")
+	if err := os.MkdirAll(filepath.Dir(configPath), 0750); err != nil {
+		t.Fatalf("failed to create config dir: %v", err)
+	}
+	if err := os.WriteFile(configPath, []byte("broken_yaml: [unclosed"), 0600); err != nil {
+		t.Fatalf("failed to write corrupted config: %v", err)
+	}
+
+	var stdout, stderr bytes.Buffer
+	err := run(context.Background(), []string{
+		"--agent-id", "aria",
+	}, &stdout, &stderr, resolver)
+
+	if err == nil {
+		t.Fatal("expected error for corrupted config, got nil")
+	}
+	if !strings.Contains(err.Error(), "loading agent config for aria") {
+		t.Errorf("expected loading agent config error, got: %v", err)
+	}
+}
