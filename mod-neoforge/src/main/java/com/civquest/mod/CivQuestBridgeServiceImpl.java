@@ -14,12 +14,19 @@ import io.grpc.Status;
 import io.grpc.StatusRuntimeException;
 import io.grpc.stub.ServerCallStreamObserver;
 import io.grpc.stub.StreamObserver;
+import net.minecraft.server.MinecraftServer;
+import net.minecraft.server.level.ServerLevel;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.util.Base64;
 import java.util.Objects;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.Supplier;
 
 /**
  * Initial bridge service implementation providing baseline responses for agent spawning,
@@ -29,17 +36,42 @@ public class CivQuestBridgeServiceImpl extends CivQuestBridgeServiceGrpc.CivQues
     private static final Logger LOGGER = LoggerFactory.getLogger(CivQuestBridgeServiceImpl.class);
 
     private final StreamRegistry streamRegistry;
+    private final SettlerEntityManager settlerEntityManager;
+    private final Supplier<MinecraftServer> serverSupplier;
 
     public CivQuestBridgeServiceImpl() {
         this(new StreamRegistry());
     }
 
     public CivQuestBridgeServiceImpl(StreamRegistry streamRegistry) {
+        this(streamRegistry, new SettlerEntityManager(streamRegistry), () -> null);
+    }
+
+    public CivQuestBridgeServiceImpl(StreamRegistry streamRegistry, SettlerEntityManager settlerEntityManager) {
+        this(streamRegistry, settlerEntityManager, () -> null);
+    }
+
+    public CivQuestBridgeServiceImpl(StreamRegistry streamRegistry,
+                                     SettlerEntityManager settlerEntityManager,
+                                     Supplier<MinecraftServer> serverSupplier) {
         this.streamRegistry = Objects.requireNonNull(streamRegistry, "streamRegistry cannot be null");
+        this.settlerEntityManager = Objects.requireNonNull(settlerEntityManager, "settlerEntityManager cannot be null");
+        this.serverSupplier = Objects.requireNonNull(serverSupplier, "serverSupplier cannot be null");
+        if (this.settlerEntityManager.getStreamRegistry() == null) {
+            this.settlerEntityManager.setStreamRegistry(this.streamRegistry);
+        }
     }
 
     public StreamRegistry getStreamRegistry() {
         return streamRegistry;
+    }
+
+    public SettlerEntityManager getSettlerEntityManager() {
+        return settlerEntityManager;
+    }
+
+    public MinecraftServer getServer() {
+        return serverSupplier.get();
     }
 
     @Override
@@ -171,12 +203,99 @@ public class CivQuestBridgeServiceImpl extends CivQuestBridgeServiceGrpc.CivQues
 
     @Override
     public void spawnAgentEntity(SpawnAgentRequest request, StreamObserver<SpawnAgentResponse> responseObserver) {
+        String agentId = request.getAgentId();
         LOGGER.info("SpawnAgentEntity requested: agent_id='{}', name='{}', clan='{}'",
-                request.getAgentId(), request.getDisplayName(), request.getClanId());
+                agentId, request.getDisplayName(), request.getClanId());
 
-        String offlineUuid = java.util.UUID.nameUUIDFromBytes(
-                ("OfflinePlayer:" + request.getAgentId()).getBytes(java.nio.charset.StandardCharsets.UTF_8)
-        ).toString();
+        if (agentId == null || agentId.isBlank()) {
+            responseObserver.onError(Status.INVALID_ARGUMENT
+                    .withDescription("agent_id must not be empty")
+                    .asRuntimeException());
+            return;
+        }
+
+        if (request.getSkinPngBytes() != null && request.getSkinPngBytes().size() > 65536) {
+            responseObserver.onError(Status.INVALID_ARGUMENT
+                    .withDescription("skin_png_bytes exceeds maximum allowed size of 65536 bytes")
+                    .asRuntimeException());
+            return;
+        }
+
+        if (request.getSkinTextureValue() != null && !request.getSkinTextureValue().isBlank()) {
+            String textureVal = request.getSkinTextureValue().trim();
+            if (textureVal.length() > 4096) {
+                responseObserver.onError(Status.INVALID_ARGUMENT
+                        .withDescription("skin_texture_value exceeds maximum allowed length of 4096 characters")
+                        .asRuntimeException());
+                return;
+            }
+            try {
+                Base64.getDecoder().decode(textureVal);
+            } catch (IllegalArgumentException e) {
+                responseObserver.onError(Status.INVALID_ARGUMENT
+                        .withDescription("skin_texture_value is not valid Base64")
+                        .asRuntimeException());
+                return;
+            }
+        }
+
+        MinecraftServer server = getServer();
+        if (server != null && server.isRunning()) {
+            CompletableFuture<SettlerEntity> future = null;
+            try {
+                // Dimension lookup and entity spawn occur inside server.submit() via SettlerEntityManager
+                future = settlerEntityManager.spawnSettler(server, request);
+                SettlerEntity settler = future.get(5, TimeUnit.SECONDS);
+
+                SpawnAgentResponse response = SpawnAgentResponse.newBuilder()
+                        .setSuccess(true)
+                        .setMinecraftEntityId(settler.getId())
+                        .setOfflineUuid(settler.getUUID().toString())
+                        .build();
+
+                synchronized (responseObserver) {
+                    responseObserver.onNext(response);
+                    responseObserver.onCompleted();
+                }
+                return;
+            } catch (TimeoutException e) {
+                LOGGER.error("Timeout waiting to spawn settler entity for agent '{}'", agentId);
+                if (future != null) {
+                    future.cancel(false);
+                }
+                settlerEntityManager.despawnSettler(server, agentId);
+                SpawnAgentResponse response = SpawnAgentResponse.newBuilder()
+                        .setSuccess(false)
+                        .setErrorMessage("Timed out spawning settler on server: " + e.getMessage())
+                        .build();
+                synchronized (responseObserver) {
+                    responseObserver.onNext(response);
+                    responseObserver.onCompleted();
+                }
+                return;
+            } catch (Exception e) {
+                LOGGER.error("Failed to spawn settler for agent '{}': {}", agentId, e.getMessage(), e);
+                if (future != null) {
+                    future.cancel(false);
+                }
+                settlerEntityManager.despawnSettler(server, agentId);
+                Throwable cause = e.getCause() != null ? e.getCause() : e;
+                SpawnAgentResponse response = SpawnAgentResponse.newBuilder()
+                        .setSuccess(false)
+                        .setErrorMessage("Failed to spawn settler on server: " + cause.getMessage())
+                        .build();
+                synchronized (responseObserver) {
+                    responseObserver.onNext(response);
+                    responseObserver.onCompleted();
+                }
+                return;
+            }
+        }
+
+        // Standalone test fallback without active MinecraftServer
+        LOGGER.info("Standalone/mock spawn for agent '{}' (no active MinecraftServer)", agentId);
+        String displayName = request.getDisplayName().isBlank() ? request.getAgentId() : request.getDisplayName();
+        String offlineUuid = net.minecraft.core.UUIDUtil.createOfflinePlayerUUID(displayName).toString();
 
         SpawnAgentResponse response = SpawnAgentResponse.newBuilder()
                 .setSuccess(true)
@@ -191,13 +310,62 @@ public class CivQuestBridgeServiceImpl extends CivQuestBridgeServiceGrpc.CivQues
 
     @Override
     public void despawnAgentEntity(DespawnAgentRequest request, StreamObserver<DespawnAgentResponse> responseObserver) {
-        LOGGER.info("DespawnAgentEntity requested: agent_id='{}'", request.getAgentId());
-
         String agentId = request.getAgentId();
-        if (agentId != null && !agentId.isBlank()) {
-            streamRegistry.close(agentId);
+        LOGGER.info("DespawnAgentEntity requested: agent_id='{}'", agentId);
+
+        if (agentId == null || agentId.isBlank()) {
+            responseObserver.onError(Status.INVALID_ARGUMENT
+                    .withDescription("agent_id must not be empty")
+                    .asRuntimeException());
+            return;
         }
 
+        streamRegistry.close(agentId);
+        MinecraftServer server = getServer();
+        if (server != null && server.isRunning()) {
+            CompletableFuture<Boolean> future = null;
+            try {
+                future = settlerEntityManager.despawnSettler(server, agentId);
+                boolean despawned = future.get(5, TimeUnit.SECONDS);
+                DespawnAgentResponse response = DespawnAgentResponse.newBuilder()
+                        .setSuccess(despawned)
+                        .build();
+                synchronized (responseObserver) {
+                    responseObserver.onNext(response);
+                    responseObserver.onCompleted();
+                }
+                return;
+            } catch (TimeoutException e) {
+                LOGGER.error("Timeout while despawning settler entity for agent '{}': {}", agentId, e.getMessage());
+                if (future != null) {
+                    future.cancel(false);
+                }
+                DespawnAgentResponse response = DespawnAgentResponse.newBuilder()
+                        .setSuccess(false)
+                        .build();
+                synchronized (responseObserver) {
+                    responseObserver.onNext(response);
+                    responseObserver.onCompleted();
+                }
+                return;
+            } catch (Exception e) {
+                LOGGER.error("Failed to despawn settler entity for agent '{}': {}", agentId, e.getMessage(), e);
+                if (future != null) {
+                    future.cancel(false);
+                }
+                DespawnAgentResponse response = DespawnAgentResponse.newBuilder()
+                        .setSuccess(false)
+                        .build();
+                synchronized (responseObserver) {
+                    responseObserver.onNext(response);
+                    responseObserver.onCompleted();
+                }
+                return;
+            }
+        }
+
+        // Standalone/mock fallback without active MinecraftServer
+        settlerEntityManager.despawnSettler(null, agentId);
         DespawnAgentResponse response = DespawnAgentResponse.newBuilder()
                 .setSuccess(true)
                 .build();

@@ -5,6 +5,7 @@ import io.grpc.Server;
 import io.grpc.health.v1.HealthCheckResponse;
 import io.grpc.netty.shaded.io.grpc.netty.NettyServerBuilder;
 import io.grpc.protobuf.services.HealthStatusManager;
+import net.minecraft.server.MinecraftServer;
 import net.neoforged.neoforge.event.server.ServerStartedEvent;
 import net.neoforged.neoforge.event.server.ServerStartingEvent;
 import net.neoforged.neoforge.event.server.ServerStoppingEvent;
@@ -58,6 +59,8 @@ public class CivQuestBridgeServer {
     private final Path discoveryPath;
     private final boolean enabled;
     private final StreamRegistry streamRegistry;
+    private final SettlerEntityManager settlerEntityManager;
+    private volatile MinecraftServer minecraftServer;
 
     private Server server;
     private HealthStatusManager healthStatusManager;
@@ -101,19 +104,29 @@ public class CivQuestBridgeServer {
         String discPath = System.getProperty(PROP_DISCOVERY_PATH, DEFAULT_DISCOVERY_PATH).trim();
         this.discoveryPath = Path.of(discPath);
         this.streamRegistry = new StreamRegistry();
+        this.settlerEntityManager = new SettlerEntityManager(this.streamRegistry);
     }
 
     public CivQuestBridgeServer(String host, int port, String sharedKey, Path discoveryPath) {
-        this(host, port, sharedKey, discoveryPath, new StreamRegistry());
+        this(host, port, sharedKey, discoveryPath, new StreamRegistry(), null);
     }
 
     public CivQuestBridgeServer(String host, int port, String sharedKey, Path discoveryPath, StreamRegistry streamRegistry) {
+        this(host, port, sharedKey, discoveryPath, streamRegistry, null);
+    }
+
+    public CivQuestBridgeServer(String host, int port, String sharedKey, Path discoveryPath,
+                                StreamRegistry streamRegistry, SettlerEntityManager settlerEntityManager) {
         this.enabled = true;
         this.configuredHost = (host == null || host.isBlank()) ? "127.0.0.1" : host.trim();
         this.configuredPort = port;
         this.sharedKey = resolveSharedKey(sharedKey);
         this.discoveryPath = discoveryPath != null ? discoveryPath : Path.of(DEFAULT_DISCOVERY_PATH);
         this.streamRegistry = streamRegistry != null ? streamRegistry : new StreamRegistry();
+        this.settlerEntityManager = settlerEntityManager != null ? settlerEntityManager : new SettlerEntityManager(this.streamRegistry);
+        if (this.settlerEntityManager.getStreamRegistry() == null) {
+            this.settlerEntityManager.setStreamRegistry(this.streamRegistry);
+        }
     }
 
     public static String generateSecureSharedKey() {
@@ -173,9 +186,13 @@ public class CivQuestBridgeServer {
             return;
         }
 
+        if (streamRegistry != null) {
+            streamRegistry.reopen();
+        }
+
         this.healthStatusManager = new HealthStatusManager();
         this.authInterceptor = new SharedKeyAuthInterceptor(sharedKey);
-        this.bridgeService = new CivQuestBridgeServiceImpl(streamRegistry);
+        this.bridgeService = new CivQuestBridgeServiceImpl(streamRegistry, settlerEntityManager, this::getMinecraftServer);
 
         InetSocketAddress socketAddress = new InetSocketAddress(configuredHost, configuredPort);
         this.server = NettyServerBuilder.forAddress(socketAddress)
@@ -334,10 +351,12 @@ public class CivQuestBridgeServer {
     // NeoForge lifecycle event handlers
     public void onServerStarting(ServerStartingEvent event) {
         LOGGER.info("CivQuest server starting (preparing gRPC bridge configuration)");
+        setMinecraftServer(event.getServer());
     }
 
     public void onServerStarted(ServerStartedEvent event) {
         LOGGER.info("CivQuest server started: activating gRPC bridge");
+        setMinecraftServer(event.getServer());
         try {
             start();
         } catch (IOException e) {
@@ -348,7 +367,23 @@ public class CivQuestBridgeServer {
 
     public void onServerStopping(ServerStoppingEvent event) {
         LOGGER.info("CivQuest server stopping: shutting down gRPC bridge");
+        if (settlerEntityManager != null) {
+            settlerEntityManager.clearAll();
+        }
+        setMinecraftServer(null);
         stop();
+    }
+
+    public MinecraftServer getMinecraftServer() {
+        return minecraftServer;
+    }
+
+    public void setMinecraftServer(MinecraftServer minecraftServer) {
+        this.minecraftServer = minecraftServer;
+    }
+
+    public SettlerEntityManager getSettlerEntityManager() {
+        return settlerEntityManager;
     }
 
     // Accessors

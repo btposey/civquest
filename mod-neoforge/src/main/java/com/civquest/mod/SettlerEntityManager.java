@@ -1,0 +1,265 @@
+package com.civquest.mod;
+
+import com.civquest.mod.grpc.v1.SpawnAgentRequest;
+import com.mojang.authlib.GameProfile;
+import com.mojang.authlib.properties.Property;
+import com.mojang.logging.LogUtils;
+import net.minecraft.core.BlockPos;
+import net.minecraft.network.protocol.game.ClientboundPlayerInfoRemovePacket;
+import net.minecraft.network.protocol.game.ClientboundPlayerInfoUpdatePacket;
+import net.minecraft.server.MinecraftServer;
+import net.minecraft.server.level.ServerLevel;
+import net.minecraft.world.level.ChunkPos;
+import org.slf4j.Logger;
+
+import java.util.Base64;
+import java.util.Collections;
+import java.util.EnumSet;
+import java.util.List;
+import java.util.Map;
+import java.util.UUID;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.function.Supplier;
+
+/**
+ * Manages active {@link SettlerEntity} instances, server-thread lifecycle scheduling,
+ * and skin packet broadcasting.
+ */
+public class SettlerEntityManager {
+    private static final Logger LOGGER = LogUtils.getLogger();
+
+    private final ConcurrentHashMap<String, SettlerEntity> settlers = new ConcurrentHashMap<>();
+    private volatile StreamRegistry streamRegistry;
+
+    public SettlerEntityManager() {
+        this(null);
+    }
+
+    public SettlerEntityManager(StreamRegistry streamRegistry) {
+        this.streamRegistry = streamRegistry;
+    }
+
+    public StreamRegistry getStreamRegistry() {
+        return streamRegistry;
+    }
+
+    public void setStreamRegistry(StreamRegistry streamRegistry) {
+        this.streamRegistry = streamRegistry;
+    }
+
+    public CompletableFuture<SettlerEntity> spawnSettler(MinecraftServer server, SpawnAgentRequest request) {
+        return spawnSettler(server, null, request);
+    }
+
+    public CompletableFuture<SettlerEntity> spawnSettler(MinecraftServer server, ServerLevel level, SpawnAgentRequest request) {
+        Supplier<SettlerEntity> spawnSupplier = () -> {
+            ServerLevel targetLevel = level;
+            if (targetLevel == null && server != null) {
+                targetLevel = server.overworld();
+                if (targetLevel == null && server.getAllLevels().iterator().hasNext()) {
+                    targetLevel = server.getAllLevels().iterator().next();
+                }
+            }
+            return doSpawnSettler(server, targetLevel, request);
+        };
+        if (server != null) {
+            return server.submit(spawnSupplier);
+        } else {
+            try {
+                return CompletableFuture.completedFuture(spawnSupplier.get());
+            } catch (Throwable t) {
+                CompletableFuture<SettlerEntity> future = new CompletableFuture<>();
+                future.completeExceptionally(t);
+                return future;
+            }
+        }
+    }
+
+    private SettlerEntity doSpawnSettler(MinecraftServer server, ServerLevel level, SpawnAgentRequest request) {
+        String agentId = request.getAgentId();
+        String displayName = request.getDisplayName();
+        if (displayName == null || displayName.isBlank()) {
+            displayName = agentId;
+        }
+
+        // Check if agentId already exists: cleanly discard and despawn old entity before spawning
+        SettlerEntity existing = settlers.remove(agentId);
+        if (existing != null) {
+            LOGGER.warn("Duplicate agent spawn detected for agentId='{}'. Despawning old entity (uuid='{}')",
+                    agentId, existing.getUUID());
+            existing.releaseForcedChunk();
+            existing.discard();
+            if (server != null && server.getPlayerList() != null) {
+                ClientboundPlayerInfoRemovePacket removePacket =
+                        new ClientboundPlayerInfoRemovePacket(List.of(existing.getUUID()));
+                server.getPlayerList().broadcastAll(removePacket);
+            }
+        }
+
+        UUID offlineUuid = SettlerEntity.createOfflineUUID(displayName);
+        GameProfile profile = new GameProfile(offlineUuid, displayName);
+
+        if (request.getSkinTextureValue() != null && !request.getSkinTextureValue().isBlank()) {
+            String textureValue = request.getSkinTextureValue().trim();
+            if (textureValue.length() > 4096) {
+                throw new IllegalArgumentException("skin_texture_value exceeds maximum allowed length of 4096 characters");
+            }
+            try {
+                Base64.getDecoder().decode(textureValue);
+            } catch (IllegalArgumentException e) {
+                throw new IllegalArgumentException("skin_texture_value is not valid Base64", e);
+            }
+            String sig = (request.getSkinSignature() != null && !request.getSkinSignature().isBlank())
+                    ? request.getSkinSignature()
+                    : null;
+            profile.getProperties().put("textures", new Property("textures", textureValue, sig));
+        }
+
+        SettlerEntity settler = new SettlerEntity(level, profile, agentId, request.getClanId());
+
+        if (request.getSkinPngBytes() != null && !request.getSkinPngBytes().isEmpty()) {
+            if (request.getSkinPngBytes().size() > 65536) {
+                throw new IllegalArgumentException("skin_png_bytes exceeds maximum allowed size of 65536 bytes (was "
+                        + request.getSkinPngBytes().size() + ")");
+            }
+            settler.setSkinPngBytes(request.getSkinPngBytes().toByteArray());
+        }
+
+        double x = 0.0;
+        double y = 0.0;
+        double z = 0.0;
+        if (request.hasSpawnCoords()) {
+            x = request.getSpawnCoords().getX();
+            y = request.getSpawnCoords().getY();
+            z = request.getSpawnCoords().getZ();
+        }
+
+        settler.moveTo(x, y, z, 0.0f, 0.0f);
+        settler.setYRot(0.0f);
+        settler.setXRot(0.0f);
+        settler.setYHeadRot(0.0f);
+
+        if (level != null) {
+            ChunkPos chunkPos = new ChunkPos(BlockPos.containing(x, y, z));
+            level.setChunkForced(chunkPos.x, chunkPos.z, true);
+            boolean added = level.addFreshEntity(settler);
+            if (!added) {
+                level.setChunkForced(chunkPos.x, chunkPos.z, false);
+                throw new IllegalStateException("Failed to add SettlerEntity to level");
+            }
+            settler.setForcedChunkPos(chunkPos);
+        }
+
+        // Broadcast player info packet to connected tracking clients
+        ClientboundPlayerInfoUpdatePacket infoPacket = new ClientboundPlayerInfoUpdatePacket(
+                EnumSet.of(
+                        ClientboundPlayerInfoUpdatePacket.Action.ADD_PLAYER,
+                        ClientboundPlayerInfoUpdatePacket.Action.UPDATE_LISTED,
+                        ClientboundPlayerInfoUpdatePacket.Action.UPDATE_LATENCY,
+                        ClientboundPlayerInfoUpdatePacket.Action.UPDATE_GAME_MODE
+                ),
+                List.of(settler)
+        );
+
+        if (server != null && server.getPlayerList() != null) {
+            server.getPlayerList().broadcastAll(infoPacket);
+        }
+
+        // Broadcast custom skin payload packet if custom PNG bytes are supplied
+        if (settler.getSkinPngBytes() != null && settler.getSkinPngBytes().length > 0) {
+            ClientboundSettlerSkinPacket skinPacket = new ClientboundSettlerSkinPacket(
+                    settler.getUUID(),
+                    settler.getAgentId(),
+                    settler.getSkinPngBytes()
+            );
+            if (server != null && server.getPlayerList() != null) {
+                server.getPlayerList().broadcastAll(skinPacket.toVanillaClientbound());
+            }
+        }
+
+        settler.setDeathListener(deadSettler -> {
+            deadSettler.releaseForcedChunk();
+            settlers.remove(deadSettler.getAgentId(), deadSettler);
+            if (streamRegistry != null) {
+                streamRegistry.close(deadSettler.getAgentId());
+            }
+            if (server != null && server.getPlayerList() != null) {
+                ClientboundPlayerInfoRemovePacket removePacket =
+                        new ClientboundPlayerInfoRemovePacket(List.of(deadSettler.getUUID()));
+                server.getPlayerList().broadcastAll(removePacket);
+            }
+        });
+
+        settler.setRemovalListener(removedSettler -> {
+            removedSettler.releaseForcedChunk();
+            settlers.remove(removedSettler.getAgentId(), removedSettler);
+            if (server != null && server.getPlayerList() != null) {
+                ClientboundPlayerInfoRemovePacket removePacket =
+                        new ClientboundPlayerInfoRemovePacket(List.of(removedSettler.getUUID()));
+                server.getPlayerList().broadcastAll(removePacket);
+            }
+        });
+
+        settlers.put(agentId, settler);
+        LOGGER.info("SettlerEntity registered and spawned: agentId='{}', uuid='{}', entityId={}",
+                agentId, settler.getUUID(), settler.getId());
+        return settler;
+    }
+
+    public CompletableFuture<Boolean> despawnSettler(MinecraftServer server, String agentId) {
+        if (agentId == null || agentId.isBlank()) {
+            return CompletableFuture.completedFuture(false);
+        }
+
+        Supplier<Boolean> despawnSupplier = () -> {
+            SettlerEntity removed = settlers.remove(agentId);
+            if (removed != null) {
+                removed.releaseForcedChunk();
+                removed.discard();
+                if (server != null && server.getPlayerList() != null) {
+                    ClientboundPlayerInfoRemovePacket removePacket =
+                            new ClientboundPlayerInfoRemovePacket(List.of(removed.getUUID()));
+                    server.getPlayerList().broadcastAll(removePacket);
+                }
+                LOGGER.info("SettlerEntity despawned and discarded: agentId='{}'", agentId);
+                return true;
+            }
+            return false;
+        };
+
+        if (server != null) {
+            return server.submit(despawnSupplier);
+        } else {
+            return CompletableFuture.completedFuture(despawnSupplier.get());
+        }
+    }
+
+    public SettlerEntity getSettler(String agentId) {
+        if (agentId == null) {
+            return null;
+        }
+        return settlers.get(agentId);
+    }
+
+    public Map<String, SettlerEntity> getAllSettlers() {
+        return Collections.unmodifiableMap(settlers);
+    }
+
+    public int count() {
+        return settlers.size();
+    }
+
+    public void clearAll() {
+        for (SettlerEntity settler : settlers.values()) {
+            try {
+                settler.releaseForcedChunk();
+                settler.discard();
+            } catch (Exception e) {
+                LOGGER.debug("Error discarding settler during clearAll: {}", e.getMessage());
+            }
+        }
+        settlers.clear();
+        LOGGER.info("SettlerEntityManager cleared all active settlers");
+    }
+}
