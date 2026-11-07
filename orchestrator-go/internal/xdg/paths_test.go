@@ -161,6 +161,38 @@ func TestDefaultResolution(t *testing.T) {
 	if got := r.SupervisorPIDPath(); got != filepath.Join(expectedState, "supervisor.pid") {
 		t.Errorf("SupervisorPIDPath() = %q", got)
 	}
+
+	// Server and Agent installation helpers
+	if got := r.BinDir(); got != filepath.Join(expectedData, "bin") {
+		t.Errorf("BinDir() = %q", got)
+	}
+	if got := r.AgentsManifestPath(); got != filepath.Join(expectedData, "civquest.agents.json") {
+		t.Errorf("AgentsManifestPath() = %q", got)
+	}
+	if got := r.ServerDir(); got != filepath.Join(expectedData, "server") {
+		t.Errorf("ServerDir() = %q", got)
+	}
+	if got := r.ServerModsDir(); got != filepath.Join(expectedData, "server", "mods") {
+		t.Errorf("ServerModsDir() = %q", got)
+	}
+	if got := r.ServerManifestPath(); got != filepath.Join(expectedData, "server", "civquest.server.json") {
+		t.Errorf("ServerManifestPath() = %q", got)
+	}
+	if got := r.ServerRunScriptPath(); got != filepath.Join(expectedData, "server", "run.sh") {
+		t.Errorf("ServerRunScriptPath() = %q", got)
+	}
+	if got := r.ServerPropertiesPath(); got != filepath.Join(expectedData, "server", "server.properties") {
+		t.Errorf("ServerPropertiesPath() = %q", got)
+	}
+	if got := r.ServerEULAPath(); got != filepath.Join(expectedData, "server", "eula.txt") {
+		t.Errorf("ServerEULAPath() = %q", got)
+	}
+	if got := r.ServerPIDPath(); got != filepath.Join(expectedState, "server.pid") {
+		t.Errorf("ServerPIDPath() = %q", got)
+	}
+	if got := r.ServerLogPath(); got != filepath.Join(expectedState, "server.log") {
+		t.Errorf("ServerLogPath() = %q", got)
+	}
 }
 
 func TestEnvOverrides(t *testing.T) {

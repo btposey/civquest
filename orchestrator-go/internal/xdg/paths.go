@@ -21,14 +21,17 @@ var validIdentifierRegex = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_-]{0,31}$`
 
 // Resolver resolves filesystem paths in compliance with the XDG Base Directory specification.
 type Resolver struct {
-	homeDir    string
-	configHome string
-	dataHome   string
-	stateHome  string
-	cacheHome  string
-	runtimeDir string
-	customRoot string
-	getenv     func(string) string
+	homeDir           string
+	configHome        string
+	dataHome          string
+	stateHome         string
+	cacheHome         string
+	runtimeDir        string
+	customRoot        string
+	explicitConfigDir string
+	explicitDataDir   string
+	explicitStateDir  string
+	getenv            func(string) string
 }
 
 // Option configures a Resolver instance.
@@ -84,6 +87,16 @@ func WithCustomRoot(root string) Option {
 	}
 }
 
+// WithExplicitDirs configures explicit directories for config, data, and state.
+// Any empty string argument is ignored, falling back to standard resolution.
+func WithExplicitDirs(configDir, dataDir, stateDir string) Option {
+	return func(r *Resolver) {
+		r.explicitConfigDir = configDir
+		r.explicitDataDir = dataDir
+		r.explicitStateDir = stateDir
+	}
+}
+
 // WithEnv configures environment variable lookup from a fixed map.
 func WithEnv(env map[string]string) Option {
 	return func(r *Resolver) {
@@ -126,6 +139,9 @@ func (r *Resolver) getHomeDir() string {
 
 // ConfigDir returns the base CivQuest configuration directory ($XDG_CONFIG_HOME/civquest).
 func (r *Resolver) ConfigDir() string {
+	if r.explicitConfigDir != "" {
+		return r.explicitConfigDir
+	}
 	if r.configHome != "" {
 		return filepath.Join(r.configHome, "civquest")
 	}
@@ -140,6 +156,9 @@ func (r *Resolver) ConfigDir() string {
 
 // DataDir returns the base CivQuest data directory ($XDG_DATA_HOME/civquest).
 func (r *Resolver) DataDir() string {
+	if r.explicitDataDir != "" {
+		return r.explicitDataDir
+	}
 	if r.dataHome != "" {
 		return filepath.Join(r.dataHome, "civquest")
 	}
@@ -154,6 +173,9 @@ func (r *Resolver) DataDir() string {
 
 // StateDir returns the base CivQuest state directory ($XDG_STATE_HOME/civquest).
 func (r *Resolver) StateDir() string {
+	if r.explicitStateDir != "" {
+		return r.explicitStateDir
+	}
 	if r.stateHome != "" {
 		return filepath.Join(r.stateHome, "civquest")
 	}
@@ -314,6 +336,46 @@ func (r *Resolver) GraveyardDir() string {
 	return filepath.Join(r.DataDir(), "graveyard")
 }
 
+// BinDir returns $XDG_DATA_HOME/civquest/bin.
+func (r *Resolver) BinDir() string {
+	return filepath.Join(r.DataDir(), "bin")
+}
+
+// AgentsManifestPath returns $XDG_DATA_HOME/civquest/civquest.agents.json.
+func (r *Resolver) AgentsManifestPath() string {
+	return filepath.Join(r.DataDir(), "civquest.agents.json")
+}
+
+// ServerDir returns $XDG_DATA_HOME/civquest/server.
+func (r *Resolver) ServerDir() string {
+	return filepath.Join(r.DataDir(), "server")
+}
+
+// ServerModsDir returns $XDG_DATA_HOME/civquest/server/mods.
+func (r *Resolver) ServerModsDir() string {
+	return filepath.Join(r.ServerDir(), "mods")
+}
+
+// ServerManifestPath returns $XDG_DATA_HOME/civquest/server/civquest.server.json.
+func (r *Resolver) ServerManifestPath() string {
+	return filepath.Join(r.ServerDir(), "civquest.server.json")
+}
+
+// ServerRunScriptPath returns $XDG_DATA_HOME/civquest/server/run.sh.
+func (r *Resolver) ServerRunScriptPath() string {
+	return filepath.Join(r.ServerDir(), "run.sh")
+}
+
+// ServerPropertiesPath returns $XDG_DATA_HOME/civquest/server/server.properties.
+func (r *Resolver) ServerPropertiesPath() string {
+	return filepath.Join(r.ServerDir(), "server.properties")
+}
+
+// ServerEULAPath returns $XDG_DATA_HOME/civquest/server/eula.txt.
+func (r *Resolver) ServerEULAPath() string {
+	return filepath.Join(r.ServerDir(), "eula.txt")
+}
+
 // GraveyardAgentDir returns $XDG_DATA_HOME/civquest/graveyard/{agent_name}_{uuid}_tick{tick}.
 func (r *Resolver) GraveyardAgentDir(agentName, uuid string, tick int64) (string, error) {
 	if err := validateIdentifier(agentName); err != nil {
@@ -380,6 +442,16 @@ func (r *Resolver) SupervisorPIDPath() string {
 	return filepath.Join(r.StateDir(), "supervisor.pid")
 }
 
+// ServerPIDPath returns $XDG_STATE_HOME/civquest/server.pid.
+func (r *Resolver) ServerPIDPath() string {
+	return filepath.Join(r.StateDir(), "server.pid")
+}
+
+// ServerLogPath returns $XDG_STATE_HOME/civquest/server.log.
+func (r *Resolver) ServerLogPath() string {
+	return filepath.Join(r.StateDir(), "server.log")
+}
+
 // ==================== DIRECTORY INITIALIZATION ====================
 
 // InitDirectories creates the standard CivQuest directory skeleton with 0750 permissions,
@@ -431,6 +503,20 @@ func (r *Resolver) InitAgentDirectories(agentName string) error {
 	for _, dir := range dirs {
 		if err := os.MkdirAll(dir, 0750); err != nil {
 			return fmt.Errorf("failed to create agent directory %s: %w", dir, err)
+		}
+	}
+	return nil
+}
+
+// InitServerDirectories creates server and mods directories with 0750 permissions.
+func (r *Resolver) InitServerDirectories() error {
+	dirs := []string{
+		r.ServerDir(),
+		r.ServerModsDir(),
+	}
+	for _, dir := range dirs {
+		if err := os.MkdirAll(dir, 0750); err != nil {
+			return fmt.Errorf("failed to create server directory %s: %w", dir, err)
 		}
 	}
 	return nil
@@ -614,8 +700,41 @@ func AgentSocketPath(agentName string) string { return defaultResolver.AgentSock
 // SupervisorPIDPath returns supervisor.pid path via the default resolver.
 func SupervisorPIDPath() string { return defaultResolver.SupervisorPIDPath() }
 
+// BinDir returns $XDG_DATA_HOME/civquest/bin via the default resolver.
+func BinDir() string { return defaultResolver.BinDir() }
+
+// AgentsManifestPath returns civquest.agents.json path via the default resolver.
+func AgentsManifestPath() string { return defaultResolver.AgentsManifestPath() }
+
+// ServerDir returns $XDG_DATA_HOME/civquest/server via the default resolver.
+func ServerDir() string { return defaultResolver.ServerDir() }
+
+// ServerModsDir returns $XDG_DATA_HOME/civquest/server/mods via the default resolver.
+func ServerModsDir() string { return defaultResolver.ServerModsDir() }
+
+// ServerManifestPath returns civquest.server.json path via the default resolver.
+func ServerManifestPath() string { return defaultResolver.ServerManifestPath() }
+
+// ServerRunScriptPath returns run.sh path via the default resolver.
+func ServerRunScriptPath() string { return defaultResolver.ServerRunScriptPath() }
+
+// ServerPropertiesPath returns server.properties path via the default resolver.
+func ServerPropertiesPath() string { return defaultResolver.ServerPropertiesPath() }
+
+// ServerEULAPath returns eula.txt path via the default resolver.
+func ServerEULAPath() string { return defaultResolver.ServerEULAPath() }
+
+// ServerPIDPath returns server.pid path via the default resolver.
+func ServerPIDPath() string { return defaultResolver.ServerPIDPath() }
+
+// ServerLogPath returns server.log path via the default resolver.
+func ServerLogPath() string { return defaultResolver.ServerLogPath() }
+
 // InitDirectories initializes the standard directory skeleton via the default resolver.
 func InitDirectories() error { return defaultResolver.InitDirectories() }
+
+// InitServerDirectories initializes server directories via the default resolver.
+func InitServerDirectories() error { return defaultResolver.InitServerDirectories() }
 
 // InitAgentDirectories initializes directories for an agent via the default resolver.
 func InitAgentDirectories(agentName string) error {
