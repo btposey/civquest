@@ -1,0 +1,197 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <!-- Copyright (c) 2026 Brian Posey
+       Use of this source code is governed by an MIT-style
+       license that can be found in the LICENSE file. -->
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>CivQuest — Autonomous Dynastic Settlement Engine</title>
+  <meta name="description" content="Autonomous, dynastic settlement engine replacing vanilla game villagers with process-isolated FakePlayer agents driven by external Go orchestrators.">
+  <link rel="stylesheet" href="assets/css/style.css">
+</head>
+<body>
+
+  <!-- Alpha Status Banner -->
+  <div class="alpha-banner">
+    <span class="alpha-tag">Active Pre-Alpha</span>
+    <span>CivQuest is under active early architecture and development. <a href="https://github.com/btposey/civquest" target="_blank" rel="noopener">Track source & issues on GitHub</a></span>
+  </div>
+
+  <!-- Navigation -->
+  <header>
+    <div class="nav-container">
+      <a href="#" class="logo">
+        <span class="logo-badge">civquest</span>
+        <span>CivQuest</span>
+        <span class="badge-alpha">v0.1.0</span>
+      </a>
+      <nav class="nav-links">
+        <a href="#architecture">Architecture</a>
+        <a href="#cognition">Cognition</a>
+        <a href="#quickstart">Quickstart</a>
+        <a href="https://github.com/btposey/civquest" class="btn-github" target="_blank" rel="noopener">
+          <svg width="18" height="18" viewBox="0 0 16 16" fill="currentColor">
+            <path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/>
+          </svg>
+          <span>GitHub</span>
+        </a>
+      </nav>
+    </div>
+  </header>
+
+  <!-- Hero Section -->
+  <section class="hero">
+    <div class="hero-pill">
+      <span>Two-Tier Cognitive Architecture • Go 1.23+ & NeoForge</span>
+    </div>
+    <h1>Autonomous Dynasties<br><span>Driven by Process-Isolated AI Agents</span></h1>
+    <p>
+      CivQuest replaces static trading entities with living, humanoid settlers. Driven by external Go processes, 
+      settlers feature sub-5ms survival reflexes, LLM-powered social deliberation, spatial quadrant construction, 
+      and irreversible generational permadeath.
+    </p>
+    <div class="hero-buttons">
+      <a href="https://github.com/btposey/civquest" class="btn-primary" target="_blank" rel="noopener">Explore Codebase</a>
+      <a href="#architecture" class="btn-secondary">View Architecture</a>
+    </div>
+  </section>
+
+  <!-- Architecture Pillars -->
+  <section id="architecture" class="section">
+    <div class="section-header">
+      <h2>Dual-Layer System Topology</h2>
+      <p>Decoupling physical voxel simulation in the JVM from cognitive deliberation in Go.</p>
+    </div>
+
+    <div class="grid">
+      <div class="card">
+        <div class="card-icon icon-blue">⚡</div>
+        <h3>Server-Side Mod Layer</h3>
+        <p>
+          Built on NeoForge 21.1+ (Java 21). Spawns headless <code>FakePlayer</code> avatars, 
+          delivers dynamic settler skin packets, streams 5 Hz sensory frustum telemetry, 
+          and delegates physical voxel pathfinding to an integrated Baritone API wrapper.
+        </p>
+      </div>
+
+      <div class="card">
+        <div class="card-icon icon-emerald">🧠</div>
+        <h3>Two-Tier Cognitive Engine</h3>
+        <p>
+          <strong>System 1:</strong> Sub-5ms deterministic utility AI (0 LLM tokens) for combat panic, shield blocking, 
+          and hunger. <strong>System 2:</strong> Asynchronous JSON-validated LLM inference (Ollama/vLLM) for dialogue, 
+          haggling, Chronicler book writing, and quadrant layout.
+        </p>
+      </div>
+
+      <div class="card">
+        <div class="card-icon icon-purple">🏛️</div>
+        <h3>Process-Per-Agent Isolation</h3>
+        <p>
+          Each settler executes as an independent operating system process (<code>civquest-agent</code>) 
+          managed by the <code>civctl</code> supervisor daemon. Every agent retains dedicated XDG directories, 
+          SQLite databases, and UNIX domain sockets for live inspection.
+        </p>
+      </div>
+    </div>
+  </section>
+
+  <!-- Cognition & Mechanics -->
+  <section id="cognition" class="section">
+    <div class="section-header">
+      <h2>Civilization Mechanics</h2>
+      <p>Emergent Dynasties, Spatial Construction, and High-Stakes Permadeath</p>
+    </div>
+
+    <div class="grid">
+      <div class="card">
+        <div class="card-icon icon-amber">🛡️</div>
+        <h3>Permadeath & Graveyards</h3>
+        <p>
+          Agents never respawn. When an agent falls, their state directory is permanently moved to the 
+          cold graveyard archive alongside an epitaph and death certificate. Surviving spouses transition to 
+          widowed status, and Chroniclers document their sacrifice.
+        </p>
+      </div>
+
+      <div class="card">
+        <div class="card-icon icon-blue">📐</div>
+        <h3>Spatial Quadrant Building</h3>
+        <p>
+          Architects parse YAML blueprints, compute Bills of Materials against granary stock, and subdivide 
+          structures into 4 spatial quadrants (NW, NE, SW, SE). Builders place voxels bottom-up 
+          (Y<sub>min</sub> &rarr; Y<sub>max</sub>) to eliminate collisions and entrapment.
+        </p>
+      </div>
+
+      <div class="card">
+        <div class="card-icon icon-emerald">🌾</div>
+        <h3>Dynasties & Sharecropping</h3>
+        <p>
+          Surplus granaries trigger the dynastic reproduction governor, blending parent traits with 
+          Gaussian mutation. Agrarian settlers propose sharecropping agreements to human players, cultivating 
+          modded crops and depositing 50% yields directly into player chests.
+        </p>
+      </div>
+    </div>
+  </section>
+
+  <!-- Quickstart Terminal -->
+  <section id="quickstart" class="section">
+    <div class="section-header">
+      <h2>Developer Quickstart</h2>
+      <p>Set up the local development toolchain and inspect ready tasks in seconds.</p>
+    </div>
+
+    <div class="terminal-card">
+      <div class="terminal-header">
+        <div class="dot dot-red"></div>
+        <div class="dot dot-yellow"></div>
+        <div class="dot dot-green"></div>
+        <span style="font-size: 0.8rem; color: #64748b; margin-left: 0.5rem; font-family: var(--font-mono);">bash — civquest setup</span>
+      </div>
+      <div class="terminal-body">
+        <pre><span class="comment"># 1. Clone the repository</span>
+<span class="cmd">git clone</span> https://github.com/btposey/civquest.git
+<span class="cmd">cd</span> civquest
+
+<span class="comment"># 2. Run the automated local toolchain setup (installs protoc, buf, sqlite-vec)</span>
+<span class="cmd">./setup.sh</span>
+
+<span class="comment"># 3. View ready development tasks using Beads (bd)</span>
+<span class="cmd">bd ready</span>
+<span class="comment"># Output: ○ cq-bu1.1: Define master Protobuf v3 contract and configure code generation</span>
+
+<span class="comment"># 4. Claim work and start building</span>
+<span class="cmd">bd update</span> cq-bu1.1 --claim</pre>
+      </div>
+    </div>
+  </section>
+
+  <!-- Footer & Trademark Notice -->
+  <footer>
+    <div class="footer-container">
+      <div class="disclaimer-box">
+        <strong>LEGAL & TRADEMARK DISCLAIMER:</strong><br>
+        <strong>NOT AN OFFICIAL MINECRAFT PRODUCT. NOT APPROVED BY OR ASSOCIATED WITH MOJANG OR MICROSOFT.</strong><br>
+        <em>Minecraft</em> is a registered trademark of Mojang Synergies AB / Microsoft Corporation. 
+        CivQuest is an independent, community-developed software modification and autonomous agent orchestration platform. 
+        CivQuest is not affiliated with, endorsed by, sponsored by, or associated with Mojang Synergies AB, Microsoft Corporation, 
+        or any of their subsidiaries. All references to Minecraft, related game mechanics, and block identifiers are strictly 
+        nominative references for technical compatibility and modding interoperability under applicable fair use doctrines.
+      </div>
+
+      <div class="footer-links">
+        <a href="https://github.com/btposey/civquest">Source Code</a>
+        <a href="https://github.com/btposey/civquest/blob/main/ACKNOWLEDGEMENTS.md">Acknowledgements</a>
+        <a href="https://github.com/btposey/civquest/blob/main/NOTICES.md">Third-Party Notices</a>
+        <a href="https://github.com/btposey/civquest/blob/main/LICENSE">MIT License</a>
+      </div>
+
+      <p class="copyright">&copy; 2026 Brian Posey. Open source under the MIT License.</p>
+    </div>
+  </footer>
+
+</body>
+</html>
