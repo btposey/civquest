@@ -24,7 +24,7 @@ public record ClientboundSettlerSkinPacket(UUID settlerUuid, String agentId, byt
                     ClientboundSettlerSkinPacket::settlerUuid,
                     ByteBufCodecs.STRING_UTF8,
                     ClientboundSettlerSkinPacket::agentId,
-                    ByteBufCodecs.BYTE_ARRAY,
+                    ByteBufCodecs.byteArray(65536),
                     ClientboundSettlerSkinPacket::skinPng,
                     ClientboundSettlerSkinPacket::new
             );

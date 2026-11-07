@@ -10,13 +10,16 @@ import net.minecraft.tags.EntityTypeTags;
 import net.minecraft.world.damagesource.DamageSource;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.item.enchantment.EnchantmentHelper;
+import net.minecraft.world.level.ChunkPos;
 import net.minecraft.world.level.GameRules;
 import net.minecraft.world.level.gameevent.GameEvent;
+import net.minecraft.world.scores.Team;
 import net.neoforged.neoforge.common.CommonHooks;
 import net.neoforged.neoforge.common.util.FakePlayer;
 import org.slf4j.Logger;
 
 import java.util.UUID;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Consumer;
 
 /**
@@ -31,7 +34,10 @@ public class SettlerEntity extends FakePlayer {
     private final String clanId;
     private String skinId;
     private byte[] skinPngBytes;
+    private ChunkPos forcedChunkPos;
     private Consumer<SettlerEntity> deathListener;
+    private Consumer<SettlerEntity> removalListener;
+    private final AtomicBoolean cleanedUp = new AtomicBoolean(false);
 
     public SettlerEntity(ServerLevel level, GameProfile profile, String agentId, String clanId) {
         super(level, profile);
@@ -54,17 +60,10 @@ public class SettlerEntity extends FakePlayer {
         super.tick();
         if (!this.level().isClientSide) {
             try {
-                // Execute player tick logic (which FakePlayer stubbed out)
+                // Execute player tick logic (which FakePlayer stubbed out, including FoodData tick at 20 Hz)
                 this.doTick();
             } catch (Exception e) {
                 LOGGER.error("Exception during settler doTick for agent '{}': {}", agentId, e.getMessage(), e);
-            }
-
-            // Ensure FoodData hunger decay and health regeneration ticks appropriately
-            try {
-                this.getFoodData().tick(this);
-            } catch (Exception e) {
-                LOGGER.debug("FoodData tick note for settler '{}': {}", agentId, e.getMessage());
             }
         }
     }
@@ -75,35 +74,48 @@ public class SettlerEntity extends FakePlayer {
     }
 
     @Override
-    public boolean isInvulnerableTo(DamageSource source) {
-        if (this.isRemoved()) {
-            return true;
-        }
-        if (this.isInvulnerable() && !source.is(DamageTypeTags.BYPASSES_INVULNERABILITY) && !source.isCreativePlayer()) {
-            return true;
-        }
-        if (source.is(DamageTypeTags.IS_FIRE) && this.fireImmune()) {
-            return true;
-        }
-        if (source.is(DamageTypeTags.IS_FALL) &&
-                (!this.level().getGameRules().getBoolean(GameRules.RULE_FALL_DAMAGE)
-                        || this.getType().is(EntityTypeTags.FALL_DAMAGE_IMMUNE))) {
-            return true;
-        }
-        if (source.is(DamageTypeTags.IS_DROWNING) &&
-                !this.level().getGameRules().getBoolean(GameRules.RULE_DROWNING_DAMAGE)) {
-            return true;
-        }
-        if (this.level() instanceof ServerLevel serverLevel &&
-                EnchantmentHelper.isImmuneToDamage(serverLevel, this, source)) {
-            return true;
-        }
+    public boolean canUsePortal(boolean allowVehicles) {
+        // Autonomous settler agents are tethered to their assigned dimension
         return false;
     }
 
     @Override
-    public boolean canHarmPlayer(Player player) {
-        return true;
+    public boolean isInvulnerableTo(DamageSource source) {
+        if (this.isRemoved()) {
+            return true;
+        }
+        boolean isInvul = false;
+        if (this.isInvulnerable() && !source.is(DamageTypeTags.BYPASSES_INVULNERABILITY) && !source.isCreativePlayer()) {
+            isInvul = true;
+        } else if (source.is(DamageTypeTags.IS_FIRE) && this.fireImmune()) {
+            isInvul = true;
+        } else if (source.is(DamageTypeTags.IS_FALL) &&
+                (!this.level().getGameRules().getBoolean(GameRules.RULE_FALL_DAMAGE)
+                        || this.getType().is(EntityTypeTags.FALL_DAMAGE_IMMUNE))) {
+            isInvul = true;
+        } else if (source.is(DamageTypeTags.IS_DROWNING) &&
+                !this.level().getGameRules().getBoolean(GameRules.RULE_DROWNING_DAMAGE)) {
+            isInvul = true;
+        } else if (this.level() instanceof ServerLevel serverLevel &&
+                EnchantmentHelper.isImmuneToDamage(serverLevel, this, source)) {
+            isInvul = true;
+        }
+        return CommonHooks.isEntityInvulnerableTo(this, source, isInvul);
+    }
+
+    @Override
+    public boolean canHarmPlayer(Player other) {
+        if (this.getServer() != null && !this.getServer().isPvpAllowed()) {
+            return false;
+        }
+        Team team = this.getTeam();
+        Team otherTeam = other.getTeam();
+        if (team != null) {
+            if (team.isAlliedTo(otherTeam) && !team.isAllowFriendlyFire()) {
+                return false;
+            }
+        }
+        return super.canHarmPlayer(other);
     }
 
     @Override
@@ -128,16 +140,57 @@ public class SettlerEntity extends FakePlayer {
             this.dropAllDeathLoot(this.serverLevel(), cause);
         }
 
+        // Release forced chunk
+        releaseForcedChunk();
+
         // Trigger unregistration / cleanup callback
-        if (this.deathListener != null) {
-            try {
-                this.deathListener.accept(this);
-            } catch (Exception e) {
-                LOGGER.error("Error executing deathListener for settler '{}': {}", agentId, e.getMessage(), e);
+        if (cleanedUp.compareAndSet(false, true)) {
+            if (this.deathListener != null) {
+                try {
+                    this.deathListener.accept(this);
+                } catch (Exception e) {
+                    LOGGER.error("Error executing deathListener for settler '{}': {}", agentId, e.getMessage(), e);
+                }
             }
         }
 
         this.discard();
+    }
+
+    @Override
+    public void remove(RemovalReason reason) {
+        super.remove(reason);
+        releaseForcedChunk();
+        if (cleanedUp.compareAndSet(false, true)) {
+            if (this.removalListener != null) {
+                try {
+                    this.removalListener.accept(this);
+                } catch (Exception e) {
+                    LOGGER.error("Error executing removalListener for settler '{}': {}", agentId, e.getMessage(), e);
+                }
+            }
+        }
+    }
+
+    public void releaseForcedChunk() {
+        if (this.forcedChunkPos != null && this.level() instanceof ServerLevel serverLevel) {
+            try {
+                serverLevel.setChunkForced(this.forcedChunkPos.x, this.forcedChunkPos.z, false);
+                LOGGER.debug("Released forced chunk [{}, {}] for settler '{}'",
+                        this.forcedChunkPos.x, this.forcedChunkPos.z, agentId);
+            } catch (Exception e) {
+                LOGGER.warn("Failed to release forced chunk for settler '{}': {}", agentId, e.getMessage());
+            }
+            this.forcedChunkPos = null;
+        }
+    }
+
+    public ChunkPos getForcedChunkPos() {
+        return forcedChunkPos;
+    }
+
+    public void setForcedChunkPos(ChunkPos forcedChunkPos) {
+        this.forcedChunkPos = forcedChunkPos;
     }
 
     public String getAgentId() {
@@ -166,5 +219,9 @@ public class SettlerEntity extends FakePlayer {
 
     public void setDeathListener(Consumer<SettlerEntity> deathListener) {
         this.deathListener = deathListener;
+    }
+
+    public void setRemovalListener(Consumer<SettlerEntity> removalListener) {
+        this.removalListener = removalListener;
     }
 }

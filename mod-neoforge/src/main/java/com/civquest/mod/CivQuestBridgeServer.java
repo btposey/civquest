@@ -104,15 +104,15 @@ public class CivQuestBridgeServer {
         String discPath = System.getProperty(PROP_DISCOVERY_PATH, DEFAULT_DISCOVERY_PATH).trim();
         this.discoveryPath = Path.of(discPath);
         this.streamRegistry = new StreamRegistry();
-        this.settlerEntityManager = new SettlerEntityManager();
+        this.settlerEntityManager = new SettlerEntityManager(this.streamRegistry);
     }
 
     public CivQuestBridgeServer(String host, int port, String sharedKey, Path discoveryPath) {
-        this(host, port, sharedKey, discoveryPath, new StreamRegistry(), new SettlerEntityManager());
+        this(host, port, sharedKey, discoveryPath, new StreamRegistry(), null);
     }
 
     public CivQuestBridgeServer(String host, int port, String sharedKey, Path discoveryPath, StreamRegistry streamRegistry) {
-        this(host, port, sharedKey, discoveryPath, streamRegistry, new SettlerEntityManager());
+        this(host, port, sharedKey, discoveryPath, streamRegistry, null);
     }
 
     public CivQuestBridgeServer(String host, int port, String sharedKey, Path discoveryPath,
@@ -123,7 +123,10 @@ public class CivQuestBridgeServer {
         this.sharedKey = resolveSharedKey(sharedKey);
         this.discoveryPath = discoveryPath != null ? discoveryPath : Path.of(DEFAULT_DISCOVERY_PATH);
         this.streamRegistry = streamRegistry != null ? streamRegistry : new StreamRegistry();
-        this.settlerEntityManager = settlerEntityManager != null ? settlerEntityManager : new SettlerEntityManager();
+        this.settlerEntityManager = settlerEntityManager != null ? settlerEntityManager : new SettlerEntityManager(this.streamRegistry);
+        if (this.settlerEntityManager.getStreamRegistry() == null) {
+            this.settlerEntityManager.setStreamRegistry(this.streamRegistry);
+        }
     }
 
     public static String generateSecureSharedKey() {
@@ -181,6 +184,10 @@ public class CivQuestBridgeServer {
         if (server != null && !server.isShutdown()) {
             LOGGER.warn("CivQuestBridgeServer is already running on port {}", boundPort);
             return;
+        }
+
+        if (streamRegistry != null) {
+            streamRegistry.reopen();
         }
 
         this.healthStatusManager = new HealthStatusManager();

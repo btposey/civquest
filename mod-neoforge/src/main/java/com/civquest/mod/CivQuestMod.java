@@ -2,16 +2,22 @@ package com.civquest.mod;
 
 import com.civquest.mod.gametest.SettlerGameTest;
 import com.mojang.logging.LogUtils;
+import net.minecraft.network.protocol.game.ClientboundPlayerInfoUpdatePacket;
+import net.minecraft.server.level.ServerPlayer;
 import net.neoforged.bus.api.IEventBus;
 import net.neoforged.fml.common.Mod;
 import net.neoforged.neoforge.common.NeoForge;
 import net.neoforged.neoforge.event.RegisterGameTestsEvent;
+import net.neoforged.neoforge.event.entity.player.PlayerEvent;
 import net.neoforged.neoforge.event.server.ServerStartedEvent;
 import net.neoforged.neoforge.event.server.ServerStartingEvent;
 import net.neoforged.neoforge.event.server.ServerStoppingEvent;
 import net.neoforged.neoforge.network.event.RegisterPayloadHandlersEvent;
 import net.neoforged.neoforge.network.registration.PayloadRegistrar;
 import org.slf4j.Logger;
+
+import java.util.EnumSet;
+import java.util.List;
 
 @Mod(CivQuestMod.MOD_ID)
 public class CivQuestMod {
@@ -28,6 +34,7 @@ public class CivQuestMod {
         NeoForge.EVENT_BUS.addListener(this::onServerStarting);
         NeoForge.EVENT_BUS.addListener(this::onServerStarted);
         NeoForge.EVENT_BUS.addListener(this::onServerStopping);
+        NeoForge.EVENT_BUS.addListener(this::onPlayerLoggedIn);
     }
 
     private void onRegisterPayloadHandlers(RegisterPayloadHandlersEvent event) {
@@ -58,6 +65,38 @@ public class CivQuestMod {
 
     private void onServerStopping(ServerStoppingEvent event) {
         bridgeServer.onServerStopping(event);
+    }
+
+    private void onPlayerLoggedIn(PlayerEvent.PlayerLoggedInEvent event) {
+        if (event.getEntity() instanceof ServerPlayer player) {
+            SettlerEntityManager manager = getSettlerEntityManager();
+            if (manager != null && !manager.getAllSettlers().isEmpty()) {
+                List<ServerPlayer> activeSettlers = new java.util.ArrayList<>(manager.getAllSettlers().values());
+                ClientboundPlayerInfoUpdatePacket infoPacket = new ClientboundPlayerInfoUpdatePacket(
+                        EnumSet.of(
+                                ClientboundPlayerInfoUpdatePacket.Action.ADD_PLAYER,
+                                ClientboundPlayerInfoUpdatePacket.Action.UPDATE_LISTED,
+                                ClientboundPlayerInfoUpdatePacket.Action.UPDATE_LATENCY,
+                                ClientboundPlayerInfoUpdatePacket.Action.UPDATE_GAME_MODE
+                        ),
+                        activeSettlers
+                );
+                player.connection.send(infoPacket);
+
+                for (SettlerEntity settler : manager.getAllSettlers().values()) {
+                    if (settler.getSkinPngBytes() != null && settler.getSkinPngBytes().length > 0) {
+                        ClientboundSettlerSkinPacket skinPacket = new ClientboundSettlerSkinPacket(
+                                settler.getUUID(),
+                                settler.getAgentId(),
+                                settler.getSkinPngBytes()
+                        );
+                        player.connection.send(skinPacket.toVanillaClientbound());
+                    }
+                }
+                LOGGER.info("Synchronized {} active settlers to joining player '{}'",
+                        activeSettlers.size(), player.getName().getString());
+            }
+        }
     }
 
     public CivQuestBridgeServer getBridgeServer() {

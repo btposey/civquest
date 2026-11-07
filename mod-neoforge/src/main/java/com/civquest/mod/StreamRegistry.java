@@ -286,6 +286,15 @@ public class StreamRegistry {
     }
 
     /**
+     * Reopens the StreamRegistry, resetting the closed state so new streams can be registered.
+     */
+    public void reopen() {
+        if (closed.compareAndSet(true, false)) {
+            LOGGER.info("Reopened StreamRegistry for new agent connections");
+        }
+    }
+
+    /**
      * Returns the number of actively registered agent streams.
      *
      * @return the active agent count

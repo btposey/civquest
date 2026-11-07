@@ -4,7 +4,9 @@ import com.civquest.mod.grpc.v1.DespawnAgentRequest;
 import com.civquest.mod.grpc.v1.DespawnAgentResponse;
 import com.civquest.mod.grpc.v1.SpawnAgentRequest;
 import com.civquest.mod.grpc.v1.SpawnAgentResponse;
+import com.civquest.mod.grpc.v1.TelemetryFrame;
 import com.civquest.mod.grpc.v1.Vec3;
+import com.google.protobuf.ByteString;
 import io.grpc.Status;
 import io.grpc.StatusRuntimeException;
 import io.grpc.stub.StreamObserver;
@@ -209,5 +211,166 @@ public class SettlerEntityTest {
         assertNotNull(error);
         assertInstanceOf(StatusRuntimeException.class, error);
         assertEquals(Status.Code.INVALID_ARGUMENT, ((StatusRuntimeException) error).getStatus().getCode());
+    }
+
+    @Test
+    @DisplayName("CivQuestBridgeServiceImpl rejects SpawnAgentRequest with invalid Base64 skin_texture_value")
+    void testSkinValidationInvalidBase64() {
+        SpawnAgentRequest request = SpawnAgentRequest.newBuilder()
+                .setAgentId("agent-invalid-base64")
+                .setSkinTextureValue("not-valid-base64-!@#$%^&*()")
+                .build();
+
+        AtomicReference<Throwable> errorRef = new AtomicReference<>();
+        bridgeService.spawnAgentEntity(request, new StreamObserver<>() {
+            @Override
+            public void onNext(SpawnAgentResponse value) {}
+
+            @Override
+            public void onError(Throwable t) {
+                errorRef.set(t);
+            }
+
+            @Override
+            public void onCompleted() {}
+        });
+
+        Throwable error = errorRef.get();
+        assertNotNull(error);
+        assertInstanceOf(StatusRuntimeException.class, error);
+        assertEquals(Status.Code.INVALID_ARGUMENT, ((StatusRuntimeException) error).getStatus().getCode());
+        assertTrue(error.getMessage().contains("skin_texture_value is not valid Base64"));
+    }
+
+    @Test
+    @DisplayName("CivQuestBridgeServiceImpl rejects SpawnAgentRequest with skin_texture_value exceeding 4096 characters")
+    void testSkinValidationTextureTooLong() {
+        String longTexture = "A".repeat(4097);
+        SpawnAgentRequest request = SpawnAgentRequest.newBuilder()
+                .setAgentId("agent-long-texture")
+                .setSkinTextureValue(longTexture)
+                .build();
+
+        AtomicReference<Throwable> errorRef = new AtomicReference<>();
+        bridgeService.spawnAgentEntity(request, new StreamObserver<>() {
+            @Override
+            public void onNext(SpawnAgentResponse value) {}
+
+            @Override
+            public void onError(Throwable t) {
+                errorRef.set(t);
+            }
+
+            @Override
+            public void onCompleted() {}
+        });
+
+        Throwable error = errorRef.get();
+        assertNotNull(error);
+        assertInstanceOf(StatusRuntimeException.class, error);
+        assertEquals(Status.Code.INVALID_ARGUMENT, ((StatusRuntimeException) error).getStatus().getCode());
+        assertTrue(error.getMessage().contains("exceeds maximum allowed length of 4096"));
+    }
+
+    @Test
+    @DisplayName("CivQuestBridgeServiceImpl rejects SpawnAgentRequest with skin_png_bytes exceeding 64KB")
+    void testSkinPngBytesExceeds64KB() {
+        byte[] oversizedBytes = new byte[65537];
+        SpawnAgentRequest request = SpawnAgentRequest.newBuilder()
+                .setAgentId("agent-oversized-skin")
+                .setSkinPngBytes(ByteString.copyFrom(oversizedBytes))
+                .build();
+
+        AtomicReference<Throwable> errorRef = new AtomicReference<>();
+        bridgeService.spawnAgentEntity(request, new StreamObserver<>() {
+            @Override
+            public void onNext(SpawnAgentResponse value) {}
+
+            @Override
+            public void onError(Throwable t) {
+                errorRef.set(t);
+            }
+
+            @Override
+            public void onCompleted() {}
+        });
+
+        Throwable error = errorRef.get();
+        assertNotNull(error);
+        assertInstanceOf(StatusRuntimeException.class, error);
+        assertEquals(Status.Code.INVALID_ARGUMENT, ((StatusRuntimeException) error).getStatus().getCode());
+        assertTrue(error.getMessage().contains("exceeds maximum allowed size of 65536"));
+    }
+
+    @Test
+    @DisplayName("ClientboundSettlerSkinPacket rejects payloads larger than 64KB on decode")
+    void testSettlerSkinPacketCodecRejectsOversizedPayload() {
+        FriendlyByteBuf buffer = new FriendlyByteBuf(Unpooled.buffer());
+        buffer.writeUUID(UUID.randomUUID());
+        buffer.writeUtf("agent-oversized-test");
+        buffer.writeByteArray(new byte[65537]);
+
+        assertThrows(Exception.class, () -> ClientboundSettlerSkinPacket.STREAM_CODEC.decode(buffer));
+    }
+
+    @Test
+    @DisplayName("CivQuestBridgeServiceImpl rejects DespawnAgentRequest with empty or blank agent_id")
+    void testDespawnAgentEmptyIdValidation() {
+        DespawnAgentRequest request = DespawnAgentRequest.newBuilder()
+                .setAgentId("   ")
+                .build();
+
+        AtomicReference<Throwable> errorRef = new AtomicReference<>();
+        bridgeService.despawnAgentEntity(request, new StreamObserver<>() {
+            @Override
+            public void onNext(DespawnAgentResponse value) {}
+
+            @Override
+            public void onError(Throwable t) {
+                errorRef.set(t);
+            }
+
+            @Override
+            public void onCompleted() {}
+        });
+
+        Throwable error = errorRef.get();
+        assertNotNull(error);
+        assertInstanceOf(StatusRuntimeException.class, error);
+        assertEquals(Status.Code.INVALID_ARGUMENT, ((StatusRuntimeException) error).getStatus().getCode());
+    }
+
+    @Test
+    @DisplayName("StreamRegistry reopen restores closed registry allowing new registrations")
+    void testStreamRegistryReopen() {
+        StreamRegistry registry = new StreamRegistry();
+        assertFalse(registry.isClosed());
+
+        StreamObserver<TelemetryFrame> dummyObserver = new StreamObserver<>() {
+            @Override
+            public void onNext(TelemetryFrame value) {}
+            @Override
+            public void onError(Throwable t) {}
+            @Override
+            public void onCompleted() {}
+        };
+
+        assertTrue(registry.register("agent-reopen-1", dummyObserver));
+        assertEquals(1, registry.getActiveAgentCount());
+
+        registry.closeAll();
+        assertTrue(registry.isClosed());
+        assertEquals(0, registry.getActiveAgentCount());
+
+        // While closed, registrations are rejected
+        assertFalse(registry.register("agent-reopen-2", dummyObserver));
+
+        // Reopen resets closed state
+        registry.reopen();
+        assertFalse(registry.isClosed());
+
+        // Registrations succeed after reopen
+        assertTrue(registry.register("agent-reopen-3", dummyObserver));
+        assertEquals(1, registry.getActiveAgentCount());
     }
 }
