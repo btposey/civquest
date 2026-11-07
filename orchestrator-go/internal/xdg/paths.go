@@ -124,6 +124,11 @@ func NewResolver(opts ...Option) *Resolver {
 	return r
 }
 
+// NewPaths creates a new Resolver, serving as an alias for NewResolver.
+func NewPaths(opts ...Option) *Resolver {
+	return NewResolver(opts...)
+}
+
 func (r *Resolver) getHomeDir() string {
 	if r.homeDir != "" {
 		return r.homeDir
