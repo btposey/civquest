@@ -14,12 +14,12 @@ Welcome to **CivQuest** (`https://github.com/btposey/civquest`). This document e
 
 ## 1. Project Mission & Core Architecture
 
-CivQuest is an autonomous, dynastic settlement engine designed to completely replace Minecraft's vanilla villagers with intelligent, humanoid, process-isolated `FakePlayer` agents driven by external Go orchestrators.
+CivQuest is an autonomous, dynastic settlement engine introducing intelligent, humanoid, process-isolated `FakePlayer` agents driven by external Go orchestrators alongside vanilla game entities.
 
 ### The Dual-Layer Architecture:
 1. **Minecraft Java Server Mod (`mod-neoforge`)**:
    - Engine: **Minecraft 1.21.1** powered by **NeoForge 21.1.265** (Java 21).
-   - Functions: Suppresses vanilla villages and villagers; spawns headless `SettlerEntity` (`FakePlayer`) avatars; delivers dynamic settler skin packets; streams sensory frustum frames (5 Hz) over embedded Netty gRPC; delegates physical voxel pathfinding to an integrated Baritone API wrapper.
+   - Functions: Spawns headless `SettlerEntity` (`FakePlayer`) avatars; delivers dynamic settler skin packets; streams sensory frustum frames (5 Hz) over embedded Netty gRPC; delegates physical voxel pathfinding to an integrated Baritone API wrapper; preserves vanilla villages and villagers for rich inter-entity co-existence.
 2. **External Multi-Process Go Orchestrator (`orchestrator-go`)**:
    - Engine: **Go 1.23+**.
    - Functions: Multi-process supervisor (`civctl`) spawning dedicated OS worker processes (`civquest-agent`) per settler.

@@ -2,7 +2,7 @@
 
 ## 1. System Philosophy
 
-CivQuest transforms Minecraft into a living, persistent civilization simulation. It rejects the primitive trading mechanics and artificial nature of vanilla Minecraft villagers, replacing them with autonomous, humanoid agents possessing:
+CivQuest transforms Minecraft into a living, persistent civilization simulation. Moving beyond simple trading mechanics, it introduces autonomous, humanoid agents that co-exist with vanilla game worlds and entities, possessing:
 - Individual identities, genealogies, and personality traits.
 - Dual-career schedules (primary duty + secondary artisanal hobbies).
 - Dynamic inter-clan relationships, trade caravans, and diplomacy.
@@ -13,14 +13,14 @@ CivQuest transforms Minecraft into a living, persistent civilization simulation.
 flowchart TB
     subgraph Minecraft_JVM ["Minecraft Java Edition Server (NeoForge 21.1.265)"]
         World["Minecraft World & Physics Engine"]
-        Suppressor["Village Suppressor & Starter Camp"]
+        Camp["Pioneer Camp Spawner"]
         Entity["SettlerEntity (FakePlayer Avatar)"]
         Frustum["Sensory Frustum (5 Hz Telemetry Scanner)"]
         Baritone["Baritone API Navigation Wrapper"]
         Netty["Embedded Netty gRPC Server (:50051)"]
 
-        World --> Suppressor
-        Suppressor --> Entity
+        World --> Camp
+        Camp --> Entity
         Entity --> Frustum
         Frustum --> Netty
         Netty --> Baritone
@@ -56,7 +56,7 @@ flowchart TB
 
 ### Component 1: `mod-neoforge`
 The server-side Minecraft mod acts as the sensory input organ and physical actuator. It does not perform high-level cognitive deliberation. Its responsibilities are:
-1. **World Generation Interception**: Datapack override suppressing vanilla village structures, and event handlers canceling `Villager` and `WanderingTrader` entity spawns.
+1. **Starter Camp World Generation**: Generates custom pioneer campfire structures (`civquest:pioneer_campfire`) while preserving vanilla villages and villagers for rich inter-entity co-existence and trade.
 2. **`SettlerEntity`**: Subclassing `FakePlayer` to provide full player simulation (hunger ticking, item usage, combat knockback, equipment slots) for server-side autonomous agents.
 3. **Sensory Frustum**: Gathering visible entities ($R = 24$), interesting blocks ($R = 16$), chat events, and damage frames at 5 Hz.
 4. **Physical Actuation**: Executing navigation intents via Baritone, block interactions (harvesting, paving, sleeping), container transfers, signpost placement, and lectern book insertion.

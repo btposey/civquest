@@ -5,7 +5,7 @@
 You are an autonomous software engineering agent tasked with planning, scaffolding, and implementing **Autonomous Settlers (`settlers-mc`)**—a dual-layer system consisting of a **Minecraft Java Edition (NeoForge 1.21.1+) Server Mod** and an **External Multi-Process Go Agent Orchestrator**.
 
 ### Core Objectives
-1. **Total Villager & Village Replacement**: Suppress all vanilla `minecraft:village_*` world generation and `minecraft:villager` entity spawns. Replace them with autonomous, humanoid `FakePlayer` avatars driven by external Go processes over bidirectional gRPC streams.
+1. **Settlement Generation & Co-existence**: Spawns autonomous, humanoid `FakePlayer` avatars driven by external Go processes over bidirectional gRPC streams, co-existing with vanilla villagers and structures.
 2. **Server-Side FakePlayer Avatars**: Operate using server-side `FakePlayer` instances with offline UUIDs and custom skin textures injected directly into client player-info packets.
 3. **Process-Per-Agent Isolation & XDG Compliance**: Never loop through agents on a single thread. Each settler runs as an independent OS process (`settler-agent`) with dedicated state, logs, UNIX domain sockets, and SQLite databases organized strictly under XDG Base Directory specifications.
 4. **Dual-Process Cognitive Architecture**:
@@ -33,14 +33,14 @@ settlers-mc/
 │       │   ├── SettlersMod.java
 │       │   ├── grpc/                   # gRPC Netty Server & Stream Registry
 │       │   ├── entity/                 # SettlerEntity (FakePlayer) & Skin Injector
-│       │   ├── worldgen/               # Village Suppressor & Starter Camp Spawner
+│       │   ├── worldgen/               # Starter Camp Spawner & Structure Registries
 │       │   ├── navigation/             # Baritone API Wrapper & Caravan Leash Controller
 │       │   ├── actions/                # Block Interaction, Builder, Signpost & Book NBT
 │       │   ├── recipes/                # Modded Recipe DAG Serializer (JEI/RecipeManager)
 │       │   └── client/gui/             # Custom Two-Sided Barter Screen
 │       └── resources/
 │           ├── META-INF/neoforge.mods.toml
-│           └── data/settlers/          # Datapack tags suppressing vanilla villages
+│           └── data/settlers/          # Datapack tags and starter campfire structures
 ├── orchestrator-go/                    # Go 1.23+ Workspace
 │   ├── go.mod
 │   ├── cmd/
@@ -634,10 +634,9 @@ CREATE TABLE IF NOT EXISTS sharecropping_contracts (
 
 ## 5. Component 1: NeoForge Server Mod (`mod-neoforge`)
 
-### 5.1 WorldGen Suppression & Entity Interception
-1. **Datapack Override**: Place a structure set override in `src/main/resources/data/minecraft/worldgen/structure_set/villages.json` with `"structures": []` so vanilla villages never generate.
-2. **Event Interceptor**: Subscribe to `EntityJoinLevelEvent`. If `event.getEntity() instanceof Villager` or `WanderingTrader`, call `event.setCanceled(true)`.
-3. **Starter Camp Generation**: Register a custom Jigsaw structure (`settlers:pioneer_campfire`) that spawns basic campfires, supply crates, and a clan banner where initial agents can be spawned via `settlerctl`.
+### 5.1 Starter Camp Generation & Co-existence
+1. **Vanilla Co-existence**: Leave vanilla villages, villagers, and wandering traders completely untouched, providing avatars with existing in-game entities to encounter, barter with, and protect.
+2. **Starter Camp Generation**: Register a custom Jigsaw structure (`settlers:pioneer_campfire`) that spawns basic campfires, supply crates, and a clan banner where initial agents can be spawned via `settlerctl`.
 
 ### 5.2 `SettlerEntity` (`FakePlayer` Subclass) & Offline Skin Rendering
 1. Extend `net.neoforged.neoforge.common.util.FakePlayer` (or `ServerPlayer` with a dummy `ServerGamePacketListenerImpl` attached to an embedded Netty `Connection` so physics, knockback, hunger, and item use tick identically to real players).
@@ -822,10 +821,10 @@ Execute the implementation in the following sequential phases. Do not advance to
   3. Build `settlerctl agent create` and `settlerctl gateway test`.
 - **Verification**: Run `go test ./internal/...` to verify XDG directory creation, SQLite table migrations, vector insert/query roundtrips, and YAML serialization.
 
-### Phase 2: NeoForge Bridge Mod, WorldGen Override & FakePlayer Puppet
+### Phase 2: NeoForge Bridge Mod, Starter Camp & FakePlayer Puppet
 - **Tasks**:
   1. Scaffold `mod-neoforge` for Minecraft 1.21.1+ with embedded Netty gRPC server on `:50051`.
-  2. Implement vanilla village datapack suppression and `Villager` spawn cancellation.
+  2. Implement starter camp generation while preserving vanilla villages and entities.
   3. Implement `SettlerEntity` (`FakePlayer`), offline UUID generation, custom skin packet broadcasting, 5 Hz `TelemetryFrame` streaming, and Baritone navigation integration.
 - **Verification**: Start NeoForge server, run `settlerctl agent start kaelen --coords "0,70,0"`, verify entity spawns in-game with custom skin, receives 5 Hz telemetry frames, and walks to a target coordinate via `NavigateIntent`.
 

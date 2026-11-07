@@ -5,22 +5,12 @@
 - **Java Version**: OpenJDK 21.
 - **Build System**: Gradle with NeoForge Gradle Plugin (`net.neoforged.gradle.userdev`).
 
-## 2. WorldGen Suppression & Interception
-To ensure complete replacement of vanilla villagers:
-1. **Datapack Override**:
-   File `src/main/resources/data/minecraft/worldgen/structure_set/villages.json` defines `"structures": []`. This prevents the vanilla world generator from placing village structures during chunk creation.
-2. **Spawn Cancellation**:
-   Event listener on `EntityJoinLevelEvent`:
-   ```java
-   @SubscribeEvent
-   public void onEntityJoin(EntityJoinLevelEvent event) {
-       if (event.getEntity() instanceof Villager || event.getEntity() instanceof WanderingTrader) {
-           event.setCanceled(true);
-       }
-   }
-   ```
-3. **Pioneer Camp Spawner**:
-   A custom jigsaw feature (`civquest:pioneer_campfire`) creates an initial starter camp (campfire, supply crates, clan banner) where initial agents can be spawned.
+## 2. WorldGen Integration & Co-existence
+CivQuest preserves vanilla villages and villager entities so players and settlers can interact with them. Rather than suppressing vanilla world generation, the mod introduces custom clan starter structures:
+1. **Pioneer Camp Spawner**:
+   A custom jigsaw feature (`civquest:pioneer_campfire`) creates an initial starter camp (campfire, supply crates, clan banner) where initial agents can be spawned and establish their settlements.
+2. **Vanilla Co-existence**:
+   Vanilla villages, villagers, and wandering traders spawn naturally, giving autonomous avatars additional in-game entities to encounter, barter with, and protect.
 
 ## 3. `SettlerEntity` (`FakePlayer`) Lifecycle
 `SettlerEntity` extends `net.neoforged.neoforge.common.util.FakePlayer` (or `ServerPlayer` attached to a headless virtual `ServerGamePacketListenerImpl`):
