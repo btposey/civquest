@@ -1,113 +1,216 @@
 package main
 
 import (
+	"context"
+	"errors"
 	"flag"
 	"fmt"
-	"net"
+	"io"
 	"os"
 	"os/signal"
-	"path/filepath"
 	"syscall"
 
+	"github.com/btposey/civquest/orchestrator-go/internal/agent"
+	"github.com/btposey/civquest/orchestrator-go/internal/bridge"
+	"github.com/btposey/civquest/orchestrator-go/internal/db"
+	civquestv1 "github.com/btposey/civquest/orchestrator-go/internal/proto/v1"
 	"github.com/btposey/civquest/orchestrator-go/internal/xdg"
 )
 
 func main() {
-	agentName := flag.String("name", "aria", "Agent avatar identifier")
-	configPath := flag.String("config", "", "Explicit path to agent YAML configuration")
-	flag.Parse()
+	if err := run(context.Background(), os.Args[1:], os.Stdout, os.Stderr, nil); err != nil {
+		fmt.Fprintf(os.Stderr, "[-] Fatal error: %v\n", err)
+		os.Exit(1)
+	}
+}
 
-	r := xdg.DefaultResolver()
+func run(parentCtx context.Context, args []string, stdout, stderr io.Writer, r *xdg.Resolver) error {
+	flags := flag.NewFlagSet("civquest-agent", flag.ContinueOnError)
+	flags.SetOutput(stderr)
 
+	agentIDFlag := flags.String("agent-id", "aria", "Agent avatar identifier")
+	nameFlag := flags.String("name", "", "Agent avatar identifier (alias for --agent-id)")
+	configPathFlag := flags.String("config", "", "Explicit path to agent YAML configuration")
+	grpcAddrFlag := flags.String("grpc-addr", "", "CivQuest gRPC bridge server address (defaults to global config or 127.0.0.1:50051)")
+	sharedKeyFlag := flags.String("shared-key", "", "Shared secret authentication key (ADR-012)")
+	authTokenFlag := flags.String("auth-token", "", "Shared secret authentication key (alias for --shared-key)")
+	socketPathFlag := flags.String("socket-path", "", "Override UNIX domain socket path")
+
+	if err := flags.Parse(args); err != nil {
+		return err
+	}
+
+	// Resolve agent ID taking flag priority into account
+	agentID := "aria"
+	var agentIDSet, nameSet bool
+	flags.Visit(func(f *flag.Flag) {
+		if f.Name == "agent-id" {
+			agentIDSet = true
+		}
+		if f.Name == "name" {
+			nameSet = true
+		}
+	})
+	if agentIDSet {
+		agentID = *agentIDFlag
+	} else if nameSet {
+		agentID = *nameFlag
+	} else if *agentIDFlag != "" {
+		agentID = *agentIDFlag
+	}
+
+	if err := xdg.ValidateAgentName(agentID); err != nil {
+		return fmt.Errorf("invalid agent identifier %q: %w", agentID, err)
+	}
+
+	if r == nil {
+		r = xdg.DefaultResolver()
+	}
+
+	// Load or create agent identity YAML profile
 	var cfg *xdg.AgentIdentityConfig
 	var err error
-	if *configPath != "" {
-		cfg, err = xdg.LoadAgentConfig(*configPath)
+	if *configPathFlag != "" {
+		cfg, err = xdg.LoadAgentConfig(*configPathFlag)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "[-] Failed loading agent config from %s: %v\n", *configPath, err)
-			os.Exit(1)
+			return fmt.Errorf("loading agent config from %s: %w", *configPathFlag, err)
 		}
 	} else {
-		cfg, err = r.LoadAgentConfig(*agentName)
+		cfg, err = r.LoadAgentConfig(agentID)
 		if err != nil {
-			// If not found in config dir, create a default profile for this run
-			cfg = xdg.DefaultAgentIdentityConfig(*agentName)
+			if !errors.Is(err, os.ErrNotExist) {
+				return fmt.Errorf("loading agent config for %s: %w", agentID, err)
+			}
+			// If not found in config dir, generate a default profile for this run
+			cfg = xdg.DefaultAgentIdentityConfig(agentID)
 			cfg.ClanID = "pioneers"
 			cfg.Profession = "EXPLORER"
 		}
 	}
 
-	// Initialize agent-specific directories ($XDG_DATA_HOME/civquest/agents/{name}, etc.)
+	// Initialize agent-specific XDG directories ($XDG_DATA_HOME/civquest/agents/{name}, etc.)
 	if err := r.InitAgentDirectories(cfg.Name); err != nil {
-		fmt.Fprintf(os.Stderr, "[-] Failed initializing directories for agent %s: %v\n", cfg.Name, err)
-		os.Exit(1)
+		return fmt.Errorf("initializing directories for agent %s: %w", cfg.Name, err)
 	}
 
-	// Load global config if present
+	// Resolve gRPC and SharedKey from flags, global config, or discovery artifact
 	globalCfg, _ := r.LoadGlobalConfig()
-	grpcAddr := "127.0.0.1:50051"
-	llmGateway := "http://127.0.0.1:11434/v1"
-	if globalCfg != nil {
+	grpcAddr := *grpcAddrFlag
+	if grpcAddr == "" && globalCfg != nil {
 		grpcAddr = globalCfg.GRPC.Address()
-		llmGateway = globalCfg.LLMGateway.BaseURL
 	}
 
-	fmt.Println("======================================================================")
-	fmt.Printf(" [civquest-agent] Starting Avatar: %s (PID: %d)\n", cfg.Name, os.Getpid())
-	fmt.Println("======================================================================")
-	fmt.Printf(" Clan:           %s\n", cfg.ClanID)
-	fmt.Printf(" Profession:     %s\n", cfg.Profession)
-	if cfg.SecondaryHobby != "" {
-		fmt.Printf(" Secondary:      %s\n", cfg.SecondaryHobby)
+	sharedKey := *sharedKeyFlag
+	if sharedKey == "" {
+		sharedKey = *authTokenFlag
 	}
-	fmt.Printf(" Personality:    Bravery=%.2f Industriousness=%.2f Sociability=%.2f Curiosity=%.2f Aggressiveness=%.2f\n",
-		cfg.Traits.Bravery, cfg.Traits.Industriousness, cfg.Traits.Sociability, cfg.Traits.Curiosity, cfg.Traits.Aggressiveness)
-	fmt.Printf(" gRPC Target:    %s\n", grpcAddr)
-	fmt.Printf(" LLM Gateway:    %s\n", llmGateway)
 
-	// Set up UNIX domain socket in $XDG_STATE_HOME/civquest/agents/{name}.sock
-	sockPath := r.AgentSocketPath(cfg.Name)
-	var listener net.Listener
-	if err := os.MkdirAll(filepath.Dir(sockPath), 0750); err == nil {
-		_ = os.Remove(sockPath)
-		var listenErr error
-		listener, listenErr = net.Listen("unix", sockPath)
-		if listenErr == nil {
-			defer func() {
-				if listener != nil {
-					_ = listener.Close()
-				}
-				_ = os.Remove(sockPath)
-			}()
-			fmt.Printf(" IPC Socket:     %s\n", sockPath)
-
-			// Handle incoming socket connections asynchronously
-			go func() {
-				for {
-					conn, err := listener.Accept()
-					if err != nil {
-						return
-					}
-					response := fmt.Sprintf(`{"agent":"%s","clan":"%s","status":"OK","pid":%d}`+"\n",
-						cfg.Name, cfg.ClanID, os.Getpid())
-					_, _ = conn.Write([]byte(response))
-					_ = conn.Close()
-				}
-			}()
+	// Attempt discovery artifact lookup if gRPC address or shared key are still unset
+	if grpcAddr == "" || sharedKey == "" {
+		if meta, discErr := bridge.ReadDiscovery(""); discErr == nil && meta.IsReady() {
+			if grpcAddr == "" {
+				grpcAddr = meta.Addr()
+			}
+			if sharedKey == "" {
+				sharedKey = meta.SharedKey
+			}
 		}
 	}
 
-	fmt.Println("======================================================================")
-	fmt.Println("[civquest-agent] Settler loop active. Waiting for sensory frustum frames...")
+	if grpcAddr == "" {
+		grpcAddr = "127.0.0.1:50051"
+	}
 
-	// Listen for termination signals
+	llmGateway := "http://127.0.0.1:11434/v1"
+	if globalCfg != nil && globalCfg.LLMGateway.BaseURL != "" {
+		llmGateway = globalCfg.LLMGateway.BaseURL
+	}
+
+	fmt.Fprintln(stdout, "======================================================================")
+	fmt.Fprintf(stdout, " [civquest-agent] Starting Settler Avatar: %s (PID: %d)\n", cfg.Name, os.Getpid())
+	fmt.Fprintln(stdout, "======================================================================")
+	fmt.Fprintf(stdout, " Clan:           %s\n", cfg.ClanID)
+	fmt.Fprintf(stdout, " Profession:     %s\n", cfg.Profession)
+	if cfg.SecondaryHobby != "" {
+		fmt.Fprintf(stdout, " Secondary:      %s\n", cfg.SecondaryHobby)
+	}
+	fmt.Fprintf(stdout, " Personality:    Bravery=%.2f Industriousness=%.2f Sociability=%.2f Curiosity=%.2f Aggressiveness=%.2f\n",
+		cfg.Traits.Bravery, cfg.Traits.Industriousness, cfg.Traits.Sociability, cfg.Traits.Curiosity, cfg.Traits.Aggressiveness)
+	fmt.Fprintf(stdout, " gRPC Target:    %s\n", grpcAddr)
+	if sharedKey != "" {
+		fmt.Fprintf(stdout, " Authentication: Shared-Key Bearer Token (ADR-012)\n")
+	} else {
+		fmt.Fprintf(stdout, " Authentication: None\n")
+	}
+	fmt.Fprintf(stdout, " LLM Gateway:    %s\n", llmGateway)
+
+	// Open per-agent SQLite database (memory.db and map_graph.db with sqlite-vec)
+	agentDB, err := db.OpenAgentDBForAgent(r, cfg.Name)
+	if err != nil {
+		return fmt.Errorf("opening agent database: %w", err)
+	}
+	defer agentDB.Close()
+
+	// Dial gRPC bridge with shared key
+	bridgeClient, err := bridge.NewClient(grpcAddr, sharedKey)
+	if err != nil {
+		return fmt.Errorf("creating gRPC bridge client for %s: %w", grpcAddr, err)
+	}
+	defer bridgeClient.Close()
+
+	sockPath := *socketPathFlag
+	if sockPath == "" {
+		sockPath = r.AgentSocketPath(cfg.Name)
+	}
+
+	rt, err := agent.NewRuntime(agent.Config{
+		AgentID:        cfg.Name,
+		ClanID:         cfg.ClanID,
+		IdentityConfig: cfg,
+		Resolver:       r,
+		AgentDB:        agentDB,
+		BridgeClient:   bridgeClient,
+		SocketPath:     sockPath,
+		OnDeath: func(e *civquestv1.DeathEvent) {
+			fmt.Fprintf(stdout, "[civquest-agent] Permadeath event recorded at tick %d (cause: %s)\n",
+				e.GetWorldTick(), e.GetDamageSource())
+		},
+	})
+	if err != nil {
+		return fmt.Errorf("creating agent runtime: %w", err)
+	}
+
+	fmt.Fprintf(stdout, " IPC Socket:     %s\n", rt.SocketPath())
+	fmt.Fprintln(stdout, "======================================================================")
+	fmt.Fprintln(stdout, "[civquest-agent] Settler runtime active. Connecting telemetry stream...")
+
+	// Listen for termination signals (SIGINT, SIGTERM)
+	ctx, cancel := context.WithCancel(parentCtx)
+	defer cancel()
+
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
-	sig := <-sigChan
+	defer signal.Stop(sigChan)
 
-	fmt.Printf("[civquest-agent] Received signal %v. Performing clean agent shutdown...\n", sig)
-	if listener != nil {
-		_ = listener.Close()
+	go func() {
+		select {
+		case sig := <-sigChan:
+			fmt.Fprintf(stdout, "\n[civquest-agent] Received signal %v. Performing clean agent shutdown...\n", sig)
+			cancel()
+		case <-ctx.Done():
+		}
+	}()
+
+	runErr := rt.Start(ctx)
+	if rt.IsDead() {
+		fmt.Fprintf(stdout, "[civquest-agent] Agent %s has died. Clean permadeath exit code 0.\n", cfg.Name)
+		return nil
 	}
-	_ = os.Remove(sockPath)
+
+	if runErr != nil && ctx.Err() == nil {
+		return fmt.Errorf("agent runtime error: %w", runErr)
+	}
+
+	fmt.Fprintln(stdout, "[civquest-agent] Agent runtime terminated cleanly.")
+	return nil
 }
