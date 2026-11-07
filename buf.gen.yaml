@@ -1,0 +1,10 @@
+version: v2
+plugins:
+  - local: protoc-gen-go
+    out: orchestrator-go
+    opt:
+      - module=github.com/btposey/civquest/orchestrator-go
+  - local: protoc-gen-go-grpc
+    out: orchestrator-go
+    opt:
+      - module=github.com/btposey/civquest/orchestrator-go

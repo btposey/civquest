@@ -1,0 +1,314 @@
+syntax = "proto3";
+
+package civquest.v1;
+
+option go_package = "github.com/btposey/civquest/orchestrator-go/internal/proto/v1;civquestv1";
+option java_package = "com.civquest.mod.grpc.v1";
+option java_multiple_files = true;
+
+// CivQuestBridgeService defines the gRPC bridge between the Minecraft NeoForge mod and external orchestrators.
+service CivQuestBridgeService {
+  // Primary per-agent bidirectional control and telemetry stream
+  rpc ConnectAgent(stream AgentIntent) returns (stream TelemetryFrame);
+
+  // Administrative RPCs called by civctl supervisor
+  rpc SpawnAgentEntity(SpawnAgentRequest) returns (SpawnAgentResponse);
+  rpc DespawnAgentEntity(DespawnAgentRequest) returns (DespawnAgentResponse);
+  rpc ExportRecipeGraph(ExportRecipeRequest) returns (ExportRecipeResponse);
+}
+
+// ==================== COMMON PRIMITIVES ====================
+
+message Vec3 {
+  double x = 1;
+  double y = 2;
+  double z = 3;
+}
+
+message BlockPosProto {
+  int32 x = 1;
+  int32 y = 2;
+  int32 z = 3;
+}
+
+message BoundingBoxProto {
+  BlockPosProto min = 1;
+  BlockPosProto max = 2;
+}
+
+message ItemStackProto {
+  string item_id = 1;           // e.g., "minecraft:iron_ingot", "farmersdelight:tomato_soup"
+  int32 count = 2;
+  int32 slot = 3;
+  int32 durability = 4;
+  int32 max_durability = 5;
+  string custom_name = 6;
+}
+
+// ==================== ADMINISTRATIVE RPCS ====================
+
+message SpawnAgentRequest {
+  string agent_id = 1;
+  string display_name = 2;
+  string clan_id = 3;
+  Vec3 spawn_coords = 4;
+  bytes skin_png_bytes = 5;
+  string skin_texture_value = 6;
+  string skin_signature = 7;
+  bool is_child = 8;
+}
+
+message SpawnAgentResponse {
+  bool success = 1;
+  int32 minecraft_entity_id = 2;
+  string offline_uuid = 3;
+  string error_message = 4;
+}
+
+message DespawnAgentRequest {
+  string agent_id = 1;
+  string reason = 2;
+}
+
+message DespawnAgentResponse {
+  bool success = 1;
+}
+
+message ExportRecipeRequest {}
+
+message RecipeNode {
+  string recipe_id = 1;
+  string recipe_type = 2;       // e.g., "minecraft:crafting_shaped", "farmersdelight:cooking"
+  string workstation_block = 3; // e.g., "minecraft:crafting_table", "farmersdelight:cooking_pot"
+  repeated ItemStackProto ingredients = 4;
+  ItemStackProto result = 5;
+}
+
+message ExportRecipeResponse {
+  repeated RecipeNode recipes = 1;
+}
+
+// ==================== TELEMETRY (Server -> Agent @ 5 Hz) ====================
+
+message TelemetryFrame {
+  int64 world_tick = 1;
+  int64 time_of_day = 2;        // 0 - 24000 tick cycle
+  string weather = 3;           // "CLEAR", "RAIN", "THUNDER"
+  string biome_id = 4;
+  AgentStatus status = 5;
+  repeated VisibleEntity visible_entities = 6;
+  repeated VisibleBlock interesting_blocks = 7;
+  repeated ChatEvent incoming_chats = 8;
+  DamageEvent last_damage_taken = 9;
+  TradeRequest pending_trade = 10;
+  FarmlandSurveyEvent farmland_survey = 11;
+  LandmarkContext current_landmark = 12;
+  DeathEvent death_event = 13;  // Terminal event triggering permadeath teardown
+}
+
+message AgentStatus {
+  string agent_id = 1;
+  int32 entity_id = 2;
+  Vec3 position = 3;
+  float yaw = 4;
+  float pitch = 5;
+  float health = 6;
+  float max_health = 7;
+  int32 food_level = 8;         // 0 - 20
+  float saturation = 9;
+  bool is_sleeping = 10;
+  bool is_in_water = 11;
+  bool is_on_fire = 12;
+  string navigation_state = 13; // "IDLE", "PATHING", "STUCK", "ARRIVED", "BUILDING"
+  repeated ItemStackProto inventory = 14;
+  repeated int32 leashed_entity_ids = 15;
+}
+
+message VisibleEntity {
+  int32 entity_id = 1;
+  string uuid = 2;
+  string entity_type = 3;       // e.g., "minecraft:player", "minecraft:zombie", "minecraft:mule"
+  string display_name = 4;
+  Vec3 position = 5;
+  float distance = 6;
+  float health = 7;
+  bool is_hostile = 8;
+  bool is_tamed = 9;
+  string held_item_id = 10;
+  int32 fuse_ticks = 11;        // > 0 if Creeper is hissing
+}
+
+message VisibleBlock {
+  BlockPosProto pos = 1;
+  string block_id = 2;
+  map<string, string> block_state_props = 3; // e.g., {"age": "7", "honey_level": "5"}
+}
+
+message ChatEvent {
+  string sender_uuid = 1;
+  string sender_name = 2;
+  string message = 3;
+  float distance = 4;
+}
+
+message DamageEvent {
+  string source_type = 1;       // "mob", "player", "arrow", "fall", "explosion", "lava"
+  int32 attacker_entity_id = 2;
+  string attacker_uuid = 3;
+  string attacker_name = 4;
+  float damage_amount = 5;
+}
+
+message TradeRequest {
+  int32 player_entity_id = 1;
+  string player_uuid = 2;
+  string player_name = 3;
+  repeated ItemStackProto player_offered_items = 4;
+  string spoken_proposal = 5;
+}
+
+message FarmlandSurveyEvent {
+  BoundingBoxProto bounds = 1;
+  string primary_crop_id = 2;
+  int32 mature_crop_count = 3;
+  int32 total_farmland_blocks = 4;
+  string inferred_owner_uuid = 5;
+}
+
+message LandmarkContext {
+  string landmark_id = 1;
+  string display_name = 2;
+  string category = 3;
+}
+
+message DeathEvent {
+  string agent_id = 1;
+  int64 world_tick = 2;
+  Vec3 death_location = 3;
+  string damage_source = 4;
+  int32 killer_entity_id = 5;
+  string killer_uuid = 6;
+  string killer_display_name = 7;
+  repeated ItemStackProto dropped_loot = 8;
+}
+
+// ==================== INTENTS (Agent -> Server) ====================
+
+message AgentIntent {
+  string agent_id = 1;
+  int64 sequence_id = 2;
+  oneof action {
+    NavigateIntent navigate = 3;
+    AttackIntent attack = 4;
+    InteractBlockIntent interact_block = 5;
+    UseItemIntent use_item = 6;
+    CraftItemIntent craft_item = 7;
+    SendChatIntent chat = 8;
+    RespondTradeIntent trade_response = 9;
+    CaravanIntent caravan = 10;
+    BuildBlockIntent build_block = 11;
+    CreateWrittenBookIntent create_book = 12;
+    PlaceSignpostIntent place_signpost = 13;
+    TransferContainerIntent transfer_container = 14;
+  }
+}
+
+message NavigateIntent {
+  Vec3 target = 1;
+  float speed_multiplier = 2;
+  bool sprint = 3;
+  bool allow_break_blocks = 4;
+  bool allow_place_scaffolding = 5;
+  int32 arrival_tolerance = 6;
+}
+
+message AttackIntent {
+  int32 target_entity_id = 1;
+  bool raise_shield = 2;
+  bool keep_distance_kite = 3;
+  bool flee_immediately = 4;
+}
+
+message InteractBlockIntent {
+  enum InteractionType {
+    HARVEST_BREAK = 0;
+    PLACE_BLOCK = 1;
+    SLEEP_IN_BED = 2;
+    WAKE_UP = 3;
+    USE_WORKSTATION = 4;
+    RING_BELL = 5;
+    SHEAR_OR_BOTTLE_BEEHIVE = 6;
+    PAVE_ROAD_PATH = 7;
+  }
+  BlockPosProto pos = 1;
+  InteractionType interaction_type = 2;
+  string block_or_item_id = 3;
+}
+
+message UseItemIntent {
+  int32 inventory_slot = 1;
+  bool is_eating_or_drinking = 2;
+  bool equip_armor_or_offhand = 3;
+}
+
+message CraftItemIntent {
+  string recipe_id = 1;
+  BlockPosProto workstation_pos = 2;
+  int32 batch_count = 3;
+}
+
+message SendChatIntent {
+  string message = 1;
+  string target_channel = 2;    // "LOCAL", "CLAN_BROADCAST"
+}
+
+message RespondTradeIntent {
+  int32 player_entity_id = 1;
+  bool accept_deal = 2;
+  repeated ItemStackProto agent_counter_offer = 3;
+  repeated ItemStackProto demanded_from_player = 4;
+  string spoken_response = 5;
+}
+
+message CaravanIntent {
+  enum CaravanAction {
+    LEASH_BEAST = 0;
+    UNLEASH_BEAST = 1;
+    HITCH_TO_FENCE = 2;
+    LOAD_BEAST_CHEST = 3;
+    UNLOAD_BEAST_CHEST = 4;
+  }
+  CaravanAction action = 1;
+  int32 beast_entity_id = 2;
+  BlockPosProto fence_pos = 3;
+  repeated ItemStackProto cargo_items = 4;
+}
+
+message BuildBlockIntent {
+  BlockPosProto target_voxel = 1;
+  string block_state_string = 2; // e.g., "minecraft:stone_brick_stairs[facing=north,half=bottom]"
+  bool is_temporary_scaffold = 3;
+}
+
+message CreateWrittenBookIntent {
+  string title = 1;             // Max 32 chars
+  string author = 2;
+  repeated string pages = 3;    // Max 100 pages, <= 250 chars & <= 14 lines per page
+  BlockPosProto target_lectern_or_shelf = 4;
+  int32 bookshelf_slot = 5;     // 0 - 5 for chiseled bookshelf
+}
+
+message PlaceSignpostIntent {
+  BlockPosProto pos = 1;
+  bool is_hanging_sign = 2;
+  string line1 = 3;             // Max 15 chars
+  string line2 = 4;
+  string line3 = 5;
+  string line4 = 6;
+}
+
+message TransferContainerIntent {
+  BlockPosProto container_pos = 1;
+  bool deposit_into_container = 2; // true = deposit, false = withdraw
+  repeated ItemStackProto items = 3;
+}

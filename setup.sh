@@ -45,9 +45,16 @@ if [ ! -d "${SDKMAN_DIR}/candidates/java/${TARGET_JDK}" ]; then
     sdk install java "${TARGET_JDK}" </dev/null
 fi
 sdk default java "${TARGET_JDK}" </dev/null || true
+
+TARGET_GRADLE="8.10.2"
+if ! command -v gradle >/dev/null 2>&1; then
+    echo "    Installing Gradle ${TARGET_GRADLE} via SDKMAN..."
+    sdk install gradle "${TARGET_GRADLE}" </dev/null || true
+fi
 set -u
 
 echo "    ✓ Java managed via SDKMAN ($(java -version 2>&1 | head -n 1))"
+echo "    ✓ Gradle managed via SDKMAN ($(gradle --version 2>&1 | head -n 3 | tail -n 1))"
 
 # ------------------------------------------------------------------------------
 # 2. Check Go (Go 1.23+ required)
@@ -93,12 +100,26 @@ else
 fi
 
 # ------------------------------------------------------------------------------
-# 4. Install Go Protobuf & gRPC Code Generation Plugins
+# 4. Install Protobuf & gRPC Code Generation Plugins
 # ------------------------------------------------------------------------------
-echo "[+] Installing Go Protobuf plugins..."
+echo "[+] Installing Protobuf & gRPC plugins..."
 go install google.golang.org/protobuf/cmd/protoc-gen-go@latest
 go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@latest
 echo "    ✓ Go protobuf plugins ready in \$(go env GOPATH)/bin"
+
+GRPC_JAVA_VERSION="1.68.1"
+if [ ! -f "${LOCAL_BIN}/protoc-gen-grpc-java" ]; then
+    echo "    Downloading protoc-gen-grpc-java v${GRPC_JAVA_VERSION}..."
+    GRPC_JAVA_EXE="protoc-gen-grpc-java-${GRPC_JAVA_VERSION}-linux-x86_64.exe"
+    if [ "${ARCH_GO}" = "arm64" ]; then
+        GRPC_JAVA_EXE="protoc-gen-grpc-java-${GRPC_JAVA_VERSION}-linux-aarch_64.exe"
+    fi
+    curl -sSL -o "${LOCAL_BIN}/protoc-gen-grpc-java" "https://repo1.maven.org/maven2/io/grpc/protoc-gen-grpc-java/${GRPC_JAVA_VERSION}/${GRPC_JAVA_EXE}"
+    chmod +x "${LOCAL_BIN}/protoc-gen-grpc-java"
+    echo "    ✓ Installed protoc-gen-grpc-java to ${LOCAL_BIN}/protoc-gen-grpc-java"
+else
+    echo "    ✓ protoc-gen-grpc-java already installed"
+fi
 
 # ------------------------------------------------------------------------------
 # 5. Check Beads (bd)
