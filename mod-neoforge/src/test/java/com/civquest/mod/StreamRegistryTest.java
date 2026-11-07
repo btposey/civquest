@@ -3,7 +3,11 @@ package com.civquest.mod;
 import com.civquest.mod.grpc.v1.AgentIntent;
 import com.civquest.mod.grpc.v1.AgentStatus;
 import com.civquest.mod.grpc.v1.AttackIntent;
+import com.civquest.mod.grpc.v1.DespawnAgentRequest;
+import com.civquest.mod.grpc.v1.DespawnAgentResponse;
 import com.civquest.mod.grpc.v1.TelemetryFrame;
+import io.grpc.Status;
+import io.grpc.stub.ServerCallStreamObserver;
 import io.grpc.stub.StreamObserver;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -59,6 +63,67 @@ public class StreamRegistryTest {
                 throw new RuntimeException("Simulated complete error");
             }
             completed.set(true);
+        }
+    }
+
+    static class TestServerCallStreamObserver<T> extends ServerCallStreamObserver<T> {
+        final List<T> receivedFrames = new CopyOnWriteArrayList<>();
+        final AtomicBoolean completed = new AtomicBoolean(false);
+        final AtomicReference<Throwable> error = new AtomicReference<>(null);
+        volatile boolean ready = true;
+        volatile Runnable cancelHandler;
+        volatile boolean cancelled = false;
+
+        @Override
+        public boolean isCancelled() {
+            return cancelled;
+        }
+
+        @Override
+        public void setOnCancelHandler(Runnable onCancelHandler) {
+            this.cancelHandler = onCancelHandler;
+        }
+
+        @Override
+        public void setCompression(String compression) {}
+
+        @Override
+        public boolean isReady() {
+            return ready;
+        }
+
+        @Override
+        public void setOnReadyHandler(Runnable onReadyHandler) {}
+
+        @Override
+        public void disableAutoInboundFlowControl() {}
+
+        @Override
+        public void request(int count) {}
+
+        @Override
+        public void setMessageCompression(boolean enable) {}
+
+        @Override
+        public void onNext(T value) {
+            receivedFrames.add(value);
+        }
+
+        @Override
+        public void onError(Throwable t) {
+            error.set(t);
+        }
+
+        @Override
+        public void onCompleted() {
+            completed.set(true);
+        }
+
+        public void triggerCancel() {
+            cancelled = true;
+            if (cancelHandler != null) {
+                cancelHandler.run();
+            }
         }
     }
 
@@ -352,5 +417,245 @@ public class StreamRegistryTest {
         // Server stop must invoke streamRegistry.closeAll()
         assertEquals(0, registry.getActiveAgentCount());
         assertTrue(observer.completed.get(), "Observer must be marked completed on server stop");
+    }
+
+    @Test
+    @DisplayName("close(agentId) atomically unregisters and completes observer")
+    void testCloseIndividualAgent() {
+        StreamRegistry registry = new StreamRegistry();
+        RecordingObserver obs1 = new RecordingObserver();
+        RecordingObserver obs2 = new RecordingObserver();
+
+        registry.register("agent-1", obs1);
+        registry.register("agent-2", obs2);
+        assertEquals(2, registry.getActiveAgentCount());
+
+        // Close agent-1 completes obs1 and removes it
+        assertTrue(registry.close("agent-1"));
+        assertTrue(obs1.completed.get(), "obs1 must be completed on close");
+        assertFalse(registry.isRegistered("agent-1"));
+        assertEquals(1, registry.getActiveAgentCount());
+
+        // Closing again returns false
+        assertFalse(registry.close("agent-1"));
+        assertFalse(registry.close(null));
+
+        // Exact match close overload
+        assertFalse(registry.close("agent-2", obs1), "Closing with mismatching observer must return false");
+        assertFalse(obs2.completed.get());
+        assertTrue(registry.isRegistered("agent-2"));
+
+        assertTrue(registry.close("agent-2", obs2), "Closing with matching observer must return true");
+        assertTrue(obs2.completed.get(), "obs2 must be completed on close");
+        assertFalse(registry.isRegistered("agent-2"));
+        assertEquals(0, registry.getActiveAgentCount());
+    }
+
+    @Test
+    @DisplayName("DespawnAgentEntity in CivQuestBridgeServiceImpl closes agent stream")
+    void testDespawnAgentEntityClosesStream() {
+        StreamRegistry registry = new StreamRegistry();
+        CivQuestBridgeServiceImpl service = new CivQuestBridgeServiceImpl(registry);
+
+        RecordingObserver streamObserver = new RecordingObserver();
+        registry.register("agent-despawn", streamObserver);
+        assertTrue(registry.isRegistered("agent-despawn"));
+
+        RecordingObserver despawnResponseObserver = new RecordingObserver();
+        service.despawnAgentEntity(
+                DespawnAgentRequest.newBuilder().setAgentId("agent-despawn").build(),
+                new StreamObserver<>() {
+                    @Override
+                    public void onNext(DespawnAgentResponse value) {
+                        assertTrue(value.getSuccess());
+                    }
+
+                    @Override
+                    public void onError(Throwable t) {
+                        fail("Unexpected despawn error: " + t.getMessage());
+                    }
+
+                    @Override
+                    public void onCompleted() {}
+                }
+        );
+
+        assertFalse(registry.isRegistered("agent-despawn"), "Agent must be closed and removed after despawn");
+        assertTrue(streamObserver.completed.get(), "Agent stream observer must be completed on despawn");
+    }
+
+    @Test
+    @DisplayName("Duplicate registration cleanly completes superseded observer")
+    void testDuplicateRegistrationCompletesReplacedObserver() {
+        StreamRegistry registry = new StreamRegistry();
+        RecordingObserver obs1 = new RecordingObserver();
+        RecordingObserver obs2 = new RecordingObserver();
+
+        assertTrue(registry.register("agent-dup", obs1));
+        assertFalse(obs1.completed.get());
+
+        // Registering obs2 replaces obs1 and completes obs1
+        assertFalse(registry.register("agent-dup", obs2));
+        assertTrue(obs1.completed.get(), "Superseded observer must be completed");
+        assertFalse(obs2.completed.get(), "New observer must remain open");
+        assertSame(obs2, registry.getObserver("agent-dup"));
+
+        // Re-registering the same observer does not complete it
+        assertFalse(registry.register("agent-dup", obs2));
+        assertFalse(obs2.completed.get(), "Re-registering same observer instance should not complete it");
+    }
+
+    @Test
+    @DisplayName("Registration is rejected and completes observer post-closeAll")
+    void testRegistrationRejectionPostCloseAll() {
+        StreamRegistry registry = new StreamRegistry();
+        assertFalse(registry.isClosed());
+
+        registry.closeAll();
+        assertTrue(registry.isClosed());
+
+        // Subsequent closeAll is idempotent
+        registry.closeAll();
+        assertTrue(registry.isClosed());
+
+        RecordingObserver lateObserver = new RecordingObserver();
+        boolean registered = registry.register("agent-late", lateObserver);
+
+        assertFalse(registered, "Registering on closed registry must return false");
+        assertTrue(lateObserver.completed.get(), "Observer passed to closed registry must be completed");
+        assertEquals(0, registry.getActiveAgentCount());
+        assertFalse(registry.isRegistered("agent-late"));
+
+        TelemetryFrame frame = createSampleFrame(50, 20.0f);
+        assertFalse(registry.sendFrame("agent-late", frame));
+        assertEquals(0, registry.broadcastFrame(frame));
+    }
+
+    @Test
+    @DisplayName("Flow control drops stale telemetry frames when observer is not ready (backpressure)")
+    void testFlowControlBackpressureDropsStaleFrame() {
+        StreamRegistry registry = new StreamRegistry();
+        TestServerCallStreamObserver<TelemetryFrame> slowObserver = new TestServerCallStreamObserver<>();
+        RecordingObserver normalObserver = new RecordingObserver();
+
+        registry.register("agent-slow", slowObserver);
+        registry.register("agent-normal", normalObserver);
+
+        TelemetryFrame frame1 = createSampleFrame(1, 20.0f);
+        assertTrue(registry.sendFrame("agent-slow", frame1));
+        assertEquals(1, slowObserver.receivedFrames.size());
+
+        // Simulate backpressure: client buffer full
+        slowObserver.ready = false;
+
+        TelemetryFrame frame2 = createSampleFrame(2, 19.0f);
+        boolean sent = registry.sendFrame("agent-slow", frame2);
+        assertFalse(sent, "sendFrame must drop frame and return false when observer is not ready");
+        assertEquals(1, slowObserver.receivedFrames.size(), "Stale frame must not be delivered");
+        assertTrue(registry.isRegistered("agent-slow"), "Backpressured agent must NOT be evicted from registry");
+
+        // Broadcast should deliver to normalObserver while skipping backpressured slowObserver
+        TelemetryFrame frame3 = createSampleFrame(3, 18.0f);
+        int delivered = registry.broadcastFrame(frame3);
+        assertEquals(1, delivered, "Broadcast must only deliver to ready observer");
+        assertEquals(1, slowObserver.receivedFrames.size());
+        assertEquals(1, normalObserver.receivedFrames.size());
+
+        // Simulate client catching up: stream becomes ready again
+        slowObserver.ready = true;
+        TelemetryFrame frame4 = createSampleFrame(4, 17.0f);
+        assertTrue(registry.sendFrame("agent-slow", frame4));
+        assertEquals(2, slowObserver.receivedFrames.size());
+    }
+
+    @Test
+    @DisplayName("Agent ID mutation attempts on an established stream are rejected with PERMISSION_DENIED")
+    void testAgentIdMutationRejectedWithPermissionDenied() {
+        StreamRegistry registry = new StreamRegistry();
+        CivQuestBridgeServiceImpl service = new CivQuestBridgeServiceImpl(registry);
+
+        RecordingObserver responseObserver = new RecordingObserver();
+        StreamObserver<AgentIntent> requestObserver = service.connectAgent(responseObserver);
+
+        // Bind stream to agent-alpha on first valid intent
+        requestObserver.onNext(AgentIntent.newBuilder()
+                .setAgentId("agent-alpha")
+                .build());
+
+        assertTrue(registry.isRegistered("agent-alpha"));
+        assertNull(responseObserver.error.get());
+
+        // Subsequent intent with same agent ID is accepted
+        requestObserver.onNext(AgentIntent.newBuilder()
+                .setAgentId("agent-alpha")
+                .setAttack(AttackIntent.newBuilder().setTargetEntityId(10).build())
+                .build());
+        assertNull(responseObserver.error.get());
+
+        // Attempting to mutate stream to agent-bravo must be rejected
+        requestObserver.onNext(AgentIntent.newBuilder()
+                .setAgentId("agent-bravo")
+                .build());
+
+        assertNotNull(responseObserver.error.get(), "Stream should be terminated with an error");
+        Status status = Status.fromThrowable(responseObserver.error.get());
+        assertEquals(Status.Code.PERMISSION_DENIED, status.getCode());
+        assertFalse(registry.isRegistered("agent-alpha"), "Agent should be unregistered after fatal error");
+        assertFalse(registry.isRegistered("agent-bravo"));
+    }
+
+    @Test
+    @DisplayName("Blank or empty agent IDs are rejected with INVALID_ARGUMENT")
+    void testBlankOrEmptyAgentIdRejectedWithInvalidArgument() {
+        StreamRegistry registry = new StreamRegistry();
+        CivQuestBridgeServiceImpl service = new CivQuestBridgeServiceImpl(registry);
+
+        // Test empty string
+        RecordingObserver responseObserver1 = new RecordingObserver();
+        StreamObserver<AgentIntent> requestObserver1 = service.connectAgent(responseObserver1);
+
+        requestObserver1.onNext(AgentIntent.newBuilder()
+                .setAgentId("")
+                .build());
+
+        assertNotNull(responseObserver1.error.get());
+        assertEquals(Status.Code.INVALID_ARGUMENT, Status.fromThrowable(responseObserver1.error.get()).getCode());
+        assertEquals(0, registry.getActiveAgentCount());
+
+        // Test whitespace blank string
+        RecordingObserver responseObserver2 = new RecordingObserver();
+        StreamObserver<AgentIntent> requestObserver2 = service.connectAgent(responseObserver2);
+
+        requestObserver2.onNext(AgentIntent.newBuilder()
+                .setAgentId("   ")
+                .build());
+
+        assertNotNull(responseObserver2.error.get());
+        assertEquals(Status.Code.INVALID_ARGUMENT, Status.fromThrowable(responseObserver2.error.get()).getCode());
+        assertEquals(0, registry.getActiveAgentCount());
+    }
+
+    @Test
+    @DisplayName("Abrupt client disconnect triggers cancellation handler and unregisters agent")
+    void testCancellationHandlerUnregistration() {
+        StreamRegistry registry = new StreamRegistry();
+        CivQuestBridgeServiceImpl service = new CivQuestBridgeServiceImpl(registry);
+
+        TestServerCallStreamObserver<TelemetryFrame> responseObserver = new TestServerCallStreamObserver<>();
+        StreamObserver<AgentIntent> requestObserver = service.connectAgent(responseObserver);
+
+        assertNotNull(responseObserver.cancelHandler, "Cancellation handler must be registered on ServerCallStreamObserver");
+
+        requestObserver.onNext(AgentIntent.newBuilder()
+                .setAgentId("agent-disconnect")
+                .build());
+
+        assertTrue(registry.isRegistered("agent-disconnect"));
+
+        // Simulate abrupt client network reset or cancel
+        responseObserver.triggerCancel();
+
+        assertFalse(registry.isRegistered("agent-disconnect"), "Agent must be unregistered upon stream cancellation");
+        assertEquals(0, registry.getActiveAgentCount());
     }
 }

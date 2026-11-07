@@ -10,11 +10,15 @@ import com.civquest.mod.grpc.v1.ExportRecipeResponse;
 import com.civquest.mod.grpc.v1.SpawnAgentRequest;
 import com.civquest.mod.grpc.v1.SpawnAgentResponse;
 import com.civquest.mod.grpc.v1.TelemetryFrame;
+import io.grpc.Status;
+import io.grpc.StatusRuntimeException;
+import io.grpc.stub.ServerCallStreamObserver;
 import io.grpc.stub.StreamObserver;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.util.Objects;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 
 /**
@@ -52,33 +56,91 @@ public class CivQuestBridgeServiceImpl extends CivQuestBridgeServiceGrpc.CivQues
                 .setWorldTick(0)
                 .setTimeOfDay(0)
                 .build();
-        responseObserver.onNext(initialFrame);
+        synchronized (responseObserver) {
+            responseObserver.onNext(initialFrame);
+        }
+
+        final AtomicReference<String> sessionAgentId = new AtomicReference<>(null);
+        final AtomicBoolean terminated = new AtomicBoolean(false);
+
+        if (responseObserver instanceof ServerCallStreamObserver<TelemetryFrame> serverCallObserver) {
+            serverCallObserver.setOnCancelHandler(() -> {
+                terminated.set(true);
+                String agentId = sessionAgentId.get();
+                LOGGER.info("ConnectAgent stream cancelled by client for agent '{}'", agentId);
+                if (agentId != null) {
+                    streamRegistry.unregister(agentId, responseObserver);
+                }
+            });
+        }
 
         return new StreamObserver<AgentIntent>() {
-            private final AtomicReference<String> sessionAgentId = new AtomicReference<>(null);
-
             @Override
             public void onNext(AgentIntent value) {
+                if (terminated.get()) {
+                    return;
+                }
+
                 String intentAgentId = value.getAgentId();
-                if (intentAgentId != null && !intentAgentId.isBlank()) {
-                    String current = sessionAgentId.get();
-                    if (!intentAgentId.equals(current) || streamRegistry.getObserver(intentAgentId) != responseObserver) {
-                        if (current != null && !current.equals(intentAgentId)) {
-                            streamRegistry.unregister(current, responseObserver);
+                if (intentAgentId == null || intentAgentId.isBlank()) {
+                    LOGGER.error("Received AgentIntent with empty or blank agent_id");
+                    terminateWithError(Status.INVALID_ARGUMENT
+                            .withDescription("AgentIntent must contain a non-blank agent_id"));
+                    return;
+                }
+
+                String current = sessionAgentId.get();
+                if (current == null) {
+                    if (sessionAgentId.compareAndSet(null, intentAgentId)) {
+                        boolean registered = streamRegistry.register(intentAgentId, responseObserver);
+                        if (!registered && streamRegistry.isClosed()) {
+                            terminated.set(true);
+                            return;
                         }
-                        sessionAgentId.set(intentAgentId);
-                        streamRegistry.register(intentAgentId, responseObserver);
                         LOGGER.info("Registered agent '{}' in StreamRegistry", intentAgentId);
+                    } else {
+                        current = sessionAgentId.get();
+                        if (current != null && !current.equals(intentAgentId)) {
+                            terminateWithPermissionDenied(current, intentAgentId);
+                            return;
+                        }
                     }
+                } else if (!current.equals(intentAgentId)) {
+                    terminateWithPermissionDenied(current, intentAgentId);
+                    return;
                 }
 
                 LOGGER.debug("Received AgentIntent: agent_id={}, action_case={}",
                         value.getAgentId(), value.getActionCase());
             }
 
+            private void terminateWithPermissionDenied(String boundAgentId, String requestedAgentId) {
+                LOGGER.error("Stream agent ID mutation attempted: bound='{}', requested='{}'", boundAgentId, requestedAgentId);
+                terminateWithError(Status.PERMISSION_DENIED
+                        .withDescription("Agent stream is bound to '" + boundAgentId + "' and cannot be rebound to '" + requestedAgentId + "'"));
+            }
+
+            private void terminateWithError(Status status) {
+                if (terminated.compareAndSet(false, true)) {
+                    StatusRuntimeException error = status.asRuntimeException();
+                    synchronized (responseObserver) {
+                        try {
+                            responseObserver.onError(error);
+                        } catch (Throwable t) {
+                            LOGGER.debug("Error delivering {} to observer: {}", status.getCode(), t.getMessage());
+                        }
+                    }
+                    String current = sessionAgentId.get();
+                    if (current != null) {
+                        streamRegistry.unregister(current, responseObserver);
+                    }
+                }
+            }
+
             @Override
             public void onError(Throwable t) {
                 LOGGER.warn("ConnectAgent stream error: {}", t.getMessage());
+                terminated.set(true);
                 String agentId = sessionAgentId.get();
                 if (agentId != null) {
                     streamRegistry.unregister(agentId, responseObserver);
@@ -94,10 +156,14 @@ public class CivQuestBridgeServiceImpl extends CivQuestBridgeServiceGrpc.CivQues
                     streamRegistry.unregister(agentId, responseObserver);
                     LOGGER.info("Unregistered agent '{}' from StreamRegistry due to stream completion", agentId);
                 }
-                try {
-                    responseObserver.onCompleted();
-                } catch (Throwable t) {
-                    LOGGER.debug("Exception while completing responseObserver: {}", t.getMessage());
+                if (terminated.compareAndSet(false, true)) {
+                    try {
+                        synchronized (responseObserver) {
+                            responseObserver.onCompleted();
+                        }
+                    } catch (Throwable t) {
+                        LOGGER.debug("Exception while completing responseObserver: {}", t.getMessage());
+                    }
                 }
             }
         };
@@ -117,19 +183,28 @@ public class CivQuestBridgeServiceImpl extends CivQuestBridgeServiceGrpc.CivQues
                 .setMinecraftEntityId(1001)
                 .setOfflineUuid(offlineUuid)
                 .build();
-        responseObserver.onNext(response);
-        responseObserver.onCompleted();
+        synchronized (responseObserver) {
+            responseObserver.onNext(response);
+            responseObserver.onCompleted();
+        }
     }
 
     @Override
     public void despawnAgentEntity(DespawnAgentRequest request, StreamObserver<DespawnAgentResponse> responseObserver) {
         LOGGER.info("DespawnAgentEntity requested: agent_id='{}'", request.getAgentId());
 
+        String agentId = request.getAgentId();
+        if (agentId != null && !agentId.isBlank()) {
+            streamRegistry.close(agentId);
+        }
+
         DespawnAgentResponse response = DespawnAgentResponse.newBuilder()
                 .setSuccess(true)
                 .build();
-        responseObserver.onNext(response);
-        responseObserver.onCompleted();
+        synchronized (responseObserver) {
+            responseObserver.onNext(response);
+            responseObserver.onCompleted();
+        }
     }
 
     @Override
@@ -138,7 +213,9 @@ public class CivQuestBridgeServiceImpl extends CivQuestBridgeServiceGrpc.CivQues
 
         ExportRecipeResponse response = ExportRecipeResponse.newBuilder()
                 .build();
-        responseObserver.onNext(response);
-        responseObserver.onCompleted();
+        synchronized (responseObserver) {
+            responseObserver.onNext(response);
+            responseObserver.onCompleted();
+        }
     }
 }
