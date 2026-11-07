@@ -1,5 +1,8 @@
 package com.civquest.mod;
 
+import com.civquest.mod.grpc.v1.DeathEvent;
+import com.civquest.mod.grpc.v1.TelemetryFrame;
+import com.civquest.mod.sensory.SensoryFrustumCollector;
 import com.mojang.authlib.GameProfile;
 import com.mojang.logging.LogUtils;
 import net.minecraft.core.UUIDUtil;
@@ -35,6 +38,8 @@ public class SettlerEntity extends FakePlayer {
     private String skinId;
     private byte[] skinPngBytes;
     private ChunkPos forcedChunkPos;
+    private StreamRegistry streamRegistry;
+    private SensoryFrustumCollector sensoryCollector;
     private Consumer<SettlerEntity> deathListener;
     private Consumer<SettlerEntity> removalListener;
     private final AtomicBoolean cleanedUp = new AtomicBoolean(false);
@@ -135,6 +140,21 @@ public class SettlerEntity extends FakePlayer {
             this.getServer().getPlayerList().broadcastSystemMessage(deathMessage, false);
         }
 
+        // Construct DeathEvent and emit zero-latency terminal telemetry frame immediately before stream closure
+        if (this.streamRegistry != null && this.streamRegistry.isRegistered(this.agentId)) {
+            try {
+                DeathEvent deathEvent = SensoryFrustumCollector.buildDeathEvent(this, cause);
+                SensoryFrustumCollector collector = this.sensoryCollector != null
+                        ? this.sensoryCollector
+                        : new SensoryFrustumCollector();
+                TelemetryFrame deathFrame = collector.collectFrame(this, null, deathEvent);
+                this.streamRegistry.sendFrame(this.agentId, deathFrame);
+            } catch (Exception e) {
+                LOGGER.error("Error sending terminal death telemetry frame for settler '{}': {}",
+                        this.agentId, e.getMessage(), e);
+            }
+        }
+
         // Drop death inventory if not spectator
         if (!this.isSpectator() && !this.level().isClientSide) {
             this.dropAllDeathLoot(this.serverLevel(), cause);
@@ -215,6 +235,27 @@ public class SettlerEntity extends FakePlayer {
 
     public void setSkinPngBytes(byte[] skinPngBytes) {
         this.skinPngBytes = skinPngBytes;
+    }
+
+    public StreamRegistry getStreamRegistry() {
+        return streamRegistry;
+    }
+
+    public void setStreamRegistry(StreamRegistry streamRegistry) {
+        this.streamRegistry = streamRegistry;
+    }
+
+    public SensoryFrustumCollector getSensoryCollector() {
+        return sensoryCollector;
+    }
+
+    public void setSensoryCollector(SensoryFrustumCollector sensoryCollector) {
+        this.sensoryCollector = sensoryCollector;
+    }
+
+    public void setTelemetryContext(StreamRegistry streamRegistry, SensoryFrustumCollector sensoryCollector) {
+        this.streamRegistry = streamRegistry;
+        this.sensoryCollector = sensoryCollector;
     }
 
     public void setDeathListener(Consumer<SettlerEntity> deathListener) {

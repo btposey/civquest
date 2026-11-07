@@ -1,0 +1,33 @@
+{
+  "replace": false,
+  "values": [
+    "#minecraft:beds",
+    "#minecraft:doors",
+    "minecraft:crafting_table",
+    "minecraft:furnace",
+    "minecraft:blast_furnace",
+    "minecraft:smoker",
+    "minecraft:campfire",
+    "minecraft:soul_campfire",
+    "minecraft:chest",
+    "minecraft:trapped_chest",
+    "minecraft:barrel",
+    "minecraft:farmland",
+    "minecraft:wheat",
+    "minecraft:carrots",
+    "minecraft:potatoes",
+    "minecraft:beetroots",
+    "minecraft:melon",
+    "minecraft:pumpkin",
+    "minecraft:melon_stem",
+    "minecraft:pumpkin_stem",
+    "minecraft:attached_melon_stem",
+    "minecraft:attached_pumpkin_stem",
+    "minecraft:composter",
+    "minecraft:beehive",
+    "minecraft:bee_nest",
+    "minecraft:lectern",
+    "minecraft:water",
+    "minecraft:bell"
+  ]
+}
