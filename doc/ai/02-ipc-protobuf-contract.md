@@ -23,7 +23,14 @@ service CivQuestBridgeService {
 }
 ```
 
-## 2. Telemetry Streaming (Server -> Agent @ 5 Hz)
+## 2. Authentication & Transport Security (ADR-012)
+
+CivQuest supports both co-located and cross-host distributed deployments where the Minecraft server runs on one machine and the agent pool (and local GPU) runs on another:
+- **Shared Key Secret**: Configured via `shared_key` in server config and `$XDG_CONFIG_HOME/civquest/config.yaml` (`grpc.shared_key`).
+- **Metadata Interceptor**: Every gRPC RPC must include metadata header `authorization: Bearer <shared_key>`.
+- **Validation**: On the Minecraft server, a Netty `ServerInterceptor` checks the token with constant-time comparison before processing; invalid or missing tokens are rejected with `Status.UNAUTHENTICATED`.
+
+## 3. Telemetry Streaming (Server -> Agent @ 5 Hz)
 
 Every 4 Minecraft server ticks (5 Hz), or immediately upon an urgent event (such as `LivingDamageEvent` or `DeathEvent`), the Minecraft mod constructs and sends a `TelemetryFrame` containing:
 - `world_tick`: Absolute server tick counter.

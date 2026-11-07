@@ -74,6 +74,9 @@ Major technical decisions are formally recorded in `doc/adr/`:
 - [ADR-008: Permadeath Lifecycle & Dynastic Reproduction Governor](file:///home/brian/Workspaces/btposey/civquest/doc/adr/ADR-008-permadeath-lifecycle-and-dynastic-reproduction-governor.md)
 - [ADR-009: Baritone API Pathfinding Wrapper](file:///home/brian/Workspaces/btposey/civquest/doc/adr/ADR-009-baritone-api-pathfinding-wrapper.md)
 - [ADR-010: Spatial Quadrant Partitioning for Multi-Agent Construction](file:///home/brian/Workspaces/btposey/civquest/doc/adr/ADR-010-spatial-quadrant-partitioning-for-multi-agent-construction.md)
+- [ADR-011: In-Game Integration Test Harness](file:///home/brian/Workspaces/btposey/civquest/doc/adr/ADR-011-in-game-integration-test-harness.md)
+- [ADR-012: Shared-Key Authentication for Cross-Host gRPC IPC](file:///home/brian/Workspaces/btposey/civquest/doc/adr/ADR-012-shared-key-authentication-for-grpc-ipc.md)
+- [ADR-013: Host CPU Multimedia SIMD Extensions (AVX2/AVX-512) for System 1 Reflexes and Vector Operations](file:///home/brian/Workspaces/btposey/civquest/doc/adr/ADR-013-host-cpu-multimedia-simd-extensions-for-system1.md)
 
 ---
 
