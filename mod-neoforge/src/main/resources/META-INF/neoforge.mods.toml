@@ -4,7 +4,7 @@ license="MIT"
 
 [[mods]]
 modId="civquest"
-version="0.1.0-SNAPSHOT"
+version="${version}"
 displayName="CivQuest"
 description="Autonomous FakePlayer settlement and dynastic simulation engine."
 

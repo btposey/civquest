@@ -4,19 +4,11 @@ plugins {
 }
 
 group = 'com.civquest'
-version = '0.1.0-SNAPSHOT'
+version = project.findProperty('modVersion') ?: '0.1.0-SNAPSHOT'
 
 java {
     toolchain {
         languageVersion = JavaLanguageVersion.of(21)
-    }
-}
-
-repositories {
-    mavenCentral()
-    maven {
-        name = 'NeoForged'
-        url = 'https://maven.neoforged.net/releases'
     }
 }
 
@@ -27,11 +19,14 @@ neoForge {
         gameTestServer {
             type = "gameTestServer"
             systemProperty 'neoforge.enabledGameTestNamespaces', 'civquest'
+            systemProperty 'java.awt.headless', 'true'
+            jvmArguments.addAll('-Xms1024m', '-Xmx2048m')
         }
         server {
             server()
             systemProperty 'neoforge.enabledGameTestNamespaces', 'civquest'
             programArgument '--nogui'
+            jvmArguments.addAll('-Xms1024m', '-Xmx2048m')
         }
     }
 
@@ -60,6 +55,13 @@ dependencies {
 
 test {
     useJUnitPlatform()
+}
+
+processResources {
+    inputs.property 'version', project.version
+    filesMatching('META-INF/neoforge.mods.toml') {
+        expand 'version': project.version
+    }
 }
 
 sourceSets {
