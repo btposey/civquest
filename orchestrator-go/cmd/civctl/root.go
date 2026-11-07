@@ -1,6 +1,8 @@
 package main
 
 import (
+	"path/filepath"
+
 	"github.com/spf13/cobra"
 
 	"github.com/btposey/civquest/orchestrator-go/internal/xdg"
@@ -15,7 +17,25 @@ var (
 
 func getResolver() *xdg.Resolver {
 	if flagConfigDir != "" || flagDataDir != "" || flagStateDir != "" {
-		return xdg.NewResolver(xdg.WithExplicitDirs(flagConfigDir, flagDataDir, flagStateDir))
+		cfg := flagConfigDir
+		if cfg != "" {
+			if abs, err := filepath.Abs(cfg); err == nil {
+				cfg = abs
+			}
+		}
+		data := flagDataDir
+		if data != "" {
+			if abs, err := filepath.Abs(data); err == nil {
+				data = abs
+			}
+		}
+		state := flagStateDir
+		if state != "" {
+			if abs, err := filepath.Abs(state); err == nil {
+				state = abs
+			}
+		}
+		return xdg.NewResolver(xdg.WithExplicitDirs(cfg, data, state))
 	}
 	return xdg.DefaultResolver()
 }

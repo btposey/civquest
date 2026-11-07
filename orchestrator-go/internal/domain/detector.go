@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -143,14 +144,39 @@ func DetectServer(r *xdg.Resolver) (ServerStatus, error) {
 	}
 
 	serverDirExists := false
+	hasRunnerScript := false
+	hasJarFile := false
+
 	if info, err := os.Stat(r.ServerDir()); err == nil && info.IsDir() {
 		serverDirExists = true
+		if _, err := os.Stat(r.ServerRunScriptPath()); err == nil {
+			hasRunnerScript = true
+		}
+		// Check for any .jar in server dir or mods dir
+		if entries, err := os.ReadDir(r.ServerDir()); err == nil {
+			for _, entry := range entries {
+				if !entry.IsDir() && strings.HasSuffix(entry.Name(), ".jar") {
+					hasJarFile = true
+					break
+				}
+			}
+		}
+		if !hasJarFile {
+			if entries, err := os.ReadDir(r.ServerModsDir()); err == nil {
+				for _, entry := range entries {
+					if !entry.IsDir() && strings.HasSuffix(entry.Name(), ".jar") {
+						hasJarFile = true
+						break
+					}
+				}
+			}
+		}
 	}
 
-	if hasManifest || serverDirExists {
+	if hasManifest || (serverDirExists && (hasRunnerScript || hasJarFile)) {
 		status.Installed = true
 	} else {
-		status.StatusReason = "Server directory and manifest not found"
+		status.StatusReason = "Server directory, manifest, or runner not found"
 		return status, nil
 	}
 
@@ -160,7 +186,7 @@ func DetectServer(r *xdg.Resolver) (ServerStatus, error) {
 	if err == nil {
 		pidStr := strings.TrimSpace(string(pidData))
 		pid, err := strconv.Atoi(pidStr)
-		if err == nil && pid > 0 {
+		if err == nil && pid > 1 {
 			if IsProcessRunning(pid) {
 				status.Running = true
 				status.PID = pid
@@ -173,6 +199,9 @@ func DetectServer(r *xdg.Resolver) (ServerStatus, error) {
 				status.Running = false
 				status.StatusReason = fmt.Sprintf("Stale PID file detected (%d not running)", pid)
 			}
+		} else {
+			status.Running = false
+			status.StatusReason = fmt.Sprintf("Invalid PID file content (%s)", pidStr)
 		}
 	} else {
 		status.StatusReason = "Stopped"
@@ -233,7 +262,14 @@ func DetectAgents(r *xdg.Resolver) (AgentDomainStatus, error) {
 			sockPath := r.AgentSocketPath(agentName)
 			isActive := false
 			if _, err := os.Stat(sockPath); err == nil {
-				isActive = true
+				conn, dialErr := net.DialTimeout("unix", sockPath, 100*time.Millisecond)
+				if dialErr == nil {
+					isActive = true
+					_ = conn.Close()
+				} else {
+					// Connection failed (dead/stale socket) - clean up socket file
+					_ = os.Remove(sockPath)
+				}
 			}
 
 			status.ConfiguredAgents = append(status.ConfiguredAgents, AgentSummary{
@@ -279,6 +315,20 @@ func DetectClans(r *xdg.Resolver) (ClanDomainStatus, error) {
 
 // IsProcessRunning checks if a PID is alive and not a zombie on Linux.
 func IsProcessRunning(pid int) bool {
+	if pid <= 1 {
+		return false
+	}
+
+	// On Linux, inspect /proc/<pid>/cmdline if available before sending signals.
+	// A terminated or recycled zombie process has an empty cmdline.
+	if cmdline, err := os.ReadFile(fmt.Sprintf("/proc/%d/cmdline", pid)); err == nil {
+		if len(cmdline) == 0 {
+			return false
+		}
+	} else if os.IsNotExist(err) {
+		return false
+	}
+
 	// Attempt non-blocking reap in case it is a child of the current process
 	var ws syscall.WaitStatus
 	wpid, err := syscall.Wait4(pid, &ws, syscall.WNOHANG, nil)

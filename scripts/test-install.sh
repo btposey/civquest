@@ -60,6 +60,21 @@ grep -q "eula=true" "${SERVER_DIR}/eula.txt" || { echo "[-] eula=true not set"; 
 test -f "${SERVER_DIR}/server.properties" || { echo "[-] server.properties not found"; exit 1; }
 test -f "${SERVER_DIR}/civquest.server.json" || { echo "[-] civquest.server.json not found"; exit 1; }
 test -x "${SERVER_DIR}/run.sh" || { echo "[-] run.sh is not executable"; exit 1; }
+test -x "${INSTALL_BIN_DIR}/civctl" || { echo "[-] civctl not found in bin after server install"; exit 1; }
+test -d "${XDG_STATE_HOME}/civquest/run" || { echo "[-] state/civquest/run not created"; exit 1; }
+
+# Verify run.sh preservation without -f
+echo "# Custom run marker" >> "${SERVER_DIR}/run.sh"
+"${ROOT_DIR}/install.sh" -y server >/dev/null 2>&1
+grep -q "# Custom run marker" "${SERVER_DIR}/run.sh" || { echo "[-] run.sh was unexpectedly overwritten without -f"; exit 1; }
+
+# Verify run.sh overwrite with -f
+"${ROOT_DIR}/install.sh" -y -f server >/dev/null 2>&1
+if grep -q "# Custom run marker" "${SERVER_DIR}/run.sh"; then
+    echo "[-] run.sh was not overwritten with -f"
+    exit 1
+fi
+
 echo "  ✓ Server domain installation verified"
 
 # 4. Test 'agents' target installation

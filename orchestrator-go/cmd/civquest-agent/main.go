@@ -67,12 +67,16 @@ func main() {
 
 	// Set up UNIX domain socket in $XDG_STATE_HOME/civquest/agents/{name}.sock
 	sockPath := r.AgentSocketPath(cfg.Name)
+	var listener net.Listener
 	if err := os.MkdirAll(filepath.Dir(sockPath), 0750); err == nil {
 		_ = os.Remove(sockPath)
-		listener, err := net.Listen("unix", sockPath)
-		if err == nil {
+		var listenErr error
+		listener, listenErr = net.Listen("unix", sockPath)
+		if listenErr == nil {
 			defer func() {
-				_ = listener.Close()
+				if listener != nil {
+					_ = listener.Close()
+				}
 				_ = os.Remove(sockPath)
 			}()
 			fmt.Printf(" IPC Socket:     %s\n", sockPath)
@@ -102,5 +106,8 @@ func main() {
 	sig := <-sigChan
 
 	fmt.Printf("[civquest-agent] Received signal %v. Performing clean agent shutdown...\n", sig)
-	os.Exit(0)
+	if listener != nil {
+		_ = listener.Close()
+	}
+	_ = os.Remove(sockPath)
 }

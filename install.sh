@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
+umask 0027
 
 # ==============================================================================
 # CivQuest Polyglot Settlement Engine - Deployment Script
@@ -142,6 +143,13 @@ fi
 # ------------------------------------------------------------------------------
 # Resolve XDG Paths
 # ------------------------------------------------------------------------------
+if [ -z "${HOME:-}" ]; then
+    HOME="$(getent passwd "$(id -u)" 2>/dev/null | cut -d: -f6 || true)"
+    if [ -z "${HOME}" ] || [ ! -d "${HOME}" ]; then
+        HOME="/tmp"
+    fi
+fi
+
 CONFIG_HOME="${XDG_CONFIG_HOME:-${HOME}/.config}"
 DATA_HOME="${XDG_DATA_HOME:-${HOME}/.local/share}"
 STATE_HOME="${XDG_STATE_HOME:-${HOME}/.local/state}"
@@ -182,7 +190,8 @@ install_server() {
 
     # 3. Create server directory structure
     mkdir -p "${CIVQUEST_SERVER_DIR}/mods"
-    mkdir -p "${CIVQUEST_STATE_DIR}"
+    mkdir -p "${CIVQUEST_STATE_DIR}/run"
+    chmod 0700 "${CIVQUEST_STATE_DIR}/run"
 
     # 4. Copy mod jar into mods folder
     log_info "Copying mod jar to ${CIVQUEST_SERVER_DIR}/mods/${jar_name}..."
@@ -218,10 +227,12 @@ EOF
     fi
 
     # 7. Write lightweight runner script run.sh
-    log_info "Creating runner script ${CIVQUEST_SERVER_DIR}/run.sh..."
-    cat > "${CIVQUEST_SERVER_DIR}/run.sh" << 'EOF'
+    if [ ! -f "${CIVQUEST_SERVER_DIR}/run.sh" ] || [ "${FORCE_OVERWRITE}" = "true" ]; then
+        log_info "Creating runner script ${CIVQUEST_SERVER_DIR}/run.sh..."
+        cat > "${CIVQUEST_SERVER_DIR}/run.sh" << 'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
+umask 0027
 
 SERVER_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "${SERVER_DIR}"
@@ -257,7 +268,10 @@ else
     done
 fi
 EOF
-    chmod +x "${CIVQUEST_SERVER_DIR}/run.sh"
+        chmod +x "${CIVQUEST_SERVER_DIR}/run.sh"
+    else
+        log_info "Preserving existing ${CIVQUEST_SERVER_DIR}/run.sh (use -f to overwrite)"
+    fi
 
     # 8. Write civquest.server.json manifest
     local timestamp
@@ -280,6 +294,25 @@ EOF
 }
 EOF
 
+    # 9. Build and install civctl for server management if Go is available
+    if command -v go >/dev/null 2>&1; then
+        log_info "Go toolchain detected: compiling and installing civctl for server management..."
+        local server_build_tmp
+        server_build_tmp="$(mktemp -d)"
+        trap 'rm -rf "${server_build_tmp:-}"' EXIT INT TERM
+        (
+            cd "${SCRIPT_DIR}/orchestrator-go"
+            go build -o "${server_build_tmp}/civctl" ./cmd/civctl
+        )
+        mkdir -p "${BIN_DIR}"
+        mkdir -p "${CIVQUEST_DATA_DIR}/bin"
+        cp -f "${server_build_tmp}/civctl" "${BIN_DIR}/civctl"
+        cp -f "${server_build_tmp}/civctl" "${CIVQUEST_DATA_DIR}/bin/civctl"
+        chmod +x "${BIN_DIR}/civctl" "${CIVQUEST_DATA_DIR}/bin/civctl"
+        rm -rf "${server_build_tmp}"
+        trap - EXIT INT TERM
+    fi
+
     log_success "Server domain installed successfully at ${CIVQUEST_SERVER_DIR}"
 }
 
@@ -299,6 +332,7 @@ install_agents() {
     log_info "Building Go orchestrator binaries (civctl and civquest-agent)..."
     local build_tmp
     build_tmp="$(mktemp -d)"
+    trap 'rm -rf "${build_tmp:-}"' EXIT INT TERM
     (
         cd "${SCRIPT_DIR}/orchestrator-go"
         go build -o "${build_tmp}/civctl" ./cmd/civctl
@@ -320,6 +354,7 @@ install_agents() {
     chmod +x "${CIVQUEST_DATA_DIR}/bin/civctl" "${CIVQUEST_DATA_DIR}/bin/civquest-agent"
 
     rm -rf "${build_tmp}"
+    trap - EXIT INT TERM
 
     # 4. Initialize standard XDG directories
     log_info "Initializing XDG directory skeleton..."

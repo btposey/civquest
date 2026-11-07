@@ -3,6 +3,7 @@ package domain_test
 import (
 	"encoding/json"
 	"fmt"
+	"net"
 	"os"
 	"path/filepath"
 	"testing"
@@ -142,13 +143,19 @@ func TestDetectTopology_AgentsInstalled(t *testing.T) {
 		t.Fatalf("SaveAgentConfig(aria) failed: %v", err)
 	}
 
-	// Create a mock socket for aria to test active flag
+	// Create a real active unix socket listener for aria
 	if err := r.InitAgentDirectories("aria"); err != nil {
 		t.Fatalf("InitAgentDirectories failed: %v", err)
 	}
-	if err := os.WriteFile(r.AgentSocketPath("aria"), []byte("mock-socket"), 0600); err != nil {
-		t.Fatalf("write mock socket failed: %v", err)
+	sockPath := r.AgentSocketPath("aria")
+	l, err := net.Listen("unix", sockPath)
+	if err != nil {
+		t.Fatalf("listen mock socket failed: %v", err)
 	}
+	defer func() {
+		_ = l.Close()
+		_ = os.Remove(sockPath)
+	}()
 
 	agentsStatus, err := domain.DetectAgents(r)
 	if err != nil {
@@ -166,7 +173,67 @@ func TestDetectTopology_AgentsInstalled(t *testing.T) {
 		t.Errorf("unexpected agent summary: %+v", ariaSummary)
 	}
 	if !ariaSummary.Active {
-		t.Errorf("expected aria.Active == true because socket exists")
+		t.Errorf("expected aria.Active == true because socket listener is active")
+	}
+}
+
+func TestDetectAgents_StaleSocket(t *testing.T) {
+	tmpDir := t.TempDir()
+	r := xdg.NewResolver(xdg.WithCustomRoot(tmpDir))
+
+	if err := r.InitDirectories(); err != nil {
+		t.Fatalf("InitDirectories failed: %v", err)
+	}
+	if err := r.InitAgentDirectories("aria"); err != nil {
+		t.Fatalf("InitAgentDirectories failed: %v", err)
+	}
+
+	ariaCfg := xdg.DefaultAgentIdentityConfig("aria")
+	ariaCfg.ClanID = "pioneers"
+	ariaCfg.Profession = "FARMER"
+	if err := r.SaveAgentConfig(ariaCfg); err != nil {
+		t.Fatalf("SaveAgentConfig(aria) failed: %v", err)
+	}
+
+	// Create a socket, then immediately close it so it becomes stale
+	sockPath := r.AgentSocketPath("aria")
+	l, err := net.Listen("unix", sockPath)
+	if err != nil {
+		t.Fatalf("listen failed: %v", err)
+	}
+	_ = l.Close() // Socket file remains on disk, but nothing listening
+
+	agentsStatus, err := domain.DetectAgents(r)
+	if err != nil {
+		t.Fatalf("DetectAgents failed: %v", err)
+	}
+	if len(agentsStatus.ConfiguredAgents) != 1 {
+		t.Fatalf("expected 1 configured agent, got %d", len(agentsStatus.ConfiguredAgents))
+	}
+	if agentsStatus.ConfiguredAgents[0].Active {
+		t.Errorf("expected aria.Active == false for stale closed socket")
+	}
+	// Verify stale socket file was cleaned up
+	if _, err := os.Stat(sockPath); !os.IsNotExist(err) {
+		t.Errorf("expected stale socket file to be cleaned up")
+	}
+}
+
+func TestDetectServer_EmptyDirectory(t *testing.T) {
+	tmpDir := t.TempDir()
+	r := xdg.NewResolver(xdg.WithCustomRoot(tmpDir))
+
+	// Create empty server dir (no manifest, no run.sh, no .jar)
+	if err := os.MkdirAll(r.ServerDir(), 0755); err != nil {
+		t.Fatalf("mkdir server dir failed: %v", err)
+	}
+
+	status, err := domain.DetectServer(r)
+	if err != nil {
+		t.Fatalf("DetectServer failed: %v", err)
+	}
+	if status.Installed {
+		t.Errorf("expected status.Installed == false for empty server directory, got true")
 	}
 }
 
