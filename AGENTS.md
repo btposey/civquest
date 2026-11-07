@@ -1,127 +1,105 @@
-# Agent Instructions
+# CivQuest Agent Directives & Architecture Guide
 
-This project uses **bd** (beads) for issue tracking. Run `bd prime` for full workflow context.
+Welcome to **CivQuest** (`https://github.com/btposey/civquest`). This document establishes the foundational principles, invariants, progressive documentation map, and operational workflows for autonomous engineering agents working on this repository.
 
-> **Architecture in one line:** Issues live in a local Dolt database
-> (`.beads/dolt/`); cross-machine sync uses `bd dolt push/pull` (a
-> git-compatible protocol), stored under `refs/dolt/data` on your git
-> remote — separate from `refs/heads/*` where your code lives.
-> `.beads/issues.jsonl` is a passive export, not the wire protocol.
->
-> See [sync-concepts](https://github.com/gastownhall/beads/blob/main/docs/core-concepts/sync-concepts.md)
-> for the one-screen overview and anti-patterns (don't treat JSONL as the
-> source of truth; don't `bd import` during normal operation; don't
-> reach for third-party Dolt hosting before trying the default).
+---
 
-## Quick Reference
+> [!IMPORTANT]
+> **Legal & Trademark Disclaimer**  
+> **NOT AN OFFICIAL MINECRAFT PRODUCT. NOT APPROVED BY OR ASSOCIATED WITH MOJANG OR MICROSOFT.**  
+> *Minecraft* is a registered trademark of Mojang Synergies AB / Microsoft Corporation.  
+> CivQuest is an independent, community-developed software modification and autonomous agent orchestration platform. CivQuest is not affiliated with, endorsed by, sponsored by, or associated with Mojang Synergies AB, Microsoft Corporation, or any of their subsidiaries. All references to Minecraft, related game mechanics, and block identifiers are strictly nominative references for technical compatibility and modding interoperability under applicable fair use doctrines and community guidelines.
 
+---
+
+## 1. Project Mission & Core Architecture
+
+CivQuest is an autonomous, dynastic settlement engine designed to completely replace Minecraft's vanilla villagers with intelligent, humanoid, process-isolated `FakePlayer` agents driven by external Go orchestrators.
+
+### The Dual-Layer Architecture:
+1. **Minecraft Java Server Mod (`mod-neoforge`)**:
+   - Engine: **Minecraft 1.21.1** powered by **NeoForge 21.1.265** (Java 21).
+   - Functions: Suppresses vanilla villages and villagers; spawns headless `SettlerEntity` (`FakePlayer`) avatars; delivers dynamic settler skin packets; streams sensory frustum frames (5 Hz) over embedded Netty gRPC; delegates physical voxel pathfinding to an integrated Baritone API wrapper.
+2. **External Multi-Process Go Orchestrator (`orchestrator-go`)**:
+   - Engine: **Go 1.23+**.
+   - Functions: Multi-process supervisor (`civctl`) spawning dedicated OS worker processes (`civquest-agent`) per settler.
+   - **System 1 (Reactive Utility AI Engine)**: Sub-$5\text{ ms}$, zero-token deterministic loop handling combat reflexes, fight-or-flight confidence scoring, hunger, road paving, and daily career state transitions.
+   - **System 2 (Deliberative LLM Engine)**: Asynchronous JSON-validated inference pipelines connected to local gateways (Ollama/vLLM) for dialogue, barter trade, Chronicler book writing, landmark toponymy, and Architect quadrant construction.
+   - **Persistence Tier**: Embedded SQLite databases per agent and clan with `sqlite-vec` vector RAG.
+
+---
+
+## 2. Invariants & Strict Rules
+
+All agents contributing to CivQuest must uphold these non-negotiable architectural invariants:
+
+1. **Process-Per-Agent Isolation**: Never loop through multiple agents in a single Go process thread. Each active settler is an independent OS process with dedicated state, logs, UNIX domain sockets, and SQLite databases.
+2. **XDG Base Directory Compliance**: Hardcoded paths are strictly prohibited. All paths must be dynamically resolved via `$XDG_CONFIG_HOME`, `$XDG_DATA_HOME`, and `$XDG_STATE_HOME`.
+3. **Zero Token Survival Reflexes**: System 1 reflexes (shield raising, running from creepers, eating, pathing) must **never** invoke LLM inference. System 1 must execute synchronously in $<5\text{ ms}$.
+4. **Strict Permadeath Lifecycle**: When an agent dies in Minecraft (`DeathEvent`), they never respawn. The agent process must record memorial chronicles, move its state directory to `$XDG_DATA_HOME/civquest/graveyard/`, and exit cleanly with code 0.
+5. **Server-Side FakePlayer Avatars**: Autonomous settler entities are simulated server-side using standard FakePlayer implementations with deterministic offline UUIDs and custom skin packet distribution.
+6. **Version & Branching Discipline**: Feature development targets the stable LTS baseline (**Minecraft 1.21.1 / NeoForge 21.1.265**) on `main`. Upstream updates track dedicated version branches (`version/mc-*`) with backporting to active branches.
+7. **Spatial Construction Order**: All collaborative multi-agent building projects must follow Spatial Quadrant Partitioning ($NW, NE, SW, SE$) and build bottom-up ($Y_{\text{min}} \to Y_{\text{max}}$) to prevent collisions and builder entrapment.
+8. **Operator Interaction & Subagent Delegation Directive**: The agent holding the conversational thread with the human operator must aggressively make use of right-sized subagents (`flash_lite` for trivial tasks, `flash` for standard tasks, `pro` for high-reasoning decomposition) and keep the chat thread open, responsive, and available to the operator. Never block or monopolize the operator turn with monolithic background execution—delegate heavy tasks to subagents and remain conversational.
+
+---
+
+## 3. Progressive Discovery Documentation (`doc/ai`)
+
+Before beginning work on any subsystem, read the corresponding progressive discovery documentation in `doc/ai/`:
+
+- [00-index.md](file:///home/brian/Workspaces/btposey/civquest/doc/ai/00-index.md): Master documentation index and agent onboarding guide.
+- [01-architecture-overview.md](file:///home/brian/Workspaces/btposey/civquest/doc/ai/01-architecture-overview.md): System topology, data flow diagrams, and component interactions.
+- [02-ipc-protobuf-contract.md](file:///home/brian/Workspaces/btposey/civquest/doc/ai/02-ipc-protobuf-contract.md): Protobuf specification, gRPC streaming, telemetry frames, and intents.
+- [03-neoforge-mod-internals.md](file:///home/brian/Workspaces/btposey/civquest/doc/ai/03-neoforge-mod-internals.md): FakePlayer lifecycle, Baritone wrapper, sensory frustum, and skin injection.
+- [04-system1-utility-engine.md](file:///home/brian/Workspaces/btposey/civquest/doc/ai/04-system1-utility-engine.md): Fight-or-flight mathematics, utility curves, daily schedules, and emergent hobbies.
+- [05-system2-llm-pipelines.md](file:///home/brian/Workspaces/btposey/civquest/doc/ai/05-system2-llm-pipelines.md): LLM gateway integration, dual-temperature sampling, JSON schemas, Chronicler pagination, and Architect grammar.
+- [06-storage-and-xdg.md](file:///home/brian/Workspaces/btposey/civquest/doc/ai/06-storage-and-xdg.md): SQLite relational schemas, `sqlite-vec` vector RAG, and filesystem layouts.
+- [07-supervisor-and-cli.md](file:///home/brian/Workspaces/btposey/civquest/doc/ai/07-supervisor-and-cli.md): `civctl` commands, supervisor daemon, UNIX socket telemetry, and process management.
+- [08-versioning-and-branching-strategy.md](file:///home/brian/Workspaces/btposey/civquest/doc/ai/08-versioning-and-branching-strategy.md): Minecraft/NeoForge version matrix, version branches, and backporting rules.
+
+---
+
+## 4. Architectural Decision Records (`doc/adr`)
+
+Major technical decisions are formally recorded in `doc/adr/`:
+- [ADR-001: Polyglot Monorepo Structure](file:///home/brian/Workspaces/btposey/civquest/doc/adr/ADR-001-polyglot-monorepo-structure.md)
+- [ADR-002: Minecraft & NeoForge Versioning and Multi-Branch Release Strategy](file:///home/brian/Workspaces/btposey/civquest/doc/adr/ADR-002-minecraft-neoforge-version-and-branching-strategy.md)
+- [ADR-003: Bidirectional Netty gRPC IPC Streaming](file:///home/brian/Workspaces/btposey/civquest/doc/adr/ADR-003-bidirectional-netty-grpc-ipc-streaming.md)
+- [ADR-004: Process-Per-Agent Isolation & XDG Base Directory Compliance](file:///home/brian/Workspaces/btposey/civquest/doc/adr/ADR-004-process-per-agent-isolation-and-xdg-compliance.md)
+- [ADR-005: Two-Tier Cognitive Architecture (System 1 Utility vs. System 2 LLM)](file:///home/brian/Workspaces/btposey/civquest/doc/adr/ADR-005-two-tier-cognitive-architecture-system1-utility-system2-llm.md)
+- [ADR-006: Relational & Vector Persistence (SQLite + sqlite-vec)](file:///home/brian/Workspaces/btposey/civquest/doc/adr/ADR-006-relational-and-vector-persistence-sqlite-and-sqlite-vec.md)
+- [ADR-007: Server-Side FakePlayer Architecture & Packet Skin Injection](file:///home/brian/Workspaces/btposey/civquest/doc/adr/ADR-007-server-side-fakeplayer-and-packet-skin-injection.md)
+- [ADR-008: Permadeath Lifecycle & Dynastic Reproduction Governor](file:///home/brian/Workspaces/btposey/civquest/doc/adr/ADR-008-permadeath-lifecycle-and-dynastic-reproduction-governor.md)
+- [ADR-009: Baritone API Pathfinding Wrapper](file:///home/brian/Workspaces/btposey/civquest/doc/adr/ADR-009-baritone-api-pathfinding-wrapper.md)
+- [ADR-010: Spatial Quadrant Partitioning for Multi-Agent Construction](file:///home/brian/Workspaces/btposey/civquest/doc/adr/ADR-010-spatial-quadrant-partitioning-for-multi-agent-construction.md)
+
+---
+
+## 5. Beads Issue Tracker & Workflow (`bd`)
+
+Task and issue tracking in CivQuest uses **Beads (`bd`)**.
+**Do NOT use generic TODO lists or informal task files.**
+
+### Essential Commands:
 ```bash
-bd ready              # Find available work
-bd show <id>          # View issue details
-bd update <id> --claim  # Claim work atomically
-bd close <id>         # Complete work
-bd dolt push          # Push beads data to remote
+bd prime                 # Output AI-optimized workflow context and command guide
+bd ready                 # Find open, unblocked tasks ready to be worked on
+bd show <id>             # Inspect issue details, acceptance criteria, and blockers
+bd update <id> --claim   # Claim an issue before starting work
+bd close <id>            # Close an issue upon completing verification criteria
+bd dep add <id> <blocker># Define dependencies between issues
+bd dolt push             # Push beads Dolt state to remote
 ```
 
-## Non-Interactive Shell Commands
+### Issue Prefix:
+All issues use the prefix `cq-` (e.g., `cq-1`, `cq-epic-infra`).
 
-**ALWAYS use non-interactive flags** with file operations to avoid hanging on confirmation prompts.
+---
 
-Shell commands like `cp`, `mv`, and `rm` may be aliased to include `-i` (interactive) mode on some systems, causing the agent to hang indefinitely waiting for y/n input.
+## 6. Development & Tooling Guidelines
 
-**Use these forms instead:**
-```bash
-# Force overwrite without prompting
-cp -f source dest           # NOT: cp source dest
-mv -f source dest           # NOT: mv source dest
-rm -f file                  # NOT: rm file
-
-# For recursive operations
-rm -rf directory            # NOT: rm -r directory
-cp -rf source dest          # NOT: cp -r source dest
-```
-
-**Other commands that may prompt:**
-- `scp` - use `-o BatchMode=yes` for non-interactive
-- `ssh` - use `-o BatchMode=yes` to fail instead of prompting
-- `apt-get` - use `-y` flag
-- `brew` - use `HOMEBREW_NO_AUTO_UPDATE=1` env var
-
-<!-- BEGIN BEADS INTEGRATION v:1 profile:minimal hash:1105d646 -->
-## Beads Issue Tracker
-
-This project uses **bd (beads)** for issue tracking. Run `bd prime` to see full workflow context and commands.
-
-### Quick Reference
-
-```bash
-bd ready              # Find available work
-bd show <id>          # View issue details
-bd update <id> --claim  # Claim work
-bd close <id>         # Complete work
-```
-
-### Rules
-
-- Use `bd` for ALL task tracking — do NOT use TodoWrite, TaskCreate, or markdown TODO lists
-- Run `bd prime` for detailed command reference and session close protocol
-- Use `bd remember` for persistent knowledge — do NOT use MEMORY.md files
-
-**Architecture in one line:** issues live in a local Dolt DB; sync uses `refs/dolt/data` on your git remote; `.beads/issues.jsonl` is a passive export. See https://github.com/gastownhall/beads/blob/main/docs/core-concepts/sync-concepts.md for details and anti-patterns.
-
-## Agent Context Profiles
-
-The managed Beads block is task-tracking guidance, not permission to override repository, user, or orchestrator instructions.
-
-- **Conservative (default)**: Use `bd` for task tracking. Do not run git commits, git pushes, or Dolt remote sync unless explicitly asked. At handoff, report changed files, validation, and suggested next commands.
-- **Minimal**: Keep tool instruction files as pointers to `bd prime`; use the same conservative git policy unless active instructions say otherwise.
-- **Team-maintainer**: Only when the repository explicitly opts in, agents may close beads, run quality gates, commit, and push as part of session close. A current "do not commit" or "do not push" instruction still wins.
-
-## Session Completion
-
-This protocol applies when ending a Beads implementation workflow. It is subordinate to explicit user, repository, and orchestrator instructions.
-
-1. **File issues for remaining work** - Create beads for anything that needs follow-up
-2. **Run quality gates** (if code changed) - Tests, linters, builds
-3. **Update issue status** - Close finished work, update in-progress items
-4. **Handle git/sync by active profile**:
-   ```bash
-   # Conservative/minimal/default: report status and proposed commands; wait for approval.
-   git status
-
-   # Team-maintainer opt-in only, unless current instructions forbid it:
-   git pull --rebase
-   git push
-   git status
-   ```
-5. **Hand off** - Summarize changes, validation, issue status, and any blocked sync/commit/push step
-
-**Critical rules:**
-- Explicit user or orchestrator instructions override this Beads block.
-- Do not commit or push without clear authority from the active profile or the current user request.
-- If a required sync or push is blocked, stop and report the exact command and error.
-<!-- END BEADS INTEGRATION -->
-
-<!-- BEGIN BEADS CODEX SETUP: generated by bd setup codex -->
-## Beads Issue Tracker
-
-Use Beads (`bd`) for durable task tracking in repositories that include it. Use the `beads` skill at `.agents/skills/beads/SKILL.md` (project install) or `~/.agents/skills/beads/SKILL.md` (global install) for Beads workflow guidance, then use the `bd` CLI for issue operations.
-
-### Quick Reference
-
-```bash
-bd ready                # Find available work
-bd show <id>            # View issue details
-bd update <id> --claim  # Claim work
-bd close <id>           # Complete work
-bd prime                # Refresh Beads context
-```
-
-### Rules
-
-- Use `bd` for all task tracking; do not create markdown TODO lists.
-- Run `bd prime` when Beads context is missing or stale. Codex 0.129.0+ can load Beads context automatically through native hooks; use `/hooks` to inspect or toggle them.
-- Keep persistent project memory in Beads via `bd remember`; do not create ad hoc memory files.
-
-**Architecture in one line:** issues live in a local Dolt DB; sync uses `refs/dolt/data` on your git remote; `.beads/issues.jsonl` is a passive export. See https://github.com/gastownhall/beads/blob/main/docs/core-concepts/sync-concepts.md for details and anti-patterns.
-<!-- END BEADS CODEX SETUP -->
+- **Java Development**: Use OpenJDK 21. Build via Gradle (`./gradlew build`). Ensure clean compilation with NeoForge 21.1.265.
+- **Go Development**: Use Go 1.23+. Format code with `gofmt` and verify tests with `go test ./...`.
+- **Protocol Buffers**: Regenerate stubs when modifying `proto/civquest/v1/civquest.proto` using `buf` or `protoc`.
+- **Non-Interactive Commands**: Always use `-f` and `-y` flags for file and shell operations (`rm -rf`, `cp -f`, etc.) to prevent blocking.
