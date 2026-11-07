@@ -27,6 +27,7 @@ import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.RejectedExecutionException;
 import java.util.function.Supplier;
 
 /**
@@ -348,30 +349,47 @@ public class SettlerEntityManager {
         }
 
         Runnable task = () -> {
-            String agentId = intent.getAgentId();
-            if (agentId == null || agentId.isBlank()) {
-                LOGGER.warn("Received AgentIntent without agent_id");
-                return;
-            }
-
-            SettlerEntity settler = settlers.get(agentId);
-            if (settler == null || settler.isRemoved() || !settler.isAlive()) {
-                LOGGER.warn("Received intent {} for unknown or inactive settler '{}'",
-                        intent.getActionCase(), agentId);
-                return;
-            }
-
             try {
+                String agentId = intent.getAgentId();
+                if (agentId == null || agentId.isBlank()) {
+                    LOGGER.warn("Received AgentIntent without agent_id");
+                    return;
+                }
+
+                SettlerEntity settler = settlers.get(agentId);
+                if (settler == null || settler.isRemoved() || !settler.isAlive()) {
+                    LOGGER.warn("Received intent {} for unknown or inactive settler '{}'",
+                            intent.getActionCase(), agentId);
+                    return;
+                }
+
                 intentActuator.actuate(settler, intent);
-            } catch (Exception e) {
+            } catch (Throwable t) {
                 LOGGER.error("Error executing intent {} for settler '{}': {}",
-                        intent.getActionCase(), agentId, e.getMessage(), e);
+                        intent.getActionCase(), intent.getAgentId(), t.getMessage(), t);
             }
         };
 
         if (server != null) {
-            return server.submit(task);
+            if (!server.isRunning()) {
+                LOGGER.warn("Dropping intent {}: MinecraftServer is not running", intent.getActionCase());
+                return CompletableFuture.failedFuture(new IllegalStateException("MinecraftServer is not running"));
+            }
+            try {
+                return server.submit(task);
+            } catch (RejectedExecutionException e) {
+                LOGGER.warn("Rejected execution when submitting intent {}: {}", intent.getActionCase(), e.getMessage());
+                return CompletableFuture.failedFuture(e);
+            }
         } else {
+            // Headless test environment without MinecraftServer
+            String agentId = intent.getAgentId();
+            SettlerEntity settler = (agentId != null) ? settlers.get(agentId) : null;
+            if (settler != null && settler.level() != null) {
+                LOGGER.warn("Dropping intent {}: no MinecraftServer running to execute world-modifying task safely",
+                        intent.getActionCase());
+                return CompletableFuture.failedFuture(new IllegalStateException("No MinecraftServer present for world-bound settler"));
+            }
             task.run();
             return CompletableFuture.completedFuture(null);
         }

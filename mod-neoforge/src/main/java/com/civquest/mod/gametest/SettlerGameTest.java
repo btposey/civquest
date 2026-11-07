@@ -11,8 +11,10 @@ import com.civquest.mod.grpc.v1.CreateWrittenBookIntent;
 import com.civquest.mod.grpc.v1.InteractBlockIntent;
 import com.civquest.mod.grpc.v1.NavigateIntent;
 import com.civquest.mod.grpc.v1.NavigationState;
+import com.civquest.mod.grpc.v1.PlaceSignpostIntent;
 import com.civquest.mod.grpc.v1.SpawnAgentRequest;
 import com.civquest.mod.grpc.v1.TelemetryFrame;
+import com.civquest.mod.grpc.v1.UseItemIntent;
 import com.civquest.mod.grpc.v1.Vec3;
 import com.civquest.mod.grpc.v1.VisibleBlock;
 import com.civquest.mod.grpc.v1.VisibleEntity;
@@ -37,6 +39,7 @@ import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.CropBlock;
 import net.minecraft.world.level.block.LecternBlock;
 import net.minecraft.world.level.block.entity.LecternBlockEntity;
+import net.minecraft.world.level.block.entity.SignBlockEntity;
 import net.neoforged.neoforge.common.damagesource.DamageContainer;
 import net.neoforged.neoforge.event.entity.living.LivingDamageEvent;
 import net.neoforged.neoforge.gametest.GameTestHolder;
@@ -44,6 +47,7 @@ import net.neoforged.neoforge.gametest.PrefixGameTestTemplate;
 
 import java.nio.charset.StandardCharsets;
 import java.util.List;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
@@ -537,6 +541,12 @@ public class SettlerGameTest {
         SettlerEntity settler = manager.spawnSettler(server, level, request).join();
         helper.assertTrue(settler != null, "Settler must spawn");
         settler.setItemInHand(InteractionHand.MAIN_HAND, new ItemStack(Items.IRON_SWORD));
+        settler.getInventory().add(new ItemStack(Items.SHIELD));
+
+        // Advance ticks so attack strength cooldown scale is >= 0.9f
+        for (int i = 0; i < 20; i++) {
+            settler.tick();
+        }
 
         // Spawn a zombie in adjacent block
         Zombie zombie = helper.spawn(EntityType.ZOMBIE, new BlockPos(1, 1, 2));
@@ -556,7 +566,7 @@ public class SettlerGameTest {
 
         manager.handleIntent(server, intent).join();
 
-        // Verify shield raised in offhand
+        // Verify shield raised in offhand (cleanly swapped from inventory without free item generation)
         helper.assertTrue(settler.getItemInHand(InteractionHand.OFF_HAND).is(Items.SHIELD),
                 "Settler must hold shield in offhand");
         helper.assertTrue(settler.isUsingItem(), "Settler must be using offhand shield item");
@@ -567,6 +577,64 @@ public class SettlerGameTest {
         helper.assertTrue(zombie.getHealth() < initialHealth,
                 "Target zombie must have taken damage, health was: " + zombie.getHealth());
 
+        // Verify friendly fire rejection for ally with same clan
+        BlockPos allyPos = helper.absolutePos(new BlockPos(1, 1, 0));
+        SpawnAgentRequest allyRequest = SpawnAgentRequest.newBuilder()
+                .setAgentId("agent-gt-ally")
+                .setDisplayName("AllySettler")
+                .setClanId("clan-ironwood")
+                .setSpawnCoords(Vec3.newBuilder()
+                        .setX(allyPos.getX() + 0.5)
+                        .setY(allyPos.getY())
+                        .setZ(allyPos.getZ() + 0.5)
+                        .build())
+                .build();
+        SettlerEntity ally = manager.spawnSettler(server, level, allyRequest).join();
+        float allyInitialHealth = ally.getHealth();
+
+        AgentIntent allyAttackIntent = AgentIntent.newBuilder()
+                .setAgentId("agent-gt-attack")
+                .setAttack(AttackIntent.newBuilder()
+                        .setTargetEntityId(ally.getId())
+                        .build())
+                .build();
+        manager.handleIntent(server, allyAttackIntent).join();
+        helper.assertTrue(ally.getHealth() == allyInitialHealth,
+                "Ally settler in same clan must not take friendly fire damage");
+
+        // Verify Flee reflex movement (normalized vector * 10 blocks, tolerance 1)
+        AttackIntent fleeIntent = AttackIntent.newBuilder()
+                .setTargetEntityId(zombie.getId())
+                .setFleeImmediately(true)
+                .build();
+        AgentIntent fleeAgentIntent = AgentIntent.newBuilder()
+                .setAgentId("agent-gt-attack")
+                .setAttack(fleeIntent)
+                .build();
+        manager.handleIntent(server, fleeAgentIntent).join();
+
+        helper.assertTrue(settler.getNavigator().isPathing(), "Settler must be pathing away when fleeing");
+        net.minecraft.world.phys.Vec3 fleeTarget = settler.getNavigator().getTargetCoords();
+        helper.assertTrue(fleeTarget != null, "Flee target coordinates must be set");
+        helper.assertTrue(settler.getNavigator().getArrivalTolerance() == 1,
+                "Flee navigation arrival tolerance must be 1");
+        helper.assertTrue(Math.abs(fleeTarget.z - (settler.getZ() - 10.0)) < 0.01,
+                "Flee target Z must be 10 blocks away from zombie opposite to target");
+
+        // Verify Flee reflex when distance < 0.001 (opposite to yaw)
+        zombie.setPos(settler.getX(), settler.getY(), settler.getZ());
+        settler.setYRot(0.0F); // Facing +Z
+        manager.handleIntent(server, fleeAgentIntent).join();
+        net.minecraft.world.phys.Vec3 zeroDistFleeTarget = settler.getNavigator().getTargetCoords();
+        helper.assertTrue(zeroDistFleeTarget != null && zeroDistFleeTarget.z < settler.getZ(),
+                "When distance < 0.001, flee direction must be opposite to settler yaw");
+
+        // Verify thread safety: world-modifying intent with null server must return failed future
+        CompletableFuture<Void> nullServerFuture = manager.handleIntent(null, intent);
+        helper.assertTrue(nullServerFuture.isCompletedExceptionally(),
+                "World-modifying intent without running MinecraftServer must return failed future");
+
+        manager.despawnSettler(server, "agent-gt-ally").join();
         zombie.discard();
         manager.despawnSettler(server, "agent-gt-attack").join();
         helper.succeed();
@@ -609,7 +677,22 @@ public class SettlerGameTest {
         manager.handleIntent(server, harvestIntent).join();
         helper.assertBlockNotPresent(Blocks.WHEAT, localWheat);
 
-        // 2. PAVE_ROAD_PATH on grass block
+        // 2. HARVEST_BREAK prohibited on indestructible blocks (bedrock destroySpeed < 0)
+        BlockPos localBedrock = new BlockPos(1, 1, 2);
+        BlockPos absBedrock = helper.absolutePos(localBedrock);
+        helper.setBlock(localBedrock, Blocks.BEDROCK);
+        AgentIntent breakBedrockIntent = AgentIntent.newBuilder()
+                .setAgentId("agent-gt-interact")
+                .setInteractBlock(InteractBlockIntent.newBuilder()
+                        .setPos(BlockPosProto.newBuilder().setX(absBedrock.getX()).setY(absBedrock.getY()).setZ(absBedrock.getZ()).build())
+                        .setInteractionType(InteractBlockIntent.InteractionType.HARVEST_BREAK)
+                        .build())
+                .build();
+        manager.handleIntent(server, breakBedrockIntent).join();
+        helper.assertBlockPresent(Blocks.BEDROCK, localBedrock);
+        helper.setBlock(localBedrock, Blocks.AIR);
+
+        // 3. PAVE_ROAD_PATH on grass block
         BlockPos localGrass = new BlockPos(2, 1, 1);
         BlockPos absGrass = helper.absolutePos(localGrass);
         helper.setBlock(localGrass, Blocks.GRASS_BLOCK);
@@ -625,10 +708,39 @@ public class SettlerGameTest {
         manager.handleIntent(server, paveIntent).join();
         helper.assertBlockPresent(Blocks.DIRT_PATH, localGrass);
 
-        // 3. SLEEP_IN_BED and WAKE_UP
+        // 4. PLACE_BLOCK consuming inventory item
+        BlockPos localCobble = new BlockPos(2, 1, 2);
+        BlockPos absCobble = helper.absolutePos(localCobble);
+        helper.setBlock(localCobble, Blocks.AIR);
+        settler.getInventory().add(new ItemStack(Items.COBBLESTONE, 2));
+
+        AgentIntent placeIntent = AgentIntent.newBuilder()
+                .setAgentId("agent-gt-interact")
+                .setInteractBlock(InteractBlockIntent.newBuilder()
+                        .setPos(BlockPosProto.newBuilder().setX(absCobble.getX()).setY(absCobble.getY()).setZ(absCobble.getZ()).build())
+                        .setInteractionType(InteractBlockIntent.InteractionType.PLACE_BLOCK)
+                        .setBlockOrItemId("minecraft:cobblestone")
+                        .build())
+                .build();
+        manager.handleIntent(server, placeIntent).join();
+        helper.assertBlockPresent(Blocks.COBBLESTONE, localCobble);
+
+        int cobbleCount = 0;
+        for (int i = 0; i < settler.getInventory().getContainerSize(); i++) {
+            ItemStack stack = settler.getInventory().getItem(i);
+            if (stack.is(Items.COBBLESTONE)) {
+                cobbleCount += stack.getCount();
+            }
+        }
+        helper.assertTrue(cobbleCount == 1, "Cobblestone inventory count must shrink by 1 after placement");
+
+        // 5. SLEEP_IN_BED and WAKE_UP (requires night time or thundering)
         BlockPos localBed = new BlockPos(1, 1, 0);
         BlockPos absBed = helper.absolutePos(localBed);
         helper.setBlock(localBed, Blocks.RED_BED);
+        level.setDayTime(13000L); // Set to night
+        level.setThunderLevel(1.0F);
+        level.setRainLevel(1.0F);
 
         AgentIntent sleepIntent = AgentIntent.newBuilder()
                 .setAgentId("agent-gt-interact")
@@ -714,7 +826,130 @@ public class SettlerGameTest {
         helper.assertTrue("Chronicler".equals(content.author()), "Book author must match intent");
         helper.assertTrue(content.pages().size() == 2, "Page count must match intent (2)");
 
+        // 2. Placing book on lectern that already has a book must be rejected
+        boolean duplicateLectern = manager.getIntentActuator().actuateCreateWrittenBook(settler, bookIntent);
+        helper.assertFalse(duplicateLectern, "Placing book on lectern that already holds a book must be rejected");
+
+        // 3. Title length > 32 chars must be rejected
+        CreateWrittenBookIntent longTitleIntent = CreateWrittenBookIntent.newBuilder()
+                .setTitle("A".repeat(33))
+                .addPages("Valid content")
+                .build();
+        helper.assertFalse(manager.getIntentActuator().actuateCreateWrittenBook(settler, longTitleIntent),
+                "Title length > 32 chars must be rejected");
+
+        // 4. Pages count > 100 must be rejected
+        CreateWrittenBookIntent.Builder manyPagesBuilder = CreateWrittenBookIntent.newBuilder()
+                .setTitle("Valid Title");
+        for (int i = 0; i < 101; i++) {
+            manyPagesBuilder.addPages("Page " + i);
+        }
+        helper.assertFalse(manager.getIntentActuator().actuateCreateWrittenBook(settler, manyPagesBuilder.build()),
+                "Page count > 100 must be rejected");
+
+        // 5. Page text length > 1024 chars must be rejected
+        CreateWrittenBookIntent longPageIntent = CreateWrittenBookIntent.newBuilder()
+                .setTitle("Valid Title")
+                .addPages("B".repeat(1025))
+                .build();
+        helper.assertFalse(manager.getIntentActuator().actuateCreateWrittenBook(settler, longPageIntent),
+                "Page length > 1024 chars must be rejected");
+
+        // 6. Target lectern out of reach (> 6.0 blocks) must be rejected
+        CreateWrittenBookIntent outOfReachLectern = CreateWrittenBookIntent.newBuilder()
+                .setTitle("Valid Title")
+                .addPages("Content")
+                .setTargetLecternOrShelf(BlockPosProto.newBuilder().setX(absLectern.getX() + 20).setY(absLectern.getY()).setZ(absLectern.getZ()).build())
+                .build();
+        helper.assertFalse(manager.getIntentActuator().actuateCreateWrittenBook(settler, outOfReachLectern),
+                "Target lectern out of reach (> 6.0 blocks) must be rejected");
+
         manager.despawnSettler(server, "agent-gt-book").join();
+        helper.succeed();
+    }
+
+    @GameTest(template = "empty3x3x3")
+    public static void testUseItemAndSignpost(GameTestHelper helper) {
+        ServerLevel level = helper.getLevel();
+        MinecraftServer server = level.getServer();
+        SettlerEntityManager manager = new SettlerEntityManager();
+
+        BlockPos spawnPos = helper.absolutePos(new BlockPos(1, 1, 1));
+        SpawnAgentRequest request = SpawnAgentRequest.newBuilder()
+                .setAgentId("agent-gt-useitem")
+                .setDisplayName("UseItemSettler")
+                .setClanId("clan-ironwood")
+                .setSpawnCoords(Vec3.newBuilder()
+                        .setX(spawnPos.getX() + 0.5)
+                        .setY(spawnPos.getY())
+                        .setZ(spawnPos.getZ() + 0.5)
+                        .build())
+                .build();
+
+        SettlerEntity settler = manager.spawnSettler(server, level, request).join();
+        helper.assertTrue(settler != null, "Settler must spawn");
+
+        // 1. Eating non-food item (e.g. Iron Ingot) must be rejected
+        settler.getInventory().setItem(0, new ItemStack(Items.IRON_INGOT, 2));
+        settler.getFoodData().setFoodLevel(16);
+
+        AgentIntent eatIngotIntent = AgentIntent.newBuilder()
+                .setAgentId("agent-gt-useitem")
+                .setUseItem(UseItemIntent.newBuilder()
+                        .setInventorySlot(0)
+                        .setIsEatingOrDrinking(true)
+                        .build())
+                .build();
+        manager.handleIntent(server, eatIngotIntent).join();
+        helper.assertTrue(settler.getFoodData().getFoodLevel() == 16, "Eating non-food must be rejected");
+        helper.assertTrue(settler.getInventory().getItem(0).getCount() == 2, "Non-food item count must not decrease");
+
+        // 2. Eating valid food (Apple) increases food level and shrinks item
+        settler.getInventory().setItem(1, new ItemStack(Items.APPLE, 2));
+        AgentIntent eatAppleIntent = AgentIntent.newBuilder()
+                .setAgentId("agent-gt-useitem")
+                .setUseItem(UseItemIntent.newBuilder()
+                        .setInventorySlot(1)
+                        .setIsEatingOrDrinking(true)
+                        .build())
+                .build();
+        manager.handleIntent(server, eatAppleIntent).join();
+        helper.assertTrue(settler.getFoodData().getFoodLevel() > 16, "Eating valid food must increase food level");
+        helper.assertTrue(settler.getInventory().getItem(1).getCount() == 1, "Food item count must shrink by 1");
+
+        // 3. Eating when full (foodLevel=20) for standard food must be rejected
+        settler.getFoodData().setFoodLevel(20);
+        manager.handleIntent(server, eatAppleIntent).join();
+        helper.assertTrue(settler.getInventory().getItem(1).getCount() == 1, "Eating when full must be rejected");
+
+        // 4. Place Signpost with oak sign item consumed and lines clamped to 80 chars
+        helper.setBlock(new BlockPos(1, 0, 2), Blocks.STONE);
+        helper.setBlock(new BlockPos(1, 1, 2), Blocks.AIR);
+        BlockPos absSign = helper.absolutePos(new BlockPos(1, 1, 2));
+        settler.getInventory().setItem(2, new ItemStack(Items.OAK_SIGN, 2));
+
+        String longLine = "A".repeat(100);
+        AgentIntent signIntent = AgentIntent.newBuilder()
+                .setAgentId("agent-gt-useitem")
+                .setPlaceSignpost(PlaceSignpostIntent.newBuilder()
+                        .setPos(BlockPosProto.newBuilder().setX(absSign.getX()).setY(absSign.getY()).setZ(absSign.getZ()).build())
+                        .setIsHangingSign(false)
+                        .setLine1("Ironwood Gate")
+                        .setLine2(longLine)
+                        .build())
+                .build();
+        manager.handleIntent(server, signIntent).join();
+
+        helper.assertBlockPresent(Blocks.OAK_SIGN, new BlockPos(1, 1, 2));
+        helper.assertTrue(settler.getInventory().getItem(2).getCount() == 1, "Sign item count must shrink by 1");
+
+        net.minecraft.world.level.block.entity.BlockEntity signEntity = helper.getBlockEntity(new BlockPos(1, 1, 2));
+        helper.assertTrue(signEntity instanceof SignBlockEntity, "Must be SignBlockEntity");
+        SignBlockEntity signBe = (SignBlockEntity) signEntity;
+        helper.assertTrue("Ironwood Gate".equals(signBe.getFrontText().getMessage(0, false).getString()), "Sign line 1 must match");
+        helper.assertTrue(signBe.getFrontText().getMessage(1, false).getString().length() == 80, "Sign line 2 must be clamped to 80 chars");
+
+        manager.despawnSettler(server, "agent-gt-useitem").join();
         helper.succeed();
     }
 }

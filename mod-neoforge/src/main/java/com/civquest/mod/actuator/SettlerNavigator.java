@@ -11,7 +11,6 @@ import net.minecraft.world.phys.Vec3;
 import org.slf4j.Logger;
 
 import java.lang.reflect.Constructor;
-import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 
 /**
@@ -22,15 +21,65 @@ import java.lang.reflect.Method;
 public class SettlerNavigator {
     private static final Logger LOGGER = LogUtils.getLogger();
     private static final boolean BARITONE_PRESENT;
+    private static final Method GET_PROVIDER_METHOD;
+    private static final Method GET_BARITONE_FOR_PLAYER_METHOD;
+    private static final Method GET_CUSTOM_GOAL_PROCESS_METHOD;
+    private static final Method SET_GOAL_AND_PATH_METHOD;
+    private static final Method SET_GOAL_METHOD;
+    private static final Method IS_ACTIVE_METHOD;
+    private static final Constructor<?> GOAL_NEAR_CTOR;
+    private static final Constructor<?> GOAL_BLOCK_CTOR;
 
     static {
         boolean present = false;
+        Method getProvider = null;
+        Method getBaritoneForPlayer = null;
+        Method getCustomGoalProcess = null;
+        Method setGoalAndPath = null;
+        Method setGoal = null;
+        Method isActive = null;
+        Constructor<?> goalNearCtor = null;
+        Constructor<?> goalBlockCtor = null;
+
         try {
-            Class.forName("baritone.api.BaritoneAPI");
+            Class<?> apiClass = Class.forName("baritone.api.BaritoneAPI");
+            getProvider = apiClass.getMethod("getProvider");
+            Class<?> providerClass = Class.forName("baritone.api.IBaritoneProvider");
+            getBaritoneForPlayer = providerClass.getMethod("getBaritoneForPlayer", net.minecraft.world.entity.player.Player.class);
+            Class<?> baritoneClass = Class.forName("baritone.api.IBaritone");
+            getCustomGoalProcess = baritoneClass.getMethod("getCustomGoalProcess");
+            Class<?> goalProcessClass = Class.forName("baritone.api.process.ICustomGoalProcess");
+            Class<?> goalClass = Class.forName("baritone.api.pathing.goals.Goal");
+            setGoalAndPath = goalProcessClass.getMethod("setGoalAndPath", goalClass);
+            setGoal = goalProcessClass.getMethod("setGoal", goalClass);
+            isActive = goalProcessClass.getMethod("isActive");
+
+            try {
+                Class<?> goalNearClass = Class.forName("baritone.api.pathing.goals.GoalNear");
+                goalNearCtor = goalNearClass.getConstructor(BlockPos.class, int.class);
+            } catch (Throwable ignored) {
+            }
+
+            try {
+                Class<?> goalBlockClass = Class.forName("baritone.api.pathing.goals.GoalBlock");
+                goalBlockCtor = goalBlockClass.getConstructor(BlockPos.class);
+            } catch (Throwable ignored) {
+            }
+
             present = true;
         } catch (Throwable ignored) {
+            present = false;
         }
+
         BARITONE_PRESENT = present;
+        GET_PROVIDER_METHOD = getProvider;
+        GET_BARITONE_FOR_PLAYER_METHOD = getBaritoneForPlayer;
+        GET_CUSTOM_GOAL_PROCESS_METHOD = getCustomGoalProcess;
+        SET_GOAL_AND_PATH_METHOD = setGoalAndPath;
+        SET_GOAL_METHOD = setGoal;
+        IS_ACTIVE_METHOD = isActive;
+        GOAL_NEAR_CTOR = goalNearCtor;
+        GOAL_BLOCK_CTOR = goalBlockCtor;
     }
 
     private final SettlerEntity settler;
@@ -42,6 +91,7 @@ public class SettlerNavigator {
     private boolean allowPlace = false;
     private int arrivalTolerance = 1;
     private int stuckTicks = 0;
+    private int baritoneInactivityTicks = 0;
     private Vec3 lastPosition = null;
     private Vec3 simulatedPos = Vec3.ZERO;
     private boolean usingBaritone = false;
@@ -63,7 +113,9 @@ public class SettlerNavigator {
     }
 
     public void setPosition(Vec3 pos) {
-        if (pos == null) return;
+        if (pos == null || !Double.isFinite(pos.x) || !Double.isFinite(pos.y) || !Double.isFinite(pos.z)) {
+            return;
+        }
         if (settler != null) {
             settler.setPos(pos.x, pos.y, pos.z);
         }
@@ -97,6 +149,13 @@ public class SettlerNavigator {
                          boolean allowBreak,
                          boolean allowPlace,
                          int arrivalTolerance) {
+        if (!Double.isFinite(x) || !Double.isFinite(y) || !Double.isFinite(z)
+                || Math.abs(x) > 30000000.0 || Math.abs(z) > 30000000.0
+                || y < -64.0 || y > 320.0) {
+            LOGGER.warn("Rejecting navigate coordinates outside finite world bounds: ({}, {}, {})", x, y, z);
+            return;
+        }
+
         this.targetCoords = new Vec3(x, y, z);
         this.speedMultiplier = speedMultiplier > 0.0f ? speedMultiplier : 1.0;
         this.sprint = sprint;
@@ -104,61 +163,52 @@ public class SettlerNavigator {
         this.allowPlace = allowPlace;
         this.arrivalTolerance = arrivalTolerance > 0 ? arrivalTolerance : 1;
         this.stuckTicks = 0;
+        this.baritoneInactivityTicks = 0;
         this.lastPosition = getPosition();
         this.navigationState = NavigationState.NAVIGATION_STATE_PATHING;
 
         if (BARITONE_PRESENT) {
-            this.usingBaritone = tryStartBaritone(x, y, z, allowBreak, allowPlace, sprint, this.arrivalTolerance);
+            this.usingBaritone = tryStartBaritone(x, y, z, this.arrivalTolerance);
         } else {
             this.usingBaritone = false;
         }
     }
 
-    private boolean tryStartBaritone(double x, double y, double z, boolean allowBreak, boolean allowPlace, boolean allowSprint, int tolerance) {
+    private boolean tryStartBaritone(double x, double y, double z, int tolerance) {
+        if (!BARITONE_PRESENT || GET_PROVIDER_METHOD == null || GET_BARITONE_FOR_PLAYER_METHOD == null
+                || GET_CUSTOM_GOAL_PROCESS_METHOD == null || SET_GOAL_AND_PATH_METHOD == null) {
+            return false;
+        }
         try {
-            Class<?> apiClass = Class.forName("baritone.api.BaritoneAPI");
-            Method getSettingsMethod = apiClass.getMethod("getSettings");
-            Object settings = getSettingsMethod.invoke(null);
-            if (settings != null) {
-                setBaritoneSetting(settings, "allowBreak", allowBreak);
-                setBaritoneSetting(settings, "allowPlace", allowPlace);
-                setBaritoneSetting(settings, "allowSprint", allowSprint);
-            }
-
-            Method getProviderMethod = apiClass.getMethod("getProvider");
-            Object provider = getProviderMethod.invoke(null);
+            Object provider = GET_PROVIDER_METHOD.invoke(null);
             if (provider == null) {
                 return false;
             }
 
-            Method getBaritoneMethod = provider.getClass().getMethod("getBaritoneForPlayer", net.minecraft.world.entity.player.Player.class);
-            Object baritone = getBaritoneMethod.invoke(provider, this.settler);
+            Object baritone = GET_BARITONE_FOR_PLAYER_METHOD.invoke(provider, this.settler);
             if (baritone == null) {
                 return false;
             }
             this.baritoneInstance = baritone;
 
-            Method getCustomGoalProcessMethod = baritone.getClass().getMethod("getCustomGoalProcess");
-            Object customGoalProcess = getCustomGoalProcessMethod.invoke(baritone);
+            Object customGoalProcess = GET_CUSTOM_GOAL_PROCESS_METHOD.invoke(baritone);
             if (customGoalProcess == null) {
                 return false;
             }
 
             BlockPos targetPos = BlockPos.containing(x, y, z);
-            Object goal;
-            try {
-                Class<?> goalNearClass = Class.forName("baritone.api.pathing.goals.GoalNear");
-                Constructor<?> ctor = goalNearClass.getConstructor(BlockPos.class, int.class);
-                goal = ctor.newInstance(targetPos, tolerance);
-            } catch (Throwable t) {
-                Class<?> goalBlockClass = Class.forName("baritone.api.pathing.goals.GoalBlock");
-                Constructor<?> ctor = goalBlockClass.getConstructor(BlockPos.class);
-                goal = ctor.newInstance(targetPos);
+            Object goal = null;
+            if (GOAL_NEAR_CTOR != null) {
+                goal = GOAL_NEAR_CTOR.newInstance(targetPos, tolerance);
+            } else if (GOAL_BLOCK_CTOR != null) {
+                goal = GOAL_BLOCK_CTOR.newInstance(targetPos);
             }
 
-            Class<?> goalInterface = Class.forName("baritone.api.pathing.goals.Goal");
-            Method setGoalAndPathMethod = customGoalProcess.getClass().getMethod("setGoalAndPath", goalInterface);
-            setGoalAndPathMethod.invoke(customGoalProcess, goal);
+            if (goal == null) {
+                return false;
+            }
+
+            SET_GOAL_AND_PATH_METHOD.invoke(customGoalProcess, goal);
             LOGGER.debug("Baritone navigation initiated for agent '{}' to ({}, {}, {})",
                     settler != null ? settler.getAgentId() : "unknown", x, y, z);
             return true;
@@ -169,30 +219,17 @@ public class SettlerNavigator {
         }
     }
 
-    private void setBaritoneSetting(Object settings, String fieldName, boolean val) {
-        try {
-            Field field = settings.getClass().getField(fieldName);
-            Object settingObj = field.get(settings);
-            if (settingObj != null) {
-                Field valueField = settingObj.getClass().getField("value");
-                valueField.set(settingObj, val);
-            }
-        } catch (Throwable ignored) {
-        }
-    }
-
     public void tick() {
         if (this.navigationState != NavigationState.NAVIGATION_STATE_PATHING || this.targetCoords == null) {
             return;
         }
 
-        if (this.usingBaritone && this.baritoneInstance != null && this.settler != null) {
+        if (this.usingBaritone && this.baritoneInstance != null && this.settler != null
+                && GET_CUSTOM_GOAL_PROCESS_METHOD != null && IS_ACTIVE_METHOD != null) {
             try {
-                Method getCustomGoalProcessMethod = this.baritoneInstance.getClass().getMethod("getCustomGoalProcess");
-                Object customGoalProcess = getCustomGoalProcessMethod.invoke(this.baritoneInstance);
+                Object customGoalProcess = GET_CUSTOM_GOAL_PROCESS_METHOD.invoke(this.baritoneInstance);
                 if (customGoalProcess != null) {
-                    Method isActiveMethod = customGoalProcess.getClass().getMethod("isActive");
-                    boolean active = (boolean) isActiveMethod.invoke(customGoalProcess);
+                    boolean active = (boolean) IS_ACTIVE_METHOD.invoke(customGoalProcess);
                     if (!active) {
                         double distSq = this.settler.distanceToSqr(this.targetCoords.x, this.targetCoords.y, this.targetCoords.z);
                         if (distSq <= (double) (this.arrivalTolerance * this.arrivalTolerance)) {
@@ -203,8 +240,29 @@ public class SettlerNavigator {
                         this.usingBaritone = false;
                         return;
                     }
-                    this.navigationState = NavigationState.NAVIGATION_STATE_PATHING;
-                    return;
+
+                    // Check horizontal movement while Baritone is active
+                    Vec3 currentPos = getPosition();
+                    if (this.lastPosition != null) {
+                        double hdx = currentPos.x - this.lastPosition.x;
+                        double hdz = currentPos.z - this.lastPosition.z;
+                        if ((hdx * hdx + hdz * hdz) < 0.0004) {
+                            this.baritoneInactivityTicks++;
+                            if (this.baritoneInactivityTicks >= 20) {
+                                LOGGER.info("Baritone produced no horizontal movement for 20 ticks; falling back to native navigation");
+                                this.usingBaritone = false;
+                                this.baritoneInactivityTicks = 0;
+                            }
+                        } else {
+                            this.baritoneInactivityTicks = 0;
+                        }
+                    }
+                    this.lastPosition = currentPos;
+
+                    if (this.usingBaritone) {
+                        this.navigationState = NavigationState.NAVIGATION_STATE_PATHING;
+                        return;
+                    }
                 }
             } catch (Throwable t) {
                 LOGGER.debug("Baritone tick poll failed; falling back to native tick: {}", t.getMessage());
@@ -248,9 +306,19 @@ public class SettlerNavigator {
         double baseSpeed = this.sprint ? 0.28 : 0.21;
         double moveSpeed = baseSpeed * this.speedMultiplier;
 
-        double vy = this.settler != null ? this.settler.getDeltaMovement().y : 0.0;
-        if (this.settler != null && this.settler.onGround() && (this.settler.horizontalCollision || dy > 0.5)) {
-            vy = 0.42; // Jump impulse
+        double vy = 0.0;
+        if (this.settler != null) {
+            vy = this.settler.getDeltaMovement().y;
+            if (this.settler.onGround()) {
+                if (this.settler.horizontalCollision || dy > 0.5) {
+                    vy = 0.42; // Jump impulse
+                } else {
+                    vy = Math.max(-0.0784, vy);
+                }
+            } else {
+                vy = (vy - 0.08) * 0.98;
+                vy = Math.max(vy, -3.92); // Terminal velocity
+            }
         }
 
         Vec3 movement = new Vec3(dirX * moveSpeed, vy, dirZ * moveSpeed);
@@ -260,7 +328,8 @@ public class SettlerNavigator {
             try {
                 this.settler.move(MoverType.SELF, movement);
             } catch (Throwable t) {
-                this.settler.setPos(this.settler.getX() + movement.x, this.settler.getY() + movement.y, this.settler.getZ() + movement.z);
+                LOGGER.debug("Movement exception: {}", t.getMessage());
+                this.settler.setDeltaMovement(0.0, 0.0, 0.0);
             }
         } else {
             this.simulatedPos = this.simulatedPos.add(movement);
@@ -281,10 +350,12 @@ public class SettlerNavigator {
             return;
         }
 
-        // Stuck detection
+        // Stuck detection using horizontal displacement squared to avoid wall jumping false-negatives
         if (this.lastPosition != null) {
-            double movedDistSq = postPos.distanceToSqr(this.lastPosition);
-            if (movedDistSq < 0.0004) {
+            double hdx = postPos.x - this.lastPosition.x;
+            double hdz = postPos.z - this.lastPosition.z;
+            double horizontalMovedSq = hdx * hdx + hdz * hdz;
+            if (horizontalMovedSq < 0.0004) {
                 this.stuckTicks++;
                 if (this.stuckTicks >= 40) {
                     this.navigationState = NavigationState.NAVIGATION_STATE_STUCK;
@@ -304,17 +375,16 @@ public class SettlerNavigator {
         this.navigationState = NavigationState.NAVIGATION_STATE_IDLE;
         this.targetCoords = null;
         this.stuckTicks = 0;
+        this.baritoneInactivityTicks = 0;
         if (this.settler != null) {
             this.settler.setDeltaMovement(0.0, 0.0, 0.0);
             this.settler.setSprinting(false);
         }
-        if (this.usingBaritone && this.baritoneInstance != null) {
+        if (this.usingBaritone && this.baritoneInstance != null && GET_CUSTOM_GOAL_PROCESS_METHOD != null && SET_GOAL_METHOD != null) {
             try {
-                Method getCustomGoalProcessMethod = this.baritoneInstance.getClass().getMethod("getCustomGoalProcess");
-                Object customGoalProcess = getCustomGoalProcessMethod.invoke(this.baritoneInstance);
+                Object customGoalProcess = GET_CUSTOM_GOAL_PROCESS_METHOD.invoke(this.baritoneInstance);
                 if (customGoalProcess != null) {
-                    Method setGoalMethod = customGoalProcess.getClass().getMethod("setGoal", Class.forName("baritone.api.pathing.goals.Goal"));
-                    setGoalMethod.invoke(customGoalProcess, (Object) null);
+                    SET_GOAL_METHOD.invoke(customGoalProcess, (Object) null);
                 }
             } catch (Throwable ignored) {
             }
@@ -360,6 +430,14 @@ public class SettlerNavigator {
 
     public void setStuckTicks(int stuckTicks) {
         this.stuckTicks = stuckTicks;
+    }
+
+    public int getBaritoneInactivityTicks() {
+        return baritoneInactivityTicks;
+    }
+
+    public void setBaritoneInactivityTicks(int baritoneInactivityTicks) {
+        this.baritoneInactivityTicks = baritoneInactivityTicks;
     }
 
     public boolean isUsingBaritone() {

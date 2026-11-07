@@ -133,6 +133,52 @@ public class IntentActuatorTest {
     }
 
     @Test
+    @DisplayName("SettlerNavigator stuck detection evaluates horizontal displacement squared ignoring vertical bobbing")
+    void testNavigatorHorizontalStuckDetectionWithVerticalBobbing() {
+        navigator.setPosition(0.0, 64.0, 0.0);
+        navigator.navigate(100.0, 64.0, 100.0, 1.0f, false, false, false, 1);
+
+        // Simulate 42 ticks where horizontal position is frozen but vertical position bobs (e.g. wall jumping)
+        for (int i = 0; i < 42; i++) {
+            navigator.tick();
+            navigator.setPosition(0.0, 64.0 + (i % 2 == 0 ? 0.5 : 0.0), 0.0);
+        }
+
+        assertEquals(NavigationState.NAVIGATION_STATE_STUCK, navigator.getNavigationState());
+        assertTrue(navigator.isStuck());
+    }
+
+    @Test
+    @DisplayName("SettlerNavigator rejects non-finite coordinates and coordinates exceeding world bounds")
+    void testNavigatorCoordinateValidation() {
+        navigator.setPosition(0.0, 64.0, 0.0);
+
+        // NaN coordinates rejected
+        navigator.navigate(Double.NaN, 64.0, 0.0, 1.0f, false, false, false, 1);
+        assertEquals(NavigationState.NAVIGATION_STATE_IDLE, navigator.getNavigationState());
+
+        // Infinite coordinates rejected
+        navigator.navigate(0.0, Double.POSITIVE_INFINITY, 0.0, 1.0f, false, false, false, 1);
+        assertEquals(NavigationState.NAVIGATION_STATE_IDLE, navigator.getNavigationState());
+
+        // X exceeding world bounds (> 30,000,000)
+        navigator.navigate(30000001.0, 64.0, 0.0, 1.0f, false, false, false, 1);
+        assertEquals(NavigationState.NAVIGATION_STATE_IDLE, navigator.getNavigationState());
+
+        // Z exceeding world bounds (< -30,000,000)
+        navigator.navigate(0.0, 64.0, -30000001.0, 1.0f, false, false, false, 1);
+        assertEquals(NavigationState.NAVIGATION_STATE_IDLE, navigator.getNavigationState());
+
+        // Y below world floor (< -64)
+        navigator.navigate(0.0, -65.0, 0.0, 1.0f, false, false, false, 1);
+        assertEquals(NavigationState.NAVIGATION_STATE_IDLE, navigator.getNavigationState());
+
+        // Y above world ceiling (> 320)
+        navigator.navigate(0.0, 321.0, 0.0, 1.0f, false, false, false, 1);
+        assertEquals(NavigationState.NAVIGATION_STATE_IDLE, navigator.getNavigationState());
+    }
+
+    @Test
     @DisplayName("SettlerNavigator stop resets to IDLE and clears targets and velocity")
     void testNavigatorStop() {
         navigator.navigate(50.0, 64.0, 50.0, 1.0f, true, false, false, 1);
