@@ -55,9 +55,6 @@ import net.minecraft.world.phys.HitResult;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.lang.invoke.MethodHandle;
-import java.lang.invoke.MethodHandles;
-import java.lang.reflect.Field;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -74,23 +71,10 @@ public class SensoryFrustumCollector {
     public static final double ENTITY_SCAN_RADIUS = 24.0;
     public static final double ENTITY_LOS_BYPASS_DISTANCE = 2.0;
     public static final int BLOCK_SCAN_RADIUS = 16;
+    public static final int MAX_INTERESTING_BLOCKS = 128;
 
     public static final TagKey<Block> INTERESTING_BLOCKS =
             TagKey.create(Registries.BLOCK, ResourceLocation.fromNamespaceAndPath(CivQuestMod.MOD_ID, "interesting_blocks"));
-
-    private static final MethodHandle CREEPER_SWELL_GETTER;
-
-    static {
-        MethodHandle mh = null;
-        try {
-            Field field = Creeper.class.getDeclaredField("swell");
-            field.setAccessible(true);
-            mh = MethodHandles.lookup().unreflectGetter(field);
-        } catch (Throwable t) {
-            LOGGER.debug("Could not bind Creeper swell field getter: {}", t.getMessage());
-        }
-        CREEPER_SWELL_GETTER = mh;
-    }
 
     public TelemetryFrame collectFrame(SettlerEntity settler) {
         return collectFrame(settler, null, null);
@@ -165,9 +149,10 @@ public class SensoryFrustumCollector {
         }
 
         // 5. Visible Entities within R = 24.0 blocks
-        if (level != null) {
+        if (deathEvent == null && level != null) {
             AABB searchBox = settler.getBoundingBox().inflate(ENTITY_SCAN_RADIUS);
-            List<Entity> nearbyEntities = level.getEntities(settler, searchBox, e -> e != null && e.isAlive() && e != settler);
+            List<Entity> nearbyEntities = level.getEntities(settler, searchBox,
+                    e -> e != null && e.isAlive() && !e.isRemoved() && !e.isSpectator() && e != settler);
             net.minecraft.world.phys.Vec3 settlerEye = settler.getEyePosition();
 
             for (Entity entity : nearbyEntities) {
@@ -186,7 +171,7 @@ public class SensoryFrustumCollector {
                     ClipContext clipContext = new ClipContext(
                             settlerEye,
                             entityEye,
-                            ClipContext.Block.COLLIDER,
+                            ClipContext.Block.VISUAL,
                             ClipContext.Fluid.NONE,
                             settler
                     );
@@ -216,7 +201,7 @@ public class SensoryFrustumCollector {
         }
 
         // 6. Interesting Blocks & Farmland Survey within R = 16 blocks
-        if (level != null) {
+        if (deathEvent == null && level != null) {
             BlockPos center = settler.blockPosition();
             int radius = BLOCK_SCAN_RADIUS;
             int radiusSq = radius * radius;
@@ -230,6 +215,10 @@ public class SensoryFrustumCollector {
 
             int minBuildHeight = level.getMinBuildHeight();
             int maxBuildHeight = level.getMaxBuildHeight();
+
+            int lastChunkX = Integer.MIN_VALUE;
+            int lastChunkZ = Integer.MIN_VALUE;
+            boolean lastChunkLoaded = false;
 
             for (int dy = -radius; dy <= radius; dy++) {
                 int y = center.getY() + dy;
@@ -245,19 +234,32 @@ public class SensoryFrustumCollector {
                     int maxDz = (int) Math.sqrt(remZSq);
                     for (int dz = -maxDz; dz <= maxDz; dz++) {
                         mpos.set(center.getX() + dx, y, center.getZ() + dz);
+                        int curChunkX = mpos.getX() >> 4;
+                        int curChunkZ = mpos.getZ() >> 4;
+                        if (curChunkX != lastChunkX || curChunkZ != lastChunkZ) {
+                            lastChunkX = curChunkX;
+                            lastChunkZ = curChunkZ;
+                            lastChunkLoaded = level.hasChunkAt(mpos);
+                        }
+                        if (!lastChunkLoaded) {
+                            continue;
+                        }
+
                         BlockState state = level.getBlockState(mpos);
                         if (state.isAir()) {
                             continue;
                         }
 
                         if (isInterestingBlock(state)) {
-                            String blockId = BuiltInRegistries.BLOCK.getKey(state.getBlock()).toString();
-                            String stateString = formatBlockProperties(state);
-                            frameBuilder.addInterestingBlocks(VisibleBlock.newBuilder()
-                                    .setPos(toBlockPosProto(mpos))
-                                    .setBlockId(blockId)
-                                    .setBlockStateString(stateString)
-                                    .build());
+                            if (frameBuilder.getInterestingBlocksCount() < MAX_INTERESTING_BLOCKS) {
+                                String blockId = BuiltInRegistries.BLOCK.getKey(state.getBlock()).toString();
+                                String stateString = formatBlockProperties(state);
+                                frameBuilder.addInterestingBlocks(VisibleBlock.newBuilder()
+                                        .setPos(toBlockPosProto(mpos))
+                                        .setBlockId(blockId)
+                                        .setBlockStateString(stateString)
+                                        .build());
+                            }
                         }
 
                         if (isFarmland(state)) {
@@ -287,11 +289,11 @@ public class SensoryFrustumCollector {
                 }
             }
 
-            if (matureCropCount > 0 && farmMinX <= farmMaxX) {
-                String primaryCropId = matureCropFrequency.entrySet().stream()
+            if ((totalFarmlandBlocks > 0 || matureCropCount > 0) && farmMinX <= farmMaxX) {
+                String primaryCropId = matureCropCount > 0 ? matureCropFrequency.entrySet().stream()
                         .max(Map.Entry.comparingByValue())
                         .map(Map.Entry::getKey)
-                        .orElse("");
+                        .orElse("") : "";
 
                 FarmlandSurveyEvent survey = FarmlandSurveyEvent.newBuilder()
                         .setBounds(BoundingBoxProto.newBuilder()
@@ -377,14 +379,9 @@ public class SensoryFrustumCollector {
         if (creeper.isIgnited()) {
             return 30;
         }
-        if (creeper.getSwellDir() > 0) {
-            if (CREEPER_SWELL_GETTER != null) {
-                try {
-                    return (int) CREEPER_SWELL_GETTER.invoke(creeper);
-                } catch (Throwable ignored) {
-                }
-            }
-            return Math.max(1, (int) (creeper.getSwelling(0.0f) * 28.0f));
+        float swelling = creeper.getSwelling(0.0f);
+        if (swelling > 0.0f || creeper.getSwellDir() != 0) {
+            return Math.round(swelling * 30.0f);
         }
         return 0;
     }
@@ -424,7 +421,6 @@ public class SensoryFrustumCollector {
                 || state.is(Blocks.BEEHIVE)
                 || state.is(Blocks.BEE_NEST)
                 || state.is(Blocks.LECTERN)
-                || state.is(Blocks.WATER)
                 || state.is(Blocks.BELL);
     }
 

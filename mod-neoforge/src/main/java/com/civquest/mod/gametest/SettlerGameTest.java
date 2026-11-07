@@ -3,6 +3,7 @@ package com.civquest.mod.gametest;
 import com.civquest.mod.SettlerEntity;
 import com.civquest.mod.SettlerEntityManager;
 import com.civquest.mod.StreamRegistry;
+import com.civquest.mod.sensory.SensoryFrustumCollector;
 import com.civquest.mod.grpc.v1.SpawnAgentRequest;
 import com.civquest.mod.grpc.v1.TelemetryFrame;
 import com.civquest.mod.grpc.v1.Vec3;
@@ -144,6 +145,10 @@ public class SettlerGameTest {
         helper.assertTrue(deathFrameRef.get().hasDeathEvent(), "Terminal frame must contain death_event");
         helper.assertTrue("agent-gt-death".equals(deathFrameRef.get().getDeathEvent().getAgentId()), "DeathEvent must have matching agent_id");
         helper.assertTrue(streamOpenWhenDeathReceived.get(), "Death frame must be delivered while stream was still registered");
+        helper.assertTrue(deathFrameRef.get().getInterestingBlocksCount() == 0,
+                "Terminal death frame must skip block scanning");
+        helper.assertTrue(deathFrameRef.get().getVisibleEntitiesCount() == 0,
+                "Terminal death frame must skip entity scanning");
         helper.assertTrue(settler.getForcedChunkPos() == null, "Forced chunk must be cleared on settler");
         helper.assertFalse(level.getForcedChunks().contains(forcedChunk.toLong()), "Level forced chunk must be released");
         helper.succeed();
@@ -254,6 +259,18 @@ public class SettlerGameTest {
         helper.assertTrue(frame.getFarmlandSurvey().getTotalFarmlandBlocks() >= 1,
                 "Total farmland blocks must be at least 1");
 
+        // Verify farmland survey when matureCropCount == 0 (only farmland)
+        helper.setBlock(wheatPos, Blocks.AIR);
+        TelemetryFrame frameFarmlandOnly = manager.getSensoryCollector().collectFrame(settler);
+        helper.assertTrue(frameFarmlandOnly.hasFarmlandSurvey(),
+                "Must populate FarmlandSurveyEvent for farmland even without mature crops");
+        helper.assertTrue("".equals(frameFarmlandOnly.getFarmlandSurvey().getPrimaryCropId()),
+                "Primary crop ID must be empty string when mature crops are 0");
+        helper.assertTrue(frameFarmlandOnly.getFarmlandSurvey().getMatureCropCount() == 0,
+                "Mature crop count must be 0");
+        helper.assertTrue(frameFarmlandOnly.getFarmlandSurvey().getTotalFarmlandBlocks() >= 1,
+                "Total farmland blocks must be at least 1");
+
         manager.despawnSettler(server, "agent-gt-blocks").join();
         helper.succeed();
     }
@@ -301,6 +318,16 @@ public class SettlerGameTest {
                 "Ignited creeper must report fuse_ticks=30, was: " + creeperEntity.getFuseTicks());
         helper.assertTrue(creeperEntity.getDistance() > 0.0f, "Distance must be positive");
         helper.assertTrue(creeperEntity.getHealth() > 0.0f, "Health must be positive");
+
+        // Test swelling and deflating states via getCreeperFuseTicks
+        Creeper swellCreeper = helper.spawn(EntityType.CREEPER, new BlockPos(1, 1, 0));
+        swellCreeper.setSwellDir(1);
+        int swellingFuse = SensoryFrustumCollector.getCreeperFuseTicks(swellCreeper);
+        helper.assertTrue(swellingFuse >= 0 && swellingFuse <= 30, "Swelling creeper fuse ticks must be in [0, 30]");
+        swellCreeper.setSwellDir(-1);
+        int deflatingFuse = SensoryFrustumCollector.getCreeperFuseTicks(swellCreeper);
+        helper.assertTrue(deflatingFuse >= 0 && deflatingFuse <= 30, "Deflating creeper fuse ticks must be in [0, 30]");
+        swellCreeper.discard();
 
         creeper.discard();
         manager.despawnSettler(server, "agent-gt-entity").join();
@@ -351,7 +378,10 @@ public class SettlerGameTest {
         helper.assertTrue("agent-gt-stream".equals(frame.getStatus().getAgentId()), "Agent ID must match");
         helper.assertTrue(frame.getStatus().getHealth() == settler.getMaxHealth(), "Health must match max health");
 
+        helper.assertTrue(streamRegistry.isRegistered("agent-gt-stream"), "Agent stream must be registered prior to despawn");
         manager.despawnSettler(server, "agent-gt-stream").join();
+        helper.assertFalse(streamRegistry.isRegistered("agent-gt-stream"),
+                "Agent stream must be cleanly closed via removalListener upon non-death despawn");
         helper.succeed();
     }
 
@@ -402,6 +432,12 @@ public class SettlerGameTest {
         helper.assertTrue(frame.hasLastDamageTaken(), "Frame must contain last_damage_taken");
         helper.assertTrue(frame.getLastDamageTaken().getDamageAmount() == 4.5f,
                 "Damage amount must match 4.5f, was: " + frame.getLastDamageTaken().getDamageAmount());
+
+        // Emit damage event when settler is dying / dead (health <= 0) - should be skipped
+        settler.setHealth(0.0f);
+        manager.onLivingDamage(postEvent);
+        helper.assertTrue(receivedFrames.size() == 1,
+                "Must not emit damage frame when settler is dead/dying, received count: " + receivedFrames.size());
 
         manager.despawnSettler(server, "agent-gt-damage-event").join();
         helper.succeed();

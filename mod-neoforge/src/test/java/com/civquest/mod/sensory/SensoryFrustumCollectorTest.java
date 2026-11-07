@@ -166,6 +166,7 @@ public class SensoryFrustumCollectorTest {
         assertEquals(24.0, SensoryFrustumCollector.ENTITY_SCAN_RADIUS, 0.001);
         assertEquals(2.0, SensoryFrustumCollector.ENTITY_LOS_BYPASS_DISTANCE, 0.001);
         assertEquals(16, SensoryFrustumCollector.BLOCK_SCAN_RADIUS);
+        assertEquals(128, SensoryFrustumCollector.MAX_INTERESTING_BLOCKS);
         assertNotNull(SensoryFrustumCollector.INTERESTING_BLOCKS);
         assertEquals("civquest:interesting_blocks", SensoryFrustumCollector.INTERESTING_BLOCKS.location().toString());
     }

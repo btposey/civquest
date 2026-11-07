@@ -214,6 +214,9 @@ public class SettlerEntityManager {
         settler.setRemovalListener(removedSettler -> {
             removedSettler.releaseForcedChunk();
             settlers.remove(removedSettler.getAgentId(), removedSettler);
+            if (streamRegistry != null) {
+                streamRegistry.close(removedSettler.getAgentId());
+            }
             if (server != null && server.getPlayerList() != null) {
                 ClientboundPlayerInfoRemovePacket removePacket =
                         new ClientboundPlayerInfoRemovePacket(List.of(removedSettler.getUUID()));
@@ -272,16 +275,29 @@ public class SettlerEntityManager {
 
     public void onServerTick(ServerTickEvent.Post event) {
         MinecraftServer server = event.getServer();
-        if (server != null && server.getTickCount() % 4 == 0) {
-            tickTelemetry();
+        if (server != null) {
+            tickTelemetry(server.getTickCount());
         }
     }
 
     public void tickTelemetry() {
+        tickTelemetry(-1);
+    }
+
+    public void tickTelemetry(int tickCount) {
         if (streamRegistry == null || settlers.isEmpty()) {
             return;
         }
         for (SettlerEntity settler : settlers.values()) {
+            if (tickCount >= 0) {
+                int hash = Math.abs(settler.getUUID().hashCode());
+                if (hash < 0) {
+                    hash = 0;
+                }
+                if ((hash + tickCount) % 4 != 0) {
+                    continue;
+                }
+            }
             if (settler.isAlive() && !settler.isRemoved()) {
                 if (streamRegistry.isRegistered(settler.getAgentId())) {
                     try {
@@ -298,6 +314,9 @@ public class SettlerEntityManager {
 
     public void onLivingDamage(LivingDamageEvent.Post event) {
         if (event.getEntity() instanceof SettlerEntity settler) {
+            if (settler.isDeadOrDying() || settler.getHealth() <= 0.0f) {
+                return;
+            }
             if (streamRegistry != null && streamRegistry.isRegistered(settler.getAgentId())) {
                 try {
                     DamageEvent damageEvent = SensoryFrustumCollector.buildDamageEvent(event.getSource(), event.getNewDamage());

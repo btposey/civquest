@@ -195,16 +195,17 @@ public class StreamRegistry {
      * @param agentId  the agent identifier
      * @param observer the observer to send to
      * @param frame    the telemetry frame to deliver
+     * @param force    if true, bypasses backpressure checks (for terminal death frames or critical events)
      * @return true if delivered, false if dropped due to backpressure or delivery failure
      */
-    private boolean sendFrameToObserver(String agentId, StreamObserver<TelemetryFrame> observer, TelemetryFrame frame) {
-        if (observer instanceof CallStreamObserver<?> callObserver && !callObserver.isReady()) {
+    private boolean sendFrameToObserver(String agentId, StreamObserver<TelemetryFrame> observer, TelemetryFrame frame, boolean force) {
+        if (!force && observer instanceof CallStreamObserver<?> callObserver && !callObserver.isReady()) {
             LOGGER.warn("Dropping telemetry frame for agent '{}': stream is not ready (backpressure)", agentId);
             return false;
         }
         try {
             synchronized (observer) {
-                if (observer instanceof CallStreamObserver<?> callObserver && !callObserver.isReady()) {
+                if (!force && observer instanceof CallStreamObserver<?> callObserver && !callObserver.isReady()) {
                     LOGGER.warn("Dropping telemetry frame for agent '{}': stream is not ready (backpressure)", agentId);
                     return false;
                 }
@@ -236,7 +237,26 @@ public class StreamRegistry {
         if (observer == null) {
             return false;
         }
-        return sendFrameToObserver(agentId, observer, frame);
+        return sendFrameToObserver(agentId, observer, frame, false);
+    }
+
+    /**
+     * Thread-safely sends a critical telemetry frame (such as a terminal death frame) to the specified agent,
+     * bypassing advisory backpressure checks to ensure guaranteed delivery.
+     *
+     * @param agentId the unique identifier of the recipient agent
+     * @param frame   the critical telemetry frame to deliver
+     * @return true if the frame was delivered successfully, false otherwise
+     */
+    public boolean sendCriticalFrame(String agentId, TelemetryFrame frame) {
+        if (agentId == null || frame == null || closed.get()) {
+            return false;
+        }
+        StreamObserver<TelemetryFrame> observer = observers.get(agentId);
+        if (observer == null) {
+            return false;
+        }
+        return sendFrameToObserver(agentId, observer, frame, true);
     }
 
     /**
@@ -253,7 +273,7 @@ public class StreamRegistry {
         }
         int delivered = 0;
         for (Map.Entry<String, StreamObserver<TelemetryFrame>> entry : observers.entrySet()) {
-            if (sendFrameToObserver(entry.getKey(), entry.getValue(), frame)) {
+            if (sendFrameToObserver(entry.getKey(), entry.getValue(), frame, false)) {
                 delivered++;
             }
         }

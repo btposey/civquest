@@ -148,7 +148,7 @@ public class SettlerEntity extends FakePlayer {
                         ? this.sensoryCollector
                         : new SensoryFrustumCollector();
                 TelemetryFrame deathFrame = collector.collectFrame(this, null, deathEvent);
-                this.streamRegistry.sendFrame(this.agentId, deathFrame);
+                this.streamRegistry.sendCriticalFrame(this.agentId, deathFrame);
             } catch (Exception e) {
                 LOGGER.error("Error sending terminal death telemetry frame for settler '{}': {}",
                         this.agentId, e.getMessage(), e);
