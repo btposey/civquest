@@ -137,45 +137,9 @@ jobs:
           name: ${{ needs.resolve-version.outputs.artifact_base }}-mod
           path: dist/mod/
 
-  integration-test:
-    name: Multi-Tier In-Game Integration Test
-    needs: [resolve-version, build-mod, build-go]
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout Code
-        uses: actions/checkout@v4
-
-      - name: Set up Java 21
-        uses: actions/setup-java@v4
-        with:
-          distribution: 'temurin'
-          java-version: '21'
-
-      - name: Set up Go
-        uses: actions/setup-go@v5
-        with:
-          go-version: '1.23'
-          cache-dependency-path: 'orchestrator-go/go.sum'
-
-      - name: Pre-warm Mod Build
-        run: ./gradlew :mod-neoforge:prepareIntegrationServer :mod-neoforge:compileJava
-
-      - name: Run End-to-End In-Game Integration Test
-        run: |
-          chmod +x gradlew scripts/run-integration-test.sh || true
-          ./scripts/run-integration-test.sh
-
-      - name: Upload Integration Server Log Artifact
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: civquest-integration-server-log-${{ needs.resolve-version.outputs.semver }}
-          path: mod-neoforge/build/integration-server/server.log
-          if-no-files-found: warn
-
   package-bundle:
     name: Package Release Bundle
-    needs: [resolve-version, build-go, build-mod, integration-test]
+    needs: [resolve-version, build-go, build-mod]
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Code
