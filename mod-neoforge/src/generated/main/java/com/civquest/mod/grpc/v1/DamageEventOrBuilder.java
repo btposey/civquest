@@ -10,24 +10,15 @@ public interface DamageEventOrBuilder extends
     com.google.protobuf.MessageOrBuilder {
 
   /**
-   * <pre>
-   * "mob", "player", "arrow", "fall", "explosion", "lava"
-   * </pre>
-   *
-   * <code>string source_type = 1;</code>
+   * <code>.civquest.v1.DamageSourceType source_type = 1;</code>
+   * @return The enum numeric value on the wire for sourceType.
+   */
+  int getSourceTypeValue();
+  /**
+   * <code>.civquest.v1.DamageSourceType source_type = 1;</code>
    * @return The sourceType.
    */
-  java.lang.String getSourceType();
-  /**
-   * <pre>
-   * "mob", "player", "arrow", "fall", "explosion", "lava"
-   * </pre>
-   *
-   * <code>string source_type = 1;</code>
-   * @return The bytes for sourceType.
-   */
-  com.google.protobuf.ByteString
-      getSourceTypeBytes();
+  com.civquest.mod.grpc.v1.DamageSourceType getSourceType();
 
   /**
    * <code>int32 attacker_entity_id = 2;</code>

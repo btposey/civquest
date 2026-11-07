@@ -50,25 +50,29 @@ private static final long serialVersionUID = 0L;
   public enum CaravanAction
       implements com.google.protobuf.ProtocolMessageEnum {
     /**
-     * <code>LEASH_BEAST = 0;</code>
+     * <code>CARAVAN_ACTION_UNSPECIFIED = 0;</code>
      */
-    LEASH_BEAST(0),
+    CARAVAN_ACTION_UNSPECIFIED(0),
     /**
-     * <code>UNLEASH_BEAST = 1;</code>
+     * <code>LEASH_BEAST = 1;</code>
      */
-    UNLEASH_BEAST(1),
+    LEASH_BEAST(1),
     /**
-     * <code>HITCH_TO_FENCE = 2;</code>
+     * <code>UNLEASH_BEAST = 2;</code>
      */
-    HITCH_TO_FENCE(2),
+    UNLEASH_BEAST(2),
     /**
-     * <code>LOAD_BEAST_CHEST = 3;</code>
+     * <code>HITCH_TO_FENCE = 3;</code>
      */
-    LOAD_BEAST_CHEST(3),
+    HITCH_TO_FENCE(3),
     /**
-     * <code>UNLOAD_BEAST_CHEST = 4;</code>
+     * <code>LOAD_BEAST_CHEST = 4;</code>
      */
-    UNLOAD_BEAST_CHEST(4),
+    LOAD_BEAST_CHEST(4),
+    /**
+     * <code>UNLOAD_BEAST_CHEST = 5;</code>
+     */
+    UNLOAD_BEAST_CHEST(5),
     UNRECOGNIZED(-1),
     ;
 
@@ -82,25 +86,29 @@ private static final long serialVersionUID = 0L;
         CaravanAction.class.getName());
     }
     /**
-     * <code>LEASH_BEAST = 0;</code>
+     * <code>CARAVAN_ACTION_UNSPECIFIED = 0;</code>
      */
-    public static final int LEASH_BEAST_VALUE = 0;
+    public static final int CARAVAN_ACTION_UNSPECIFIED_VALUE = 0;
     /**
-     * <code>UNLEASH_BEAST = 1;</code>
+     * <code>LEASH_BEAST = 1;</code>
      */
-    public static final int UNLEASH_BEAST_VALUE = 1;
+    public static final int LEASH_BEAST_VALUE = 1;
     /**
-     * <code>HITCH_TO_FENCE = 2;</code>
+     * <code>UNLEASH_BEAST = 2;</code>
      */
-    public static final int HITCH_TO_FENCE_VALUE = 2;
+    public static final int UNLEASH_BEAST_VALUE = 2;
     /**
-     * <code>LOAD_BEAST_CHEST = 3;</code>
+     * <code>HITCH_TO_FENCE = 3;</code>
      */
-    public static final int LOAD_BEAST_CHEST_VALUE = 3;
+    public static final int HITCH_TO_FENCE_VALUE = 3;
     /**
-     * <code>UNLOAD_BEAST_CHEST = 4;</code>
+     * <code>LOAD_BEAST_CHEST = 4;</code>
      */
-    public static final int UNLOAD_BEAST_CHEST_VALUE = 4;
+    public static final int LOAD_BEAST_CHEST_VALUE = 4;
+    /**
+     * <code>UNLOAD_BEAST_CHEST = 5;</code>
+     */
+    public static final int UNLOAD_BEAST_CHEST_VALUE = 5;
 
 
     public final int getNumber() {
@@ -127,11 +135,12 @@ private static final long serialVersionUID = 0L;
      */
     public static CaravanAction forNumber(int value) {
       switch (value) {
-        case 0: return LEASH_BEAST;
-        case 1: return UNLEASH_BEAST;
-        case 2: return HITCH_TO_FENCE;
-        case 3: return LOAD_BEAST_CHEST;
-        case 4: return UNLOAD_BEAST_CHEST;
+        case 0: return CARAVAN_ACTION_UNSPECIFIED;
+        case 1: return LEASH_BEAST;
+        case 2: return UNLEASH_BEAST;
+        case 3: return HITCH_TO_FENCE;
+        case 4: return LOAD_BEAST_CHEST;
+        case 5: return UNLOAD_BEAST_CHEST;
         default: return null;
       }
     }
@@ -299,7 +308,7 @@ private static final long serialVersionUID = 0L;
   @java.lang.Override
   public void writeTo(com.google.protobuf.CodedOutputStream output)
                       throws java.io.IOException {
-    if (action_ != com.civquest.mod.grpc.v1.CaravanIntent.CaravanAction.LEASH_BEAST.getNumber()) {
+    if (action_ != com.civquest.mod.grpc.v1.CaravanIntent.CaravanAction.CARAVAN_ACTION_UNSPECIFIED.getNumber()) {
       output.writeEnum(1, action_);
     }
     if (beastEntityId_ != 0) {
@@ -320,7 +329,7 @@ private static final long serialVersionUID = 0L;
     if (size != -1) return size;
 
     size = 0;
-    if (action_ != com.civquest.mod.grpc.v1.CaravanIntent.CaravanAction.LEASH_BEAST.getNumber()) {
+    if (action_ != com.civquest.mod.grpc.v1.CaravanIntent.CaravanAction.CARAVAN_ACTION_UNSPECIFIED.getNumber()) {
       size += com.google.protobuf.CodedOutputStream
         .computeEnumSize(1, action_);
     }

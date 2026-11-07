@@ -22,22 +22,13 @@ public interface SendChatIntentOrBuilder extends
       getMessageBytes();
 
   /**
-   * <pre>
-   * "LOCAL", "CLAN_BROADCAST"
-   * </pre>
-   *
-   * <code>string target_channel = 2;</code>
+   * <code>.civquest.v1.ChatChannel target_channel = 2;</code>
+   * @return The enum numeric value on the wire for targetChannel.
+   */
+  int getTargetChannelValue();
+  /**
+   * <code>.civquest.v1.ChatChannel target_channel = 2;</code>
    * @return The targetChannel.
    */
-  java.lang.String getTargetChannel();
-  /**
-   * <pre>
-   * "LOCAL", "CLAN_BROADCAST"
-   * </pre>
-   *
-   * <code>string target_channel = 2;</code>
-   * @return The bytes for targetChannel.
-   */
-  com.google.protobuf.ByteString
-      getTargetChannelBytes();
+  com.civquest.mod.grpc.v1.ChatChannel getTargetChannel();
 }

@@ -195,6 +195,10 @@ private static final long serialVersionUID = 0L;
   public static final int SKIN_PNG_BYTES_FIELD_NUMBER = 5;
   private com.google.protobuf.ByteString skinPngBytes_ = com.google.protobuf.ByteString.EMPTY;
   /**
+   * <pre>
+   * Max 64 KB payload (standard 64x64 or 128x128 RGBA PNG texture)
+   * </pre>
+   *
    * <code>bytes skin_png_bytes = 5;</code>
    * @return The skinPngBytes.
    */
@@ -1113,6 +1117,10 @@ private static final long serialVersionUID = 0L;
 
     private com.google.protobuf.ByteString skinPngBytes_ = com.google.protobuf.ByteString.EMPTY;
     /**
+     * <pre>
+     * Max 64 KB payload (standard 64x64 or 128x128 RGBA PNG texture)
+     * </pre>
+     *
      * <code>bytes skin_png_bytes = 5;</code>
      * @return The skinPngBytes.
      */
@@ -1121,6 +1129,10 @@ private static final long serialVersionUID = 0L;
       return skinPngBytes_;
     }
     /**
+     * <pre>
+     * Max 64 KB payload (standard 64x64 or 128x128 RGBA PNG texture)
+     * </pre>
+     *
      * <code>bytes skin_png_bytes = 5;</code>
      * @param value The skinPngBytes to set.
      * @return This builder for chaining.
@@ -1133,6 +1145,10 @@ private static final long serialVersionUID = 0L;
       return this;
     }
     /**
+     * <pre>
+     * Max 64 KB payload (standard 64x64 or 128x128 RGBA PNG texture)
+     * </pre>
+     *
      * <code>bytes skin_png_bytes = 5;</code>
      * @return This builder for chaining.
      */

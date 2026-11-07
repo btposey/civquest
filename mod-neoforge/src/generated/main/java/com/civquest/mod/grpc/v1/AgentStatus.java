@@ -28,7 +28,7 @@ private static final long serialVersionUID = 0L;
   }
   private AgentStatus() {
     agentId_ = "";
-    navigationState_ = "";
+    navigationState_ = 0;
     inventory_ = java.util.Collections.emptyList();
     leashedEntityIds_ = emptyIntList();
   }
@@ -227,50 +227,21 @@ private static final long serialVersionUID = 0L;
   }
 
   public static final int NAVIGATION_STATE_FIELD_NUMBER = 13;
-  @SuppressWarnings("serial")
-  private volatile java.lang.Object navigationState_ = "";
+  private int navigationState_ = 0;
   /**
-   * <pre>
-   * "IDLE", "PATHING", "STUCK", "ARRIVED", "BUILDING"
-   * </pre>
-   *
-   * <code>string navigation_state = 13;</code>
-   * @return The navigationState.
+   * <code>.civquest.v1.NavigationState navigation_state = 13;</code>
+   * @return The enum numeric value on the wire for navigationState.
    */
-  @java.lang.Override
-  public java.lang.String getNavigationState() {
-    java.lang.Object ref = navigationState_;
-    if (ref instanceof java.lang.String) {
-      return (java.lang.String) ref;
-    } else {
-      com.google.protobuf.ByteString bs = 
-          (com.google.protobuf.ByteString) ref;
-      java.lang.String s = bs.toStringUtf8();
-      navigationState_ = s;
-      return s;
-    }
+  @java.lang.Override public int getNavigationStateValue() {
+    return navigationState_;
   }
   /**
-   * <pre>
-   * "IDLE", "PATHING", "STUCK", "ARRIVED", "BUILDING"
-   * </pre>
-   *
-   * <code>string navigation_state = 13;</code>
-   * @return The bytes for navigationState.
+   * <code>.civquest.v1.NavigationState navigation_state = 13;</code>
+   * @return The navigationState.
    */
-  @java.lang.Override
-  public com.google.protobuf.ByteString
-      getNavigationStateBytes() {
-    java.lang.Object ref = navigationState_;
-    if (ref instanceof java.lang.String) {
-      com.google.protobuf.ByteString b = 
-          com.google.protobuf.ByteString.copyFromUtf8(
-              (java.lang.String) ref);
-      navigationState_ = b;
-      return b;
-    } else {
-      return (com.google.protobuf.ByteString) ref;
-    }
+  @java.lang.Override public com.civquest.mod.grpc.v1.NavigationState getNavigationState() {
+    com.civquest.mod.grpc.v1.NavigationState result = com.civquest.mod.grpc.v1.NavigationState.forNumber(navigationState_);
+    return result == null ? com.civquest.mod.grpc.v1.NavigationState.UNRECOGNIZED : result;
   }
 
   public static final int INVENTORY_FIELD_NUMBER = 14;
@@ -395,8 +366,8 @@ private static final long serialVersionUID = 0L;
     if (isOnFire_ != false) {
       output.writeBool(12, isOnFire_);
     }
-    if (!com.google.protobuf.GeneratedMessage.isStringEmpty(navigationState_)) {
-      com.google.protobuf.GeneratedMessage.writeString(output, 13, navigationState_);
+    if (navigationState_ != com.civquest.mod.grpc.v1.NavigationState.NAVIGATION_STATE_UNSPECIFIED.getNumber()) {
+      output.writeEnum(13, navigationState_);
     }
     for (int i = 0; i < inventory_.size(); i++) {
       output.writeMessage(14, inventory_.get(i));
@@ -464,8 +435,9 @@ private static final long serialVersionUID = 0L;
       size += com.google.protobuf.CodedOutputStream
         .computeBoolSize(12, isOnFire_);
     }
-    if (!com.google.protobuf.GeneratedMessage.isStringEmpty(navigationState_)) {
-      size += com.google.protobuf.GeneratedMessage.computeStringSize(13, navigationState_);
+    if (navigationState_ != com.civquest.mod.grpc.v1.NavigationState.NAVIGATION_STATE_UNSPECIFIED.getNumber()) {
+      size += com.google.protobuf.CodedOutputStream
+        .computeEnumSize(13, navigationState_);
     }
     for (int i = 0; i < inventory_.size(); i++) {
       size += com.google.protobuf.CodedOutputStream
@@ -532,8 +504,7 @@ private static final long serialVersionUID = 0L;
         != other.getIsInWater()) return false;
     if (getIsOnFire()
         != other.getIsOnFire()) return false;
-    if (!getNavigationState()
-        .equals(other.getNavigationState())) return false;
+    if (navigationState_ != other.navigationState_) return false;
     if (!getInventoryList()
         .equals(other.getInventoryList())) return false;
     if (!getLeashedEntityIdsList()
@@ -584,7 +555,7 @@ private static final long serialVersionUID = 0L;
     hash = (53 * hash) + com.google.protobuf.Internal.hashBoolean(
         getIsOnFire());
     hash = (37 * hash) + NAVIGATION_STATE_FIELD_NUMBER;
-    hash = (53 * hash) + getNavigationState().hashCode();
+    hash = (53 * hash) + navigationState_;
     if (getInventoryCount() > 0) {
       hash = (37 * hash) + INVENTORY_FIELD_NUMBER;
       hash = (53 * hash) + getInventoryList().hashCode();
@@ -747,7 +718,7 @@ private static final long serialVersionUID = 0L;
       isSleeping_ = false;
       isInWater_ = false;
       isOnFire_ = false;
-      navigationState_ = "";
+      navigationState_ = 0;
       if (inventoryBuilder_ == null) {
         inventory_ = java.util.Collections.emptyList();
       } else {
@@ -902,10 +873,8 @@ private static final long serialVersionUID = 0L;
       if (other.getIsOnFire() != false) {
         setIsOnFire(other.getIsOnFire());
       }
-      if (!other.getNavigationState().isEmpty()) {
-        navigationState_ = other.navigationState_;
-        bitField0_ |= 0x00001000;
-        onChanged();
+      if (other.navigationState_ != 0) {
+        setNavigationStateValue(other.getNavigationStateValue());
       }
       if (inventoryBuilder_ == null) {
         if (!other.inventory_.isEmpty()) {
@@ -1032,11 +1001,11 @@ private static final long serialVersionUID = 0L;
               bitField0_ |= 0x00000800;
               break;
             } // case 96
-            case 106: {
-              navigationState_ = input.readStringRequireUtf8();
+            case 104: {
+              navigationState_ = input.readEnum();
               bitField0_ |= 0x00001000;
               break;
-            } // case 106
+            } // case 104
             case 114: {
               com.civquest.mod.grpc.v1.ItemStackProto m =
                   input.readMessage(
@@ -1608,94 +1577,55 @@ private static final long serialVersionUID = 0L;
       return this;
     }
 
-    private java.lang.Object navigationState_ = "";
+    private int navigationState_ = 0;
     /**
-     * <pre>
-     * "IDLE", "PATHING", "STUCK", "ARRIVED", "BUILDING"
-     * </pre>
-     *
-     * <code>string navigation_state = 13;</code>
+     * <code>.civquest.v1.NavigationState navigation_state = 13;</code>
+     * @return The enum numeric value on the wire for navigationState.
+     */
+    @java.lang.Override public int getNavigationStateValue() {
+      return navigationState_;
+    }
+    /**
+     * <code>.civquest.v1.NavigationState navigation_state = 13;</code>
+     * @param value The enum numeric value on the wire for navigationState to set.
+     * @return This builder for chaining.
+     */
+    public Builder setNavigationStateValue(int value) {
+      navigationState_ = value;
+      bitField0_ |= 0x00001000;
+      onChanged();
+      return this;
+    }
+    /**
+     * <code>.civquest.v1.NavigationState navigation_state = 13;</code>
      * @return The navigationState.
      */
-    public java.lang.String getNavigationState() {
-      java.lang.Object ref = navigationState_;
-      if (!(ref instanceof java.lang.String)) {
-        com.google.protobuf.ByteString bs =
-            (com.google.protobuf.ByteString) ref;
-        java.lang.String s = bs.toStringUtf8();
-        navigationState_ = s;
-        return s;
-      } else {
-        return (java.lang.String) ref;
-      }
+    @java.lang.Override
+    public com.civquest.mod.grpc.v1.NavigationState getNavigationState() {
+      com.civquest.mod.grpc.v1.NavigationState result = com.civquest.mod.grpc.v1.NavigationState.forNumber(navigationState_);
+      return result == null ? com.civquest.mod.grpc.v1.NavigationState.UNRECOGNIZED : result;
     }
     /**
-     * <pre>
-     * "IDLE", "PATHING", "STUCK", "ARRIVED", "BUILDING"
-     * </pre>
-     *
-     * <code>string navigation_state = 13;</code>
-     * @return The bytes for navigationState.
-     */
-    public com.google.protobuf.ByteString
-        getNavigationStateBytes() {
-      java.lang.Object ref = navigationState_;
-      if (ref instanceof String) {
-        com.google.protobuf.ByteString b = 
-            com.google.protobuf.ByteString.copyFromUtf8(
-                (java.lang.String) ref);
-        navigationState_ = b;
-        return b;
-      } else {
-        return (com.google.protobuf.ByteString) ref;
-      }
-    }
-    /**
-     * <pre>
-     * "IDLE", "PATHING", "STUCK", "ARRIVED", "BUILDING"
-     * </pre>
-     *
-     * <code>string navigation_state = 13;</code>
+     * <code>.civquest.v1.NavigationState navigation_state = 13;</code>
      * @param value The navigationState to set.
      * @return This builder for chaining.
      */
-    public Builder setNavigationState(
-        java.lang.String value) {
-      if (value == null) { throw new NullPointerException(); }
-      navigationState_ = value;
+    public Builder setNavigationState(com.civquest.mod.grpc.v1.NavigationState value) {
+      if (value == null) {
+        throw new NullPointerException();
+      }
       bitField0_ |= 0x00001000;
+      navigationState_ = value.getNumber();
       onChanged();
       return this;
     }
     /**
-     * <pre>
-     * "IDLE", "PATHING", "STUCK", "ARRIVED", "BUILDING"
-     * </pre>
-     *
-     * <code>string navigation_state = 13;</code>
+     * <code>.civquest.v1.NavigationState navigation_state = 13;</code>
      * @return This builder for chaining.
      */
     public Builder clearNavigationState() {
-      navigationState_ = getDefaultInstance().getNavigationState();
       bitField0_ = (bitField0_ & ~0x00001000);
-      onChanged();
-      return this;
-    }
-    /**
-     * <pre>
-     * "IDLE", "PATHING", "STUCK", "ARRIVED", "BUILDING"
-     * </pre>
-     *
-     * <code>string navigation_state = 13;</code>
-     * @param value The bytes for navigationState to set.
-     * @return This builder for chaining.
-     */
-    public Builder setNavigationStateBytes(
-        com.google.protobuf.ByteString value) {
-      if (value == null) { throw new NullPointerException(); }
-      checkByteStringIsUtf8(value);
-      navigationState_ = value;
-      bitField0_ |= 0x00001000;
+      navigationState_ = 0;
       onChanged();
       return this;
     }

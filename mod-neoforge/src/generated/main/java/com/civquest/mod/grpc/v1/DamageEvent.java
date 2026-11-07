@@ -27,7 +27,7 @@ private static final long serialVersionUID = 0L;
     super(builder);
   }
   private DamageEvent() {
-    sourceType_ = "";
+    sourceType_ = 0;
     attackerUuid_ = "";
     attackerName_ = "";
   }
@@ -46,50 +46,21 @@ private static final long serialVersionUID = 0L;
   }
 
   public static final int SOURCE_TYPE_FIELD_NUMBER = 1;
-  @SuppressWarnings("serial")
-  private volatile java.lang.Object sourceType_ = "";
+  private int sourceType_ = 0;
   /**
-   * <pre>
-   * "mob", "player", "arrow", "fall", "explosion", "lava"
-   * </pre>
-   *
-   * <code>string source_type = 1;</code>
-   * @return The sourceType.
+   * <code>.civquest.v1.DamageSourceType source_type = 1;</code>
+   * @return The enum numeric value on the wire for sourceType.
    */
-  @java.lang.Override
-  public java.lang.String getSourceType() {
-    java.lang.Object ref = sourceType_;
-    if (ref instanceof java.lang.String) {
-      return (java.lang.String) ref;
-    } else {
-      com.google.protobuf.ByteString bs = 
-          (com.google.protobuf.ByteString) ref;
-      java.lang.String s = bs.toStringUtf8();
-      sourceType_ = s;
-      return s;
-    }
+  @java.lang.Override public int getSourceTypeValue() {
+    return sourceType_;
   }
   /**
-   * <pre>
-   * "mob", "player", "arrow", "fall", "explosion", "lava"
-   * </pre>
-   *
-   * <code>string source_type = 1;</code>
-   * @return The bytes for sourceType.
+   * <code>.civquest.v1.DamageSourceType source_type = 1;</code>
+   * @return The sourceType.
    */
-  @java.lang.Override
-  public com.google.protobuf.ByteString
-      getSourceTypeBytes() {
-    java.lang.Object ref = sourceType_;
-    if (ref instanceof java.lang.String) {
-      com.google.protobuf.ByteString b = 
-          com.google.protobuf.ByteString.copyFromUtf8(
-              (java.lang.String) ref);
-      sourceType_ = b;
-      return b;
-    } else {
-      return (com.google.protobuf.ByteString) ref;
-    }
+  @java.lang.Override public com.civquest.mod.grpc.v1.DamageSourceType getSourceType() {
+    com.civquest.mod.grpc.v1.DamageSourceType result = com.civquest.mod.grpc.v1.DamageSourceType.forNumber(sourceType_);
+    return result == null ? com.civquest.mod.grpc.v1.DamageSourceType.UNRECOGNIZED : result;
   }
 
   public static final int ATTACKER_ENTITY_ID_FIELD_NUMBER = 2;
@@ -206,8 +177,8 @@ private static final long serialVersionUID = 0L;
   @java.lang.Override
   public void writeTo(com.google.protobuf.CodedOutputStream output)
                       throws java.io.IOException {
-    if (!com.google.protobuf.GeneratedMessage.isStringEmpty(sourceType_)) {
-      com.google.protobuf.GeneratedMessage.writeString(output, 1, sourceType_);
+    if (sourceType_ != com.civquest.mod.grpc.v1.DamageSourceType.DAMAGE_SOURCE_TYPE_UNSPECIFIED.getNumber()) {
+      output.writeEnum(1, sourceType_);
     }
     if (attackerEntityId_ != 0) {
       output.writeInt32(2, attackerEntityId_);
@@ -230,8 +201,9 @@ private static final long serialVersionUID = 0L;
     if (size != -1) return size;
 
     size = 0;
-    if (!com.google.protobuf.GeneratedMessage.isStringEmpty(sourceType_)) {
-      size += com.google.protobuf.GeneratedMessage.computeStringSize(1, sourceType_);
+    if (sourceType_ != com.civquest.mod.grpc.v1.DamageSourceType.DAMAGE_SOURCE_TYPE_UNSPECIFIED.getNumber()) {
+      size += com.google.protobuf.CodedOutputStream
+        .computeEnumSize(1, sourceType_);
     }
     if (attackerEntityId_ != 0) {
       size += com.google.protobuf.CodedOutputStream
@@ -262,8 +234,7 @@ private static final long serialVersionUID = 0L;
     }
     com.civquest.mod.grpc.v1.DamageEvent other = (com.civquest.mod.grpc.v1.DamageEvent) obj;
 
-    if (!getSourceType()
-        .equals(other.getSourceType())) return false;
+    if (sourceType_ != other.sourceType_) return false;
     if (getAttackerEntityId()
         != other.getAttackerEntityId()) return false;
     if (!getAttackerUuid()
@@ -285,7 +256,7 @@ private static final long serialVersionUID = 0L;
     int hash = 41;
     hash = (19 * hash) + getDescriptor().hashCode();
     hash = (37 * hash) + SOURCE_TYPE_FIELD_NUMBER;
-    hash = (53 * hash) + getSourceType().hashCode();
+    hash = (53 * hash) + sourceType_;
     hash = (37 * hash) + ATTACKER_ENTITY_ID_FIELD_NUMBER;
     hash = (53 * hash) + getAttackerEntityId();
     hash = (37 * hash) + ATTACKER_UUID_FIELD_NUMBER;
@@ -426,7 +397,7 @@ private static final long serialVersionUID = 0L;
     public Builder clear() {
       super.clear();
       bitField0_ = 0;
-      sourceType_ = "";
+      sourceType_ = 0;
       attackerEntityId_ = 0;
       attackerUuid_ = "";
       attackerName_ = "";
@@ -493,10 +464,8 @@ private static final long serialVersionUID = 0L;
 
     public Builder mergeFrom(com.civquest.mod.grpc.v1.DamageEvent other) {
       if (other == com.civquest.mod.grpc.v1.DamageEvent.getDefaultInstance()) return this;
-      if (!other.getSourceType().isEmpty()) {
-        sourceType_ = other.sourceType_;
-        bitField0_ |= 0x00000001;
-        onChanged();
+      if (other.sourceType_ != 0) {
+        setSourceTypeValue(other.getSourceTypeValue());
       }
       if (other.getAttackerEntityId() != 0) {
         setAttackerEntityId(other.getAttackerEntityId());
@@ -540,11 +509,11 @@ private static final long serialVersionUID = 0L;
             case 0:
               done = true;
               break;
-            case 10: {
-              sourceType_ = input.readStringRequireUtf8();
+            case 8: {
+              sourceType_ = input.readEnum();
               bitField0_ |= 0x00000001;
               break;
-            } // case 10
+            } // case 8
             case 16: {
               attackerEntityId_ = input.readInt32();
               bitField0_ |= 0x00000002;
@@ -582,94 +551,55 @@ private static final long serialVersionUID = 0L;
     }
     private int bitField0_;
 
-    private java.lang.Object sourceType_ = "";
+    private int sourceType_ = 0;
     /**
-     * <pre>
-     * "mob", "player", "arrow", "fall", "explosion", "lava"
-     * </pre>
-     *
-     * <code>string source_type = 1;</code>
+     * <code>.civquest.v1.DamageSourceType source_type = 1;</code>
+     * @return The enum numeric value on the wire for sourceType.
+     */
+    @java.lang.Override public int getSourceTypeValue() {
+      return sourceType_;
+    }
+    /**
+     * <code>.civquest.v1.DamageSourceType source_type = 1;</code>
+     * @param value The enum numeric value on the wire for sourceType to set.
+     * @return This builder for chaining.
+     */
+    public Builder setSourceTypeValue(int value) {
+      sourceType_ = value;
+      bitField0_ |= 0x00000001;
+      onChanged();
+      return this;
+    }
+    /**
+     * <code>.civquest.v1.DamageSourceType source_type = 1;</code>
      * @return The sourceType.
      */
-    public java.lang.String getSourceType() {
-      java.lang.Object ref = sourceType_;
-      if (!(ref instanceof java.lang.String)) {
-        com.google.protobuf.ByteString bs =
-            (com.google.protobuf.ByteString) ref;
-        java.lang.String s = bs.toStringUtf8();
-        sourceType_ = s;
-        return s;
-      } else {
-        return (java.lang.String) ref;
-      }
+    @java.lang.Override
+    public com.civquest.mod.grpc.v1.DamageSourceType getSourceType() {
+      com.civquest.mod.grpc.v1.DamageSourceType result = com.civquest.mod.grpc.v1.DamageSourceType.forNumber(sourceType_);
+      return result == null ? com.civquest.mod.grpc.v1.DamageSourceType.UNRECOGNIZED : result;
     }
     /**
-     * <pre>
-     * "mob", "player", "arrow", "fall", "explosion", "lava"
-     * </pre>
-     *
-     * <code>string source_type = 1;</code>
-     * @return The bytes for sourceType.
-     */
-    public com.google.protobuf.ByteString
-        getSourceTypeBytes() {
-      java.lang.Object ref = sourceType_;
-      if (ref instanceof String) {
-        com.google.protobuf.ByteString b = 
-            com.google.protobuf.ByteString.copyFromUtf8(
-                (java.lang.String) ref);
-        sourceType_ = b;
-        return b;
-      } else {
-        return (com.google.protobuf.ByteString) ref;
-      }
-    }
-    /**
-     * <pre>
-     * "mob", "player", "arrow", "fall", "explosion", "lava"
-     * </pre>
-     *
-     * <code>string source_type = 1;</code>
+     * <code>.civquest.v1.DamageSourceType source_type = 1;</code>
      * @param value The sourceType to set.
      * @return This builder for chaining.
      */
-    public Builder setSourceType(
-        java.lang.String value) {
-      if (value == null) { throw new NullPointerException(); }
-      sourceType_ = value;
+    public Builder setSourceType(com.civquest.mod.grpc.v1.DamageSourceType value) {
+      if (value == null) {
+        throw new NullPointerException();
+      }
       bitField0_ |= 0x00000001;
+      sourceType_ = value.getNumber();
       onChanged();
       return this;
     }
     /**
-     * <pre>
-     * "mob", "player", "arrow", "fall", "explosion", "lava"
-     * </pre>
-     *
-     * <code>string source_type = 1;</code>
+     * <code>.civquest.v1.DamageSourceType source_type = 1;</code>
      * @return This builder for chaining.
      */
     public Builder clearSourceType() {
-      sourceType_ = getDefaultInstance().getSourceType();
       bitField0_ = (bitField0_ & ~0x00000001);
-      onChanged();
-      return this;
-    }
-    /**
-     * <pre>
-     * "mob", "player", "arrow", "fall", "explosion", "lava"
-     * </pre>
-     *
-     * <code>string source_type = 1;</code>
-     * @param value The bytes for sourceType to set.
-     * @return This builder for chaining.
-     */
-    public Builder setSourceTypeBytes(
-        com.google.protobuf.ByteString value) {
-      if (value == null) { throw new NullPointerException(); }
-      checkByteStringIsUtf8(value);
-      sourceType_ = value;
-      bitField0_ |= 0x00000001;
+      sourceType_ = 0;
       onChanged();
       return this;
     }

@@ -50,37 +50,41 @@ private static final long serialVersionUID = 0L;
   public enum InteractionType
       implements com.google.protobuf.ProtocolMessageEnum {
     /**
-     * <code>HARVEST_BREAK = 0;</code>
+     * <code>INTERACTION_TYPE_UNSPECIFIED = 0;</code>
      */
-    HARVEST_BREAK(0),
+    INTERACTION_TYPE_UNSPECIFIED(0),
     /**
-     * <code>PLACE_BLOCK = 1;</code>
+     * <code>HARVEST_BREAK = 1;</code>
      */
-    PLACE_BLOCK(1),
+    HARVEST_BREAK(1),
     /**
-     * <code>SLEEP_IN_BED = 2;</code>
+     * <code>PLACE_BLOCK = 2;</code>
      */
-    SLEEP_IN_BED(2),
+    PLACE_BLOCK(2),
     /**
-     * <code>WAKE_UP = 3;</code>
+     * <code>SLEEP_IN_BED = 3;</code>
      */
-    WAKE_UP(3),
+    SLEEP_IN_BED(3),
     /**
-     * <code>USE_WORKSTATION = 4;</code>
+     * <code>WAKE_UP = 4;</code>
      */
-    USE_WORKSTATION(4),
+    WAKE_UP(4),
     /**
-     * <code>RING_BELL = 5;</code>
+     * <code>USE_WORKSTATION = 5;</code>
      */
-    RING_BELL(5),
+    USE_WORKSTATION(5),
     /**
-     * <code>SHEAR_OR_BOTTLE_BEEHIVE = 6;</code>
+     * <code>RING_BELL = 6;</code>
      */
-    SHEAR_OR_BOTTLE_BEEHIVE(6),
+    RING_BELL(6),
     /**
-     * <code>PAVE_ROAD_PATH = 7;</code>
+     * <code>SHEAR_OR_BOTTLE_BEEHIVE = 7;</code>
      */
-    PAVE_ROAD_PATH(7),
+    SHEAR_OR_BOTTLE_BEEHIVE(7),
+    /**
+     * <code>PAVE_ROAD_PATH = 8;</code>
+     */
+    PAVE_ROAD_PATH(8),
     UNRECOGNIZED(-1),
     ;
 
@@ -94,37 +98,41 @@ private static final long serialVersionUID = 0L;
         InteractionType.class.getName());
     }
     /**
-     * <code>HARVEST_BREAK = 0;</code>
+     * <code>INTERACTION_TYPE_UNSPECIFIED = 0;</code>
      */
-    public static final int HARVEST_BREAK_VALUE = 0;
+    public static final int INTERACTION_TYPE_UNSPECIFIED_VALUE = 0;
     /**
-     * <code>PLACE_BLOCK = 1;</code>
+     * <code>HARVEST_BREAK = 1;</code>
      */
-    public static final int PLACE_BLOCK_VALUE = 1;
+    public static final int HARVEST_BREAK_VALUE = 1;
     /**
-     * <code>SLEEP_IN_BED = 2;</code>
+     * <code>PLACE_BLOCK = 2;</code>
      */
-    public static final int SLEEP_IN_BED_VALUE = 2;
+    public static final int PLACE_BLOCK_VALUE = 2;
     /**
-     * <code>WAKE_UP = 3;</code>
+     * <code>SLEEP_IN_BED = 3;</code>
      */
-    public static final int WAKE_UP_VALUE = 3;
+    public static final int SLEEP_IN_BED_VALUE = 3;
     /**
-     * <code>USE_WORKSTATION = 4;</code>
+     * <code>WAKE_UP = 4;</code>
      */
-    public static final int USE_WORKSTATION_VALUE = 4;
+    public static final int WAKE_UP_VALUE = 4;
     /**
-     * <code>RING_BELL = 5;</code>
+     * <code>USE_WORKSTATION = 5;</code>
      */
-    public static final int RING_BELL_VALUE = 5;
+    public static final int USE_WORKSTATION_VALUE = 5;
     /**
-     * <code>SHEAR_OR_BOTTLE_BEEHIVE = 6;</code>
+     * <code>RING_BELL = 6;</code>
      */
-    public static final int SHEAR_OR_BOTTLE_BEEHIVE_VALUE = 6;
+    public static final int RING_BELL_VALUE = 6;
     /**
-     * <code>PAVE_ROAD_PATH = 7;</code>
+     * <code>SHEAR_OR_BOTTLE_BEEHIVE = 7;</code>
      */
-    public static final int PAVE_ROAD_PATH_VALUE = 7;
+    public static final int SHEAR_OR_BOTTLE_BEEHIVE_VALUE = 7;
+    /**
+     * <code>PAVE_ROAD_PATH = 8;</code>
+     */
+    public static final int PAVE_ROAD_PATH_VALUE = 8;
 
 
     public final int getNumber() {
@@ -151,14 +159,15 @@ private static final long serialVersionUID = 0L;
      */
     public static InteractionType forNumber(int value) {
       switch (value) {
-        case 0: return HARVEST_BREAK;
-        case 1: return PLACE_BLOCK;
-        case 2: return SLEEP_IN_BED;
-        case 3: return WAKE_UP;
-        case 4: return USE_WORKSTATION;
-        case 5: return RING_BELL;
-        case 6: return SHEAR_OR_BOTTLE_BEEHIVE;
-        case 7: return PAVE_ROAD_PATH;
+        case 0: return INTERACTION_TYPE_UNSPECIFIED;
+        case 1: return HARVEST_BREAK;
+        case 2: return PLACE_BLOCK;
+        case 3: return SLEEP_IN_BED;
+        case 4: return WAKE_UP;
+        case 5: return USE_WORKSTATION;
+        case 6: return RING_BELL;
+        case 7: return SHEAR_OR_BOTTLE_BEEHIVE;
+        case 8: return PAVE_ROAD_PATH;
         default: return null;
       }
     }
@@ -316,7 +325,7 @@ private static final long serialVersionUID = 0L;
     if (((bitField0_ & 0x00000001) != 0)) {
       output.writeMessage(1, getPos());
     }
-    if (interactionType_ != com.civquest.mod.grpc.v1.InteractBlockIntent.InteractionType.HARVEST_BREAK.getNumber()) {
+    if (interactionType_ != com.civquest.mod.grpc.v1.InteractBlockIntent.InteractionType.INTERACTION_TYPE_UNSPECIFIED.getNumber()) {
       output.writeEnum(2, interactionType_);
     }
     if (!com.google.protobuf.GeneratedMessage.isStringEmpty(blockOrItemId_)) {
@@ -335,7 +344,7 @@ private static final long serialVersionUID = 0L;
       size += com.google.protobuf.CodedOutputStream
         .computeMessageSize(1, getPos());
     }
-    if (interactionType_ != com.civquest.mod.grpc.v1.InteractBlockIntent.InteractionType.HARVEST_BREAK.getNumber()) {
+    if (interactionType_ != com.civquest.mod.grpc.v1.InteractBlockIntent.InteractionType.INTERACTION_TYPE_UNSPECIFIED.getNumber()) {
       size += com.google.protobuf.CodedOutputStream
         .computeEnumSize(2, interactionType_);
     }

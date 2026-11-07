@@ -21,40 +21,263 @@ const (
 	_ = protoimpl.EnforceVersion(protoimpl.MaxVersion - 20)
 )
 
+type Weather int32
+
+const (
+	Weather_WEATHER_UNSPECIFIED Weather = 0
+	Weather_WEATHER_CLEAR       Weather = 1
+	Weather_WEATHER_RAIN        Weather = 2
+	Weather_WEATHER_THUNDER     Weather = 3
+)
+
+// Enum value maps for Weather.
+var (
+	Weather_name = map[int32]string{
+		0: "WEATHER_UNSPECIFIED",
+		1: "WEATHER_CLEAR",
+		2: "WEATHER_RAIN",
+		3: "WEATHER_THUNDER",
+	}
+	Weather_value = map[string]int32{
+		"WEATHER_UNSPECIFIED": 0,
+		"WEATHER_CLEAR":       1,
+		"WEATHER_RAIN":        2,
+		"WEATHER_THUNDER":     3,
+	}
+)
+
+func (x Weather) Enum() *Weather {
+	p := new(Weather)
+	*p = x
+	return p
+}
+
+func (x Weather) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (Weather) Descriptor() protoreflect.EnumDescriptor {
+	return file_civquest_v1_civquest_proto_enumTypes[0].Descriptor()
+}
+
+func (Weather) Type() protoreflect.EnumType {
+	return &file_civquest_v1_civquest_proto_enumTypes[0]
+}
+
+func (x Weather) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use Weather.Descriptor instead.
+func (Weather) EnumDescriptor() ([]byte, []int) {
+	return file_civquest_v1_civquest_proto_rawDescGZIP(), []int{0}
+}
+
+type NavigationState int32
+
+const (
+	NavigationState_NAVIGATION_STATE_UNSPECIFIED NavigationState = 0
+	NavigationState_NAVIGATION_STATE_IDLE        NavigationState = 1
+	NavigationState_NAVIGATION_STATE_PATHING     NavigationState = 2
+	NavigationState_NAVIGATION_STATE_STUCK       NavigationState = 3
+	NavigationState_NAVIGATION_STATE_ARRIVED     NavigationState = 4
+	NavigationState_NAVIGATION_STATE_BUILDING    NavigationState = 5
+)
+
+// Enum value maps for NavigationState.
+var (
+	NavigationState_name = map[int32]string{
+		0: "NAVIGATION_STATE_UNSPECIFIED",
+		1: "NAVIGATION_STATE_IDLE",
+		2: "NAVIGATION_STATE_PATHING",
+		3: "NAVIGATION_STATE_STUCK",
+		4: "NAVIGATION_STATE_ARRIVED",
+		5: "NAVIGATION_STATE_BUILDING",
+	}
+	NavigationState_value = map[string]int32{
+		"NAVIGATION_STATE_UNSPECIFIED": 0,
+		"NAVIGATION_STATE_IDLE":        1,
+		"NAVIGATION_STATE_PATHING":     2,
+		"NAVIGATION_STATE_STUCK":       3,
+		"NAVIGATION_STATE_ARRIVED":     4,
+		"NAVIGATION_STATE_BUILDING":    5,
+	}
+)
+
+func (x NavigationState) Enum() *NavigationState {
+	p := new(NavigationState)
+	*p = x
+	return p
+}
+
+func (x NavigationState) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (NavigationState) Descriptor() protoreflect.EnumDescriptor {
+	return file_civquest_v1_civquest_proto_enumTypes[1].Descriptor()
+}
+
+func (NavigationState) Type() protoreflect.EnumType {
+	return &file_civquest_v1_civquest_proto_enumTypes[1]
+}
+
+func (x NavigationState) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use NavigationState.Descriptor instead.
+func (NavigationState) EnumDescriptor() ([]byte, []int) {
+	return file_civquest_v1_civquest_proto_rawDescGZIP(), []int{1}
+}
+
+type DamageSourceType int32
+
+const (
+	DamageSourceType_DAMAGE_SOURCE_TYPE_UNSPECIFIED DamageSourceType = 0
+	DamageSourceType_DAMAGE_SOURCE_TYPE_MOB         DamageSourceType = 1
+	DamageSourceType_DAMAGE_SOURCE_TYPE_PLAYER      DamageSourceType = 2
+	DamageSourceType_DAMAGE_SOURCE_TYPE_ARROW       DamageSourceType = 3
+	DamageSourceType_DAMAGE_SOURCE_TYPE_FALL        DamageSourceType = 4
+	DamageSourceType_DAMAGE_SOURCE_TYPE_EXPLOSION   DamageSourceType = 5
+	DamageSourceType_DAMAGE_SOURCE_TYPE_LAVA        DamageSourceType = 6
+)
+
+// Enum value maps for DamageSourceType.
+var (
+	DamageSourceType_name = map[int32]string{
+		0: "DAMAGE_SOURCE_TYPE_UNSPECIFIED",
+		1: "DAMAGE_SOURCE_TYPE_MOB",
+		2: "DAMAGE_SOURCE_TYPE_PLAYER",
+		3: "DAMAGE_SOURCE_TYPE_ARROW",
+		4: "DAMAGE_SOURCE_TYPE_FALL",
+		5: "DAMAGE_SOURCE_TYPE_EXPLOSION",
+		6: "DAMAGE_SOURCE_TYPE_LAVA",
+	}
+	DamageSourceType_value = map[string]int32{
+		"DAMAGE_SOURCE_TYPE_UNSPECIFIED": 0,
+		"DAMAGE_SOURCE_TYPE_MOB":         1,
+		"DAMAGE_SOURCE_TYPE_PLAYER":      2,
+		"DAMAGE_SOURCE_TYPE_ARROW":       3,
+		"DAMAGE_SOURCE_TYPE_FALL":        4,
+		"DAMAGE_SOURCE_TYPE_EXPLOSION":   5,
+		"DAMAGE_SOURCE_TYPE_LAVA":        6,
+	}
+)
+
+func (x DamageSourceType) Enum() *DamageSourceType {
+	p := new(DamageSourceType)
+	*p = x
+	return p
+}
+
+func (x DamageSourceType) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (DamageSourceType) Descriptor() protoreflect.EnumDescriptor {
+	return file_civquest_v1_civquest_proto_enumTypes[2].Descriptor()
+}
+
+func (DamageSourceType) Type() protoreflect.EnumType {
+	return &file_civquest_v1_civquest_proto_enumTypes[2]
+}
+
+func (x DamageSourceType) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use DamageSourceType.Descriptor instead.
+func (DamageSourceType) EnumDescriptor() ([]byte, []int) {
+	return file_civquest_v1_civquest_proto_rawDescGZIP(), []int{2}
+}
+
+type ChatChannel int32
+
+const (
+	ChatChannel_CHAT_CHANNEL_UNSPECIFIED    ChatChannel = 0
+	ChatChannel_CHAT_CHANNEL_LOCAL          ChatChannel = 1
+	ChatChannel_CHAT_CHANNEL_CLAN_BROADCAST ChatChannel = 2
+)
+
+// Enum value maps for ChatChannel.
+var (
+	ChatChannel_name = map[int32]string{
+		0: "CHAT_CHANNEL_UNSPECIFIED",
+		1: "CHAT_CHANNEL_LOCAL",
+		2: "CHAT_CHANNEL_CLAN_BROADCAST",
+	}
+	ChatChannel_value = map[string]int32{
+		"CHAT_CHANNEL_UNSPECIFIED":    0,
+		"CHAT_CHANNEL_LOCAL":          1,
+		"CHAT_CHANNEL_CLAN_BROADCAST": 2,
+	}
+)
+
+func (x ChatChannel) Enum() *ChatChannel {
+	p := new(ChatChannel)
+	*p = x
+	return p
+}
+
+func (x ChatChannel) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (ChatChannel) Descriptor() protoreflect.EnumDescriptor {
+	return file_civquest_v1_civquest_proto_enumTypes[3].Descriptor()
+}
+
+func (ChatChannel) Type() protoreflect.EnumType {
+	return &file_civquest_v1_civquest_proto_enumTypes[3]
+}
+
+func (x ChatChannel) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use ChatChannel.Descriptor instead.
+func (ChatChannel) EnumDescriptor() ([]byte, []int) {
+	return file_civquest_v1_civquest_proto_rawDescGZIP(), []int{3}
+}
+
 type InteractBlockIntent_InteractionType int32
 
 const (
-	InteractBlockIntent_HARVEST_BREAK           InteractBlockIntent_InteractionType = 0
-	InteractBlockIntent_PLACE_BLOCK             InteractBlockIntent_InteractionType = 1
-	InteractBlockIntent_SLEEP_IN_BED            InteractBlockIntent_InteractionType = 2
-	InteractBlockIntent_WAKE_UP                 InteractBlockIntent_InteractionType = 3
-	InteractBlockIntent_USE_WORKSTATION         InteractBlockIntent_InteractionType = 4
-	InteractBlockIntent_RING_BELL               InteractBlockIntent_InteractionType = 5
-	InteractBlockIntent_SHEAR_OR_BOTTLE_BEEHIVE InteractBlockIntent_InteractionType = 6
-	InteractBlockIntent_PAVE_ROAD_PATH          InteractBlockIntent_InteractionType = 7
+	InteractBlockIntent_INTERACTION_TYPE_UNSPECIFIED InteractBlockIntent_InteractionType = 0
+	InteractBlockIntent_HARVEST_BREAK                InteractBlockIntent_InteractionType = 1
+	InteractBlockIntent_PLACE_BLOCK                  InteractBlockIntent_InteractionType = 2
+	InteractBlockIntent_SLEEP_IN_BED                 InteractBlockIntent_InteractionType = 3
+	InteractBlockIntent_WAKE_UP                      InteractBlockIntent_InteractionType = 4
+	InteractBlockIntent_USE_WORKSTATION              InteractBlockIntent_InteractionType = 5
+	InteractBlockIntent_RING_BELL                    InteractBlockIntent_InteractionType = 6
+	InteractBlockIntent_SHEAR_OR_BOTTLE_BEEHIVE      InteractBlockIntent_InteractionType = 7
+	InteractBlockIntent_PAVE_ROAD_PATH               InteractBlockIntent_InteractionType = 8
 )
 
 // Enum value maps for InteractBlockIntent_InteractionType.
 var (
 	InteractBlockIntent_InteractionType_name = map[int32]string{
-		0: "HARVEST_BREAK",
-		1: "PLACE_BLOCK",
-		2: "SLEEP_IN_BED",
-		3: "WAKE_UP",
-		4: "USE_WORKSTATION",
-		5: "RING_BELL",
-		6: "SHEAR_OR_BOTTLE_BEEHIVE",
-		7: "PAVE_ROAD_PATH",
+		0: "INTERACTION_TYPE_UNSPECIFIED",
+		1: "HARVEST_BREAK",
+		2: "PLACE_BLOCK",
+		3: "SLEEP_IN_BED",
+		4: "WAKE_UP",
+		5: "USE_WORKSTATION",
+		6: "RING_BELL",
+		7: "SHEAR_OR_BOTTLE_BEEHIVE",
+		8: "PAVE_ROAD_PATH",
 	}
 	InteractBlockIntent_InteractionType_value = map[string]int32{
-		"HARVEST_BREAK":           0,
-		"PLACE_BLOCK":             1,
-		"SLEEP_IN_BED":            2,
-		"WAKE_UP":                 3,
-		"USE_WORKSTATION":         4,
-		"RING_BELL":               5,
-		"SHEAR_OR_BOTTLE_BEEHIVE": 6,
-		"PAVE_ROAD_PATH":          7,
+		"INTERACTION_TYPE_UNSPECIFIED": 0,
+		"HARVEST_BREAK":                1,
+		"PLACE_BLOCK":                  2,
+		"SLEEP_IN_BED":                 3,
+		"WAKE_UP":                      4,
+		"USE_WORKSTATION":              5,
+		"RING_BELL":                    6,
+		"SHEAR_OR_BOTTLE_BEEHIVE":      7,
+		"PAVE_ROAD_PATH":               8,
 	}
 )
 
@@ -69,11 +292,11 @@ func (x InteractBlockIntent_InteractionType) String() string {
 }
 
 func (InteractBlockIntent_InteractionType) Descriptor() protoreflect.EnumDescriptor {
-	return file_civquest_v1_civquest_proto_enumTypes[0].Descriptor()
+	return file_civquest_v1_civquest_proto_enumTypes[4].Descriptor()
 }
 
 func (InteractBlockIntent_InteractionType) Type() protoreflect.EnumType {
-	return &file_civquest_v1_civquest_proto_enumTypes[0]
+	return &file_civquest_v1_civquest_proto_enumTypes[4]
 }
 
 func (x InteractBlockIntent_InteractionType) Number() protoreflect.EnumNumber {
@@ -88,28 +311,31 @@ func (InteractBlockIntent_InteractionType) EnumDescriptor() ([]byte, []int) {
 type CaravanIntent_CaravanAction int32
 
 const (
-	CaravanIntent_LEASH_BEAST        CaravanIntent_CaravanAction = 0
-	CaravanIntent_UNLEASH_BEAST      CaravanIntent_CaravanAction = 1
-	CaravanIntent_HITCH_TO_FENCE     CaravanIntent_CaravanAction = 2
-	CaravanIntent_LOAD_BEAST_CHEST   CaravanIntent_CaravanAction = 3
-	CaravanIntent_UNLOAD_BEAST_CHEST CaravanIntent_CaravanAction = 4
+	CaravanIntent_CARAVAN_ACTION_UNSPECIFIED CaravanIntent_CaravanAction = 0
+	CaravanIntent_LEASH_BEAST                CaravanIntent_CaravanAction = 1
+	CaravanIntent_UNLEASH_BEAST              CaravanIntent_CaravanAction = 2
+	CaravanIntent_HITCH_TO_FENCE             CaravanIntent_CaravanAction = 3
+	CaravanIntent_LOAD_BEAST_CHEST           CaravanIntent_CaravanAction = 4
+	CaravanIntent_UNLOAD_BEAST_CHEST         CaravanIntent_CaravanAction = 5
 )
 
 // Enum value maps for CaravanIntent_CaravanAction.
 var (
 	CaravanIntent_CaravanAction_name = map[int32]string{
-		0: "LEASH_BEAST",
-		1: "UNLEASH_BEAST",
-		2: "HITCH_TO_FENCE",
-		3: "LOAD_BEAST_CHEST",
-		4: "UNLOAD_BEAST_CHEST",
+		0: "CARAVAN_ACTION_UNSPECIFIED",
+		1: "LEASH_BEAST",
+		2: "UNLEASH_BEAST",
+		3: "HITCH_TO_FENCE",
+		4: "LOAD_BEAST_CHEST",
+		5: "UNLOAD_BEAST_CHEST",
 	}
 	CaravanIntent_CaravanAction_value = map[string]int32{
-		"LEASH_BEAST":        0,
-		"UNLEASH_BEAST":      1,
-		"HITCH_TO_FENCE":     2,
-		"LOAD_BEAST_CHEST":   3,
-		"UNLOAD_BEAST_CHEST": 4,
+		"CARAVAN_ACTION_UNSPECIFIED": 0,
+		"LEASH_BEAST":                1,
+		"UNLEASH_BEAST":              2,
+		"HITCH_TO_FENCE":             3,
+		"LOAD_BEAST_CHEST":           4,
+		"UNLOAD_BEAST_CHEST":         5,
 	}
 )
 
@@ -124,11 +350,11 @@ func (x CaravanIntent_CaravanAction) String() string {
 }
 
 func (CaravanIntent_CaravanAction) Descriptor() protoreflect.EnumDescriptor {
-	return file_civquest_v1_civquest_proto_enumTypes[1].Descriptor()
+	return file_civquest_v1_civquest_proto_enumTypes[5].Descriptor()
 }
 
 func (CaravanIntent_CaravanAction) Type() protoreflect.EnumType {
-	return &file_civquest_v1_civquest_proto_enumTypes[1]
+	return &file_civquest_v1_civquest_proto_enumTypes[5]
 }
 
 func (x CaravanIntent_CaravanAction) Number() protoreflect.EnumNumber {
@@ -402,7 +628,7 @@ type SpawnAgentRequest struct {
 	DisplayName      string                 `protobuf:"bytes,2,opt,name=display_name,json=displayName,proto3" json:"display_name,omitempty"`
 	ClanId           string                 `protobuf:"bytes,3,opt,name=clan_id,json=clanId,proto3" json:"clan_id,omitempty"`
 	SpawnCoords      *Vec3                  `protobuf:"bytes,4,opt,name=spawn_coords,json=spawnCoords,proto3" json:"spawn_coords,omitempty"`
-	SkinPngBytes     []byte                 `protobuf:"bytes,5,opt,name=skin_png_bytes,json=skinPngBytes,proto3" json:"skin_png_bytes,omitempty"`
+	SkinPngBytes     []byte                 `protobuf:"bytes,5,opt,name=skin_png_bytes,json=skinPngBytes,proto3" json:"skin_png_bytes,omitempty"` // Max 64 KB payload (standard 64x64 or 128x128 RGBA PNG texture)
 	SkinTextureValue string                 `protobuf:"bytes,6,opt,name=skin_texture_value,json=skinTextureValue,proto3" json:"skin_texture_value,omitempty"`
 	SkinSignature    string                 `protobuf:"bytes,7,opt,name=skin_signature,json=skinSignature,proto3" json:"skin_signature,omitempty"`
 	IsChild          bool                   `protobuf:"varint,8,opt,name=is_child,json=isChild,proto3" json:"is_child,omitempty"`
@@ -817,22 +1043,23 @@ func (x *ExportRecipeResponse) GetRecipes() []*RecipeNode {
 }
 
 type TelemetryFrame struct {
-	state             protoimpl.MessageState `protogen:"open.v1"`
-	WorldTick         int64                  `protobuf:"varint,1,opt,name=world_tick,json=worldTick,proto3" json:"world_tick,omitempty"`
-	TimeOfDay         int64                  `protobuf:"varint,2,opt,name=time_of_day,json=timeOfDay,proto3" json:"time_of_day,omitempty"` // 0 - 24000 tick cycle
-	Weather           string                 `protobuf:"bytes,3,opt,name=weather,proto3" json:"weather,omitempty"`                         // "CLEAR", "RAIN", "THUNDER"
-	BiomeId           string                 `protobuf:"bytes,4,opt,name=biome_id,json=biomeId,proto3" json:"biome_id,omitempty"`
-	Status            *AgentStatus           `protobuf:"bytes,5,opt,name=status,proto3" json:"status,omitempty"`
-	VisibleEntities   []*VisibleEntity       `protobuf:"bytes,6,rep,name=visible_entities,json=visibleEntities,proto3" json:"visible_entities,omitempty"`
-	InterestingBlocks []*VisibleBlock        `protobuf:"bytes,7,rep,name=interesting_blocks,json=interestingBlocks,proto3" json:"interesting_blocks,omitempty"`
-	IncomingChats     []*ChatEvent           `protobuf:"bytes,8,rep,name=incoming_chats,json=incomingChats,proto3" json:"incoming_chats,omitempty"`
-	LastDamageTaken   *DamageEvent           `protobuf:"bytes,9,opt,name=last_damage_taken,json=lastDamageTaken,proto3" json:"last_damage_taken,omitempty"`
-	PendingTrade      *TradeRequest          `protobuf:"bytes,10,opt,name=pending_trade,json=pendingTrade,proto3" json:"pending_trade,omitempty"`
-	FarmlandSurvey    *FarmlandSurveyEvent   `protobuf:"bytes,11,opt,name=farmland_survey,json=farmlandSurvey,proto3" json:"farmland_survey,omitempty"`
-	CurrentLandmark   *LandmarkContext       `protobuf:"bytes,12,opt,name=current_landmark,json=currentLandmark,proto3" json:"current_landmark,omitempty"`
-	DeathEvent        *DeathEvent            `protobuf:"bytes,13,opt,name=death_event,json=deathEvent,proto3" json:"death_event,omitempty"` // Terminal event triggering permadeath teardown
-	unknownFields     protoimpl.UnknownFields
-	sizeCache         protoimpl.SizeCache
+	state                   protoimpl.MessageState `protogen:"open.v1"`
+	WorldTick               int64                  `protobuf:"varint,1,opt,name=world_tick,json=worldTick,proto3" json:"world_tick,omitempty"`
+	TimeOfDay               int64                  `protobuf:"varint,2,opt,name=time_of_day,json=timeOfDay,proto3" json:"time_of_day,omitempty"` // 0 - 24000 tick cycle
+	Weather                 Weather                `protobuf:"varint,3,opt,name=weather,proto3,enum=civquest.v1.Weather" json:"weather,omitempty"`
+	BiomeId                 string                 `protobuf:"bytes,4,opt,name=biome_id,json=biomeId,proto3" json:"biome_id,omitempty"`
+	Status                  *AgentStatus           `protobuf:"bytes,5,opt,name=status,proto3" json:"status,omitempty"`
+	VisibleEntities         []*VisibleEntity       `protobuf:"bytes,6,rep,name=visible_entities,json=visibleEntities,proto3" json:"visible_entities,omitempty"`
+	InterestingBlocks       []*VisibleBlock        `protobuf:"bytes,7,rep,name=interesting_blocks,json=interestingBlocks,proto3" json:"interesting_blocks,omitempty"`
+	IncomingChats           []*ChatEvent           `protobuf:"bytes,8,rep,name=incoming_chats,json=incomingChats,proto3" json:"incoming_chats,omitempty"`
+	LastDamageTaken         *DamageEvent           `protobuf:"bytes,9,opt,name=last_damage_taken,json=lastDamageTaken,proto3" json:"last_damage_taken,omitempty"`
+	PendingTrade            *TradeRequest          `protobuf:"bytes,10,opt,name=pending_trade,json=pendingTrade,proto3" json:"pending_trade,omitempty"`
+	FarmlandSurvey          *FarmlandSurveyEvent   `protobuf:"bytes,11,opt,name=farmland_survey,json=farmlandSurvey,proto3" json:"farmland_survey,omitempty"`
+	CurrentLandmark         *LandmarkContext       `protobuf:"bytes,12,opt,name=current_landmark,json=currentLandmark,proto3" json:"current_landmark,omitempty"`
+	DeathEvent              *DeathEvent            `protobuf:"bytes,13,opt,name=death_event,json=deathEvent,proto3" json:"death_event,omitempty"` // Terminal event triggering permadeath teardown
+	LastProcessedSequenceId int64                  `protobuf:"varint,14,opt,name=last_processed_sequence_id,json=lastProcessedSequenceId,proto3" json:"last_processed_sequence_id,omitempty"`
+	unknownFields           protoimpl.UnknownFields
+	sizeCache               protoimpl.SizeCache
 }
 
 func (x *TelemetryFrame) Reset() {
@@ -879,11 +1106,11 @@ func (x *TelemetryFrame) GetTimeOfDay() int64 {
 	return 0
 }
 
-func (x *TelemetryFrame) GetWeather() string {
+func (x *TelemetryFrame) GetWeather() Weather {
 	if x != nil {
 		return x.Weather
 	}
-	return ""
+	return Weather_WEATHER_UNSPECIFIED
 }
 
 func (x *TelemetryFrame) GetBiomeId() string {
@@ -956,6 +1183,13 @@ func (x *TelemetryFrame) GetDeathEvent() *DeathEvent {
 	return nil
 }
 
+func (x *TelemetryFrame) GetLastProcessedSequenceId() int64 {
+	if x != nil {
+		return x.LastProcessedSequenceId
+	}
+	return 0
+}
+
 type AgentStatus struct {
 	state            protoimpl.MessageState `protogen:"open.v1"`
 	AgentId          string                 `protobuf:"bytes,1,opt,name=agent_id,json=agentId,proto3" json:"agent_id,omitempty"`
@@ -970,7 +1204,7 @@ type AgentStatus struct {
 	IsSleeping       bool                   `protobuf:"varint,10,opt,name=is_sleeping,json=isSleeping,proto3" json:"is_sleeping,omitempty"`
 	IsInWater        bool                   `protobuf:"varint,11,opt,name=is_in_water,json=isInWater,proto3" json:"is_in_water,omitempty"`
 	IsOnFire         bool                   `protobuf:"varint,12,opt,name=is_on_fire,json=isOnFire,proto3" json:"is_on_fire,omitempty"`
-	NavigationState  string                 `protobuf:"bytes,13,opt,name=navigation_state,json=navigationState,proto3" json:"navigation_state,omitempty"` // "IDLE", "PATHING", "STUCK", "ARRIVED", "BUILDING"
+	NavigationState  NavigationState        `protobuf:"varint,13,opt,name=navigation_state,json=navigationState,proto3,enum=civquest.v1.NavigationState" json:"navigation_state,omitempty"`
 	Inventory        []*ItemStackProto      `protobuf:"bytes,14,rep,name=inventory,proto3" json:"inventory,omitempty"`
 	LeashedEntityIds []int32                `protobuf:"varint,15,rep,packed,name=leashed_entity_ids,json=leashedEntityIds,proto3" json:"leashed_entity_ids,omitempty"`
 	unknownFields    protoimpl.UnknownFields
@@ -1091,11 +1325,11 @@ func (x *AgentStatus) GetIsOnFire() bool {
 	return false
 }
 
-func (x *AgentStatus) GetNavigationState() string {
+func (x *AgentStatus) GetNavigationState() NavigationState {
 	if x != nil {
 		return x.NavigationState
 	}
-	return ""
+	return NavigationState_NAVIGATION_STATE_UNSPECIFIED
 }
 
 func (x *AgentStatus) GetInventory() []*ItemStackProto {
@@ -1237,12 +1471,12 @@ func (x *VisibleEntity) GetFuseTicks() int32 {
 }
 
 type VisibleBlock struct {
-	state           protoimpl.MessageState `protogen:"open.v1"`
-	Pos             *BlockPosProto         `protobuf:"bytes,1,opt,name=pos,proto3" json:"pos,omitempty"`
-	BlockId         string                 `protobuf:"bytes,2,opt,name=block_id,json=blockId,proto3" json:"block_id,omitempty"`
-	BlockStateProps map[string]string      `protobuf:"bytes,3,rep,name=block_state_props,json=blockStateProps,proto3" json:"block_state_props,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"` // e.g., {"age": "7", "honey_level": "5"}
-	unknownFields   protoimpl.UnknownFields
-	sizeCache       protoimpl.SizeCache
+	state            protoimpl.MessageState `protogen:"open.v1"`
+	Pos              *BlockPosProto         `protobuf:"bytes,1,opt,name=pos,proto3" json:"pos,omitempty"`
+	BlockId          string                 `protobuf:"bytes,2,opt,name=block_id,json=blockId,proto3" json:"block_id,omitempty"`
+	BlockStateString string                 `protobuf:"bytes,3,opt,name=block_state_string,json=blockStateString,proto3" json:"block_state_string,omitempty"` // e.g., "age=7,honey_level=5" or "minecraft:wheat[age=7]"
+	unknownFields    protoimpl.UnknownFields
+	sizeCache        protoimpl.SizeCache
 }
 
 func (x *VisibleBlock) Reset() {
@@ -1289,11 +1523,11 @@ func (x *VisibleBlock) GetBlockId() string {
 	return ""
 }
 
-func (x *VisibleBlock) GetBlockStateProps() map[string]string {
+func (x *VisibleBlock) GetBlockStateString() string {
 	if x != nil {
-		return x.BlockStateProps
+		return x.BlockStateString
 	}
-	return nil
+	return ""
 }
 
 type ChatEvent struct {
@@ -1366,7 +1600,7 @@ func (x *ChatEvent) GetDistance() float32 {
 
 type DamageEvent struct {
 	state            protoimpl.MessageState `protogen:"open.v1"`
-	SourceType       string                 `protobuf:"bytes,1,opt,name=source_type,json=sourceType,proto3" json:"source_type,omitempty"` // "mob", "player", "arrow", "fall", "explosion", "lava"
+	SourceType       DamageSourceType       `protobuf:"varint,1,opt,name=source_type,json=sourceType,proto3,enum=civquest.v1.DamageSourceType" json:"source_type,omitempty"`
 	AttackerEntityId int32                  `protobuf:"varint,2,opt,name=attacker_entity_id,json=attackerEntityId,proto3" json:"attacker_entity_id,omitempty"`
 	AttackerUuid     string                 `protobuf:"bytes,3,opt,name=attacker_uuid,json=attackerUuid,proto3" json:"attacker_uuid,omitempty"`
 	AttackerName     string                 `protobuf:"bytes,4,opt,name=attacker_name,json=attackerName,proto3" json:"attacker_name,omitempty"`
@@ -1405,11 +1639,11 @@ func (*DamageEvent) Descriptor() ([]byte, []int) {
 	return file_civquest_v1_civquest_proto_rawDescGZIP(), []int{16}
 }
 
-func (x *DamageEvent) GetSourceType() string {
+func (x *DamageEvent) GetSourceType() DamageSourceType {
 	if x != nil {
 		return x.SourceType
 	}
-	return ""
+	return DamageSourceType_DAMAGE_SOURCE_TYPE_UNSPECIFIED
 }
 
 func (x *DamageEvent) GetAttackerEntityId() int32 {
@@ -2212,7 +2446,7 @@ func (x *InteractBlockIntent) GetInteractionType() InteractBlockIntent_Interacti
 	if x != nil {
 		return x.InteractionType
 	}
-	return InteractBlockIntent_HARVEST_BREAK
+	return InteractBlockIntent_INTERACTION_TYPE_UNSPECIFIED
 }
 
 func (x *InteractBlockIntent) GetBlockOrItemId() string {
@@ -2345,7 +2579,7 @@ func (x *CraftItemIntent) GetBatchCount() int32 {
 type SendChatIntent struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Message       string                 `protobuf:"bytes,1,opt,name=message,proto3" json:"message,omitempty"`
-	TargetChannel string                 `protobuf:"bytes,2,opt,name=target_channel,json=targetChannel,proto3" json:"target_channel,omitempty"` // "LOCAL", "CLAN_BROADCAST"
+	TargetChannel ChatChannel            `protobuf:"varint,2,opt,name=target_channel,json=targetChannel,proto3,enum=civquest.v1.ChatChannel" json:"target_channel,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -2387,11 +2621,11 @@ func (x *SendChatIntent) GetMessage() string {
 	return ""
 }
 
-func (x *SendChatIntent) GetTargetChannel() string {
+func (x *SendChatIntent) GetTargetChannel() ChatChannel {
 	if x != nil {
 		return x.TargetChannel
 	}
-	return ""
+	return ChatChannel_CHAT_CHANNEL_UNSPECIFIED
 }
 
 type RespondTradeIntent struct {
@@ -2514,7 +2748,7 @@ func (x *CaravanIntent) GetAction() CaravanIntent_CaravanAction {
 	if x != nil {
 		return x.Action
 	}
-	return CaravanIntent_LEASH_BEAST
+	return CaravanIntent_CARAVAN_ACTION_UNSPECIFIED
 }
 
 func (x *CaravanIntent) GetBeastEntityId() int32 {
@@ -2873,12 +3107,12 @@ const file_civquest_v1_civquest_proto_rawDesc = "" +
 	"\vingredients\x18\x04 \x03(\v2\x1b.civquest.v1.ItemStackProtoR\vingredients\x123\n" +
 	"\x06result\x18\x05 \x01(\v2\x1b.civquest.v1.ItemStackProtoR\x06result\"I\n" +
 	"\x14ExportRecipeResponse\x121\n" +
-	"\arecipes\x18\x01 \x03(\v2\x17.civquest.v1.RecipeNodeR\arecipes\"\xda\x05\n" +
+	"\arecipes\x18\x01 \x03(\v2\x17.civquest.v1.RecipeNodeR\arecipes\"\xad\x06\n" +
 	"\x0eTelemetryFrame\x12\x1d\n" +
 	"\n" +
 	"world_tick\x18\x01 \x01(\x03R\tworldTick\x12\x1e\n" +
-	"\vtime_of_day\x18\x02 \x01(\x03R\ttimeOfDay\x12\x18\n" +
-	"\aweather\x18\x03 \x01(\tR\aweather\x12\x19\n" +
+	"\vtime_of_day\x18\x02 \x01(\x03R\ttimeOfDay\x12.\n" +
+	"\aweather\x18\x03 \x01(\x0e2\x14.civquest.v1.WeatherR\aweather\x12\x19\n" +
 	"\bbiome_id\x18\x04 \x01(\tR\abiomeId\x120\n" +
 	"\x06status\x18\x05 \x01(\v2\x18.civquest.v1.AgentStatusR\x06status\x12E\n" +
 	"\x10visible_entities\x18\x06 \x03(\v2\x1a.civquest.v1.VisibleEntityR\x0fvisibleEntities\x12H\n" +
@@ -2890,7 +3124,8 @@ const file_civquest_v1_civquest_proto_rawDesc = "" +
 	"\x0ffarmland_survey\x18\v \x01(\v2 .civquest.v1.FarmlandSurveyEventR\x0efarmlandSurvey\x12G\n" +
 	"\x10current_landmark\x18\f \x01(\v2\x1c.civquest.v1.LandmarkContextR\x0fcurrentLandmark\x128\n" +
 	"\vdeath_event\x18\r \x01(\v2\x17.civquest.v1.DeathEventR\n" +
-	"deathEvent\"\x85\x04\n" +
+	"deathEvent\x12;\n" +
+	"\x1alast_processed_sequence_id\x18\x0e \x01(\x03R\x17lastProcessedSequenceId\"\xa3\x04\n" +
 	"\vAgentStatus\x12\x19\n" +
 	"\bagent_id\x18\x01 \x01(\tR\aagentId\x12\x1b\n" +
 	"\tentity_id\x18\x02 \x01(\x05R\bentityId\x12-\n" +
@@ -2910,8 +3145,8 @@ const file_civquest_v1_civquest_proto_rawDesc = "" +
 	"isSleeping\x12\x1e\n" +
 	"\vis_in_water\x18\v \x01(\bR\tisInWater\x12\x1c\n" +
 	"\n" +
-	"is_on_fire\x18\f \x01(\bR\bisOnFire\x12)\n" +
-	"\x10navigation_state\x18\r \x01(\tR\x0fnavigationState\x129\n" +
+	"is_on_fire\x18\f \x01(\bR\bisOnFire\x12G\n" +
+	"\x10navigation_state\x18\r \x01(\x0e2\x1c.civquest.v1.NavigationStateR\x0fnavigationState\x129\n" +
 	"\tinventory\x18\x0e \x03(\v2\x1b.civquest.v1.ItemStackProtoR\tinventory\x12,\n" +
 	"\x12leashed_entity_ids\x18\x0f \x03(\x05R\x10leashedEntityIds\"\xe2\x02\n" +
 	"\rVisibleEntity\x12\x1b\n" +
@@ -2930,23 +3165,20 @@ const file_civquest_v1_civquest_proto_rawDesc = "" +
 	" \x01(\tR\n" +
 	"heldItemId\x12\x1d\n" +
 	"\n" +
-	"fuse_ticks\x18\v \x01(\x05R\tfuseTicks\"\xf7\x01\n" +
+	"fuse_ticks\x18\v \x01(\x05R\tfuseTicks\"\x85\x01\n" +
 	"\fVisibleBlock\x12,\n" +
 	"\x03pos\x18\x01 \x01(\v2\x1a.civquest.v1.BlockPosProtoR\x03pos\x12\x19\n" +
-	"\bblock_id\x18\x02 \x01(\tR\ablockId\x12Z\n" +
-	"\x11block_state_props\x18\x03 \x03(\v2..civquest.v1.VisibleBlock.BlockStatePropsEntryR\x0fblockStateProps\x1aB\n" +
-	"\x14BlockStatePropsEntry\x12\x10\n" +
-	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
-	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\x83\x01\n" +
+	"\bblock_id\x18\x02 \x01(\tR\ablockId\x12,\n" +
+	"\x12block_state_string\x18\x03 \x01(\tR\x10blockStateString\"\x83\x01\n" +
 	"\tChatEvent\x12\x1f\n" +
 	"\vsender_uuid\x18\x01 \x01(\tR\n" +
 	"senderUuid\x12\x1f\n" +
 	"\vsender_name\x18\x02 \x01(\tR\n" +
 	"senderName\x12\x18\n" +
 	"\amessage\x18\x03 \x01(\tR\amessage\x12\x1a\n" +
-	"\bdistance\x18\x04 \x01(\x02R\bdistance\"\xcb\x01\n" +
-	"\vDamageEvent\x12\x1f\n" +
-	"\vsource_type\x18\x01 \x01(\tR\n" +
+	"\bdistance\x18\x04 \x01(\x02R\bdistance\"\xea\x01\n" +
+	"\vDamageEvent\x12>\n" +
+	"\vsource_type\x18\x01 \x01(\x0e2\x1d.civquest.v1.DamageSourceTypeR\n" +
 	"sourceType\x12,\n" +
 	"\x12attacker_entity_id\x18\x02 \x01(\x05R\x10attackerEntityId\x12#\n" +
 	"\rattacker_uuid\x18\x03 \x01(\tR\fattackerUuid\x12#\n" +
@@ -3015,20 +3247,21 @@ const file_civquest_v1_civquest_proto_rawDesc = "" +
 	"\x10target_entity_id\x18\x01 \x01(\x05R\x0etargetEntityId\x12!\n" +
 	"\fraise_shield\x18\x02 \x01(\bR\vraiseShield\x12,\n" +
 	"\x12keep_distance_kite\x18\x03 \x01(\bR\x10keepDistanceKite\x12)\n" +
-	"\x10flee_immediately\x18\x04 \x01(\bR\x0ffleeImmediately\"\xf5\x02\n" +
+	"\x10flee_immediately\x18\x04 \x01(\bR\x0ffleeImmediately\"\x97\x03\n" +
 	"\x13InteractBlockIntent\x12,\n" +
 	"\x03pos\x18\x01 \x01(\v2\x1a.civquest.v1.BlockPosProtoR\x03pos\x12[\n" +
 	"\x10interaction_type\x18\x02 \x01(\x0e20.civquest.v1.InteractBlockIntent.InteractionTypeR\x0finteractionType\x12'\n" +
-	"\x10block_or_item_id\x18\x03 \x01(\tR\rblockOrItemId\"\xa9\x01\n" +
-	"\x0fInteractionType\x12\x11\n" +
-	"\rHARVEST_BREAK\x10\x00\x12\x0f\n" +
-	"\vPLACE_BLOCK\x10\x01\x12\x10\n" +
-	"\fSLEEP_IN_BED\x10\x02\x12\v\n" +
-	"\aWAKE_UP\x10\x03\x12\x13\n" +
-	"\x0fUSE_WORKSTATION\x10\x04\x12\r\n" +
-	"\tRING_BELL\x10\x05\x12\x1b\n" +
-	"\x17SHEAR_OR_BOTTLE_BEEHIVE\x10\x06\x12\x12\n" +
-	"\x0ePAVE_ROAD_PATH\x10\a\"\x9e\x01\n" +
+	"\x10block_or_item_id\x18\x03 \x01(\tR\rblockOrItemId\"\xcb\x01\n" +
+	"\x0fInteractionType\x12 \n" +
+	"\x1cINTERACTION_TYPE_UNSPECIFIED\x10\x00\x12\x11\n" +
+	"\rHARVEST_BREAK\x10\x01\x12\x0f\n" +
+	"\vPLACE_BLOCK\x10\x02\x12\x10\n" +
+	"\fSLEEP_IN_BED\x10\x03\x12\v\n" +
+	"\aWAKE_UP\x10\x04\x12\x13\n" +
+	"\x0fUSE_WORKSTATION\x10\x05\x12\r\n" +
+	"\tRING_BELL\x10\x06\x12\x1b\n" +
+	"\x17SHEAR_OR_BOTTLE_BEEHIVE\x10\a\x12\x12\n" +
+	"\x0ePAVE_ROAD_PATH\x10\b\"\x9e\x01\n" +
 	"\rUseItemIntent\x12%\n" +
 	"\x0einventory_slot\x18\x01 \x01(\x05R\rinventorySlot\x121\n" +
 	"\x15is_eating_or_drinking\x18\x02 \x01(\bR\x12isEatingOrDrinking\x123\n" +
@@ -3037,29 +3270,30 @@ const file_civquest_v1_civquest_proto_rawDesc = "" +
 	"\trecipe_id\x18\x01 \x01(\tR\brecipeId\x12C\n" +
 	"\x0fworkstation_pos\x18\x02 \x01(\v2\x1a.civquest.v1.BlockPosProtoR\x0eworkstationPos\x12\x1f\n" +
 	"\vbatch_count\x18\x03 \x01(\x05R\n" +
-	"batchCount\"Q\n" +
+	"batchCount\"k\n" +
 	"\x0eSendChatIntent\x12\x18\n" +
-	"\amessage\x18\x01 \x01(\tR\amessage\x12%\n" +
-	"\x0etarget_channel\x18\x02 \x01(\tR\rtargetChannel\"\xa4\x02\n" +
+	"\amessage\x18\x01 \x01(\tR\amessage\x12?\n" +
+	"\x0etarget_channel\x18\x02 \x01(\x0e2\x18.civquest.v1.ChatChannelR\rtargetChannel\"\xa4\x02\n" +
 	"\x12RespondTradeIntent\x12(\n" +
 	"\x10player_entity_id\x18\x01 \x01(\x05R\x0eplayerEntityId\x12\x1f\n" +
 	"\vaccept_deal\x18\x02 \x01(\bR\n" +
 	"acceptDeal\x12K\n" +
 	"\x13agent_counter_offer\x18\x03 \x03(\v2\x1b.civquest.v1.ItemStackProtoR\x11agentCounterOffer\x12M\n" +
 	"\x14demanded_from_player\x18\x04 \x03(\v2\x1b.civquest.v1.ItemStackProtoR\x12demandedFromPlayer\x12'\n" +
-	"\x0fspoken_response\x18\x05 \x01(\tR\x0espokenResponse\"\xe7\x02\n" +
+	"\x0fspoken_response\x18\x05 \x01(\tR\x0espokenResponse\"\x88\x03\n" +
 	"\rCaravanIntent\x12@\n" +
 	"\x06action\x18\x01 \x01(\x0e2(.civquest.v1.CaravanIntent.CaravanActionR\x06action\x12&\n" +
 	"\x0fbeast_entity_id\x18\x02 \x01(\x05R\rbeastEntityId\x127\n" +
 	"\tfence_pos\x18\x03 \x01(\v2\x1a.civquest.v1.BlockPosProtoR\bfencePos\x12<\n" +
 	"\vcargo_items\x18\x04 \x03(\v2\x1b.civquest.v1.ItemStackProtoR\n" +
-	"cargoItems\"u\n" +
-	"\rCaravanAction\x12\x0f\n" +
-	"\vLEASH_BEAST\x10\x00\x12\x11\n" +
-	"\rUNLEASH_BEAST\x10\x01\x12\x12\n" +
-	"\x0eHITCH_TO_FENCE\x10\x02\x12\x14\n" +
-	"\x10LOAD_BEAST_CHEST\x10\x03\x12\x16\n" +
-	"\x12UNLOAD_BEAST_CHEST\x10\x04\"\xb3\x01\n" +
+	"cargoItems\"\x95\x01\n" +
+	"\rCaravanAction\x12\x1e\n" +
+	"\x1aCARAVAN_ACTION_UNSPECIFIED\x10\x00\x12\x0f\n" +
+	"\vLEASH_BEAST\x10\x01\x12\x11\n" +
+	"\rUNLEASH_BEAST\x10\x02\x12\x12\n" +
+	"\x0eHITCH_TO_FENCE\x10\x03\x12\x14\n" +
+	"\x10LOAD_BEAST_CHEST\x10\x04\x12\x16\n" +
+	"\x12UNLOAD_BEAST_CHEST\x10\x05\"\xb3\x01\n" +
 	"\x10BuildBlockIntent\x12=\n" +
 	"\ftarget_voxel\x18\x01 \x01(\v2\x1a.civquest.v1.BlockPosProtoR\vtargetVoxel\x12,\n" +
 	"\x12block_state_string\x18\x02 \x01(\tR\x10blockStateString\x122\n" +
@@ -3080,7 +3314,31 @@ const file_civquest_v1_civquest_proto_rawDesc = "" +
 	"\x17TransferContainerIntent\x12?\n" +
 	"\rcontainer_pos\x18\x01 \x01(\v2\x1a.civquest.v1.BlockPosProtoR\fcontainerPos\x124\n" +
 	"\x16deposit_into_container\x18\x02 \x01(\bR\x14depositIntoContainer\x121\n" +
-	"\x05items\x18\x03 \x03(\v2\x1b.civquest.v1.ItemStackProtoR\x05items2\xec\x02\n" +
+	"\x05items\x18\x03 \x03(\v2\x1b.civquest.v1.ItemStackProtoR\x05items*\\\n" +
+	"\aWeather\x12\x17\n" +
+	"\x13WEATHER_UNSPECIFIED\x10\x00\x12\x11\n" +
+	"\rWEATHER_CLEAR\x10\x01\x12\x10\n" +
+	"\fWEATHER_RAIN\x10\x02\x12\x13\n" +
+	"\x0fWEATHER_THUNDER\x10\x03*\xc5\x01\n" +
+	"\x0fNavigationState\x12 \n" +
+	"\x1cNAVIGATION_STATE_UNSPECIFIED\x10\x00\x12\x19\n" +
+	"\x15NAVIGATION_STATE_IDLE\x10\x01\x12\x1c\n" +
+	"\x18NAVIGATION_STATE_PATHING\x10\x02\x12\x1a\n" +
+	"\x16NAVIGATION_STATE_STUCK\x10\x03\x12\x1c\n" +
+	"\x18NAVIGATION_STATE_ARRIVED\x10\x04\x12\x1d\n" +
+	"\x19NAVIGATION_STATE_BUILDING\x10\x05*\xeb\x01\n" +
+	"\x10DamageSourceType\x12\"\n" +
+	"\x1eDAMAGE_SOURCE_TYPE_UNSPECIFIED\x10\x00\x12\x1a\n" +
+	"\x16DAMAGE_SOURCE_TYPE_MOB\x10\x01\x12\x1d\n" +
+	"\x19DAMAGE_SOURCE_TYPE_PLAYER\x10\x02\x12\x1c\n" +
+	"\x18DAMAGE_SOURCE_TYPE_ARROW\x10\x03\x12\x1b\n" +
+	"\x17DAMAGE_SOURCE_TYPE_FALL\x10\x04\x12 \n" +
+	"\x1cDAMAGE_SOURCE_TYPE_EXPLOSION\x10\x05\x12\x1b\n" +
+	"\x17DAMAGE_SOURCE_TYPE_LAVA\x10\x06*d\n" +
+	"\vChatChannel\x12\x1c\n" +
+	"\x18CHAT_CHANNEL_UNSPECIFIED\x10\x00\x12\x16\n" +
+	"\x12CHAT_CHANNEL_LOCAL\x10\x01\x12\x1f\n" +
+	"\x1bCHAT_CHANNEL_CLAN_BROADCAST\x10\x022\xec\x02\n" +
 	"\x15CivQuestBridgeService\x12I\n" +
 	"\fConnectAgent\x12\x18.civquest.v1.AgentIntent\x1a\x1b.civquest.v1.TelemetryFrame(\x010\x01\x12S\n" +
 	"\x10SpawnAgentEntity\x12\x1e.civquest.v1.SpawnAgentRequest\x1a\x1f.civquest.v1.SpawnAgentResponse\x12Y\n" +
@@ -3100,111 +3358,117 @@ func file_civquest_v1_civquest_proto_rawDescGZIP() []byte {
 	return file_civquest_v1_civquest_proto_rawDescData
 }
 
-var file_civquest_v1_civquest_proto_enumTypes = make([]protoimpl.EnumInfo, 2)
-var file_civquest_v1_civquest_proto_msgTypes = make([]protoimpl.MessageInfo, 35)
+var file_civquest_v1_civquest_proto_enumTypes = make([]protoimpl.EnumInfo, 6)
+var file_civquest_v1_civquest_proto_msgTypes = make([]protoimpl.MessageInfo, 34)
 var file_civquest_v1_civquest_proto_goTypes = []any{
-	(InteractBlockIntent_InteractionType)(0), // 0: civquest.v1.InteractBlockIntent.InteractionType
-	(CaravanIntent_CaravanAction)(0),         // 1: civquest.v1.CaravanIntent.CaravanAction
-	(*Vec3)(nil),                             // 2: civquest.v1.Vec3
-	(*BlockPosProto)(nil),                    // 3: civquest.v1.BlockPosProto
-	(*BoundingBoxProto)(nil),                 // 4: civquest.v1.BoundingBoxProto
-	(*ItemStackProto)(nil),                   // 5: civquest.v1.ItemStackProto
-	(*SpawnAgentRequest)(nil),                // 6: civquest.v1.SpawnAgentRequest
-	(*SpawnAgentResponse)(nil),               // 7: civquest.v1.SpawnAgentResponse
-	(*DespawnAgentRequest)(nil),              // 8: civquest.v1.DespawnAgentRequest
-	(*DespawnAgentResponse)(nil),             // 9: civquest.v1.DespawnAgentResponse
-	(*ExportRecipeRequest)(nil),              // 10: civquest.v1.ExportRecipeRequest
-	(*RecipeNode)(nil),                       // 11: civquest.v1.RecipeNode
-	(*ExportRecipeResponse)(nil),             // 12: civquest.v1.ExportRecipeResponse
-	(*TelemetryFrame)(nil),                   // 13: civquest.v1.TelemetryFrame
-	(*AgentStatus)(nil),                      // 14: civquest.v1.AgentStatus
-	(*VisibleEntity)(nil),                    // 15: civquest.v1.VisibleEntity
-	(*VisibleBlock)(nil),                     // 16: civquest.v1.VisibleBlock
-	(*ChatEvent)(nil),                        // 17: civquest.v1.ChatEvent
-	(*DamageEvent)(nil),                      // 18: civquest.v1.DamageEvent
-	(*TradeRequest)(nil),                     // 19: civquest.v1.TradeRequest
-	(*FarmlandSurveyEvent)(nil),              // 20: civquest.v1.FarmlandSurveyEvent
-	(*LandmarkContext)(nil),                  // 21: civquest.v1.LandmarkContext
-	(*DeathEvent)(nil),                       // 22: civquest.v1.DeathEvent
-	(*AgentIntent)(nil),                      // 23: civquest.v1.AgentIntent
-	(*NavigateIntent)(nil),                   // 24: civquest.v1.NavigateIntent
-	(*AttackIntent)(nil),                     // 25: civquest.v1.AttackIntent
-	(*InteractBlockIntent)(nil),              // 26: civquest.v1.InteractBlockIntent
-	(*UseItemIntent)(nil),                    // 27: civquest.v1.UseItemIntent
-	(*CraftItemIntent)(nil),                  // 28: civquest.v1.CraftItemIntent
-	(*SendChatIntent)(nil),                   // 29: civquest.v1.SendChatIntent
-	(*RespondTradeIntent)(nil),               // 30: civquest.v1.RespondTradeIntent
-	(*CaravanIntent)(nil),                    // 31: civquest.v1.CaravanIntent
-	(*BuildBlockIntent)(nil),                 // 32: civquest.v1.BuildBlockIntent
-	(*CreateWrittenBookIntent)(nil),          // 33: civquest.v1.CreateWrittenBookIntent
-	(*PlaceSignpostIntent)(nil),              // 34: civquest.v1.PlaceSignpostIntent
-	(*TransferContainerIntent)(nil),          // 35: civquest.v1.TransferContainerIntent
-	nil,                                      // 36: civquest.v1.VisibleBlock.BlockStatePropsEntry
+	(Weather)(0),                             // 0: civquest.v1.Weather
+	(NavigationState)(0),                     // 1: civquest.v1.NavigationState
+	(DamageSourceType)(0),                    // 2: civquest.v1.DamageSourceType
+	(ChatChannel)(0),                         // 3: civquest.v1.ChatChannel
+	(InteractBlockIntent_InteractionType)(0), // 4: civquest.v1.InteractBlockIntent.InteractionType
+	(CaravanIntent_CaravanAction)(0),         // 5: civquest.v1.CaravanIntent.CaravanAction
+	(*Vec3)(nil),                             // 6: civquest.v1.Vec3
+	(*BlockPosProto)(nil),                    // 7: civquest.v1.BlockPosProto
+	(*BoundingBoxProto)(nil),                 // 8: civquest.v1.BoundingBoxProto
+	(*ItemStackProto)(nil),                   // 9: civquest.v1.ItemStackProto
+	(*SpawnAgentRequest)(nil),                // 10: civquest.v1.SpawnAgentRequest
+	(*SpawnAgentResponse)(nil),               // 11: civquest.v1.SpawnAgentResponse
+	(*DespawnAgentRequest)(nil),              // 12: civquest.v1.DespawnAgentRequest
+	(*DespawnAgentResponse)(nil),             // 13: civquest.v1.DespawnAgentResponse
+	(*ExportRecipeRequest)(nil),              // 14: civquest.v1.ExportRecipeRequest
+	(*RecipeNode)(nil),                       // 15: civquest.v1.RecipeNode
+	(*ExportRecipeResponse)(nil),             // 16: civquest.v1.ExportRecipeResponse
+	(*TelemetryFrame)(nil),                   // 17: civquest.v1.TelemetryFrame
+	(*AgentStatus)(nil),                      // 18: civquest.v1.AgentStatus
+	(*VisibleEntity)(nil),                    // 19: civquest.v1.VisibleEntity
+	(*VisibleBlock)(nil),                     // 20: civquest.v1.VisibleBlock
+	(*ChatEvent)(nil),                        // 21: civquest.v1.ChatEvent
+	(*DamageEvent)(nil),                      // 22: civquest.v1.DamageEvent
+	(*TradeRequest)(nil),                     // 23: civquest.v1.TradeRequest
+	(*FarmlandSurveyEvent)(nil),              // 24: civquest.v1.FarmlandSurveyEvent
+	(*LandmarkContext)(nil),                  // 25: civquest.v1.LandmarkContext
+	(*DeathEvent)(nil),                       // 26: civquest.v1.DeathEvent
+	(*AgentIntent)(nil),                      // 27: civquest.v1.AgentIntent
+	(*NavigateIntent)(nil),                   // 28: civquest.v1.NavigateIntent
+	(*AttackIntent)(nil),                     // 29: civquest.v1.AttackIntent
+	(*InteractBlockIntent)(nil),              // 30: civquest.v1.InteractBlockIntent
+	(*UseItemIntent)(nil),                    // 31: civquest.v1.UseItemIntent
+	(*CraftItemIntent)(nil),                  // 32: civquest.v1.CraftItemIntent
+	(*SendChatIntent)(nil),                   // 33: civquest.v1.SendChatIntent
+	(*RespondTradeIntent)(nil),               // 34: civquest.v1.RespondTradeIntent
+	(*CaravanIntent)(nil),                    // 35: civquest.v1.CaravanIntent
+	(*BuildBlockIntent)(nil),                 // 36: civquest.v1.BuildBlockIntent
+	(*CreateWrittenBookIntent)(nil),          // 37: civquest.v1.CreateWrittenBookIntent
+	(*PlaceSignpostIntent)(nil),              // 38: civquest.v1.PlaceSignpostIntent
+	(*TransferContainerIntent)(nil),          // 39: civquest.v1.TransferContainerIntent
 }
 var file_civquest_v1_civquest_proto_depIdxs = []int32{
-	3,  // 0: civquest.v1.BoundingBoxProto.min:type_name -> civquest.v1.BlockPosProto
-	3,  // 1: civquest.v1.BoundingBoxProto.max:type_name -> civquest.v1.BlockPosProto
-	2,  // 2: civquest.v1.SpawnAgentRequest.spawn_coords:type_name -> civquest.v1.Vec3
-	5,  // 3: civquest.v1.RecipeNode.ingredients:type_name -> civquest.v1.ItemStackProto
-	5,  // 4: civquest.v1.RecipeNode.result:type_name -> civquest.v1.ItemStackProto
-	11, // 5: civquest.v1.ExportRecipeResponse.recipes:type_name -> civquest.v1.RecipeNode
-	14, // 6: civquest.v1.TelemetryFrame.status:type_name -> civquest.v1.AgentStatus
-	15, // 7: civquest.v1.TelemetryFrame.visible_entities:type_name -> civquest.v1.VisibleEntity
-	16, // 8: civquest.v1.TelemetryFrame.interesting_blocks:type_name -> civquest.v1.VisibleBlock
-	17, // 9: civquest.v1.TelemetryFrame.incoming_chats:type_name -> civquest.v1.ChatEvent
-	18, // 10: civquest.v1.TelemetryFrame.last_damage_taken:type_name -> civquest.v1.DamageEvent
-	19, // 11: civquest.v1.TelemetryFrame.pending_trade:type_name -> civquest.v1.TradeRequest
-	20, // 12: civquest.v1.TelemetryFrame.farmland_survey:type_name -> civquest.v1.FarmlandSurveyEvent
-	21, // 13: civquest.v1.TelemetryFrame.current_landmark:type_name -> civquest.v1.LandmarkContext
-	22, // 14: civquest.v1.TelemetryFrame.death_event:type_name -> civquest.v1.DeathEvent
-	2,  // 15: civquest.v1.AgentStatus.position:type_name -> civquest.v1.Vec3
-	5,  // 16: civquest.v1.AgentStatus.inventory:type_name -> civquest.v1.ItemStackProto
-	2,  // 17: civquest.v1.VisibleEntity.position:type_name -> civquest.v1.Vec3
-	3,  // 18: civquest.v1.VisibleBlock.pos:type_name -> civquest.v1.BlockPosProto
-	36, // 19: civquest.v1.VisibleBlock.block_state_props:type_name -> civquest.v1.VisibleBlock.BlockStatePropsEntry
-	5,  // 20: civquest.v1.TradeRequest.player_offered_items:type_name -> civquest.v1.ItemStackProto
-	4,  // 21: civquest.v1.FarmlandSurveyEvent.bounds:type_name -> civquest.v1.BoundingBoxProto
-	2,  // 22: civquest.v1.DeathEvent.death_location:type_name -> civquest.v1.Vec3
-	5,  // 23: civquest.v1.DeathEvent.dropped_loot:type_name -> civquest.v1.ItemStackProto
-	24, // 24: civquest.v1.AgentIntent.navigate:type_name -> civquest.v1.NavigateIntent
-	25, // 25: civquest.v1.AgentIntent.attack:type_name -> civquest.v1.AttackIntent
-	26, // 26: civquest.v1.AgentIntent.interact_block:type_name -> civquest.v1.InteractBlockIntent
-	27, // 27: civquest.v1.AgentIntent.use_item:type_name -> civquest.v1.UseItemIntent
-	28, // 28: civquest.v1.AgentIntent.craft_item:type_name -> civquest.v1.CraftItemIntent
-	29, // 29: civquest.v1.AgentIntent.chat:type_name -> civquest.v1.SendChatIntent
-	30, // 30: civquest.v1.AgentIntent.trade_response:type_name -> civquest.v1.RespondTradeIntent
-	31, // 31: civquest.v1.AgentIntent.caravan:type_name -> civquest.v1.CaravanIntent
-	32, // 32: civquest.v1.AgentIntent.build_block:type_name -> civquest.v1.BuildBlockIntent
-	33, // 33: civquest.v1.AgentIntent.create_book:type_name -> civquest.v1.CreateWrittenBookIntent
-	34, // 34: civquest.v1.AgentIntent.place_signpost:type_name -> civquest.v1.PlaceSignpostIntent
-	35, // 35: civquest.v1.AgentIntent.transfer_container:type_name -> civquest.v1.TransferContainerIntent
-	2,  // 36: civquest.v1.NavigateIntent.target:type_name -> civquest.v1.Vec3
-	3,  // 37: civquest.v1.InteractBlockIntent.pos:type_name -> civquest.v1.BlockPosProto
-	0,  // 38: civquest.v1.InteractBlockIntent.interaction_type:type_name -> civquest.v1.InteractBlockIntent.InteractionType
-	3,  // 39: civquest.v1.CraftItemIntent.workstation_pos:type_name -> civquest.v1.BlockPosProto
-	5,  // 40: civquest.v1.RespondTradeIntent.agent_counter_offer:type_name -> civquest.v1.ItemStackProto
-	5,  // 41: civquest.v1.RespondTradeIntent.demanded_from_player:type_name -> civquest.v1.ItemStackProto
-	1,  // 42: civquest.v1.CaravanIntent.action:type_name -> civquest.v1.CaravanIntent.CaravanAction
-	3,  // 43: civquest.v1.CaravanIntent.fence_pos:type_name -> civquest.v1.BlockPosProto
-	5,  // 44: civquest.v1.CaravanIntent.cargo_items:type_name -> civquest.v1.ItemStackProto
-	3,  // 45: civquest.v1.BuildBlockIntent.target_voxel:type_name -> civquest.v1.BlockPosProto
-	3,  // 46: civquest.v1.CreateWrittenBookIntent.target_lectern_or_shelf:type_name -> civquest.v1.BlockPosProto
-	3,  // 47: civquest.v1.PlaceSignpostIntent.pos:type_name -> civquest.v1.BlockPosProto
-	3,  // 48: civquest.v1.TransferContainerIntent.container_pos:type_name -> civquest.v1.BlockPosProto
-	5,  // 49: civquest.v1.TransferContainerIntent.items:type_name -> civquest.v1.ItemStackProto
-	23, // 50: civquest.v1.CivQuestBridgeService.ConnectAgent:input_type -> civquest.v1.AgentIntent
-	6,  // 51: civquest.v1.CivQuestBridgeService.SpawnAgentEntity:input_type -> civquest.v1.SpawnAgentRequest
-	8,  // 52: civquest.v1.CivQuestBridgeService.DespawnAgentEntity:input_type -> civquest.v1.DespawnAgentRequest
-	10, // 53: civquest.v1.CivQuestBridgeService.ExportRecipeGraph:input_type -> civquest.v1.ExportRecipeRequest
-	13, // 54: civquest.v1.CivQuestBridgeService.ConnectAgent:output_type -> civquest.v1.TelemetryFrame
-	7,  // 55: civquest.v1.CivQuestBridgeService.SpawnAgentEntity:output_type -> civquest.v1.SpawnAgentResponse
-	9,  // 56: civquest.v1.CivQuestBridgeService.DespawnAgentEntity:output_type -> civquest.v1.DespawnAgentResponse
-	12, // 57: civquest.v1.CivQuestBridgeService.ExportRecipeGraph:output_type -> civquest.v1.ExportRecipeResponse
-	54, // [54:58] is the sub-list for method output_type
-	50, // [50:54] is the sub-list for method input_type
-	50, // [50:50] is the sub-list for extension type_name
-	50, // [50:50] is the sub-list for extension extendee
-	0,  // [0:50] is the sub-list for field type_name
+	7,  // 0: civquest.v1.BoundingBoxProto.min:type_name -> civquest.v1.BlockPosProto
+	7,  // 1: civquest.v1.BoundingBoxProto.max:type_name -> civquest.v1.BlockPosProto
+	6,  // 2: civquest.v1.SpawnAgentRequest.spawn_coords:type_name -> civquest.v1.Vec3
+	9,  // 3: civquest.v1.RecipeNode.ingredients:type_name -> civquest.v1.ItemStackProto
+	9,  // 4: civquest.v1.RecipeNode.result:type_name -> civquest.v1.ItemStackProto
+	15, // 5: civquest.v1.ExportRecipeResponse.recipes:type_name -> civquest.v1.RecipeNode
+	0,  // 6: civquest.v1.TelemetryFrame.weather:type_name -> civquest.v1.Weather
+	18, // 7: civquest.v1.TelemetryFrame.status:type_name -> civquest.v1.AgentStatus
+	19, // 8: civquest.v1.TelemetryFrame.visible_entities:type_name -> civquest.v1.VisibleEntity
+	20, // 9: civquest.v1.TelemetryFrame.interesting_blocks:type_name -> civquest.v1.VisibleBlock
+	21, // 10: civquest.v1.TelemetryFrame.incoming_chats:type_name -> civquest.v1.ChatEvent
+	22, // 11: civquest.v1.TelemetryFrame.last_damage_taken:type_name -> civquest.v1.DamageEvent
+	23, // 12: civquest.v1.TelemetryFrame.pending_trade:type_name -> civquest.v1.TradeRequest
+	24, // 13: civquest.v1.TelemetryFrame.farmland_survey:type_name -> civquest.v1.FarmlandSurveyEvent
+	25, // 14: civquest.v1.TelemetryFrame.current_landmark:type_name -> civquest.v1.LandmarkContext
+	26, // 15: civquest.v1.TelemetryFrame.death_event:type_name -> civquest.v1.DeathEvent
+	6,  // 16: civquest.v1.AgentStatus.position:type_name -> civquest.v1.Vec3
+	1,  // 17: civquest.v1.AgentStatus.navigation_state:type_name -> civquest.v1.NavigationState
+	9,  // 18: civquest.v1.AgentStatus.inventory:type_name -> civquest.v1.ItemStackProto
+	6,  // 19: civquest.v1.VisibleEntity.position:type_name -> civquest.v1.Vec3
+	7,  // 20: civquest.v1.VisibleBlock.pos:type_name -> civquest.v1.BlockPosProto
+	2,  // 21: civquest.v1.DamageEvent.source_type:type_name -> civquest.v1.DamageSourceType
+	9,  // 22: civquest.v1.TradeRequest.player_offered_items:type_name -> civquest.v1.ItemStackProto
+	8,  // 23: civquest.v1.FarmlandSurveyEvent.bounds:type_name -> civquest.v1.BoundingBoxProto
+	6,  // 24: civquest.v1.DeathEvent.death_location:type_name -> civquest.v1.Vec3
+	9,  // 25: civquest.v1.DeathEvent.dropped_loot:type_name -> civquest.v1.ItemStackProto
+	28, // 26: civquest.v1.AgentIntent.navigate:type_name -> civquest.v1.NavigateIntent
+	29, // 27: civquest.v1.AgentIntent.attack:type_name -> civquest.v1.AttackIntent
+	30, // 28: civquest.v1.AgentIntent.interact_block:type_name -> civquest.v1.InteractBlockIntent
+	31, // 29: civquest.v1.AgentIntent.use_item:type_name -> civquest.v1.UseItemIntent
+	32, // 30: civquest.v1.AgentIntent.craft_item:type_name -> civquest.v1.CraftItemIntent
+	33, // 31: civquest.v1.AgentIntent.chat:type_name -> civquest.v1.SendChatIntent
+	34, // 32: civquest.v1.AgentIntent.trade_response:type_name -> civquest.v1.RespondTradeIntent
+	35, // 33: civquest.v1.AgentIntent.caravan:type_name -> civquest.v1.CaravanIntent
+	36, // 34: civquest.v1.AgentIntent.build_block:type_name -> civquest.v1.BuildBlockIntent
+	37, // 35: civquest.v1.AgentIntent.create_book:type_name -> civquest.v1.CreateWrittenBookIntent
+	38, // 36: civquest.v1.AgentIntent.place_signpost:type_name -> civquest.v1.PlaceSignpostIntent
+	39, // 37: civquest.v1.AgentIntent.transfer_container:type_name -> civquest.v1.TransferContainerIntent
+	6,  // 38: civquest.v1.NavigateIntent.target:type_name -> civquest.v1.Vec3
+	7,  // 39: civquest.v1.InteractBlockIntent.pos:type_name -> civquest.v1.BlockPosProto
+	4,  // 40: civquest.v1.InteractBlockIntent.interaction_type:type_name -> civquest.v1.InteractBlockIntent.InteractionType
+	7,  // 41: civquest.v1.CraftItemIntent.workstation_pos:type_name -> civquest.v1.BlockPosProto
+	3,  // 42: civquest.v1.SendChatIntent.target_channel:type_name -> civquest.v1.ChatChannel
+	9,  // 43: civquest.v1.RespondTradeIntent.agent_counter_offer:type_name -> civquest.v1.ItemStackProto
+	9,  // 44: civquest.v1.RespondTradeIntent.demanded_from_player:type_name -> civquest.v1.ItemStackProto
+	5,  // 45: civquest.v1.CaravanIntent.action:type_name -> civquest.v1.CaravanIntent.CaravanAction
+	7,  // 46: civquest.v1.CaravanIntent.fence_pos:type_name -> civquest.v1.BlockPosProto
+	9,  // 47: civquest.v1.CaravanIntent.cargo_items:type_name -> civquest.v1.ItemStackProto
+	7,  // 48: civquest.v1.BuildBlockIntent.target_voxel:type_name -> civquest.v1.BlockPosProto
+	7,  // 49: civquest.v1.CreateWrittenBookIntent.target_lectern_or_shelf:type_name -> civquest.v1.BlockPosProto
+	7,  // 50: civquest.v1.PlaceSignpostIntent.pos:type_name -> civquest.v1.BlockPosProto
+	7,  // 51: civquest.v1.TransferContainerIntent.container_pos:type_name -> civquest.v1.BlockPosProto
+	9,  // 52: civquest.v1.TransferContainerIntent.items:type_name -> civquest.v1.ItemStackProto
+	27, // 53: civquest.v1.CivQuestBridgeService.ConnectAgent:input_type -> civquest.v1.AgentIntent
+	10, // 54: civquest.v1.CivQuestBridgeService.SpawnAgentEntity:input_type -> civquest.v1.SpawnAgentRequest
+	12, // 55: civquest.v1.CivQuestBridgeService.DespawnAgentEntity:input_type -> civquest.v1.DespawnAgentRequest
+	14, // 56: civquest.v1.CivQuestBridgeService.ExportRecipeGraph:input_type -> civquest.v1.ExportRecipeRequest
+	17, // 57: civquest.v1.CivQuestBridgeService.ConnectAgent:output_type -> civquest.v1.TelemetryFrame
+	11, // 58: civquest.v1.CivQuestBridgeService.SpawnAgentEntity:output_type -> civquest.v1.SpawnAgentResponse
+	13, // 59: civquest.v1.CivQuestBridgeService.DespawnAgentEntity:output_type -> civquest.v1.DespawnAgentResponse
+	16, // 60: civquest.v1.CivQuestBridgeService.ExportRecipeGraph:output_type -> civquest.v1.ExportRecipeResponse
+	57, // [57:61] is the sub-list for method output_type
+	53, // [53:57] is the sub-list for method input_type
+	53, // [53:53] is the sub-list for extension type_name
+	53, // [53:53] is the sub-list for extension extendee
+	0,  // [0:53] is the sub-list for field type_name
 }
 
 func init() { file_civquest_v1_civquest_proto_init() }
@@ -3231,8 +3495,8 @@ func file_civquest_v1_civquest_proto_init() {
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_civquest_v1_civquest_proto_rawDesc), len(file_civquest_v1_civquest_proto_rawDesc)),
-			NumEnums:      2,
-			NumMessages:   35,
+			NumEnums:      6,
+			NumMessages:   34,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

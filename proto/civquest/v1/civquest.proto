@@ -45,6 +45,40 @@ message ItemStackProto {
   string custom_name = 6;
 }
 
+// ==================== ENUMS ====================
+
+enum Weather {
+  WEATHER_UNSPECIFIED = 0;
+  WEATHER_CLEAR = 1;
+  WEATHER_RAIN = 2;
+  WEATHER_THUNDER = 3;
+}
+
+enum NavigationState {
+  NAVIGATION_STATE_UNSPECIFIED = 0;
+  NAVIGATION_STATE_IDLE = 1;
+  NAVIGATION_STATE_PATHING = 2;
+  NAVIGATION_STATE_STUCK = 3;
+  NAVIGATION_STATE_ARRIVED = 4;
+  NAVIGATION_STATE_BUILDING = 5;
+}
+
+enum DamageSourceType {
+  DAMAGE_SOURCE_TYPE_UNSPECIFIED = 0;
+  DAMAGE_SOURCE_TYPE_MOB = 1;
+  DAMAGE_SOURCE_TYPE_PLAYER = 2;
+  DAMAGE_SOURCE_TYPE_ARROW = 3;
+  DAMAGE_SOURCE_TYPE_FALL = 4;
+  DAMAGE_SOURCE_TYPE_EXPLOSION = 5;
+  DAMAGE_SOURCE_TYPE_LAVA = 6;
+}
+
+enum ChatChannel {
+  CHAT_CHANNEL_UNSPECIFIED = 0;
+  CHAT_CHANNEL_LOCAL = 1;
+  CHAT_CHANNEL_CLAN_BROADCAST = 2;
+}
+
 // ==================== ADMINISTRATIVE RPCS ====================
 
 message SpawnAgentRequest {
@@ -52,7 +86,7 @@ message SpawnAgentRequest {
   string display_name = 2;
   string clan_id = 3;
   Vec3 spawn_coords = 4;
-  bytes skin_png_bytes = 5;
+  bytes skin_png_bytes = 5;      // Max 64 KB payload (standard 64x64 or 128x128 RGBA PNG texture)
   string skin_texture_value = 6;
   string skin_signature = 7;
   bool is_child = 8;
@@ -93,7 +127,7 @@ message ExportRecipeResponse {
 message TelemetryFrame {
   int64 world_tick = 1;
   int64 time_of_day = 2;        // 0 - 24000 tick cycle
-  string weather = 3;           // "CLEAR", "RAIN", "THUNDER"
+  Weather weather = 3;
   string biome_id = 4;
   AgentStatus status = 5;
   repeated VisibleEntity visible_entities = 6;
@@ -104,6 +138,7 @@ message TelemetryFrame {
   FarmlandSurveyEvent farmland_survey = 11;
   LandmarkContext current_landmark = 12;
   DeathEvent death_event = 13;  // Terminal event triggering permadeath teardown
+  int64 last_processed_sequence_id = 14;
 }
 
 message AgentStatus {
@@ -119,7 +154,7 @@ message AgentStatus {
   bool is_sleeping = 10;
   bool is_in_water = 11;
   bool is_on_fire = 12;
-  string navigation_state = 13; // "IDLE", "PATHING", "STUCK", "ARRIVED", "BUILDING"
+  NavigationState navigation_state = 13;
   repeated ItemStackProto inventory = 14;
   repeated int32 leashed_entity_ids = 15;
 }
@@ -141,7 +176,7 @@ message VisibleEntity {
 message VisibleBlock {
   BlockPosProto pos = 1;
   string block_id = 2;
-  map<string, string> block_state_props = 3; // e.g., {"age": "7", "honey_level": "5"}
+  string block_state_string = 3; // e.g., "age=7,honey_level=5" or "minecraft:wheat[age=7]"
 }
 
 message ChatEvent {
@@ -152,7 +187,7 @@ message ChatEvent {
 }
 
 message DamageEvent {
-  string source_type = 1;       // "mob", "player", "arrow", "fall", "explosion", "lava"
+  DamageSourceType source_type = 1;
   int32 attacker_entity_id = 2;
   string attacker_uuid = 3;
   string attacker_name = 4;
@@ -231,14 +266,15 @@ message AttackIntent {
 
 message InteractBlockIntent {
   enum InteractionType {
-    HARVEST_BREAK = 0;
-    PLACE_BLOCK = 1;
-    SLEEP_IN_BED = 2;
-    WAKE_UP = 3;
-    USE_WORKSTATION = 4;
-    RING_BELL = 5;
-    SHEAR_OR_BOTTLE_BEEHIVE = 6;
-    PAVE_ROAD_PATH = 7;
+    INTERACTION_TYPE_UNSPECIFIED = 0;
+    HARVEST_BREAK = 1;
+    PLACE_BLOCK = 2;
+    SLEEP_IN_BED = 3;
+    WAKE_UP = 4;
+    USE_WORKSTATION = 5;
+    RING_BELL = 6;
+    SHEAR_OR_BOTTLE_BEEHIVE = 7;
+    PAVE_ROAD_PATH = 8;
   }
   BlockPosProto pos = 1;
   InteractionType interaction_type = 2;
@@ -259,7 +295,7 @@ message CraftItemIntent {
 
 message SendChatIntent {
   string message = 1;
-  string target_channel = 2;    // "LOCAL", "CLAN_BROADCAST"
+  ChatChannel target_channel = 2;
 }
 
 message RespondTradeIntent {
@@ -272,11 +308,12 @@ message RespondTradeIntent {
 
 message CaravanIntent {
   enum CaravanAction {
-    LEASH_BEAST = 0;
-    UNLEASH_BEAST = 1;
-    HITCH_TO_FENCE = 2;
-    LOAD_BEAST_CHEST = 3;
-    UNLOAD_BEAST_CHEST = 4;
+    CARAVAN_ACTION_UNSPECIFIED = 0;
+    LEASH_BEAST = 1;
+    UNLEASH_BEAST = 2;
+    HITCH_TO_FENCE = 3;
+    LOAD_BEAST_CHEST = 4;
+    UNLOAD_BEAST_CHEST = 5;
   }
   CaravanAction action = 1;
   int32 beast_entity_id = 2;

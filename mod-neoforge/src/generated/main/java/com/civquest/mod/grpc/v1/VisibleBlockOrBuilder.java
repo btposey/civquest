@@ -38,55 +38,21 @@ public interface VisibleBlockOrBuilder extends
 
   /**
    * <pre>
-   * e.g., {"age": "7", "honey_level": "5"}
+   * e.g., "age=7,honey_level=5" or "minecraft:wheat[age=7]"
    * </pre>
    *
-   * <code>map&lt;string, string&gt; block_state_props = 3;</code>
+   * <code>string block_state_string = 3;</code>
+   * @return The blockStateString.
    */
-  int getBlockStatePropsCount();
+  java.lang.String getBlockStateString();
   /**
    * <pre>
-   * e.g., {"age": "7", "honey_level": "5"}
+   * e.g., "age=7,honey_level=5" or "minecraft:wheat[age=7]"
    * </pre>
    *
-   * <code>map&lt;string, string&gt; block_state_props = 3;</code>
+   * <code>string block_state_string = 3;</code>
+   * @return The bytes for blockStateString.
    */
-  boolean containsBlockStateProps(
-      java.lang.String key);
-  /**
-   * Use {@link #getBlockStatePropsMap()} instead.
-   */
-  @java.lang.Deprecated
-  java.util.Map<java.lang.String, java.lang.String>
-  getBlockStateProps();
-  /**
-   * <pre>
-   * e.g., {"age": "7", "honey_level": "5"}
-   * </pre>
-   *
-   * <code>map&lt;string, string&gt; block_state_props = 3;</code>
-   */
-  java.util.Map<java.lang.String, java.lang.String>
-  getBlockStatePropsMap();
-  /**
-   * <pre>
-   * e.g., {"age": "7", "honey_level": "5"}
-   * </pre>
-   *
-   * <code>map&lt;string, string&gt; block_state_props = 3;</code>
-   */
-  /* nullable */
-java.lang.String getBlockStatePropsOrDefault(
-      java.lang.String key,
-      /* nullable */
-java.lang.String defaultValue);
-  /**
-   * <pre>
-   * e.g., {"age": "7", "honey_level": "5"}
-   * </pre>
-   *
-   * <code>map&lt;string, string&gt; block_state_props = 3;</code>
-   */
-  java.lang.String getBlockStatePropsOrThrow(
-      java.lang.String key);
+  com.google.protobuf.ByteString
+      getBlockStateStringBytes();
 }

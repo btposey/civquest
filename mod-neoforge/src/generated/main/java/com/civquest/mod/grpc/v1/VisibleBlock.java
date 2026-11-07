@@ -28,6 +28,7 @@ private static final long serialVersionUID = 0L;
   }
   private VisibleBlock() {
     blockId_ = "";
+    blockStateString_ = "";
   }
 
   public static final com.google.protobuf.Descriptors.Descriptor
@@ -35,18 +36,6 @@ private static final long serialVersionUID = 0L;
     return com.civquest.mod.grpc.v1.Civquest.internal_static_civquest_v1_VisibleBlock_descriptor;
   }
 
-  @SuppressWarnings({"rawtypes"})
-  @java.lang.Override
-  protected com.google.protobuf.MapFieldReflectionAccessor internalGetMapFieldReflection(
-      int number) {
-    switch (number) {
-      case 3:
-        return internalGetBlockStateProps();
-      default:
-        throw new RuntimeException(
-            "Invalid map field number: " + number);
-    }
-  }
   @java.lang.Override
   protected com.google.protobuf.GeneratedMessage.FieldAccessorTable
       internalGetFieldAccessorTable() {
@@ -121,99 +110,51 @@ private static final long serialVersionUID = 0L;
     }
   }
 
-  public static final int BLOCK_STATE_PROPS_FIELD_NUMBER = 3;
-  private static final class BlockStatePropsDefaultEntryHolder {
-    static final com.google.protobuf.MapEntry<
-        java.lang.String, java.lang.String> defaultEntry =
-            com.google.protobuf.MapEntry
-            .<java.lang.String, java.lang.String>newDefaultInstance(
-                com.civquest.mod.grpc.v1.Civquest.internal_static_civquest_v1_VisibleBlock_BlockStatePropsEntry_descriptor, 
-                com.google.protobuf.WireFormat.FieldType.STRING,
-                "",
-                com.google.protobuf.WireFormat.FieldType.STRING,
-                "");
-  }
+  public static final int BLOCK_STATE_STRING_FIELD_NUMBER = 3;
   @SuppressWarnings("serial")
-  private com.google.protobuf.MapField<
-      java.lang.String, java.lang.String> blockStateProps_;
-  private com.google.protobuf.MapField<java.lang.String, java.lang.String>
-  internalGetBlockStateProps() {
-    if (blockStateProps_ == null) {
-      return com.google.protobuf.MapField.emptyMapField(
-          BlockStatePropsDefaultEntryHolder.defaultEntry);
+  private volatile java.lang.Object blockStateString_ = "";
+  /**
+   * <pre>
+   * e.g., "age=7,honey_level=5" or "minecraft:wheat[age=7]"
+   * </pre>
+   *
+   * <code>string block_state_string = 3;</code>
+   * @return The blockStateString.
+   */
+  @java.lang.Override
+  public java.lang.String getBlockStateString() {
+    java.lang.Object ref = blockStateString_;
+    if (ref instanceof java.lang.String) {
+      return (java.lang.String) ref;
+    } else {
+      com.google.protobuf.ByteString bs = 
+          (com.google.protobuf.ByteString) ref;
+      java.lang.String s = bs.toStringUtf8();
+      blockStateString_ = s;
+      return s;
     }
-    return blockStateProps_;
-  }
-  public int getBlockStatePropsCount() {
-    return internalGetBlockStateProps().getMap().size();
   }
   /**
    * <pre>
-   * e.g., {"age": "7", "honey_level": "5"}
+   * e.g., "age=7,honey_level=5" or "minecraft:wheat[age=7]"
    * </pre>
    *
-   * <code>map&lt;string, string&gt; block_state_props = 3;</code>
+   * <code>string block_state_string = 3;</code>
+   * @return The bytes for blockStateString.
    */
   @java.lang.Override
-  public boolean containsBlockStateProps(
-      java.lang.String key) {
-    if (key == null) { throw new NullPointerException("map key"); }
-    return internalGetBlockStateProps().getMap().containsKey(key);
-  }
-  /**
-   * Use {@link #getBlockStatePropsMap()} instead.
-   */
-  @java.lang.Override
-  @java.lang.Deprecated
-  public java.util.Map<java.lang.String, java.lang.String> getBlockStateProps() {
-    return getBlockStatePropsMap();
-  }
-  /**
-   * <pre>
-   * e.g., {"age": "7", "honey_level": "5"}
-   * </pre>
-   *
-   * <code>map&lt;string, string&gt; block_state_props = 3;</code>
-   */
-  @java.lang.Override
-  public java.util.Map<java.lang.String, java.lang.String> getBlockStatePropsMap() {
-    return internalGetBlockStateProps().getMap();
-  }
-  /**
-   * <pre>
-   * e.g., {"age": "7", "honey_level": "5"}
-   * </pre>
-   *
-   * <code>map&lt;string, string&gt; block_state_props = 3;</code>
-   */
-  @java.lang.Override
-  public /* nullable */
-java.lang.String getBlockStatePropsOrDefault(
-      java.lang.String key,
-      /* nullable */
-java.lang.String defaultValue) {
-    if (key == null) { throw new NullPointerException("map key"); }
-    java.util.Map<java.lang.String, java.lang.String> map =
-        internalGetBlockStateProps().getMap();
-    return map.containsKey(key) ? map.get(key) : defaultValue;
-  }
-  /**
-   * <pre>
-   * e.g., {"age": "7", "honey_level": "5"}
-   * </pre>
-   *
-   * <code>map&lt;string, string&gt; block_state_props = 3;</code>
-   */
-  @java.lang.Override
-  public java.lang.String getBlockStatePropsOrThrow(
-      java.lang.String key) {
-    if (key == null) { throw new NullPointerException("map key"); }
-    java.util.Map<java.lang.String, java.lang.String> map =
-        internalGetBlockStateProps().getMap();
-    if (!map.containsKey(key)) {
-      throw new java.lang.IllegalArgumentException();
+  public com.google.protobuf.ByteString
+      getBlockStateStringBytes() {
+    java.lang.Object ref = blockStateString_;
+    if (ref instanceof java.lang.String) {
+      com.google.protobuf.ByteString b = 
+          com.google.protobuf.ByteString.copyFromUtf8(
+              (java.lang.String) ref);
+      blockStateString_ = b;
+      return b;
+    } else {
+      return (com.google.protobuf.ByteString) ref;
     }
-    return map.get(key);
   }
 
   private byte memoizedIsInitialized = -1;
@@ -236,12 +177,9 @@ java.lang.String defaultValue) {
     if (!com.google.protobuf.GeneratedMessage.isStringEmpty(blockId_)) {
       com.google.protobuf.GeneratedMessage.writeString(output, 2, blockId_);
     }
-    com.google.protobuf.GeneratedMessage
-      .serializeStringMapTo(
-        output,
-        internalGetBlockStateProps(),
-        BlockStatePropsDefaultEntryHolder.defaultEntry,
-        3);
+    if (!com.google.protobuf.GeneratedMessage.isStringEmpty(blockStateString_)) {
+      com.google.protobuf.GeneratedMessage.writeString(output, 3, blockStateString_);
+    }
     getUnknownFields().writeTo(output);
   }
 
@@ -258,15 +196,8 @@ java.lang.String defaultValue) {
     if (!com.google.protobuf.GeneratedMessage.isStringEmpty(blockId_)) {
       size += com.google.protobuf.GeneratedMessage.computeStringSize(2, blockId_);
     }
-    for (java.util.Map.Entry<java.lang.String, java.lang.String> entry
-         : internalGetBlockStateProps().getMap().entrySet()) {
-      com.google.protobuf.MapEntry<java.lang.String, java.lang.String>
-      blockStateProps__ = BlockStatePropsDefaultEntryHolder.defaultEntry.newBuilderForType()
-          .setKey(entry.getKey())
-          .setValue(entry.getValue())
-          .build();
-      size += com.google.protobuf.CodedOutputStream
-          .computeMessageSize(3, blockStateProps__);
+    if (!com.google.protobuf.GeneratedMessage.isStringEmpty(blockStateString_)) {
+      size += com.google.protobuf.GeneratedMessage.computeStringSize(3, blockStateString_);
     }
     size += getUnknownFields().getSerializedSize();
     memoizedSize = size;
@@ -290,8 +221,8 @@ java.lang.String defaultValue) {
     }
     if (!getBlockId()
         .equals(other.getBlockId())) return false;
-    if (!internalGetBlockStateProps().equals(
-        other.internalGetBlockStateProps())) return false;
+    if (!getBlockStateString()
+        .equals(other.getBlockStateString())) return false;
     if (!getUnknownFields().equals(other.getUnknownFields())) return false;
     return true;
   }
@@ -309,10 +240,8 @@ java.lang.String defaultValue) {
     }
     hash = (37 * hash) + BLOCK_ID_FIELD_NUMBER;
     hash = (53 * hash) + getBlockId().hashCode();
-    if (!internalGetBlockStateProps().getMap().isEmpty()) {
-      hash = (37 * hash) + BLOCK_STATE_PROPS_FIELD_NUMBER;
-      hash = (53 * hash) + internalGetBlockStateProps().hashCode();
-    }
+    hash = (37 * hash) + BLOCK_STATE_STRING_FIELD_NUMBER;
+    hash = (53 * hash) + getBlockStateString().hashCode();
     hash = (29 * hash) + getUnknownFields().hashCode();
     memoizedHashCode = hash;
     return hash;
@@ -422,28 +351,6 @@ java.lang.String defaultValue) {
       return com.civquest.mod.grpc.v1.Civquest.internal_static_civquest_v1_VisibleBlock_descriptor;
     }
 
-    @SuppressWarnings({"rawtypes"})
-    protected com.google.protobuf.MapFieldReflectionAccessor internalGetMapFieldReflection(
-        int number) {
-      switch (number) {
-        case 3:
-          return internalGetBlockStateProps();
-        default:
-          throw new RuntimeException(
-              "Invalid map field number: " + number);
-      }
-    }
-    @SuppressWarnings({"rawtypes"})
-    protected com.google.protobuf.MapFieldReflectionAccessor internalGetMutableMapFieldReflection(
-        int number) {
-      switch (number) {
-        case 3:
-          return internalGetMutableBlockStateProps();
-        default:
-          throw new RuntimeException(
-              "Invalid map field number: " + number);
-      }
-    }
     @java.lang.Override
     protected com.google.protobuf.GeneratedMessage.FieldAccessorTable
         internalGetFieldAccessorTable() {
@@ -478,7 +385,7 @@ java.lang.String defaultValue) {
         posBuilder_ = null;
       }
       blockId_ = "";
-      internalGetMutableBlockStateProps().clear();
+      blockStateString_ = "";
       return this;
     }
 
@@ -523,8 +430,7 @@ java.lang.String defaultValue) {
         result.blockId_ = blockId_;
       }
       if (((from_bitField0_ & 0x00000004) != 0)) {
-        result.blockStateProps_ = internalGetBlockStateProps();
-        result.blockStateProps_.makeImmutable();
+        result.blockStateString_ = blockStateString_;
       }
       result.bitField0_ |= to_bitField0_;
     }
@@ -549,9 +455,11 @@ java.lang.String defaultValue) {
         bitField0_ |= 0x00000002;
         onChanged();
       }
-      internalGetMutableBlockStateProps().mergeFrom(
-          other.internalGetBlockStateProps());
-      bitField0_ |= 0x00000004;
+      if (!other.getBlockStateString().isEmpty()) {
+        blockStateString_ = other.blockStateString_;
+        bitField0_ |= 0x00000004;
+        onChanged();
+      }
       this.mergeUnknownFields(other.getUnknownFields());
       onChanged();
       return this;
@@ -591,11 +499,7 @@ java.lang.String defaultValue) {
               break;
             } // case 18
             case 26: {
-              com.google.protobuf.MapEntry<java.lang.String, java.lang.String>
-              blockStateProps__ = input.readMessage(
-                  BlockStatePropsDefaultEntryHolder.defaultEntry.getParserForType(), extensionRegistry);
-              internalGetMutableBlockStateProps().getMutableMap().put(
-                  blockStateProps__.getKey(), blockStateProps__.getValue());
+              blockStateString_ = input.readStringRequireUtf8();
               bitField0_ |= 0x00000004;
               break;
             } // case 26
@@ -809,158 +713,95 @@ java.lang.String defaultValue) {
       return this;
     }
 
-    private com.google.protobuf.MapField<
-        java.lang.String, java.lang.String> blockStateProps_;
-    private com.google.protobuf.MapField<java.lang.String, java.lang.String>
-        internalGetBlockStateProps() {
-      if (blockStateProps_ == null) {
-        return com.google.protobuf.MapField.emptyMapField(
-            BlockStatePropsDefaultEntryHolder.defaultEntry);
+    private java.lang.Object blockStateString_ = "";
+    /**
+     * <pre>
+     * e.g., "age=7,honey_level=5" or "minecraft:wheat[age=7]"
+     * </pre>
+     *
+     * <code>string block_state_string = 3;</code>
+     * @return The blockStateString.
+     */
+    public java.lang.String getBlockStateString() {
+      java.lang.Object ref = blockStateString_;
+      if (!(ref instanceof java.lang.String)) {
+        com.google.protobuf.ByteString bs =
+            (com.google.protobuf.ByteString) ref;
+        java.lang.String s = bs.toStringUtf8();
+        blockStateString_ = s;
+        return s;
+      } else {
+        return (java.lang.String) ref;
       }
-      return blockStateProps_;
     }
-    private com.google.protobuf.MapField<java.lang.String, java.lang.String>
-        internalGetMutableBlockStateProps() {
-      if (blockStateProps_ == null) {
-        blockStateProps_ = com.google.protobuf.MapField.newMapField(
-            BlockStatePropsDefaultEntryHolder.defaultEntry);
+    /**
+     * <pre>
+     * e.g., "age=7,honey_level=5" or "minecraft:wheat[age=7]"
+     * </pre>
+     *
+     * <code>string block_state_string = 3;</code>
+     * @return The bytes for blockStateString.
+     */
+    public com.google.protobuf.ByteString
+        getBlockStateStringBytes() {
+      java.lang.Object ref = blockStateString_;
+      if (ref instanceof String) {
+        com.google.protobuf.ByteString b = 
+            com.google.protobuf.ByteString.copyFromUtf8(
+                (java.lang.String) ref);
+        blockStateString_ = b;
+        return b;
+      } else {
+        return (com.google.protobuf.ByteString) ref;
       }
-      if (!blockStateProps_.isMutable()) {
-        blockStateProps_ = blockStateProps_.copy();
-      }
+    }
+    /**
+     * <pre>
+     * e.g., "age=7,honey_level=5" or "minecraft:wheat[age=7]"
+     * </pre>
+     *
+     * <code>string block_state_string = 3;</code>
+     * @param value The blockStateString to set.
+     * @return This builder for chaining.
+     */
+    public Builder setBlockStateString(
+        java.lang.String value) {
+      if (value == null) { throw new NullPointerException(); }
+      blockStateString_ = value;
       bitField0_ |= 0x00000004;
       onChanged();
-      return blockStateProps_;
-    }
-    public int getBlockStatePropsCount() {
-      return internalGetBlockStateProps().getMap().size();
+      return this;
     }
     /**
      * <pre>
-     * e.g., {"age": "7", "honey_level": "5"}
+     * e.g., "age=7,honey_level=5" or "minecraft:wheat[age=7]"
      * </pre>
      *
-     * <code>map&lt;string, string&gt; block_state_props = 3;</code>
+     * <code>string block_state_string = 3;</code>
+     * @return This builder for chaining.
      */
-    @java.lang.Override
-    public boolean containsBlockStateProps(
-        java.lang.String key) {
-      if (key == null) { throw new NullPointerException("map key"); }
-      return internalGetBlockStateProps().getMap().containsKey(key);
-    }
-    /**
-     * Use {@link #getBlockStatePropsMap()} instead.
-     */
-    @java.lang.Override
-    @java.lang.Deprecated
-    public java.util.Map<java.lang.String, java.lang.String> getBlockStateProps() {
-      return getBlockStatePropsMap();
-    }
-    /**
-     * <pre>
-     * e.g., {"age": "7", "honey_level": "5"}
-     * </pre>
-     *
-     * <code>map&lt;string, string&gt; block_state_props = 3;</code>
-     */
-    @java.lang.Override
-    public java.util.Map<java.lang.String, java.lang.String> getBlockStatePropsMap() {
-      return internalGetBlockStateProps().getMap();
-    }
-    /**
-     * <pre>
-     * e.g., {"age": "7", "honey_level": "5"}
-     * </pre>
-     *
-     * <code>map&lt;string, string&gt; block_state_props = 3;</code>
-     */
-    @java.lang.Override
-    public /* nullable */
-java.lang.String getBlockStatePropsOrDefault(
-        java.lang.String key,
-        /* nullable */
-java.lang.String defaultValue) {
-      if (key == null) { throw new NullPointerException("map key"); }
-      java.util.Map<java.lang.String, java.lang.String> map =
-          internalGetBlockStateProps().getMap();
-      return map.containsKey(key) ? map.get(key) : defaultValue;
-    }
-    /**
-     * <pre>
-     * e.g., {"age": "7", "honey_level": "5"}
-     * </pre>
-     *
-     * <code>map&lt;string, string&gt; block_state_props = 3;</code>
-     */
-    @java.lang.Override
-    public java.lang.String getBlockStatePropsOrThrow(
-        java.lang.String key) {
-      if (key == null) { throw new NullPointerException("map key"); }
-      java.util.Map<java.lang.String, java.lang.String> map =
-          internalGetBlockStateProps().getMap();
-      if (!map.containsKey(key)) {
-        throw new java.lang.IllegalArgumentException();
-      }
-      return map.get(key);
-    }
-    public Builder clearBlockStateProps() {
+    public Builder clearBlockStateString() {
+      blockStateString_ = getDefaultInstance().getBlockStateString();
       bitField0_ = (bitField0_ & ~0x00000004);
-      internalGetMutableBlockStateProps().getMutableMap()
-          .clear();
+      onChanged();
       return this;
     }
     /**
      * <pre>
-     * e.g., {"age": "7", "honey_level": "5"}
+     * e.g., "age=7,honey_level=5" or "minecraft:wheat[age=7]"
      * </pre>
      *
-     * <code>map&lt;string, string&gt; block_state_props = 3;</code>
+     * <code>string block_state_string = 3;</code>
+     * @param value The bytes for blockStateString to set.
+     * @return This builder for chaining.
      */
-    public Builder removeBlockStateProps(
-        java.lang.String key) {
-      if (key == null) { throw new NullPointerException("map key"); }
-      internalGetMutableBlockStateProps().getMutableMap()
-          .remove(key);
-      return this;
-    }
-    /**
-     * Use alternate mutation accessors instead.
-     */
-    @java.lang.Deprecated
-    public java.util.Map<java.lang.String, java.lang.String>
-        getMutableBlockStateProps() {
+    public Builder setBlockStateStringBytes(
+        com.google.protobuf.ByteString value) {
+      if (value == null) { throw new NullPointerException(); }
+      checkByteStringIsUtf8(value);
+      blockStateString_ = value;
       bitField0_ |= 0x00000004;
-      return internalGetMutableBlockStateProps().getMutableMap();
-    }
-    /**
-     * <pre>
-     * e.g., {"age": "7", "honey_level": "5"}
-     * </pre>
-     *
-     * <code>map&lt;string, string&gt; block_state_props = 3;</code>
-     */
-    public Builder putBlockStateProps(
-        java.lang.String key,
-        java.lang.String value) {
-      if (key == null) { throw new NullPointerException("map key"); }
-      if (value == null) { throw new NullPointerException("map value"); }
-      internalGetMutableBlockStateProps().getMutableMap()
-          .put(key, value);
-      bitField0_ |= 0x00000004;
-      return this;
-    }
-    /**
-     * <pre>
-     * e.g., {"age": "7", "honey_level": "5"}
-     * </pre>
-     *
-     * <code>map&lt;string, string&gt; block_state_props = 3;</code>
-     */
-    public Builder putAllBlockStateProps(
-        java.util.Map<java.lang.String, java.lang.String> values) {
-      internalGetMutableBlockStateProps().getMutableMap()
-          .putAll(values);
-      bitField0_ |= 0x00000004;
+      onChanged();
       return this;
     }
 

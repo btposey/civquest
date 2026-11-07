@@ -101,24 +101,15 @@ public interface AgentStatusOrBuilder extends
   boolean getIsOnFire();
 
   /**
-   * <pre>
-   * "IDLE", "PATHING", "STUCK", "ARRIVED", "BUILDING"
-   * </pre>
-   *
-   * <code>string navigation_state = 13;</code>
+   * <code>.civquest.v1.NavigationState navigation_state = 13;</code>
+   * @return The enum numeric value on the wire for navigationState.
+   */
+  int getNavigationStateValue();
+  /**
+   * <code>.civquest.v1.NavigationState navigation_state = 13;</code>
    * @return The navigationState.
    */
-  java.lang.String getNavigationState();
-  /**
-   * <pre>
-   * "IDLE", "PATHING", "STUCK", "ARRIVED", "BUILDING"
-   * </pre>
-   *
-   * <code>string navigation_state = 13;</code>
-   * @return The bytes for navigationState.
-   */
-  com.google.protobuf.ByteString
-      getNavigationStateBytes();
+  com.civquest.mod.grpc.v1.NavigationState getNavigationState();
 
   /**
    * <code>repeated .civquest.v1.ItemStackProto inventory = 14;</code>

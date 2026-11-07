@@ -26,24 +26,15 @@ public interface TelemetryFrameOrBuilder extends
   long getTimeOfDay();
 
   /**
-   * <pre>
-   * "CLEAR", "RAIN", "THUNDER"
-   * </pre>
-   *
-   * <code>string weather = 3;</code>
+   * <code>.civquest.v1.Weather weather = 3;</code>
+   * @return The enum numeric value on the wire for weather.
+   */
+  int getWeatherValue();
+  /**
+   * <code>.civquest.v1.Weather weather = 3;</code>
    * @return The weather.
    */
-  java.lang.String getWeather();
-  /**
-   * <pre>
-   * "CLEAR", "RAIN", "THUNDER"
-   * </pre>
-   *
-   * <code>string weather = 3;</code>
-   * @return The bytes for weather.
-   */
-  com.google.protobuf.ByteString
-      getWeatherBytes();
+  com.civquest.mod.grpc.v1.Weather getWeather();
 
   /**
    * <code>string biome_id = 4;</code>
@@ -230,4 +221,10 @@ public interface TelemetryFrameOrBuilder extends
    * <code>.civquest.v1.DeathEvent death_event = 13;</code>
    */
   com.civquest.mod.grpc.v1.DeathEventOrBuilder getDeathEventOrBuilder();
+
+  /**
+   * <code>int64 last_processed_sequence_id = 14;</code>
+   * @return The lastProcessedSequenceId.
+   */
+  long getLastProcessedSequenceId();
 }

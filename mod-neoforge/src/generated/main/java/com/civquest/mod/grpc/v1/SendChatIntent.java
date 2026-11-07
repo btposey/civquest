@@ -28,7 +28,7 @@ private static final long serialVersionUID = 0L;
   }
   private SendChatIntent() {
     message_ = "";
-    targetChannel_ = "";
+    targetChannel_ = 0;
   }
 
   public static final com.google.protobuf.Descriptors.Descriptor
@@ -84,50 +84,21 @@ private static final long serialVersionUID = 0L;
   }
 
   public static final int TARGET_CHANNEL_FIELD_NUMBER = 2;
-  @SuppressWarnings("serial")
-  private volatile java.lang.Object targetChannel_ = "";
+  private int targetChannel_ = 0;
   /**
-   * <pre>
-   * "LOCAL", "CLAN_BROADCAST"
-   * </pre>
-   *
-   * <code>string target_channel = 2;</code>
-   * @return The targetChannel.
+   * <code>.civquest.v1.ChatChannel target_channel = 2;</code>
+   * @return The enum numeric value on the wire for targetChannel.
    */
-  @java.lang.Override
-  public java.lang.String getTargetChannel() {
-    java.lang.Object ref = targetChannel_;
-    if (ref instanceof java.lang.String) {
-      return (java.lang.String) ref;
-    } else {
-      com.google.protobuf.ByteString bs = 
-          (com.google.protobuf.ByteString) ref;
-      java.lang.String s = bs.toStringUtf8();
-      targetChannel_ = s;
-      return s;
-    }
+  @java.lang.Override public int getTargetChannelValue() {
+    return targetChannel_;
   }
   /**
-   * <pre>
-   * "LOCAL", "CLAN_BROADCAST"
-   * </pre>
-   *
-   * <code>string target_channel = 2;</code>
-   * @return The bytes for targetChannel.
+   * <code>.civquest.v1.ChatChannel target_channel = 2;</code>
+   * @return The targetChannel.
    */
-  @java.lang.Override
-  public com.google.protobuf.ByteString
-      getTargetChannelBytes() {
-    java.lang.Object ref = targetChannel_;
-    if (ref instanceof java.lang.String) {
-      com.google.protobuf.ByteString b = 
-          com.google.protobuf.ByteString.copyFromUtf8(
-              (java.lang.String) ref);
-      targetChannel_ = b;
-      return b;
-    } else {
-      return (com.google.protobuf.ByteString) ref;
-    }
+  @java.lang.Override public com.civquest.mod.grpc.v1.ChatChannel getTargetChannel() {
+    com.civquest.mod.grpc.v1.ChatChannel result = com.civquest.mod.grpc.v1.ChatChannel.forNumber(targetChannel_);
+    return result == null ? com.civquest.mod.grpc.v1.ChatChannel.UNRECOGNIZED : result;
   }
 
   private byte memoizedIsInitialized = -1;
@@ -147,8 +118,8 @@ private static final long serialVersionUID = 0L;
     if (!com.google.protobuf.GeneratedMessage.isStringEmpty(message_)) {
       com.google.protobuf.GeneratedMessage.writeString(output, 1, message_);
     }
-    if (!com.google.protobuf.GeneratedMessage.isStringEmpty(targetChannel_)) {
-      com.google.protobuf.GeneratedMessage.writeString(output, 2, targetChannel_);
+    if (targetChannel_ != com.civquest.mod.grpc.v1.ChatChannel.CHAT_CHANNEL_UNSPECIFIED.getNumber()) {
+      output.writeEnum(2, targetChannel_);
     }
     getUnknownFields().writeTo(output);
   }
@@ -162,8 +133,9 @@ private static final long serialVersionUID = 0L;
     if (!com.google.protobuf.GeneratedMessage.isStringEmpty(message_)) {
       size += com.google.protobuf.GeneratedMessage.computeStringSize(1, message_);
     }
-    if (!com.google.protobuf.GeneratedMessage.isStringEmpty(targetChannel_)) {
-      size += com.google.protobuf.GeneratedMessage.computeStringSize(2, targetChannel_);
+    if (targetChannel_ != com.civquest.mod.grpc.v1.ChatChannel.CHAT_CHANNEL_UNSPECIFIED.getNumber()) {
+      size += com.google.protobuf.CodedOutputStream
+        .computeEnumSize(2, targetChannel_);
     }
     size += getUnknownFields().getSerializedSize();
     memoizedSize = size;
@@ -182,8 +154,7 @@ private static final long serialVersionUID = 0L;
 
     if (!getMessage()
         .equals(other.getMessage())) return false;
-    if (!getTargetChannel()
-        .equals(other.getTargetChannel())) return false;
+    if (targetChannel_ != other.targetChannel_) return false;
     if (!getUnknownFields().equals(other.getUnknownFields())) return false;
     return true;
   }
@@ -198,7 +169,7 @@ private static final long serialVersionUID = 0L;
     hash = (37 * hash) + MESSAGE_FIELD_NUMBER;
     hash = (53 * hash) + getMessage().hashCode();
     hash = (37 * hash) + TARGET_CHANNEL_FIELD_NUMBER;
-    hash = (53 * hash) + getTargetChannel().hashCode();
+    hash = (53 * hash) + targetChannel_;
     hash = (29 * hash) + getUnknownFields().hashCode();
     memoizedHashCode = hash;
     return hash;
@@ -331,7 +302,7 @@ private static final long serialVersionUID = 0L;
       super.clear();
       bitField0_ = 0;
       message_ = "";
-      targetChannel_ = "";
+      targetChannel_ = 0;
       return this;
     }
 
@@ -390,10 +361,8 @@ private static final long serialVersionUID = 0L;
         bitField0_ |= 0x00000001;
         onChanged();
       }
-      if (!other.getTargetChannel().isEmpty()) {
-        targetChannel_ = other.targetChannel_;
-        bitField0_ |= 0x00000002;
-        onChanged();
+      if (other.targetChannel_ != 0) {
+        setTargetChannelValue(other.getTargetChannelValue());
       }
       this.mergeUnknownFields(other.getUnknownFields());
       onChanged();
@@ -426,11 +395,11 @@ private static final long serialVersionUID = 0L;
               bitField0_ |= 0x00000001;
               break;
             } // case 10
-            case 18: {
-              targetChannel_ = input.readStringRequireUtf8();
+            case 16: {
+              targetChannel_ = input.readEnum();
               bitField0_ |= 0x00000002;
               break;
-            } // case 18
+            } // case 16
             default: {
               if (!super.parseUnknownField(input, extensionRegistry, tag)) {
                 done = true; // was an endgroup tag
@@ -520,94 +489,55 @@ private static final long serialVersionUID = 0L;
       return this;
     }
 
-    private java.lang.Object targetChannel_ = "";
+    private int targetChannel_ = 0;
     /**
-     * <pre>
-     * "LOCAL", "CLAN_BROADCAST"
-     * </pre>
-     *
-     * <code>string target_channel = 2;</code>
+     * <code>.civquest.v1.ChatChannel target_channel = 2;</code>
+     * @return The enum numeric value on the wire for targetChannel.
+     */
+    @java.lang.Override public int getTargetChannelValue() {
+      return targetChannel_;
+    }
+    /**
+     * <code>.civquest.v1.ChatChannel target_channel = 2;</code>
+     * @param value The enum numeric value on the wire for targetChannel to set.
+     * @return This builder for chaining.
+     */
+    public Builder setTargetChannelValue(int value) {
+      targetChannel_ = value;
+      bitField0_ |= 0x00000002;
+      onChanged();
+      return this;
+    }
+    /**
+     * <code>.civquest.v1.ChatChannel target_channel = 2;</code>
      * @return The targetChannel.
      */
-    public java.lang.String getTargetChannel() {
-      java.lang.Object ref = targetChannel_;
-      if (!(ref instanceof java.lang.String)) {
-        com.google.protobuf.ByteString bs =
-            (com.google.protobuf.ByteString) ref;
-        java.lang.String s = bs.toStringUtf8();
-        targetChannel_ = s;
-        return s;
-      } else {
-        return (java.lang.String) ref;
-      }
+    @java.lang.Override
+    public com.civquest.mod.grpc.v1.ChatChannel getTargetChannel() {
+      com.civquest.mod.grpc.v1.ChatChannel result = com.civquest.mod.grpc.v1.ChatChannel.forNumber(targetChannel_);
+      return result == null ? com.civquest.mod.grpc.v1.ChatChannel.UNRECOGNIZED : result;
     }
     /**
-     * <pre>
-     * "LOCAL", "CLAN_BROADCAST"
-     * </pre>
-     *
-     * <code>string target_channel = 2;</code>
-     * @return The bytes for targetChannel.
-     */
-    public com.google.protobuf.ByteString
-        getTargetChannelBytes() {
-      java.lang.Object ref = targetChannel_;
-      if (ref instanceof String) {
-        com.google.protobuf.ByteString b = 
-            com.google.protobuf.ByteString.copyFromUtf8(
-                (java.lang.String) ref);
-        targetChannel_ = b;
-        return b;
-      } else {
-        return (com.google.protobuf.ByteString) ref;
-      }
-    }
-    /**
-     * <pre>
-     * "LOCAL", "CLAN_BROADCAST"
-     * </pre>
-     *
-     * <code>string target_channel = 2;</code>
+     * <code>.civquest.v1.ChatChannel target_channel = 2;</code>
      * @param value The targetChannel to set.
      * @return This builder for chaining.
      */
-    public Builder setTargetChannel(
-        java.lang.String value) {
-      if (value == null) { throw new NullPointerException(); }
-      targetChannel_ = value;
+    public Builder setTargetChannel(com.civquest.mod.grpc.v1.ChatChannel value) {
+      if (value == null) {
+        throw new NullPointerException();
+      }
       bitField0_ |= 0x00000002;
+      targetChannel_ = value.getNumber();
       onChanged();
       return this;
     }
     /**
-     * <pre>
-     * "LOCAL", "CLAN_BROADCAST"
-     * </pre>
-     *
-     * <code>string target_channel = 2;</code>
+     * <code>.civquest.v1.ChatChannel target_channel = 2;</code>
      * @return This builder for chaining.
      */
     public Builder clearTargetChannel() {
-      targetChannel_ = getDefaultInstance().getTargetChannel();
       bitField0_ = (bitField0_ & ~0x00000002);
-      onChanged();
-      return this;
-    }
-    /**
-     * <pre>
-     * "LOCAL", "CLAN_BROADCAST"
-     * </pre>
-     *
-     * <code>string target_channel = 2;</code>
-     * @param value The bytes for targetChannel to set.
-     * @return This builder for chaining.
-     */
-    public Builder setTargetChannelBytes(
-        com.google.protobuf.ByteString value) {
-      if (value == null) { throw new NullPointerException(); }
-      checkByteStringIsUtf8(value);
-      targetChannel_ = value;
-      bitField0_ |= 0x00000002;
+      targetChannel_ = 0;
       onChanged();
       return this;
     }

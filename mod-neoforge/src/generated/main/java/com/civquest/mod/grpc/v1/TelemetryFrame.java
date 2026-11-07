@@ -27,7 +27,7 @@ private static final long serialVersionUID = 0L;
     super(builder);
   }
   private TelemetryFrame() {
-    weather_ = "";
+    weather_ = 0;
     biomeId_ = "";
     visibleEntities_ = java.util.Collections.emptyList();
     interestingBlocks_ = java.util.Collections.emptyList();
@@ -75,50 +75,21 @@ private static final long serialVersionUID = 0L;
   }
 
   public static final int WEATHER_FIELD_NUMBER = 3;
-  @SuppressWarnings("serial")
-  private volatile java.lang.Object weather_ = "";
+  private int weather_ = 0;
   /**
-   * <pre>
-   * "CLEAR", "RAIN", "THUNDER"
-   * </pre>
-   *
-   * <code>string weather = 3;</code>
-   * @return The weather.
+   * <code>.civquest.v1.Weather weather = 3;</code>
+   * @return The enum numeric value on the wire for weather.
    */
-  @java.lang.Override
-  public java.lang.String getWeather() {
-    java.lang.Object ref = weather_;
-    if (ref instanceof java.lang.String) {
-      return (java.lang.String) ref;
-    } else {
-      com.google.protobuf.ByteString bs = 
-          (com.google.protobuf.ByteString) ref;
-      java.lang.String s = bs.toStringUtf8();
-      weather_ = s;
-      return s;
-    }
+  @java.lang.Override public int getWeatherValue() {
+    return weather_;
   }
   /**
-   * <pre>
-   * "CLEAR", "RAIN", "THUNDER"
-   * </pre>
-   *
-   * <code>string weather = 3;</code>
-   * @return The bytes for weather.
+   * <code>.civquest.v1.Weather weather = 3;</code>
+   * @return The weather.
    */
-  @java.lang.Override
-  public com.google.protobuf.ByteString
-      getWeatherBytes() {
-    java.lang.Object ref = weather_;
-    if (ref instanceof java.lang.String) {
-      com.google.protobuf.ByteString b = 
-          com.google.protobuf.ByteString.copyFromUtf8(
-              (java.lang.String) ref);
-      weather_ = b;
-      return b;
-    } else {
-      return (com.google.protobuf.ByteString) ref;
-    }
+  @java.lang.Override public com.civquest.mod.grpc.v1.Weather getWeather() {
+    com.civquest.mod.grpc.v1.Weather result = com.civquest.mod.grpc.v1.Weather.forNumber(weather_);
+    return result == null ? com.civquest.mod.grpc.v1.Weather.UNRECOGNIZED : result;
   }
 
   public static final int BIOME_ID_FIELD_NUMBER = 4;
@@ -451,6 +422,17 @@ private static final long serialVersionUID = 0L;
     return deathEvent_ == null ? com.civquest.mod.grpc.v1.DeathEvent.getDefaultInstance() : deathEvent_;
   }
 
+  public static final int LAST_PROCESSED_SEQUENCE_ID_FIELD_NUMBER = 14;
+  private long lastProcessedSequenceId_ = 0L;
+  /**
+   * <code>int64 last_processed_sequence_id = 14;</code>
+   * @return The lastProcessedSequenceId.
+   */
+  @java.lang.Override
+  public long getLastProcessedSequenceId() {
+    return lastProcessedSequenceId_;
+  }
+
   private byte memoizedIsInitialized = -1;
   @java.lang.Override
   public final boolean isInitialized() {
@@ -471,8 +453,8 @@ private static final long serialVersionUID = 0L;
     if (timeOfDay_ != 0L) {
       output.writeInt64(2, timeOfDay_);
     }
-    if (!com.google.protobuf.GeneratedMessage.isStringEmpty(weather_)) {
-      com.google.protobuf.GeneratedMessage.writeString(output, 3, weather_);
+    if (weather_ != com.civquest.mod.grpc.v1.Weather.WEATHER_UNSPECIFIED.getNumber()) {
+      output.writeEnum(3, weather_);
     }
     if (!com.google.protobuf.GeneratedMessage.isStringEmpty(biomeId_)) {
       com.google.protobuf.GeneratedMessage.writeString(output, 4, biomeId_);
@@ -504,6 +486,9 @@ private static final long serialVersionUID = 0L;
     if (((bitField0_ & 0x00000020) != 0)) {
       output.writeMessage(13, getDeathEvent());
     }
+    if (lastProcessedSequenceId_ != 0L) {
+      output.writeInt64(14, lastProcessedSequenceId_);
+    }
     getUnknownFields().writeTo(output);
   }
 
@@ -521,8 +506,9 @@ private static final long serialVersionUID = 0L;
       size += com.google.protobuf.CodedOutputStream
         .computeInt64Size(2, timeOfDay_);
     }
-    if (!com.google.protobuf.GeneratedMessage.isStringEmpty(weather_)) {
-      size += com.google.protobuf.GeneratedMessage.computeStringSize(3, weather_);
+    if (weather_ != com.civquest.mod.grpc.v1.Weather.WEATHER_UNSPECIFIED.getNumber()) {
+      size += com.google.protobuf.CodedOutputStream
+        .computeEnumSize(3, weather_);
     }
     if (!com.google.protobuf.GeneratedMessage.isStringEmpty(biomeId_)) {
       size += com.google.protobuf.GeneratedMessage.computeStringSize(4, biomeId_);
@@ -563,6 +549,10 @@ private static final long serialVersionUID = 0L;
       size += com.google.protobuf.CodedOutputStream
         .computeMessageSize(13, getDeathEvent());
     }
+    if (lastProcessedSequenceId_ != 0L) {
+      size += com.google.protobuf.CodedOutputStream
+        .computeInt64Size(14, lastProcessedSequenceId_);
+    }
     size += getUnknownFields().getSerializedSize();
     memoizedSize = size;
     return size;
@@ -582,8 +572,7 @@ private static final long serialVersionUID = 0L;
         != other.getWorldTick()) return false;
     if (getTimeOfDay()
         != other.getTimeOfDay()) return false;
-    if (!getWeather()
-        .equals(other.getWeather())) return false;
+    if (weather_ != other.weather_) return false;
     if (!getBiomeId()
         .equals(other.getBiomeId())) return false;
     if (hasStatus() != other.hasStatus()) return false;
@@ -622,6 +611,8 @@ private static final long serialVersionUID = 0L;
       if (!getDeathEvent()
           .equals(other.getDeathEvent())) return false;
     }
+    if (getLastProcessedSequenceId()
+        != other.getLastProcessedSequenceId()) return false;
     if (!getUnknownFields().equals(other.getUnknownFields())) return false;
     return true;
   }
@@ -640,7 +631,7 @@ private static final long serialVersionUID = 0L;
     hash = (53 * hash) + com.google.protobuf.Internal.hashLong(
         getTimeOfDay());
     hash = (37 * hash) + WEATHER_FIELD_NUMBER;
-    hash = (53 * hash) + getWeather().hashCode();
+    hash = (53 * hash) + weather_;
     hash = (37 * hash) + BIOME_ID_FIELD_NUMBER;
     hash = (53 * hash) + getBiomeId().hashCode();
     if (hasStatus()) {
@@ -679,6 +670,9 @@ private static final long serialVersionUID = 0L;
       hash = (37 * hash) + DEATH_EVENT_FIELD_NUMBER;
       hash = (53 * hash) + getDeathEvent().hashCode();
     }
+    hash = (37 * hash) + LAST_PROCESSED_SEQUENCE_ID_FIELD_NUMBER;
+    hash = (53 * hash) + com.google.protobuf.Internal.hashLong(
+        getLastProcessedSequenceId());
     hash = (29 * hash) + getUnknownFields().hashCode();
     memoizedHashCode = hash;
     return hash;
@@ -826,7 +820,7 @@ private static final long serialVersionUID = 0L;
       bitField0_ = 0;
       worldTick_ = 0L;
       timeOfDay_ = 0L;
-      weather_ = "";
+      weather_ = 0;
       biomeId_ = "";
       status_ = null;
       if (statusBuilder_ != null) {
@@ -879,6 +873,7 @@ private static final long serialVersionUID = 0L;
         deathEventBuilder_.dispose();
         deathEventBuilder_ = null;
       }
+      lastProcessedSequenceId_ = 0L;
       return this;
     }
 
@@ -992,6 +987,9 @@ private static final long serialVersionUID = 0L;
             : deathEventBuilder_.build();
         to_bitField0_ |= 0x00000020;
       }
+      if (((from_bitField0_ & 0x00002000) != 0)) {
+        result.lastProcessedSequenceId_ = lastProcessedSequenceId_;
+      }
       result.bitField0_ |= to_bitField0_;
     }
 
@@ -1013,10 +1011,8 @@ private static final long serialVersionUID = 0L;
       if (other.getTimeOfDay() != 0L) {
         setTimeOfDay(other.getTimeOfDay());
       }
-      if (!other.getWeather().isEmpty()) {
-        weather_ = other.weather_;
-        bitField0_ |= 0x00000004;
-        onChanged();
+      if (other.weather_ != 0) {
+        setWeatherValue(other.getWeatherValue());
       }
       if (!other.getBiomeId().isEmpty()) {
         biomeId_ = other.biomeId_;
@@ -1119,6 +1115,9 @@ private static final long serialVersionUID = 0L;
       if (other.hasDeathEvent()) {
         mergeDeathEvent(other.getDeathEvent());
       }
+      if (other.getLastProcessedSequenceId() != 0L) {
+        setLastProcessedSequenceId(other.getLastProcessedSequenceId());
+      }
       this.mergeUnknownFields(other.getUnknownFields());
       onChanged();
       return this;
@@ -1155,11 +1154,11 @@ private static final long serialVersionUID = 0L;
               bitField0_ |= 0x00000002;
               break;
             } // case 16
-            case 26: {
-              weather_ = input.readStringRequireUtf8();
+            case 24: {
+              weather_ = input.readEnum();
               bitField0_ |= 0x00000004;
               break;
-            } // case 26
+            } // case 24
             case 34: {
               biomeId_ = input.readStringRequireUtf8();
               bitField0_ |= 0x00000008;
@@ -1246,6 +1245,11 @@ private static final long serialVersionUID = 0L;
               bitField0_ |= 0x00001000;
               break;
             } // case 106
+            case 112: {
+              lastProcessedSequenceId_ = input.readInt64();
+              bitField0_ |= 0x00002000;
+              break;
+            } // case 112
             default: {
               if (!super.parseUnknownField(input, extensionRegistry, tag)) {
                 done = true; // was an endgroup tag
@@ -1339,94 +1343,55 @@ private static final long serialVersionUID = 0L;
       return this;
     }
 
-    private java.lang.Object weather_ = "";
+    private int weather_ = 0;
     /**
-     * <pre>
-     * "CLEAR", "RAIN", "THUNDER"
-     * </pre>
-     *
-     * <code>string weather = 3;</code>
+     * <code>.civquest.v1.Weather weather = 3;</code>
+     * @return The enum numeric value on the wire for weather.
+     */
+    @java.lang.Override public int getWeatherValue() {
+      return weather_;
+    }
+    /**
+     * <code>.civquest.v1.Weather weather = 3;</code>
+     * @param value The enum numeric value on the wire for weather to set.
+     * @return This builder for chaining.
+     */
+    public Builder setWeatherValue(int value) {
+      weather_ = value;
+      bitField0_ |= 0x00000004;
+      onChanged();
+      return this;
+    }
+    /**
+     * <code>.civquest.v1.Weather weather = 3;</code>
      * @return The weather.
      */
-    public java.lang.String getWeather() {
-      java.lang.Object ref = weather_;
-      if (!(ref instanceof java.lang.String)) {
-        com.google.protobuf.ByteString bs =
-            (com.google.protobuf.ByteString) ref;
-        java.lang.String s = bs.toStringUtf8();
-        weather_ = s;
-        return s;
-      } else {
-        return (java.lang.String) ref;
-      }
+    @java.lang.Override
+    public com.civquest.mod.grpc.v1.Weather getWeather() {
+      com.civquest.mod.grpc.v1.Weather result = com.civquest.mod.grpc.v1.Weather.forNumber(weather_);
+      return result == null ? com.civquest.mod.grpc.v1.Weather.UNRECOGNIZED : result;
     }
     /**
-     * <pre>
-     * "CLEAR", "RAIN", "THUNDER"
-     * </pre>
-     *
-     * <code>string weather = 3;</code>
-     * @return The bytes for weather.
-     */
-    public com.google.protobuf.ByteString
-        getWeatherBytes() {
-      java.lang.Object ref = weather_;
-      if (ref instanceof String) {
-        com.google.protobuf.ByteString b = 
-            com.google.protobuf.ByteString.copyFromUtf8(
-                (java.lang.String) ref);
-        weather_ = b;
-        return b;
-      } else {
-        return (com.google.protobuf.ByteString) ref;
-      }
-    }
-    /**
-     * <pre>
-     * "CLEAR", "RAIN", "THUNDER"
-     * </pre>
-     *
-     * <code>string weather = 3;</code>
+     * <code>.civquest.v1.Weather weather = 3;</code>
      * @param value The weather to set.
      * @return This builder for chaining.
      */
-    public Builder setWeather(
-        java.lang.String value) {
-      if (value == null) { throw new NullPointerException(); }
-      weather_ = value;
+    public Builder setWeather(com.civquest.mod.grpc.v1.Weather value) {
+      if (value == null) {
+        throw new NullPointerException();
+      }
       bitField0_ |= 0x00000004;
+      weather_ = value.getNumber();
       onChanged();
       return this;
     }
     /**
-     * <pre>
-     * "CLEAR", "RAIN", "THUNDER"
-     * </pre>
-     *
-     * <code>string weather = 3;</code>
+     * <code>.civquest.v1.Weather weather = 3;</code>
      * @return This builder for chaining.
      */
     public Builder clearWeather() {
-      weather_ = getDefaultInstance().getWeather();
       bitField0_ = (bitField0_ & ~0x00000004);
-      onChanged();
-      return this;
-    }
-    /**
-     * <pre>
-     * "CLEAR", "RAIN", "THUNDER"
-     * </pre>
-     *
-     * <code>string weather = 3;</code>
-     * @param value The bytes for weather to set.
-     * @return This builder for chaining.
-     */
-    public Builder setWeatherBytes(
-        com.google.protobuf.ByteString value) {
-      if (value == null) { throw new NullPointerException(); }
-      checkByteStringIsUtf8(value);
-      weather_ = value;
-      bitField0_ |= 0x00000004;
+      weather_ = 0;
       onChanged();
       return this;
     }
@@ -2983,6 +2948,38 @@ private static final long serialVersionUID = 0L;
         deathEvent_ = null;
       }
       return deathEventBuilder_;
+    }
+
+    private long lastProcessedSequenceId_ ;
+    /**
+     * <code>int64 last_processed_sequence_id = 14;</code>
+     * @return The lastProcessedSequenceId.
+     */
+    @java.lang.Override
+    public long getLastProcessedSequenceId() {
+      return lastProcessedSequenceId_;
+    }
+    /**
+     * <code>int64 last_processed_sequence_id = 14;</code>
+     * @param value The lastProcessedSequenceId to set.
+     * @return This builder for chaining.
+     */
+    public Builder setLastProcessedSequenceId(long value) {
+
+      lastProcessedSequenceId_ = value;
+      bitField0_ |= 0x00002000;
+      onChanged();
+      return this;
+    }
+    /**
+     * <code>int64 last_processed_sequence_id = 14;</code>
+     * @return This builder for chaining.
+     */
+    public Builder clearLastProcessedSequenceId() {
+      bitField0_ = (bitField0_ & ~0x00002000);
+      lastProcessedSequenceId_ = 0L;
+      onChanged();
+      return this;
     }
 
     // @@protoc_insertion_point(builder_scope:civquest.v1.TelemetryFrame)

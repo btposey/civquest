@@ -61,6 +61,10 @@ public interface SpawnAgentRequestOrBuilder extends
   com.civquest.mod.grpc.v1.Vec3OrBuilder getSpawnCoordsOrBuilder();
 
   /**
+   * <pre>
+   * Max 64 KB payload (standard 64x64 or 128x128 RGBA PNG texture)
+   * </pre>
+   *
    * <code>bytes skin_png_bytes = 5;</code>
    * @return The skinPngBytes.
    */
