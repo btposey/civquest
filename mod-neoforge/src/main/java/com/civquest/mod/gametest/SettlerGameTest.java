@@ -4,6 +4,13 @@ import com.civquest.mod.SettlerEntity;
 import com.civquest.mod.SettlerEntityManager;
 import com.civquest.mod.StreamRegistry;
 import com.civquest.mod.sensory.SensoryFrustumCollector;
+import com.civquest.mod.grpc.v1.AgentIntent;
+import com.civquest.mod.grpc.v1.AttackIntent;
+import com.civquest.mod.grpc.v1.BlockPosProto;
+import com.civquest.mod.grpc.v1.CreateWrittenBookIntent;
+import com.civquest.mod.grpc.v1.InteractBlockIntent;
+import com.civquest.mod.grpc.v1.NavigateIntent;
+import com.civquest.mod.grpc.v1.NavigationState;
 import com.civquest.mod.grpc.v1.SpawnAgentRequest;
 import com.civquest.mod.grpc.v1.TelemetryFrame;
 import com.civquest.mod.grpc.v1.Vec3;
@@ -12,16 +19,24 @@ import com.civquest.mod.grpc.v1.VisibleEntity;
 import com.google.protobuf.ByteString;
 import io.grpc.stub.StreamObserver;
 import net.minecraft.core.BlockPos;
+import net.minecraft.core.component.DataComponents;
 import net.minecraft.gametest.framework.GameTest;
 import net.minecraft.gametest.framework.GameTestHelper;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
+import net.minecraft.world.InteractionHand;
 import net.minecraft.world.damagesource.DamageSource;
 import net.minecraft.world.entity.EntityType;
 import net.minecraft.world.entity.monster.Creeper;
+import net.minecraft.world.entity.monster.Zombie;
+import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.item.Items;
+import net.minecraft.world.item.component.WrittenBookContent;
 import net.minecraft.world.level.ChunkPos;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.CropBlock;
+import net.minecraft.world.level.block.LecternBlock;
+import net.minecraft.world.level.block.entity.LecternBlockEntity;
 import net.neoforged.neoforge.common.damagesource.DamageContainer;
 import net.neoforged.neoforge.event.entity.living.LivingDamageEvent;
 import net.neoforged.neoforge.gametest.GameTestHolder;
@@ -440,6 +455,266 @@ public class SettlerGameTest {
                 "Must not emit damage frame when settler is dead/dying, received count: " + receivedFrames.size());
 
         manager.despawnSettler(server, "agent-gt-damage-event").join();
+        helper.succeed();
+    }
+
+    @GameTest(template = "empty3x3x3")
+    public static void testNavigateIntent(GameTestHelper helper) {
+        ServerLevel level = helper.getLevel();
+        MinecraftServer server = level.getServer();
+        SettlerEntityManager manager = new SettlerEntityManager();
+
+        // Prepare flat walking floor at Y=0
+        helper.setBlock(new BlockPos(1, 0, 1), Blocks.STONE);
+        helper.setBlock(new BlockPos(1, 0, 2), Blocks.STONE);
+        helper.setBlock(new BlockPos(1, 1, 1), Blocks.AIR);
+        helper.setBlock(new BlockPos(1, 1, 2), Blocks.AIR);
+
+        BlockPos spawnPos = helper.absolutePos(new BlockPos(1, 1, 1));
+        SpawnAgentRequest request = SpawnAgentRequest.newBuilder()
+                .setAgentId("agent-gt-nav")
+                .setDisplayName("NavSettler")
+                .setClanId("clan-ironwood")
+                .setSpawnCoords(Vec3.newBuilder()
+                        .setX(spawnPos.getX() + 0.5)
+                        .setY(spawnPos.getY())
+                        .setZ(spawnPos.getZ() + 0.5)
+                        .build())
+                .build();
+
+        SettlerEntity settler = manager.spawnSettler(server, level, request).join();
+        helper.assertTrue(settler != null, "Settler must spawn");
+
+        BlockPos targetPos = helper.absolutePos(new BlockPos(1, 1, 2));
+        NavigateIntent navIntent = NavigateIntent.newBuilder()
+                .setTarget(Vec3.newBuilder()
+                        .setX(targetPos.getX() + 0.5)
+                        .setY(targetPos.getY())
+                        .setZ(targetPos.getZ() + 0.5)
+                        .build())
+                .setSpeedMultiplier(1.0f)
+                .setSprint(false)
+                .setArrivalTolerance(1)
+                .build();
+
+        AgentIntent intent = AgentIntent.newBuilder()
+                .setAgentId("agent-gt-nav")
+                .setNavigate(navIntent)
+                .build();
+
+        manager.handleIntent(server, intent).join();
+        helper.assertTrue(settler.getNavigator().isPathing(), "Settler navigator must be PATHING");
+
+        double startDistSq = settler.distanceToSqr(targetPos.getX() + 0.5, targetPos.getY(), targetPos.getZ() + 0.5);
+        for (int i = 0; i < 5; i++) {
+            settler.tick();
+        }
+        double endDistSq = settler.distanceToSqr(targetPos.getX() + 0.5, targetPos.getY(), targetPos.getZ() + 0.5);
+        helper.assertTrue(endDistSq <= startDistSq, "Settler must move closer towards target destination");
+
+        manager.despawnSettler(server, "agent-gt-nav").join();
+        helper.succeed();
+    }
+
+    @GameTest(template = "empty3x3x3")
+    public static void testAttackIntent(GameTestHelper helper) {
+        ServerLevel level = helper.getLevel();
+        MinecraftServer server = level.getServer();
+        SettlerEntityManager manager = new SettlerEntityManager();
+
+        BlockPos spawnPos = helper.absolutePos(new BlockPos(1, 1, 1));
+        SpawnAgentRequest request = SpawnAgentRequest.newBuilder()
+                .setAgentId("agent-gt-attack")
+                .setDisplayName("AttackSettler")
+                .setClanId("clan-ironwood")
+                .setSpawnCoords(Vec3.newBuilder()
+                        .setX(spawnPos.getX() + 0.5)
+                        .setY(spawnPos.getY())
+                        .setZ(spawnPos.getZ() + 0.5)
+                        .build())
+                .build();
+
+        SettlerEntity settler = manager.spawnSettler(server, level, request).join();
+        helper.assertTrue(settler != null, "Settler must spawn");
+        settler.setItemInHand(InteractionHand.MAIN_HAND, new ItemStack(Items.IRON_SWORD));
+
+        // Spawn a zombie in adjacent block
+        Zombie zombie = helper.spawn(EntityType.ZOMBIE, new BlockPos(1, 1, 2));
+        helper.assertTrue(zombie != null, "Zombie must spawn");
+        float initialHealth = zombie.getHealth();
+        helper.assertTrue(initialHealth > 0.0f, "Zombie initial health must be positive");
+
+        AttackIntent attackIntent = AttackIntent.newBuilder()
+                .setTargetEntityId(zombie.getId())
+                .setRaiseShield(true)
+                .build();
+
+        AgentIntent intent = AgentIntent.newBuilder()
+                .setAgentId("agent-gt-attack")
+                .setAttack(attackIntent)
+                .build();
+
+        manager.handleIntent(server, intent).join();
+
+        // Verify shield raised in offhand
+        helper.assertTrue(settler.getItemInHand(InteractionHand.OFF_HAND).is(Items.SHIELD),
+                "Settler must hold shield in offhand");
+        helper.assertTrue(settler.isUsingItem(), "Settler must be using offhand shield item");
+        helper.assertTrue(settler.getUsedItemHand() == InteractionHand.OFF_HAND,
+                "Settler used hand must be OFF_HAND");
+
+        // Verify target entity took damage
+        helper.assertTrue(zombie.getHealth() < initialHealth,
+                "Target zombie must have taken damage, health was: " + zombie.getHealth());
+
+        zombie.discard();
+        manager.despawnSettler(server, "agent-gt-attack").join();
+        helper.succeed();
+    }
+
+    @GameTest(template = "empty3x3x3")
+    public static void testInteractBlockIntent(GameTestHelper helper) {
+        ServerLevel level = helper.getLevel();
+        MinecraftServer server = level.getServer();
+        SettlerEntityManager manager = new SettlerEntityManager();
+
+        BlockPos spawnPos = helper.absolutePos(new BlockPos(1, 1, 1));
+        SpawnAgentRequest request = SpawnAgentRequest.newBuilder()
+                .setAgentId("agent-gt-interact")
+                .setDisplayName("InteractSettler")
+                .setClanId("clan-ironwood")
+                .setSpawnCoords(Vec3.newBuilder()
+                        .setX(spawnPos.getX() + 0.5)
+                        .setY(spawnPos.getY())
+                        .setZ(spawnPos.getZ() + 0.5)
+                        .build())
+                .build();
+
+        SettlerEntity settler = manager.spawnSettler(server, level, request).join();
+        helper.assertTrue(settler != null, "Settler must spawn");
+
+        // 1. HARVEST_BREAK on wheat crop
+        BlockPos localWheat = new BlockPos(1, 1, 2);
+        BlockPos absWheat = helper.absolutePos(localWheat);
+        helper.setBlock(localWheat, Blocks.WHEAT.defaultBlockState().setValue(CropBlock.AGE, 7));
+        helper.assertBlockPresent(Blocks.WHEAT, localWheat);
+
+        AgentIntent harvestIntent = AgentIntent.newBuilder()
+                .setAgentId("agent-gt-interact")
+                .setInteractBlock(InteractBlockIntent.newBuilder()
+                        .setPos(BlockPosProto.newBuilder().setX(absWheat.getX()).setY(absWheat.getY()).setZ(absWheat.getZ()).build())
+                        .setInteractionType(InteractBlockIntent.InteractionType.HARVEST_BREAK)
+                        .build())
+                .build();
+        manager.handleIntent(server, harvestIntent).join();
+        helper.assertBlockNotPresent(Blocks.WHEAT, localWheat);
+
+        // 2. PAVE_ROAD_PATH on grass block
+        BlockPos localGrass = new BlockPos(2, 1, 1);
+        BlockPos absGrass = helper.absolutePos(localGrass);
+        helper.setBlock(localGrass, Blocks.GRASS_BLOCK);
+        helper.assertBlockPresent(Blocks.GRASS_BLOCK, localGrass);
+
+        AgentIntent paveIntent = AgentIntent.newBuilder()
+                .setAgentId("agent-gt-interact")
+                .setInteractBlock(InteractBlockIntent.newBuilder()
+                        .setPos(BlockPosProto.newBuilder().setX(absGrass.getX()).setY(absGrass.getY()).setZ(absGrass.getZ()).build())
+                        .setInteractionType(InteractBlockIntent.InteractionType.PAVE_ROAD_PATH)
+                        .build())
+                .build();
+        manager.handleIntent(server, paveIntent).join();
+        helper.assertBlockPresent(Blocks.DIRT_PATH, localGrass);
+
+        // 3. SLEEP_IN_BED and WAKE_UP
+        BlockPos localBed = new BlockPos(1, 1, 0);
+        BlockPos absBed = helper.absolutePos(localBed);
+        helper.setBlock(localBed, Blocks.RED_BED);
+
+        AgentIntent sleepIntent = AgentIntent.newBuilder()
+                .setAgentId("agent-gt-interact")
+                .setInteractBlock(InteractBlockIntent.newBuilder()
+                        .setPos(BlockPosProto.newBuilder().setX(absBed.getX()).setY(absBed.getY()).setZ(absBed.getZ()).build())
+                        .setInteractionType(InteractBlockIntent.InteractionType.SLEEP_IN_BED)
+                        .build())
+                .build();
+        manager.handleIntent(server, sleepIntent).join();
+        helper.assertTrue(settler.isSleeping(), "Settler must be sleeping in bed");
+
+        AgentIntent wakeIntent = AgentIntent.newBuilder()
+                .setAgentId("agent-gt-interact")
+                .setInteractBlock(InteractBlockIntent.newBuilder()
+                        .setInteractionType(InteractBlockIntent.InteractionType.WAKE_UP)
+                        .build())
+                .build();
+        manager.handleIntent(server, wakeIntent).join();
+        helper.assertFalse(settler.isSleeping(), "Settler must wake up from bed");
+
+        manager.despawnSettler(server, "agent-gt-interact").join();
+        helper.succeed();
+    }
+
+    @GameTest(template = "empty3x3x3")
+    public static void testCreateWrittenBookIntent(GameTestHelper helper) {
+        ServerLevel level = helper.getLevel();
+        MinecraftServer server = level.getServer();
+        SettlerEntityManager manager = new SettlerEntityManager();
+
+        BlockPos spawnPos = helper.absolutePos(new BlockPos(1, 1, 1));
+        SpawnAgentRequest request = SpawnAgentRequest.newBuilder()
+                .setAgentId("agent-gt-book")
+                .setDisplayName("ChroniclerSettler")
+                .setClanId("clan-ironwood")
+                .setSpawnCoords(Vec3.newBuilder()
+                        .setX(spawnPos.getX() + 0.5)
+                        .setY(spawnPos.getY())
+                        .setZ(spawnPos.getZ() + 0.5)
+                        .build())
+                .build();
+
+        SettlerEntity settler = manager.spawnSettler(server, level, request).join();
+        helper.assertTrue(settler != null, "Settler must spawn");
+
+        BlockPos localLectern = new BlockPos(1, 1, 2);
+        BlockPos absLectern = helper.absolutePos(localLectern);
+        helper.setBlock(localLectern, Blocks.LECTERN);
+        helper.assertBlockPresent(Blocks.LECTERN, localLectern);
+
+        CreateWrittenBookIntent bookIntent = CreateWrittenBookIntent.newBuilder()
+                .setTitle("Settler Annals")
+                .setAuthor("Chronicler")
+                .addPages("The founding of the Ironwood settlement.")
+                .addPages("Trade routes established with neighboring lands.")
+                .setTargetLecternOrShelf(BlockPosProto.newBuilder()
+                        .setX(absLectern.getX())
+                        .setY(absLectern.getY())
+                        .setZ(absLectern.getZ())
+                        .build())
+                .build();
+
+        AgentIntent intent = AgentIntent.newBuilder()
+                .setAgentId("agent-gt-book")
+                .setCreateBook(bookIntent)
+                .build();
+
+        manager.handleIntent(server, intent).join();
+
+        // Verify lectern has book
+        helper.assertTrue(helper.getBlockState(localLectern).getValue(LecternBlock.HAS_BOOK),
+                "Lectern block state must have HAS_BOOK=true");
+
+        LecternBlockEntity lectern = helper.getBlockEntity(localLectern);
+        helper.assertTrue(lectern != null, "Lectern block entity must exist");
+        helper.assertTrue(lectern.hasBook(), "Lectern block entity must hold book");
+        ItemStack bookStack = lectern.getBook();
+        helper.assertTrue(bookStack.is(Items.WRITTEN_BOOK), "Placed book must be WRITTEN_BOOK");
+
+        WrittenBookContent content = bookStack.get(DataComponents.WRITTEN_BOOK_CONTENT);
+        helper.assertTrue(content != null, "WrittenBookContent component must not be null");
+        helper.assertTrue("Settler Annals".equals(content.title().raw()), "Book title must match intent");
+        helper.assertTrue("Chronicler".equals(content.author()), "Book author must match intent");
+        helper.assertTrue(content.pages().size() == 2, "Page count must match intent (2)");
+
+        manager.despawnSettler(server, "agent-gt-book").join();
         helper.succeed();
     }
 }

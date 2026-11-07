@@ -1,5 +1,7 @@
 package com.civquest.mod;
 
+import com.civquest.mod.actuator.IntentActuator;
+import com.civquest.mod.grpc.v1.AgentIntent;
 import com.civquest.mod.grpc.v1.DamageEvent;
 import com.civquest.mod.grpc.v1.SpawnAgentRequest;
 import com.civquest.mod.grpc.v1.TelemetryFrame;
@@ -37,18 +39,28 @@ public class SettlerEntityManager {
     private final ConcurrentHashMap<String, SettlerEntity> settlers = new ConcurrentHashMap<>();
     private volatile StreamRegistry streamRegistry;
     private final SensoryFrustumCollector sensoryCollector;
+    private final IntentActuator intentActuator;
 
     public SettlerEntityManager() {
-        this(null, new SensoryFrustumCollector());
+        this(null, new SensoryFrustumCollector(), new IntentActuator());
     }
 
     public SettlerEntityManager(StreamRegistry streamRegistry) {
-        this(streamRegistry, new SensoryFrustumCollector());
+        this(streamRegistry, new SensoryFrustumCollector(), new IntentActuator());
     }
 
     public SettlerEntityManager(StreamRegistry streamRegistry, SensoryFrustumCollector sensoryCollector) {
+        this(streamRegistry, sensoryCollector, new IntentActuator());
+    }
+
+    public SettlerEntityManager(StreamRegistry streamRegistry, SensoryFrustumCollector sensoryCollector, IntentActuator intentActuator) {
         this.streamRegistry = streamRegistry;
         this.sensoryCollector = sensoryCollector != null ? sensoryCollector : new SensoryFrustumCollector();
+        this.intentActuator = intentActuator != null ? intentActuator : new IntentActuator();
+    }
+
+    public IntentActuator getIntentActuator() {
+        return intentActuator;
     }
 
     public SensoryFrustumCollector getSensoryCollector() {
@@ -327,6 +339,41 @@ public class SettlerEntityManager {
                             settler.getAgentId(), e.getMessage(), e);
                 }
             }
+        }
+    }
+
+    public CompletableFuture<Void> handleIntent(MinecraftServer server, AgentIntent intent) {
+        if (intent == null) {
+            return CompletableFuture.completedFuture(null);
+        }
+
+        Runnable task = () -> {
+            String agentId = intent.getAgentId();
+            if (agentId == null || agentId.isBlank()) {
+                LOGGER.warn("Received AgentIntent without agent_id");
+                return;
+            }
+
+            SettlerEntity settler = settlers.get(agentId);
+            if (settler == null || settler.isRemoved() || !settler.isAlive()) {
+                LOGGER.warn("Received intent {} for unknown or inactive settler '{}'",
+                        intent.getActionCase(), agentId);
+                return;
+            }
+
+            try {
+                intentActuator.actuate(settler, intent);
+            } catch (Exception e) {
+                LOGGER.error("Error executing intent {} for settler '{}': {}",
+                        intent.getActionCase(), agentId, e.getMessage(), e);
+            }
+        };
+
+        if (server != null) {
+            return server.submit(task);
+        } else {
+            task.run();
+            return CompletableFuture.completedFuture(null);
         }
     }
 
