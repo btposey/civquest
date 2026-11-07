@@ -14,11 +14,11 @@ import (
 
 // Client wraps the gRPC connection and service clients for CivQuestBridgeService and standard Health checks.
 type Client struct {
-	conn      *grpc.ClientConn
-	bridge    civquestv1.CivQuestBridgeServiceClient
-	health    grpc_health_v1.HealthClient
-	sharedKey string
-	target    string
+	conn    *grpc.ClientConn
+	bridge  civquestv1.CivQuestBridgeServiceClient
+	health  grpc_health_v1.HealthClient
+	hasAuth bool
+	target  string
 }
 
 // FormatBearerToken ensures the token is prefixed with "Bearer ".
@@ -77,11 +77,11 @@ func NewClient(target string, sharedKey string, opts ...grpc.DialOption) (*Clien
 	}
 
 	return &Client{
-		conn:      conn,
-		bridge:    civquestv1.NewCivQuestBridgeServiceClient(conn),
-		health:    grpc_health_v1.NewHealthClient(conn),
-		sharedKey: sharedKey,
-		target:    target,
+		conn:    conn,
+		bridge:  civquestv1.NewCivQuestBridgeServiceClient(conn),
+		health:  grpc_health_v1.NewHealthClient(conn),
+		hasAuth: sharedKey != "",
+		target:  target,
 	}, nil
 }
 
@@ -97,24 +97,9 @@ func (c *Client) HealthCheck(ctx context.Context, service ...string) (*grpc_heal
 	})
 }
 
-// CheckHealth is an alias for HealthCheck.
-func (c *Client) CheckHealth(ctx context.Context, service ...string) (*grpc_health_v1.HealthCheckResponse, error) {
-	return c.HealthCheck(ctx, service...)
-}
-
-// SpawnAgent spawns an agent avatar via SpawnAgentEntity RPC.
-func (c *Client) SpawnAgent(ctx context.Context, req *civquestv1.SpawnAgentRequest, opts ...grpc.CallOption) (*civquestv1.SpawnAgentResponse, error) {
-	return c.bridge.SpawnAgentEntity(ctx, req, opts...)
-}
-
 // SpawnAgentEntity invokes SpawnAgentEntity RPC on the CivQuest bridge.
 func (c *Client) SpawnAgentEntity(ctx context.Context, req *civquestv1.SpawnAgentRequest, opts ...grpc.CallOption) (*civquestv1.SpawnAgentResponse, error) {
 	return c.bridge.SpawnAgentEntity(ctx, req, opts...)
-}
-
-// DespawnAgent despawns an agent avatar via DespawnAgentEntity RPC.
-func (c *Client) DespawnAgent(ctx context.Context, req *civquestv1.DespawnAgentRequest, opts ...grpc.CallOption) (*civquestv1.DespawnAgentResponse, error) {
-	return c.bridge.DespawnAgentEntity(ctx, req, opts...)
 }
 
 // DespawnAgentEntity invokes DespawnAgentEntity RPC on the CivQuest bridge.
@@ -122,12 +107,7 @@ func (c *Client) DespawnAgentEntity(ctx context.Context, req *civquestv1.Despawn
 	return c.bridge.DespawnAgentEntity(ctx, req, opts...)
 }
 
-// Connect establishes the bidirectional agent telemetry and intent stream.
-func (c *Client) Connect(ctx context.Context, opts ...grpc.CallOption) (civquestv1.CivQuestBridgeService_ConnectAgentClient, error) {
-	return c.bridge.ConnectAgent(ctx, opts...)
-}
-
-// ConnectAgent is an alias for Connect.
+// ConnectAgent establishes the bidirectional agent telemetry and intent stream.
 func (c *Client) ConnectAgent(ctx context.Context, opts ...grpc.CallOption) (civquestv1.CivQuestBridgeService_ConnectAgentClient, error) {
 	return c.bridge.ConnectAgent(ctx, opts...)
 }
@@ -152,14 +132,22 @@ func (c *Client) HealthClient() grpc_health_v1.HealthClient {
 	return c.health
 }
 
-// SharedKey returns the configured authentication shared key.
-func (c *Client) SharedKey() string {
-	return c.sharedKey
+// HasAuth returns true if the client was initialized with a non-empty shared key.
+func (c *Client) HasAuth() bool {
+	return c.hasAuth
 }
 
 // Target returns the connection target string.
 func (c *Client) Target() string {
 	return c.target
+}
+
+// String implements fmt.Stringer to prevent credential leakage into logs.
+func (c *Client) String() string {
+	if c == nil {
+		return "<nil>"
+	}
+	return fmt.Sprintf("Client{target: %q, hasAuth: %t}", c.target, c.hasAuth)
 }
 
 // Close closes the underlying gRPC connection.

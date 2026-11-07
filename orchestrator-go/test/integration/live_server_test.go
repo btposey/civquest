@@ -50,19 +50,39 @@ func runEndToEndProbe(t *testing.T, meta *bridge.ServerMeta) {
 	}
 	defer unauthClient.Close()
 
-	_, err = unauthClient.SpawnAgent(ctx, &civquestv1.SpawnAgentRequest{
+	// 1a. Unary RPC rejection: SpawnAgentEntity
+	_, err = unauthClient.SpawnAgentEntity(ctx, &civquestv1.SpawnAgentRequest{
 		AgentId:     "probe-unauth-test",
 		DisplayName: "UnauthProbe",
 		ClanId:      "clan-test",
 	})
 	if err == nil {
-		t.Fatalf("Expected unauthenticated SpawnAgent to fail with codes.Unauthenticated, but succeeded")
+		t.Fatalf("Expected unauthenticated SpawnAgentEntity to fail with codes.Unauthenticated, but succeeded")
 	}
 	st, ok := status.FromError(err)
 	if !ok || st.Code() != codes.Unauthenticated {
-		t.Fatalf("Expected codes.Unauthenticated, got status code %v (err: %v)", st.Code(), err)
+		t.Fatalf("Expected codes.Unauthenticated on SpawnAgentEntity, got status code %v (err: %v)", st.Code(), err)
 	}
-	t.Logf("Verified unauthenticated RPC rejection: code=%s, desc=%s", st.Code(), st.Message())
+	t.Logf("Verified unauthenticated unary RPC rejection: code=%s, desc=%s", st.Code(), st.Message())
+
+	// 1b. Streaming RPC rejection: ConnectAgent (H-5)
+	unauthStream, err := unauthClient.ConnectAgent(ctx)
+	if err != nil {
+		st, ok := status.FromError(err)
+		if !ok || st.Code() != codes.Unauthenticated {
+			t.Fatalf("Expected codes.Unauthenticated on ConnectAgent creation, got status code %v (err: %v)", st.Code(), err)
+		}
+	} else {
+		_, err := unauthStream.Recv()
+		if err == nil {
+			t.Fatalf("Expected unauthenticated ConnectAgent stream.Recv() to fail with codes.Unauthenticated, but succeeded")
+		}
+		st, ok := status.FromError(err)
+		if !ok || st.Code() != codes.Unauthenticated {
+			t.Fatalf("Expected codes.Unauthenticated on ConnectAgent stream.Recv(), got status code %v (err: %v)", st.Code(), err)
+		}
+	}
+	t.Log("Verified unauthenticated streaming RPC rejection: code=Unauthenticated")
 
 	// 2. Dial with shared key -> assert health check is SERVING
 	t.Log("Dialing server with shared-key authentication...")
@@ -94,7 +114,7 @@ func runEndToEndProbe(t *testing.T, meta *bridge.ServerMeta) {
 	// 3. Call SpawnAgentEntity -> assert returns success and deterministic UUID
 	agentID := "probe-settler-live"
 	t.Logf("Calling SpawnAgentEntity for agent_id=%s...", agentID)
-	spawnResp, err := client.SpawnAgent(ctx, &civquestv1.SpawnAgentRequest{
+	spawnResp, err := client.SpawnAgentEntity(ctx, &civquestv1.SpawnAgentRequest{
 		AgentId:     agentID,
 		DisplayName: "ProbeSettlerLive",
 		ClanId:      "clan-test",
@@ -114,7 +134,7 @@ func runEndToEndProbe(t *testing.T, meta *bridge.ServerMeta) {
 
 	// 4. Call ConnectAgent stream -> send AgentIntent, receive TelemetryFrame
 	t.Log("Establishing ConnectAgent bidirectional stream...")
-	stream, err := client.Connect(ctx)
+	stream, err := client.ConnectAgent(ctx)
 	if err != nil {
 		t.Fatalf("ConnectAgent stream creation failed: %v", err)
 	}
@@ -153,7 +173,7 @@ func runEndToEndProbe(t *testing.T, meta *bridge.ServerMeta) {
 
 	// 5. Call DespawnAgentEntity -> assert returns success
 	t.Logf("Calling DespawnAgentEntity for agent_id=%s...", agentID)
-	despawnResp, err := client.DespawnAgent(ctx, &civquestv1.DespawnAgentRequest{
+	despawnResp, err := client.DespawnAgentEntity(ctx, &civquestv1.DespawnAgentRequest{
 		AgentId: agentID,
 	})
 	if err != nil {

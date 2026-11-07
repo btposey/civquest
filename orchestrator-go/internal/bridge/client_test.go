@@ -225,24 +225,18 @@ func TestClientUnauthenticated(t *testing.T) {
 		t.Errorf("Expected SERVING, got %v", healthResp.GetStatus())
 	}
 
-	// CheckHealth alias
-	checkResp, err := client.CheckHealth(ctx, "")
-	if err != nil || checkResp.GetStatus() != grpc_health_v1.HealthCheckResponse_SERVING {
-		t.Errorf("CheckHealth alias failed: %v", err)
-	}
-
 	// 2. SpawnAgentEntity should fail with Unauthenticated
-	_, err = client.SpawnAgent(ctx, &civquestv1.SpawnAgentRequest{AgentId: "settler-1"})
+	_, err = client.SpawnAgentEntity(ctx, &civquestv1.SpawnAgentRequest{AgentId: "settler-1"})
 	if err == nil {
-		t.Fatalf("Expected unauthenticated SpawnAgent to fail")
+		t.Fatalf("Expected unauthenticated SpawnAgentEntity to fail")
 	}
 	st, ok := status.FromError(err)
 	if !ok || st.Code() != codes.Unauthenticated {
 		t.Errorf("Expected codes.Unauthenticated, got status %v (err: %v)", st.Code(), err)
 	}
 
-	// 3. Connect stream should fail with Unauthenticated
-	stream, err := client.Connect(ctx)
+	// 3. ConnectAgent stream should fail with Unauthenticated
+	stream, err := client.ConnectAgent(ctx)
 	if err != nil {
 		st, ok := status.FromError(err)
 		if !ok || st.Code() != codes.Unauthenticated {
@@ -303,8 +297,8 @@ func TestClientAuthenticatedFullLifecycle(t *testing.T) {
 	}
 	defer client.Close()
 
-	if client.SharedKey() != sharedKey {
-		t.Errorf("Expected SharedKey %s, got %s", sharedKey, client.SharedKey())
+	if !client.HasAuth() {
+		t.Errorf("Expected HasAuth() to be true")
 	}
 	if client.Target() != "passthrough://bufnet" {
 		t.Errorf("Expected Target passthrough://bufnet, got %s", client.Target())
@@ -331,14 +325,14 @@ func TestClientAuthenticatedFullLifecycle(t *testing.T) {
 		t.Errorf("Expected SERVING, got: %v", healthResp.GetStatus())
 	}
 
-	// 2. SpawnAgent / SpawnAgentEntity
-	spawnResp, err := client.SpawnAgent(ctx, &civquestv1.SpawnAgentRequest{
+	// 2. SpawnAgentEntity
+	spawnResp, err := client.SpawnAgentEntity(ctx, &civquestv1.SpawnAgentRequest{
 		AgentId:     "settler-alpha",
 		DisplayName: "Alpha",
 		ClanId:      "clan-1",
 	})
 	if err != nil {
-		t.Fatalf("SpawnAgent failed: %v", err)
+		t.Fatalf("SpawnAgentEntity failed: %v", err)
 	}
 	if !spawnResp.GetSuccess() {
 		t.Errorf("Expected success true, got false")
@@ -350,10 +344,10 @@ func TestClientAuthenticatedFullLifecycle(t *testing.T) {
 		t.Errorf("Unexpected UUID: %s", spawnResp.GetOfflineUuid())
 	}
 
-	// 3. Connect / ConnectAgent bidirectional stream
-	stream, err := client.Connect(ctx)
+	// 3. ConnectAgent bidirectional stream
+	stream, err := client.ConnectAgent(ctx)
 	if err != nil {
-		t.Fatalf("Connect failed: %v", err)
+		t.Fatalf("ConnectAgent failed: %v", err)
 	}
 
 	frame, err := stream.Recv()
@@ -382,32 +376,15 @@ func TestClientAuthenticatedFullLifecycle(t *testing.T) {
 		t.Fatalf("Failed closing send stream: %v", err)
 	}
 
-	// ConnectAgent alias test
-	stream2, err := client.ConnectAgent(ctx)
-	if err != nil {
-		t.Fatalf("ConnectAgent alias failed: %v", err)
-	}
-	if _, err := stream2.Recv(); err != nil {
-		t.Fatalf("stream2.Recv failed: %v", err)
-	}
-	_ = stream2.CloseSend()
-
-	// 4. DespawnAgent / DespawnAgentEntity
-	despawnResp, err := client.DespawnAgent(ctx, &civquestv1.DespawnAgentRequest{
+	// 4. DespawnAgentEntity
+	despawnResp, err := client.DespawnAgentEntity(ctx, &civquestv1.DespawnAgentRequest{
 		AgentId: "settler-alpha",
 	})
 	if err != nil {
-		t.Fatalf("DespawnAgent failed: %v", err)
+		t.Fatalf("DespawnAgentEntity failed: %v", err)
 	}
 	if !despawnResp.GetSuccess() {
 		t.Errorf("Expected despawn success true, got false")
-	}
-
-	despawnResp2, err := client.DespawnAgentEntity(ctx, &civquestv1.DespawnAgentRequest{
-		AgentId: "settler-alpha",
-	})
-	if err != nil || !despawnResp2.GetSuccess() {
-		t.Fatalf("DespawnAgentEntity alias failed: %v", err)
 	}
 
 	// 5. ExportRecipeGraph
@@ -457,5 +434,36 @@ func TestInterceptorsDirectly(t *testing.T) {
 	}
 	if auths := capturedStreamMD.Get("authorization"); len(auths) == 0 || auths[0] != "Bearer stream-token" {
 		t.Errorf("Expected Bearer stream-token metadata, got: %v", auths)
+	}
+}
+
+func TestClientStringMasking(t *testing.T) {
+	setup := startTestServer(t, "super-secret-key-to-mask")
+
+	client, err := bridge.NewClient(
+		"passthrough://bufnet",
+		"super-secret-key-to-mask",
+		grpc.WithContextDialer(setup.dialer()),
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
+	)
+	if err != nil {
+		t.Fatalf("NewClient failed: %v", err)
+	}
+	defer client.Close()
+
+	str := client.String()
+	if strings.Contains(str, "super-secret-key-to-mask") {
+		t.Errorf("Client.String() leaked secret key: %s", str)
+	}
+	if !strings.Contains(str, "hasAuth: true") {
+		t.Errorf("Client.String() should report hasAuth: true, got: %s", str)
+	}
+	if !strings.Contains(str, "passthrough://bufnet") {
+		t.Errorf("Client.String() should report target, got: %s", str)
+	}
+
+	var nilClient *bridge.Client
+	if nilClient.String() != "<nil>" {
+		t.Errorf("nil Client.String() = %q, expected <nil>", nilClient.String())
 	}
 }
