@@ -1,0 +1,619 @@
+package agent
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"net"
+	"os"
+	"path/filepath"
+	"sync"
+	"sync/atomic"
+	"time"
+
+	"github.com/btposey/civquest/orchestrator-go/internal/bridge"
+	"github.com/btposey/civquest/orchestrator-go/internal/db"
+	civquestv1 "github.com/btposey/civquest/orchestrator-go/internal/proto/v1"
+	"github.com/btposey/civquest/orchestrator-go/internal/xdg"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
+)
+
+// Sentinel errors.
+var (
+	ErrRuntimeStopped = errors.New("agent runtime is stopped")
+	ErrQueueFull      = errors.New("outbound intent queue is full")
+	ErrNilIntent      = errors.New("intent cannot be nil")
+)
+
+// StreamConnector is an interface allowing abstraction over bridge.Client or custom stream providers.
+type StreamConnector interface {
+	ConnectAgent(ctx context.Context, opts ...grpc.CallOption) (civquestv1.CivQuestBridgeService_ConnectAgentClient, error)
+}
+
+// Config provides initial configuration options for constructing an AgentRuntime.
+type Config struct {
+	AgentID         string
+	ClanID          string
+	IdentityConfig  *xdg.AgentIdentityConfig
+	Resolver        *xdg.Resolver
+	AgentDB         *db.AgentDB
+	BridgeClient    *bridge.Client
+	StreamConnector StreamConnector
+	SocketPath      string
+	IntentQueueSize int
+	OnDeath         func(*civquestv1.DeathEvent)
+}
+
+// SocketPosition represents 3D coordinates in the diagnostic socket payload.
+type SocketPosition struct {
+	X float64 `json:"x"`
+	Y float64 `json:"y"`
+	Z float64 `json:"z"`
+}
+
+// SocketStatusResponse represents the JSON payload served over the per-agent UNIX domain socket.
+type SocketStatusResponse struct {
+	Agent           string          `json:"agent"`
+	Clan            string          `json:"clan"`
+	Status          string          `json:"status"`
+	PID             int             `json:"pid"`
+	WorldTick       int64           `json:"world_tick"`
+	Health          float32         `json:"health"`
+	FoodLevel       int32           `json:"food_level"`
+	Position        *SocketPosition `json:"position,omitempty"`
+	NavigationState string          `json:"navigation_state"`
+	UptimeSeconds   float64         `json:"uptime_seconds"`
+}
+
+// AgentRuntime manages the isolated OS-process lifecycle for an individual settler.
+// It maintains the 5 Hz gRPC telemetry stream, processes incoming sensory frames,
+// synchronizes local state and inventory caches, and serves live diagnostics over a UNIX socket.
+type AgentRuntime struct {
+	agentID        string
+	clanID         string
+	identityConfig *xdg.AgentIdentityConfig
+	resolver       *xdg.Resolver
+	agentDB        *db.AgentDB
+	bridgeClient   *bridge.Client
+	connector      StreamConnector
+
+	// Intent sequence numbering and outbound queue
+	sequenceID  atomic.Int64
+	intentQueue chan *civquestv1.AgentIntent
+
+	// Diagnostics & Socket
+	socketPath string
+	listener   net.Listener
+	pid        int
+	startTime  time.Time
+
+	// State and synchronization
+	mu                 sync.RWMutex
+	status             string
+	latestFrame        *civquestv1.TelemetryFrame
+	lastProcessedSeqID int64
+	isDead             bool
+	deathEvent         *civquestv1.DeathEvent
+	lastCachedItems    []CachedItem
+
+	// Callbacks
+	onDeath func(*civquestv1.DeathEvent)
+
+	// Lifecycle control
+	ctx        context.Context
+	cancel     context.CancelFunc
+	done       chan struct{}
+	stopOnce   sync.Once
+	socketDone chan struct{}
+}
+
+// NewRuntime constructs and validates an AgentRuntime instance.
+func NewRuntime(cfg Config) (*AgentRuntime, error) {
+	agentID := cfg.AgentID
+	if agentID == "" && cfg.IdentityConfig != nil {
+		agentID = cfg.IdentityConfig.Name
+	}
+	if agentID == "" {
+		return nil, fmt.Errorf("agent_id must not be empty")
+	}
+
+	clanID := cfg.ClanID
+	if clanID == "" && cfg.IdentityConfig != nil {
+		clanID = cfg.IdentityConfig.ClanID
+	}
+
+	r := cfg.Resolver
+	if r == nil {
+		r = xdg.DefaultResolver()
+	}
+
+	sockPath := cfg.SocketPath
+	if sockPath == "" {
+		sockPath = r.AgentSocketPath(agentID)
+	}
+
+	queueSize := cfg.IntentQueueSize
+	if queueSize <= 0 {
+		queueSize = 256
+	}
+
+	var connector StreamConnector = cfg.StreamConnector
+	if connector == nil && cfg.BridgeClient != nil {
+		connector = cfg.BridgeClient
+	}
+
+	runtime := &AgentRuntime{
+		agentID:         agentID,
+		clanID:          clanID,
+		identityConfig:  cfg.IdentityConfig,
+		resolver:        r,
+		agentDB:         cfg.AgentDB,
+		bridgeClient:    cfg.BridgeClient,
+		connector:       connector,
+		intentQueue:     make(chan *civquestv1.AgentIntent, queueSize),
+		socketPath:      sockPath,
+		pid:             os.Getpid(),
+		startTime:       time.Now().UTC(),
+		status:          "INITIALIZING",
+		onDeath:         cfg.OnDeath,
+		done:            make(chan struct{}),
+		socketDone:      make(chan struct{}),
+		lastCachedItems: nil,
+	}
+
+	return runtime, nil
+}
+
+// AgentID returns the unique identifier for this settler avatar.
+func (r *AgentRuntime) AgentID() string {
+	return r.agentID
+}
+
+// ClanID returns the clan identifier for this settler.
+func (r *AgentRuntime) ClanID() string {
+	return r.clanID
+}
+
+// Resolver returns the XDG filesystem path resolver.
+func (r *AgentRuntime) Resolver() *xdg.Resolver {
+	return r.resolver
+}
+
+// AgentDB returns the local SQLite database handle.
+func (r *AgentRuntime) AgentDB() *db.AgentDB {
+	return r.agentDB
+}
+
+// BridgeClient returns the gRPC bridge client.
+func (r *AgentRuntime) BridgeClient() *bridge.Client {
+	return r.bridgeClient
+}
+
+// IdentityConfig returns the loaded identity YAML profile.
+func (r *AgentRuntime) IdentityConfig() *xdg.AgentIdentityConfig {
+	return r.identityConfig
+}
+
+// SocketPath returns the bound UNIX domain socket path.
+func (r *AgentRuntime) SocketPath() string {
+	return r.socketPath
+}
+
+// PID returns the current process ID.
+func (r *AgentRuntime) PID() int {
+	return r.pid
+}
+
+// Status returns the current runtime execution status (e.g., INITIALIZING, RUNNING, DEAD, STOPPED).
+func (r *AgentRuntime) Status() string {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.status
+}
+
+// Health returns the agent's current health points.
+func (r *AgentRuntime) Health() float32 {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	if r.latestFrame != nil && r.latestFrame.Status != nil {
+		return r.latestFrame.Status.Health
+	}
+	return 0
+}
+
+// FoodLevel returns the agent's current hunger points (0-20).
+func (r *AgentRuntime) FoodLevel() int32 {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	if r.latestFrame != nil && r.latestFrame.Status != nil {
+		return r.latestFrame.Status.FoodLevel
+	}
+	return 0
+}
+
+// Position returns the agent's current 3D world position coordinates.
+func (r *AgentRuntime) Position() *civquestv1.Vec3 {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	if r.latestFrame != nil && r.latestFrame.Status != nil {
+		return r.latestFrame.Status.Position
+	}
+	return nil
+}
+
+// NavigationState returns the current Baritone navigation state enum.
+func (r *AgentRuntime) NavigationState() civquestv1.NavigationState {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	if r.latestFrame != nil && r.latestFrame.Status != nil {
+		return r.latestFrame.Status.NavigationState
+	}
+	return civquestv1.NavigationState_NAVIGATION_STATE_UNSPECIFIED
+}
+
+// WorldTick returns the latest observed Minecraft world tick.
+func (r *AgentRuntime) WorldTick() int64 {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	if r.latestFrame != nil {
+		return r.latestFrame.WorldTick
+	}
+	return 0
+}
+
+// LastProcessedSequenceID returns the latest sequence ID acknowledged by the game server.
+func (r *AgentRuntime) LastProcessedSequenceID() int64 {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.lastProcessedSeqID
+}
+
+// LatestFrame returns a copy of the most recently received sensory TelemetryFrame.
+func (r *AgentRuntime) LatestFrame() *civquestv1.TelemetryFrame {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.latestFrame
+}
+
+// IsDead returns true if a terminal DeathEvent has been observed.
+func (r *AgentRuntime) IsDead() bool {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.isDead
+}
+
+// DeathEvent returns the terminal DeathEvent, if recorded.
+func (r *AgentRuntime) DeathEvent() *civquestv1.DeathEvent {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.deathEvent
+}
+
+// UptimeSeconds returns elapsed runtime duration in seconds.
+func (r *AgentRuntime) UptimeSeconds() float64 {
+	return time.Since(r.startTime).Seconds()
+}
+
+// QueueIntent enqueues an AgentIntent into the outbound queue.
+// If the intent's SequenceId is <= 0, it is automatically assigned via atomic increment.
+// If the intent's AgentId is blank, it defaults to the runtime's AgentID.
+func (r *AgentRuntime) QueueIntent(intent *civquestv1.AgentIntent) error {
+	if intent == nil {
+		return ErrNilIntent
+	}
+
+	select {
+	case <-r.done:
+		return ErrRuntimeStopped
+	default:
+	}
+
+	if intent.AgentId == "" {
+		intent.AgentId = r.agentID
+	}
+	if intent.SequenceId <= 0 {
+		intent.SequenceId = r.sequenceID.Add(1)
+	}
+
+	select {
+	case r.intentQueue <- intent:
+		return nil
+	case <-r.done:
+		return ErrRuntimeStopped
+	default:
+		return ErrQueueFull
+	}
+}
+
+// EnqueueIntent is an alias for QueueIntent.
+func (r *AgentRuntime) EnqueueIntent(intent *civquestv1.AgentIntent) error {
+	return r.QueueIntent(intent)
+}
+
+// Start boots the runtime: initializes the UNIX diagnostic socket, establishes
+// the bidirectional gRPC stream, sends the initial handshake intent to register the agent
+// in the server StreamRegistry, and runs the telemetry loop.
+//
+// Start blocks until the context is canceled, Stop() is called, or a DeathEvent is processed.
+func (r *AgentRuntime) Start(parentCtx context.Context) error {
+	if r.connector == nil {
+		return fmt.Errorf("no StreamConnector or BridgeClient provided to AgentRuntime")
+	}
+
+	r.ctx, r.cancel = context.WithCancel(parentCtx)
+	defer r.cancel()
+
+	// 1. Initialize and start UNIX Domain Socket listener
+	if err := r.startSocketServer(); err != nil {
+		return fmt.Errorf("failed to start agent socket server: %w", err)
+	}
+	defer r.stopSocketServer()
+
+	// 2. Establish bidirectional gRPC stream with Minecraft NeoForge server
+	stream, err := r.connector.ConnectAgent(r.ctx)
+	if err != nil {
+		return fmt.Errorf("failed to establish ConnectAgent gRPC stream: %w", err)
+	}
+
+	// 3. Send initial handshake intent so server StreamRegistry registers this agent ID immediately
+	handshake := &civquestv1.AgentIntent{
+		AgentId:    r.agentID,
+		SequenceId: r.sequenceID.Add(1),
+	}
+	if err := stream.Send(handshake); err != nil {
+		return fmt.Errorf("failed to send handshake intent: %w", err)
+	}
+
+	r.mu.Lock()
+	r.status = "RUNNING"
+	r.mu.Unlock()
+
+	// 4. Run intent sender goroutine
+	sendErrCh := make(chan error, 1)
+	go r.sendLoop(stream, sendErrCh)
+
+	// 5. Run telemetry receiver loop (blocks until stream terminates or death occurs)
+	recvErr := r.recvLoop(stream)
+
+	// Trigger clean shutdown
+	r.Stop()
+
+	// Drain sender error if any
+	var sendErr error
+	select {
+	case sendErr = <-sendErrCh:
+	default:
+	}
+
+	// Normal termination conditions:
+	// - Context cancellation / Stop()
+	// - DeathEvent received (permadeath clean exit code 0)
+	// - Clean stream EOF
+	if r.IsDead() {
+		return nil
+	}
+	if r.ctx.Err() != nil || errors.Is(recvErr, io.EOF) || errors.Is(recvErr, context.Canceled) || status.Code(recvErr) == codes.Canceled {
+		return nil
+	}
+	if recvErr != nil {
+		return fmt.Errorf("telemetry stream error: %w", recvErr)
+	}
+	if sendErr != nil && !errors.Is(sendErr, io.EOF) && !errors.Is(sendErr, context.Canceled) && status.Code(sendErr) != codes.Canceled {
+		return fmt.Errorf("intent stream send error: %w", sendErr)
+	}
+
+	return nil
+}
+
+// Stop cleanly terminates the runtime, closing active sockets and channels.
+func (r *AgentRuntime) Stop() {
+	r.stopOnce.Do(func() {
+		r.mu.Lock()
+		if !r.isDead {
+			r.status = "STOPPED"
+		}
+		r.mu.Unlock()
+
+		close(r.done)
+		if r.cancel != nil {
+			r.cancel()
+		}
+
+		r.stopSocketServer()
+
+		// Close agent database if open
+		if r.agentDB != nil {
+			_ = r.agentDB.Close()
+		}
+	})
+}
+
+// sendLoop reads queued AgentIntents and writes them to the gRPC stream.
+func (r *AgentRuntime) sendLoop(stream civquestv1.CivQuestBridgeService_ConnectAgentClient, errCh chan<- error) {
+	for {
+		select {
+		case <-r.ctx.Done():
+			errCh <- nil
+			return
+		case <-r.done:
+			errCh <- nil
+			return
+		case intent, ok := <-r.intentQueue:
+			if !ok {
+				errCh <- nil
+				return
+			}
+			if err := stream.Send(intent); err != nil {
+				errCh <- err
+				return
+			}
+		}
+	}
+}
+
+// recvLoop processes incoming 5 Hz TelemetryFrames from the server.
+func (r *AgentRuntime) recvLoop(stream civquestv1.CivQuestBridgeService_ConnectAgentClient) error {
+	for {
+		select {
+		case <-r.ctx.Done():
+			return r.ctx.Err()
+		case <-r.done:
+			return nil
+		default:
+		}
+
+		frame, err := stream.Recv()
+		if err != nil {
+			return err
+		}
+
+		r.processFrame(frame)
+
+		// If a terminal death event was encountered, exit the loop cleanly
+		if frame.GetDeathEvent() != nil {
+			return nil
+		}
+	}
+}
+
+// processFrame ingests a single TelemetryFrame in sub-millisecond time.
+func (r *AgentRuntime) processFrame(frame *civquestv1.TelemetryFrame) {
+	if frame == nil {
+		return
+	}
+
+	var deathEv *civquestv1.DeathEvent
+
+	r.mu.Lock()
+	r.latestFrame = frame
+	r.lastProcessedSeqID = frame.LastProcessedSequenceId
+
+	if frame.DeathEvent != nil {
+		r.isDead = true
+		r.deathEvent = frame.DeathEvent
+		r.status = "DEAD"
+		deathEv = frame.DeathEvent
+	}
+	r.mu.Unlock()
+
+	// Update inventory cache file atomically if inventory changed
+	if frame.Status != nil && frame.Status.Inventory != nil {
+		newCache := NewInventoryCache(r.agentID, frame.WorldTick, frame.Status.Inventory)
+		r.mu.RLock()
+		changed := !InventoryEqual(r.lastCachedItems, newCache.Items)
+		r.mu.RUnlock()
+
+		if changed {
+			cachePath := r.resolver.AgentInventoryCachePath(r.agentID)
+			if err := WriteInventoryCache(cachePath, newCache); err == nil {
+				r.mu.Lock()
+				r.lastCachedItems = newCache.Items
+				r.mu.Unlock()
+			}
+		}
+	}
+
+	// Trigger permadeath terminal callback if death event occurred
+	if deathEv != nil && r.onDeath != nil {
+		r.onDeath(deathEv)
+	}
+}
+
+// startSocketServer establishes the diagnostic UNIX domain socket.
+func (r *AgentRuntime) startSocketServer() error {
+	dir := filepath.Dir(r.socketPath)
+	if err := os.MkdirAll(dir, 0750); err != nil {
+		return fmt.Errorf("creating socket directory %s: %w", dir, err)
+	}
+
+	// Remove any stale socket file left behind by previous process
+	_ = os.Remove(r.socketPath)
+
+	l, err := net.Listen("unix", r.socketPath)
+	if err != nil {
+		return fmt.Errorf("listening on unix socket %s: %w", r.socketPath, err)
+	}
+	r.listener = l
+
+	go r.serveSocket()
+	return nil
+}
+
+// stopSocketServer closes the listener and unlinks the socket file.
+func (r *AgentRuntime) stopSocketServer() {
+	if r.listener != nil {
+		_ = r.listener.Close()
+		r.listener = nil
+	}
+	if r.socketPath != "" {
+		_ = os.Remove(r.socketPath)
+	}
+}
+
+// serveSocket accepts incoming connections and serves live JSON status snapshots.
+func (r *AgentRuntime) serveSocket() {
+	defer close(r.socketDone)
+
+	for {
+		conn, err := r.listener.Accept()
+		if err != nil {
+			// Listener was closed
+			return
+		}
+
+		go r.handleSocketConn(conn)
+	}
+}
+
+// handleSocketConn serializes and returns the current status snapshot to a socket client.
+func (r *AgentRuntime) handleSocketConn(conn net.Conn) {
+	defer conn.Close()
+
+	r.mu.RLock()
+	statusSnapshot := r.status
+	worldTick := int64(0)
+	health := float32(0)
+	foodLevel := int32(0)
+	navState := "NAVIGATION_STATE_UNSPECIFIED"
+	var pos *SocketPosition
+
+	if r.latestFrame != nil {
+		worldTick = r.latestFrame.WorldTick
+		if r.latestFrame.Status != nil {
+			health = r.latestFrame.Status.Health
+			foodLevel = r.latestFrame.Status.FoodLevel
+			navState = r.latestFrame.Status.NavigationState.String()
+			if r.latestFrame.Status.Position != nil {
+				pos = &SocketPosition{
+					X: r.latestFrame.Status.Position.X,
+					Y: r.latestFrame.Status.Position.Y,
+					Z: r.latestFrame.Status.Position.Z,
+				}
+			}
+		}
+	}
+	r.mu.RUnlock()
+
+	resp := SocketStatusResponse{
+		Agent:           r.agentID,
+		Clan:            r.clanID,
+		Status:          statusSnapshot,
+		PID:             r.pid,
+		WorldTick:       worldTick,
+		Health:          health,
+		FoodLevel:       foodLevel,
+		Position:        pos,
+		NavigationState: navState,
+		UptimeSeconds:   r.UptimeSeconds(),
+	}
+
+	data, err := json.Marshal(resp)
+	if err == nil {
+		data = append(data, '\n')
+		_, _ = conn.Write(data)
+	}
+}
