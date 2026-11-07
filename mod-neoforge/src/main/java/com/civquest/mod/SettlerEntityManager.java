@@ -1,6 +1,9 @@
 package com.civquest.mod;
 
+import com.civquest.mod.grpc.v1.DamageEvent;
 import com.civquest.mod.grpc.v1.SpawnAgentRequest;
+import com.civquest.mod.grpc.v1.TelemetryFrame;
+import com.civquest.mod.sensory.SensoryFrustumCollector;
 import com.mojang.authlib.GameProfile;
 import com.mojang.authlib.properties.Property;
 import com.mojang.logging.LogUtils;
@@ -10,6 +13,8 @@ import net.minecraft.network.protocol.game.ClientboundPlayerInfoUpdatePacket;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.level.ChunkPos;
+import net.neoforged.neoforge.event.entity.living.LivingDamageEvent;
+import net.neoforged.neoforge.event.tick.ServerTickEvent;
 import org.slf4j.Logger;
 
 import java.util.Base64;
@@ -31,13 +36,23 @@ public class SettlerEntityManager {
 
     private final ConcurrentHashMap<String, SettlerEntity> settlers = new ConcurrentHashMap<>();
     private volatile StreamRegistry streamRegistry;
+    private final SensoryFrustumCollector sensoryCollector;
 
     public SettlerEntityManager() {
-        this(null);
+        this(null, new SensoryFrustumCollector());
     }
 
     public SettlerEntityManager(StreamRegistry streamRegistry) {
+        this(streamRegistry, new SensoryFrustumCollector());
+    }
+
+    public SettlerEntityManager(StreamRegistry streamRegistry, SensoryFrustumCollector sensoryCollector) {
         this.streamRegistry = streamRegistry;
+        this.sensoryCollector = sensoryCollector != null ? sensoryCollector : new SensoryFrustumCollector();
+    }
+
+    public SensoryFrustumCollector getSensoryCollector() {
+        return sensoryCollector;
     }
 
     public StreamRegistry getStreamRegistry() {
@@ -46,6 +61,9 @@ public class SettlerEntityManager {
 
     public void setStreamRegistry(StreamRegistry streamRegistry) {
         this.streamRegistry = streamRegistry;
+        for (SettlerEntity settler : settlers.values()) {
+            settler.setStreamRegistry(streamRegistry);
+        }
     }
 
     public CompletableFuture<SettlerEntity> spawnSettler(MinecraftServer server, SpawnAgentRequest request) {
@@ -117,6 +135,8 @@ public class SettlerEntityManager {
         }
 
         SettlerEntity settler = new SettlerEntity(level, profile, agentId, request.getClanId());
+        settler.setStreamRegistry(this.streamRegistry);
+        settler.setSensoryCollector(this.sensoryCollector);
 
         if (request.getSkinPngBytes() != null && !request.getSkinPngBytes().isEmpty()) {
             if (request.getSkinPngBytes().size() > 65536) {
@@ -194,6 +214,9 @@ public class SettlerEntityManager {
         settler.setRemovalListener(removedSettler -> {
             removedSettler.releaseForcedChunk();
             settlers.remove(removedSettler.getAgentId(), removedSettler);
+            if (streamRegistry != null) {
+                streamRegistry.close(removedSettler.getAgentId());
+            }
             if (server != null && server.getPlayerList() != null) {
                 ClientboundPlayerInfoRemovePacket removePacket =
                         new ClientboundPlayerInfoRemovePacket(List.of(removedSettler.getUUID()));
@@ -248,6 +271,63 @@ public class SettlerEntityManager {
 
     public int count() {
         return settlers.size();
+    }
+
+    public void onServerTick(ServerTickEvent.Post event) {
+        MinecraftServer server = event.getServer();
+        if (server != null) {
+            tickTelemetry(server.getTickCount());
+        }
+    }
+
+    public void tickTelemetry() {
+        tickTelemetry(-1);
+    }
+
+    public void tickTelemetry(int tickCount) {
+        if (streamRegistry == null || settlers.isEmpty()) {
+            return;
+        }
+        for (SettlerEntity settler : settlers.values()) {
+            if (tickCount >= 0) {
+                int hash = Math.abs(settler.getUUID().hashCode());
+                if (hash < 0) {
+                    hash = 0;
+                }
+                if ((hash + tickCount) % 4 != 0) {
+                    continue;
+                }
+            }
+            if (settler.isAlive() && !settler.isRemoved()) {
+                if (streamRegistry.isRegistered(settler.getAgentId())) {
+                    try {
+                        TelemetryFrame frame = sensoryCollector.collectFrame(settler, null, null);
+                        streamRegistry.sendFrame(settler.getAgentId(), frame);
+                    } catch (Exception e) {
+                        LOGGER.error("Error streaming 5 Hz telemetry frame for settler '{}': {}",
+                                settler.getAgentId(), e.getMessage(), e);
+                    }
+                }
+            }
+        }
+    }
+
+    public void onLivingDamage(LivingDamageEvent.Post event) {
+        if (event.getEntity() instanceof SettlerEntity settler) {
+            if (settler.isDeadOrDying() || settler.getHealth() <= 0.0f) {
+                return;
+            }
+            if (streamRegistry != null && streamRegistry.isRegistered(settler.getAgentId())) {
+                try {
+                    DamageEvent damageEvent = SensoryFrustumCollector.buildDamageEvent(event.getSource(), event.getNewDamage());
+                    TelemetryFrame frame = sensoryCollector.collectFrame(settler, damageEvent, null);
+                    streamRegistry.sendFrame(settler.getAgentId(), frame);
+                } catch (Exception e) {
+                    LOGGER.error("Error streaming immediate damage telemetry frame for settler '{}': {}",
+                            settler.getAgentId(), e.getMessage(), e);
+                }
+            }
+        }
     }
 
     public void clearAll() {

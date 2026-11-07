@@ -8,10 +8,12 @@ import net.neoforged.bus.api.IEventBus;
 import net.neoforged.fml.common.Mod;
 import net.neoforged.neoforge.common.NeoForge;
 import net.neoforged.neoforge.event.RegisterGameTestsEvent;
+import net.neoforged.neoforge.event.entity.living.LivingDamageEvent;
 import net.neoforged.neoforge.event.entity.player.PlayerEvent;
 import net.neoforged.neoforge.event.server.ServerStartedEvent;
 import net.neoforged.neoforge.event.server.ServerStartingEvent;
 import net.neoforged.neoforge.event.server.ServerStoppingEvent;
+import net.neoforged.neoforge.event.tick.ServerTickEvent;
 import net.neoforged.neoforge.network.event.RegisterPayloadHandlersEvent;
 import net.neoforged.neoforge.network.registration.PayloadRegistrar;
 import org.slf4j.Logger;
@@ -35,6 +37,8 @@ public class CivQuestMod {
         NeoForge.EVENT_BUS.addListener(this::onServerStarted);
         NeoForge.EVENT_BUS.addListener(this::onServerStopping);
         NeoForge.EVENT_BUS.addListener(this::onPlayerLoggedIn);
+        NeoForge.EVENT_BUS.addListener(this::onServerTick);
+        NeoForge.EVENT_BUS.addListener(this::onLivingDamage);
     }
 
     private void onRegisterPayloadHandlers(RegisterPayloadHandlersEvent event) {
@@ -65,6 +69,20 @@ public class CivQuestMod {
 
     private void onServerStopping(ServerStoppingEvent event) {
         bridgeServer.onServerStopping(event);
+    }
+
+    private void onServerTick(ServerTickEvent.Post event) {
+        SettlerEntityManager manager = getSettlerEntityManager();
+        if (manager != null) {
+            manager.onServerTick(event);
+        }
+    }
+
+    private void onLivingDamage(LivingDamageEvent.Post event) {
+        SettlerEntityManager manager = getSettlerEntityManager();
+        if (manager != null) {
+            manager.onLivingDamage(event);
+        }
     }
 
     private void onPlayerLoggedIn(PlayerEvent.PlayerLoggedInEvent event) {

@@ -658,4 +658,30 @@ public class StreamRegistryTest {
         assertFalse(registry.isRegistered("agent-disconnect"), "Agent must be unregistered upon stream cancellation");
         assertEquals(0, registry.getActiveAgentCount());
     }
+
+    @Test
+    @DisplayName("sendCriticalFrame bypasses backpressure whereas sendFrame drops")
+    void testSendCriticalFrameBypassesBackpressure() {
+        StreamRegistry registry = new StreamRegistry();
+        TestServerCallStreamObserver<TelemetryFrame> observer = new TestServerCallStreamObserver<>();
+        registry.register("agent-backpressure", observer);
+
+        TelemetryFrame regularFrame = TelemetryFrame.newBuilder().setWorldTick(100L).build();
+        TelemetryFrame deathFrame = TelemetryFrame.newBuilder().setWorldTick(101L).build();
+
+        // 1. Normal flow: observer is ready
+        observer.ready = true;
+        assertTrue(registry.sendFrame("agent-backpressure", regularFrame));
+        assertEquals(1, observer.receivedFrames.size());
+
+        // 2. Backpressure active: observer not ready
+        observer.ready = false;
+        assertFalse(registry.sendFrame("agent-backpressure", regularFrame), "Regular frame must be dropped when not ready");
+        assertEquals(1, observer.receivedFrames.size(), "Dropped frame must not be delivered");
+
+        // 3. Critical frame: bypasses backpressure
+        assertTrue(registry.sendCriticalFrame("agent-backpressure", deathFrame), "Critical frame must bypass backpressure");
+        assertEquals(2, observer.receivedFrames.size(), "Critical frame must be delivered despite backpressure");
+        assertEquals(101L, observer.receivedFrames.get(1).getWorldTick());
+    }
 }
