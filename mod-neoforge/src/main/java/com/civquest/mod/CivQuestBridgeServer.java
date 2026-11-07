@@ -57,6 +57,7 @@ public class CivQuestBridgeServer {
     private final String sharedKey;
     private final Path discoveryPath;
     private final boolean enabled;
+    private final StreamRegistry streamRegistry;
 
     private Server server;
     private HealthStatusManager healthStatusManager;
@@ -99,14 +100,20 @@ public class CivQuestBridgeServer {
 
         String discPath = System.getProperty(PROP_DISCOVERY_PATH, DEFAULT_DISCOVERY_PATH).trim();
         this.discoveryPath = Path.of(discPath);
+        this.streamRegistry = new StreamRegistry();
     }
 
     public CivQuestBridgeServer(String host, int port, String sharedKey, Path discoveryPath) {
+        this(host, port, sharedKey, discoveryPath, new StreamRegistry());
+    }
+
+    public CivQuestBridgeServer(String host, int port, String sharedKey, Path discoveryPath, StreamRegistry streamRegistry) {
         this.enabled = true;
         this.configuredHost = (host == null || host.isBlank()) ? "127.0.0.1" : host.trim();
         this.configuredPort = port;
         this.sharedKey = resolveSharedKey(sharedKey);
         this.discoveryPath = discoveryPath != null ? discoveryPath : Path.of(DEFAULT_DISCOVERY_PATH);
+        this.streamRegistry = streamRegistry != null ? streamRegistry : new StreamRegistry();
     }
 
     public static String generateSecureSharedKey() {
@@ -168,7 +175,7 @@ public class CivQuestBridgeServer {
 
         this.healthStatusManager = new HealthStatusManager();
         this.authInterceptor = new SharedKeyAuthInterceptor(sharedKey);
-        this.bridgeService = new CivQuestBridgeServiceImpl();
+        this.bridgeService = new CivQuestBridgeServiceImpl(streamRegistry);
 
         InetSocketAddress socketAddress = new InetSocketAddress(configuredHost, configuredPort);
         this.server = NettyServerBuilder.forAddress(socketAddress)
@@ -220,6 +227,10 @@ public class CivQuestBridgeServer {
         }
 
         writeDiscoveryFile("STOPPED");
+
+        if (streamRegistry != null) {
+            streamRegistry.closeAll();
+        }
 
         server.shutdown();
         try {
@@ -367,5 +378,13 @@ public class CivQuestBridgeServer {
 
     public HealthStatusManager getHealthStatusManager() {
         return healthStatusManager;
+    }
+
+    public StreamRegistry getStreamRegistry() {
+        return streamRegistry;
+    }
+
+    public CivQuestBridgeServiceImpl getBridgeService() {
+        return bridgeService;
     }
 }
