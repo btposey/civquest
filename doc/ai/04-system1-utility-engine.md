@@ -5,6 +5,7 @@ System 1 is the deterministic survival and routine engine running in the Go agen
 - **Latency Budget**: $<5\text{ ms}$ per incoming frame.
 - **Token Cost**: Exactly 0 LLM tokens.
 - **Execution Model**: Pure in-memory state evaluation against incoming `TelemetryFrame` data and local SQLite graph caches.
+- **Hardware Acceleration (CPU SIMD)**: System 1 leverages host CPU multimedia vector extensions (AVX2 / AVX-512 / ARM NEON) for 3D spatial geometry, threat distance matrices, and utility scoring. This guarantees sub-millisecond execution on CPU threads while preserving 100% of GPU compute and VRAM for System 2 LLM inference.
 
 ## 2. Fight-or-Flight Confidence Mathematics
 
