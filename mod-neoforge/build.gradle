@@ -18,7 +18,8 @@ def prepareIntegrationServer = tasks.register('prepareIntegrationServer') {
     description = 'Prepares isolated sandbox directory, eula.txt, and server.properties for headless integration server'
     group = 'run'
 
-    outputs.dir(integrationServerDir)
+    outputs.file(integrationServerDir.map { it.file('eula.txt') })
+    outputs.file(integrationServerDir.map { it.file('server.properties') })
 
     doLast {
         def targetDir = integrationServerDir.get().asFile
@@ -45,13 +46,6 @@ tasks.matching { it.name == 'runIntegrationServer' }.configureEach {
 
 tasks.matching { it.name == 'prepareIntegrationServerRun' }.configureEach {
     dependsOn(prepareIntegrationServer)
-}
-
-tasks.register('integrationTest', Exec) {
-    group = 'verification'
-    description = 'Executes end-to-end integration test runner orchestrating headless server and Go probe'
-    workingDir = project.rootDir
-    commandLine 'bash', "${project.rootDir}/scripts/run-integration-test.sh"
 }
 
 neoForge {

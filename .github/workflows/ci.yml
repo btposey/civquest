@@ -160,16 +160,14 @@ jobs:
       - name: Run End-to-End In-Game Integration Test
         run: |
           chmod +x gradlew scripts/run-integration-test.sh || true
-          ./gradlew :mod-neoforge:integrationTest
+          ./scripts/run-integration-test.sh
 
       - name: Upload Integration Server Log Artifact
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: civquest-integration-server-log-${{ needs.resolve-version.outputs.semver }}
-          path: |
-            build/integration-server/server.log
-            mod-neoforge/build/integration-server/server.log
+          path: mod-neoforge/build/integration-server/server.log
           if-no-files-found: warn
 
   package-bundle:
