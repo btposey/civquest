@@ -14,12 +14,29 @@ import io.grpc.stub.StreamObserver;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.util.Objects;
+import java.util.concurrent.atomic.AtomicReference;
+
 /**
  * Initial bridge service implementation providing baseline responses for agent spawning,
  * despawning, control streaming, and recipe graph export.
  */
 public class CivQuestBridgeServiceImpl extends CivQuestBridgeServiceGrpc.CivQuestBridgeServiceImplBase {
     private static final Logger LOGGER = LoggerFactory.getLogger(CivQuestBridgeServiceImpl.class);
+
+    private final StreamRegistry streamRegistry;
+
+    public CivQuestBridgeServiceImpl() {
+        this(new StreamRegistry());
+    }
+
+    public CivQuestBridgeServiceImpl(StreamRegistry streamRegistry) {
+        this.streamRegistry = Objects.requireNonNull(streamRegistry, "streamRegistry cannot be null");
+    }
+
+    public StreamRegistry getStreamRegistry() {
+        return streamRegistry;
+    }
 
     @Override
     public StreamObserver<AgentIntent> connectAgent(StreamObserver<TelemetryFrame> responseObserver) {
@@ -38,8 +55,23 @@ public class CivQuestBridgeServiceImpl extends CivQuestBridgeServiceGrpc.CivQues
         responseObserver.onNext(initialFrame);
 
         return new StreamObserver<AgentIntent>() {
+            private final AtomicReference<String> sessionAgentId = new AtomicReference<>(null);
+
             @Override
             public void onNext(AgentIntent value) {
+                String intentAgentId = value.getAgentId();
+                if (intentAgentId != null && !intentAgentId.isBlank()) {
+                    String current = sessionAgentId.get();
+                    if (!intentAgentId.equals(current) || streamRegistry.getObserver(intentAgentId) != responseObserver) {
+                        if (current != null && !current.equals(intentAgentId)) {
+                            streamRegistry.unregister(current, responseObserver);
+                        }
+                        sessionAgentId.set(intentAgentId);
+                        streamRegistry.register(intentAgentId, responseObserver);
+                        LOGGER.info("Registered agent '{}' in StreamRegistry", intentAgentId);
+                    }
+                }
+
                 LOGGER.debug("Received AgentIntent: agent_id={}, action_case={}",
                         value.getAgentId(), value.getActionCase());
             }
@@ -47,12 +79,26 @@ public class CivQuestBridgeServiceImpl extends CivQuestBridgeServiceGrpc.CivQues
             @Override
             public void onError(Throwable t) {
                 LOGGER.warn("ConnectAgent stream error: {}", t.getMessage());
+                String agentId = sessionAgentId.get();
+                if (agentId != null) {
+                    streamRegistry.unregister(agentId, responseObserver);
+                    LOGGER.info("Unregistered agent '{}' from StreamRegistry due to stream error", agentId);
+                }
             }
 
             @Override
             public void onCompleted() {
                 LOGGER.info("ConnectAgent stream completed by client");
-                responseObserver.onCompleted();
+                String agentId = sessionAgentId.get();
+                if (agentId != null) {
+                    streamRegistry.unregister(agentId, responseObserver);
+                    LOGGER.info("Unregistered agent '{}' from StreamRegistry due to stream completion", agentId);
+                }
+                try {
+                    responseObserver.onCompleted();
+                } catch (Throwable t) {
+                    LOGGER.debug("Exception while completing responseObserver: {}", t.getMessage());
+                }
             }
         };
     }
