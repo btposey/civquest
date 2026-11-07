@@ -12,6 +12,41 @@ java {
     }
 }
 
+def integrationServerDir = layout.buildDirectory.dir('integration-server')
+
+def prepareIntegrationServer = tasks.register('prepareIntegrationServer') {
+    description = 'Prepares isolated sandbox directory, eula.txt, and server.properties for headless integration server'
+    group = 'run'
+
+    outputs.dir(integrationServerDir)
+
+    doLast {
+        def targetDir = integrationServerDir.get().asFile
+        if (!targetDir.exists()) {
+            targetDir.mkdirs()
+        }
+
+        new File(targetDir, 'eula.txt').text = "eula=true\n"
+
+        new File(targetDir, 'server.properties').text = """level-type=minecraft:flat
+pause-when-empty-seconds=-1
+max-tick-time=-1
+online-mode=false
+sync-chunk-writes=false
+server-port=0
+"""
+    }
+}
+
+tasks.matching { it.name == 'runIntegrationServer' }.configureEach {
+    dependsOn(prepareIntegrationServer)
+    standardInput = System.in
+}
+
+tasks.matching { it.name == 'prepareIntegrationServerRun' }.configureEach {
+    dependsOn(prepareIntegrationServer)
+}
+
 neoForge {
     version = '21.1.265'
 
@@ -28,6 +63,16 @@ neoForge {
             programArgument '--nogui'
             jvmArguments.addAll('-Xms1024m', '-Xmx2048m')
         }
+        integrationServer {
+            server()
+            programArgument '--nogui'
+            systemProperty 'civquest.grpc.bind', '127.0.0.1:0'
+            systemProperty 'civquest.discovery.path', 'civquest-server-meta.json'
+            systemProperty 'java.awt.headless', 'true'
+            systemProperty 'neoforge.enabledGameTestNamespaces', 'civquest'
+            jvmArguments.addAll('-Xms1024m', '-Xmx2048m')
+            gameDirectory = project.layout.buildDirectory.dir('integration-server')
+        }
     }
 
     mods {
@@ -37,20 +82,36 @@ neoForge {
     }
 }
 
+configurations {
+    additionalRuntimeClasspath.extendsFrom implementation
+}
+
 dependencies {
     implementation 'com.google.guava:guava:32.1.2-jre'
     implementation 'com.google.guava:failureaccess:1.0.1'
+    implementation 'org.slf4j:slf4j-api:2.0.9'
     implementation 'com.google.protobuf:protobuf-java:4.28.3'
     implementation('io.grpc:grpc-stub:1.68.1') {
         exclude group: 'com.google.guava'
+        exclude group: 'com.google.code.gson'
     }
     implementation('io.grpc:grpc-protobuf:1.68.1') {
         exclude group: 'com.google.guava'
+        exclude group: 'com.google.code.gson'
+    }
+    implementation('io.grpc:grpc-netty-shaded:1.68.1') {
+        exclude group: 'com.google.guava'
+        exclude group: 'com.google.code.gson'
+    }
+    implementation('io.grpc:grpc-services:1.68.1') {
+        exclude group: 'com.google.guava'
+        exclude group: 'com.google.code.gson'
     }
     compileOnly 'javax.annotation:javax.annotation-api:1.3.2' // for javax.annotation.Generated
 
     testImplementation 'org.junit.jupiter:junit-jupiter:5.11.3'
     testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+    testRuntimeOnly 'org.slf4j:slf4j-simple:2.0.9'
 }
 
 test {
