@@ -123,11 +123,9 @@ jobs:
         run: |
           mkdir -p dist/mod
           if [ -f "mod-neoforge/build.gradle" ]; then
-            cd mod-neoforge
             chmod +x gradlew || true
-            ./gradlew build -PgameVersion="${ENGINE_COMPAT}" -PloaderVersion="${LOADER_VER}" -PmodVersion="${SEMVER}"
-            cp build/libs/*.jar "../dist/mod/${ARTIFACT_BASE}.jar" || true
-            cd ..
+            ./gradlew :mod-neoforge:build -PgameVersion="${ENGINE_COMPAT}" -PloaderVersion="${LOADER_VER}" -PmodVersion="${SEMVER}"
+            cp mod-neoforge/build/libs/*.jar "dist/mod/${ARTIFACT_BASE}.jar" || true
           else
             echo "Placeholder: Gradle project will compile once mod-neoforge is scaffolded"
             touch "dist/mod/${ARTIFACT_BASE}.jar"
