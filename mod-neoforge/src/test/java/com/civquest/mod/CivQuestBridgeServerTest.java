@@ -1,0 +1,204 @@
+package com.civquest.mod;
+
+import com.civquest.mod.grpc.v1.AgentIntent;
+import com.civquest.mod.grpc.v1.CivQuestBridgeServiceGrpc;
+import com.civquest.mod.grpc.v1.DespawnAgentRequest;
+import com.civquest.mod.grpc.v1.DespawnAgentResponse;
+import com.civquest.mod.grpc.v1.ExportRecipeRequest;
+import com.civquest.mod.grpc.v1.ExportRecipeResponse;
+import com.civquest.mod.grpc.v1.SpawnAgentRequest;
+import com.civquest.mod.grpc.v1.SpawnAgentResponse;
+import com.civquest.mod.grpc.v1.TelemetryFrame;
+import io.grpc.ManagedChannel;
+import io.grpc.ManagedChannelBuilder;
+import io.grpc.Metadata;
+import io.grpc.Status;
+import io.grpc.StatusRuntimeException;
+import io.grpc.health.v1.HealthCheckRequest;
+import io.grpc.health.v1.HealthCheckResponse;
+import io.grpc.health.v1.HealthGrpc;
+import io.grpc.stub.MetadataUtils;
+import io.grpc.stub.StreamObserver;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
+
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.UUID;
+import java.util.concurrent.ArrayBlockingQueue;
+import java.util.concurrent.BlockingQueue;
+import java.util.concurrent.TimeUnit;
+
+import static org.junit.jupiter.api.Assertions.*;
+
+public class CivQuestBridgeServerTest {
+
+    @TempDir
+    Path tempDir;
+
+    private CivQuestBridgeServer bridgeServer;
+    private ManagedChannel channel;
+    private Path discoveryPath;
+    private String sharedKey;
+
+    @BeforeEach
+    void setUp() throws IOException {
+        discoveryPath = tempDir.resolve("civquest-server-meta.json");
+        sharedKey = "test-secret-" + UUID.randomUUID();
+        bridgeServer = new CivQuestBridgeServer("127.0.0.1", 0, sharedKey, discoveryPath);
+        bridgeServer.start();
+
+        channel = ManagedChannelBuilder.forAddress("127.0.0.1", bridgeServer.getBoundPort())
+                .usePlaintext()
+                .build();
+    }
+
+    @AfterEach
+    void tearDown() throws InterruptedException {
+        if (channel != null && !channel.isShutdown()) {
+            channel.shutdown();
+            channel.awaitTermination(2, TimeUnit.SECONDS);
+        }
+        if (bridgeServer != null && bridgeServer.isRunning()) {
+            bridgeServer.stop();
+        }
+    }
+
+    @Test
+    @DisplayName("Ephemeral port binding and metadata discovery generation")
+    void testEphemeralPortAndDiscovery() throws IOException {
+        assertTrue(bridgeServer.isRunning());
+        assertTrue(bridgeServer.getBoundPort() > 0, "Bound port must be ephemeral dynamic port > 0");
+        assertEquals("127.0.0.1", bridgeServer.getBoundHost());
+        assertEquals(sharedKey, bridgeServer.getSharedKey());
+
+        assertTrue(Files.exists(discoveryPath), "Discovery JSON must exist");
+        String jsonContent = Files.readString(discoveryPath);
+
+        assertTrue(jsonContent.contains("\"status\": \"READY\""), "Must contain READY status");
+        assertTrue(jsonContent.contains("\"grpc_transport\": \"tcp\""), "Must contain tcp transport");
+        assertTrue(jsonContent.contains("\"grpc_port\": " + bridgeServer.getBoundPort()), "Must contain bound port");
+        assertTrue(jsonContent.contains("\"grpc_host\": \"127.0.0.1\""), "Must contain host");
+        assertTrue(jsonContent.contains("\"server_pid\": " + ProcessHandle.current().pid()), "Must contain current PID");
+        assertTrue(jsonContent.contains("\"shared_key\": \"" + sharedKey + "\""), "Must contain shared key");
+    }
+
+    @Test
+    @DisplayName("Health check succeeds unauthenticated for readiness probes")
+    void testHealthCheckUnauthenticated() {
+        HealthGrpc.HealthBlockingStub healthStub = HealthGrpc.newBlockingStub(channel);
+        HealthCheckResponse response = healthStub.check(HealthCheckRequest.getDefaultInstance());
+
+        assertEquals(HealthCheckResponse.ServingStatus.SERVING, response.getStatus());
+
+        HealthCheckResponse serviceResponse = healthStub.check(
+                HealthCheckRequest.newBuilder().setService(CivQuestBridgeServiceGrpc.SERVICE_NAME).build()
+        );
+        assertEquals(HealthCheckResponse.ServingStatus.SERVING, serviceResponse.getStatus());
+    }
+
+    @Test
+    @DisplayName("Shared key authentication rejects missing or invalid token")
+    void testAuthRejection() {
+        CivQuestBridgeServiceGrpc.CivQuestBridgeServiceBlockingStub unauthStub =
+                CivQuestBridgeServiceGrpc.newBlockingStub(channel);
+
+        // Missing authorization header
+        StatusRuntimeException ex1 = assertThrows(StatusRuntimeException.class, () ->
+                unauthStub.spawnAgentEntity(SpawnAgentRequest.newBuilder().setAgentId("agent-1").build())
+        );
+        assertEquals(Status.Code.UNAUTHENTICATED, ex1.getStatus().getCode());
+
+        // Invalid authorization header
+        Metadata invalidHeaders = new Metadata();
+        invalidHeaders.put(SharedKeyAuthInterceptor.AUTHORIZATION_METADATA_KEY, "Bearer invalid-key");
+        CivQuestBridgeServiceGrpc.CivQuestBridgeServiceBlockingStub invalidStub =
+                unauthStub.withInterceptors(MetadataUtils.newAttachHeadersInterceptor(invalidHeaders));
+
+        StatusRuntimeException ex2 = assertThrows(StatusRuntimeException.class, () ->
+                invalidStub.spawnAgentEntity(SpawnAgentRequest.newBuilder().setAgentId("agent-1").build())
+        );
+        assertEquals(Status.Code.UNAUTHENTICATED, ex2.getStatus().getCode());
+    }
+
+    @Test
+    @DisplayName("Authenticated RPCs succeed with Bearer token")
+    void testAuthenticatedRPCs() {
+        Metadata authHeaders = new Metadata();
+        authHeaders.put(SharedKeyAuthInterceptor.AUTHORIZATION_METADATA_KEY, "Bearer " + sharedKey);
+
+        CivQuestBridgeServiceGrpc.CivQuestBridgeServiceBlockingStub authStub =
+                CivQuestBridgeServiceGrpc.newBlockingStub(channel)
+                        .withInterceptors(MetadataUtils.newAttachHeadersInterceptor(authHeaders));
+
+        // 1. SpawnAgentEntity
+        SpawnAgentResponse spawnResp = authStub.spawnAgentEntity(SpawnAgentRequest.newBuilder()
+                .setAgentId("agent-alpha")
+                .setDisplayName("Alpha")
+                .setClanId("clan-1")
+                .build());
+        assertTrue(spawnResp.getSuccess());
+        assertTrue(spawnResp.getMinecraftEntityId() > 0);
+        assertFalse(spawnResp.getOfflineUuid().isEmpty());
+
+        // 2. DespawnAgentEntity
+        DespawnAgentResponse despawnResp = authStub.despawnAgentEntity(DespawnAgentRequest.newBuilder()
+                .setAgentId("agent-alpha")
+                .build());
+        assertTrue(despawnResp.getSuccess());
+
+        // 3. ExportRecipeGraph
+        ExportRecipeResponse recipeResp = authStub.exportRecipeGraph(ExportRecipeRequest.newBuilder().build());
+        assertNotNull(recipeResp);
+    }
+
+    @Test
+    @DisplayName("ConnectAgent bidirectional stream receives baseline telemetry")
+    void testConnectAgentStream() throws InterruptedException {
+        Metadata authHeaders = new Metadata();
+        authHeaders.put(SharedKeyAuthInterceptor.AUTHORIZATION_METADATA_KEY, "Bearer " + sharedKey);
+
+        CivQuestBridgeServiceGrpc.CivQuestBridgeServiceStub asyncStub =
+                CivQuestBridgeServiceGrpc.newStub(channel)
+                        .withInterceptors(MetadataUtils.newAttachHeadersInterceptor(authHeaders));
+
+        BlockingQueue<TelemetryFrame> receivedFrames = new ArrayBlockingQueue<>(5);
+
+        StreamObserver<AgentIntent> requestObserver = asyncStub.connectAgent(new StreamObserver<>() {
+            @Override
+            public void onNext(TelemetryFrame frame) {
+                receivedFrames.offer(frame);
+            }
+
+            @Override
+            public void onError(Throwable t) {
+            }
+
+            @Override
+            public void onCompleted() {
+            }
+        });
+
+        TelemetryFrame initialFrame = receivedFrames.poll(5, TimeUnit.SECONDS);
+        assertNotNull(initialFrame, "Must receive initial TelemetryFrame");
+        assertTrue(initialFrame.getStatus().getHealth() > 0, "Initial frame health must be > 0");
+
+        requestObserver.onCompleted();
+    }
+
+    @Test
+    @DisplayName("Clean shutdown updates metadata file to STOPPED")
+    void testCleanShutdown() throws IOException {
+        assertTrue(bridgeServer.isRunning());
+        bridgeServer.stop();
+        assertFalse(bridgeServer.isRunning());
+
+        assertTrue(Files.exists(discoveryPath), "Discovery JSON must exist after shutdown");
+        String content = Files.readString(discoveryPath);
+        assertTrue(content.contains("\"status\": \"STOPPED\""), "Status must be updated to STOPPED");
+    }
+}
