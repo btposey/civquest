@@ -5,14 +5,19 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 )
 
 // Sentinel errors for path operations.
 var (
-	ErrInvalidAgentName = errors.New("invalid agent name")
-	ErrInvalidClanID    = errors.New("invalid clan ID")
+	ErrInvalidAgentName  = errors.New("invalid agent name")
+	ErrInvalidClanID     = errors.New("invalid clan ID")
+	ErrInvalidUUID       = errors.New("invalid UUID")
+	ErrInvalidIdentifier = errors.New("invalid identifier")
 )
+
+var validIdentifierRegex = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_-]{0,31}$`)
 
 // Resolver resolves filesystem paths in compliance with the XDG Base Directory specification.
 type Resolver struct {
@@ -127,7 +132,7 @@ func (r *Resolver) ConfigDir() string {
 	if r.customRoot != "" {
 		return filepath.Join(r.customRoot, "config", "civquest")
 	}
-	if val := r.getenv("XDG_CONFIG_HOME"); val != "" {
+	if val := r.getenv("XDG_CONFIG_HOME"); val != "" && filepath.IsAbs(val) {
 		return filepath.Join(val, "civquest")
 	}
 	return filepath.Join(r.getHomeDir(), ".config", "civquest")
@@ -141,7 +146,7 @@ func (r *Resolver) DataDir() string {
 	if r.customRoot != "" {
 		return filepath.Join(r.customRoot, "data", "civquest")
 	}
-	if val := r.getenv("XDG_DATA_HOME"); val != "" {
+	if val := r.getenv("XDG_DATA_HOME"); val != "" && filepath.IsAbs(val) {
 		return filepath.Join(val, "civquest")
 	}
 	return filepath.Join(r.getHomeDir(), ".local", "share", "civquest")
@@ -155,7 +160,7 @@ func (r *Resolver) StateDir() string {
 	if r.customRoot != "" {
 		return filepath.Join(r.customRoot, "state", "civquest")
 	}
-	if val := r.getenv("XDG_STATE_HOME"); val != "" {
+	if val := r.getenv("XDG_STATE_HOME"); val != "" && filepath.IsAbs(val) {
 		return filepath.Join(val, "civquest")
 	}
 	return filepath.Join(r.getHomeDir(), ".local", "state", "civquest")
@@ -169,14 +174,14 @@ func (r *Resolver) CacheDir() string {
 	if r.customRoot != "" {
 		return filepath.Join(r.customRoot, "cache", "civquest")
 	}
-	if val := r.getenv("XDG_CACHE_HOME"); val != "" {
+	if val := r.getenv("XDG_CACHE_HOME"); val != "" && filepath.IsAbs(val) {
 		return filepath.Join(val, "civquest")
 	}
 	return filepath.Join(r.getHomeDir(), ".cache", "civquest")
 }
 
 // RuntimeDir returns the base CivQuest runtime directory ($XDG_RUNTIME_DIR/civquest).
-// If unset, falls back to $XDG_STATE_HOME/civquest/run.
+// If unset or relative, falls back to $XDG_STATE_HOME/civquest/run.
 func (r *Resolver) RuntimeDir() string {
 	if r.runtimeDir != "" {
 		return filepath.Join(r.runtimeDir, "civquest")
@@ -184,7 +189,7 @@ func (r *Resolver) RuntimeDir() string {
 	if r.customRoot != "" {
 		return filepath.Join(r.customRoot, "run", "civquest")
 	}
-	if val := r.getenv("XDG_RUNTIME_DIR"); val != "" {
+	if val := r.getenv("XDG_RUNTIME_DIR"); val != "" && filepath.IsAbs(val) {
 		return filepath.Join(val, "civquest")
 	}
 	return filepath.Join(r.StateDir(), "run")
@@ -310,24 +315,42 @@ func (r *Resolver) GraveyardDir() string {
 }
 
 // GraveyardAgentDir returns $XDG_DATA_HOME/civquest/graveyard/{agent_name}_{uuid}_tick{tick}.
-func (r *Resolver) GraveyardAgentDir(agentName, uuid string, tick int64) string {
+func (r *Resolver) GraveyardAgentDir(agentName, uuid string, tick int64) (string, error) {
+	if err := validateIdentifier(agentName); err != nil {
+		return "", fmt.Errorf("%w: %s", ErrInvalidAgentName, err)
+	}
+	if err := validateGraveyardUUID(uuid); err != nil {
+		return "", err
+	}
 	dirName := fmt.Sprintf("%s_%s_tick%d", agentName, uuid, tick)
-	return filepath.Join(r.GraveyardDir(), dirName)
+	return filepath.Join(r.GraveyardDir(), dirName), nil
 }
 
 // GraveyardMemoryDBPath returns the archived memory database path for a deceased agent.
-func (r *Resolver) GraveyardMemoryDBPath(agentName, uuid string, tick int64) string {
-	return filepath.Join(r.GraveyardAgentDir(agentName, uuid, tick), "memory.db")
+func (r *Resolver) GraveyardMemoryDBPath(agentName, uuid string, tick int64) (string, error) {
+	dir, err := r.GraveyardAgentDir(agentName, uuid, tick)
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, "memory.db"), nil
 }
 
 // GraveyardDeathCertificatePath returns the death certificate JSON path for a deceased agent.
-func (r *Resolver) GraveyardDeathCertificatePath(agentName, uuid string, tick int64) string {
-	return filepath.Join(r.GraveyardAgentDir(agentName, uuid, tick), "death_certificate.json")
+func (r *Resolver) GraveyardDeathCertificatePath(agentName, uuid string, tick int64) (string, error) {
+	dir, err := r.GraveyardAgentDir(agentName, uuid, tick)
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, "death_certificate.json"), nil
 }
 
 // GraveyardEpitaphPath returns the epitaph text path for a deceased agent.
-func (r *Resolver) GraveyardEpitaphPath(agentName, uuid string, tick int64) string {
-	return filepath.Join(r.GraveyardAgentDir(agentName, uuid, tick), "epitaph.txt")
+func (r *Resolver) GraveyardEpitaphPath(agentName, uuid string, tick int64) (string, error) {
+	dir, err := r.GraveyardAgentDir(agentName, uuid, tick)
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, "epitaph.txt"), nil
 }
 
 // ==================== STATE PATHS ====================
@@ -347,9 +370,9 @@ func (r *Resolver) AgentLogPath(agentName string) string {
 	return filepath.Join(r.AgentStateDir(agentName), fmt.Sprintf("%s.log", agentName))
 }
 
-// AgentSocketPath returns $XDG_STATE_HOME/civquest/agents/{agent_name}/{agent_name}.sock.
+// AgentSocketPath returns $XDG_STATE_HOME/civquest/agents/{agent_name}.sock.
 func (r *Resolver) AgentSocketPath(agentName string) string {
-	return filepath.Join(r.AgentStateDir(agentName), fmt.Sprintf("%s.sock", agentName))
+	return filepath.Join(r.AgentsStateDir(), fmt.Sprintf("%s.sock", agentName))
 }
 
 // SupervisorPIDPath returns $XDG_STATE_HOME/civquest/supervisor.pid.
@@ -359,7 +382,8 @@ func (r *Resolver) SupervisorPIDPath() string {
 
 // ==================== DIRECTORY INITIALIZATION ====================
 
-// InitDirectories creates the standard CivQuest directory skeleton with 0750 permissions.
+// InitDirectories creates the standard CivQuest directory skeleton with 0750 permissions,
+// and the runtime directory with strict 0700 permissions per XDG specification.
 func (r *Resolver) InitDirectories() error {
 	dirs := []string{
 		r.ConfigDir(),
@@ -375,7 +399,6 @@ func (r *Resolver) InitDirectories() error {
 		r.StateDir(),
 		r.AgentsStateDir(),
 		r.CacheDir(),
-		r.RuntimeDir(),
 	}
 
 	for _, dir := range dirs {
@@ -383,6 +406,15 @@ func (r *Resolver) InitDirectories() error {
 			return fmt.Errorf("failed to create directory %s: %w", dir, err)
 		}
 	}
+
+	// RuntimeDir must have mode 0700 per XDG specification
+	if err := os.MkdirAll(r.RuntimeDir(), 0700); err != nil {
+		return fmt.Errorf("failed to create runtime directory %s: %w", r.RuntimeDir(), err)
+	}
+	if err := os.Chmod(r.RuntimeDir(), 0700); err != nil {
+		return fmt.Errorf("failed to chmod runtime directory %s: %w", r.RuntimeDir(), err)
+	}
+
 	return nil
 }
 
@@ -421,8 +453,28 @@ func validateIdentifier(id string) error {
 	if trimmed == "" {
 		return errors.New("identifier cannot be empty")
 	}
-	if strings.Contains(trimmed, "..") || strings.ContainsAny(trimmed, `/\:*?"<>|`) {
-		return fmt.Errorf("identifier %q contains invalid characters or path traversal elements", id)
+	if trimmed == "." || trimmed == ".." {
+		return errors.New("identifier cannot be '.' or '..'")
+	}
+	if len(id) > 32 {
+		return fmt.Errorf("identifier %q exceeds maximum length of 32 characters", id)
+	}
+	if !validIdentifierRegex.MatchString(id) {
+		return fmt.Errorf("identifier %q contains invalid characters or does not match allowlist", id)
+	}
+	return nil
+}
+
+func validateGraveyardUUID(uuid string) error {
+	trimmed := strings.TrimSpace(uuid)
+	if trimmed == "" {
+		return fmt.Errorf("%w: uuid cannot be empty", ErrInvalidUUID)
+	}
+	if trimmed == "." || trimmed == ".." {
+		return fmt.Errorf("%w: uuid cannot be '.' or '..'", ErrInvalidUUID)
+	}
+	if strings.ContainsAny(trimmed, `/\:*?"<>|`) || strings.Contains(trimmed, "..") {
+		return fmt.Errorf("%w: uuid %q contains invalid characters or path traversal elements", ErrInvalidUUID, uuid)
 	}
 	return nil
 }
@@ -531,8 +583,23 @@ func ClanContractsDBPath(clanID string) string {
 func GraveyardDir() string { return defaultResolver.GraveyardDir() }
 
 // GraveyardAgentDir returns graveyard folder for agent via the default resolver.
-func GraveyardAgentDir(agentName, uuid string, tick int64) string {
+func GraveyardAgentDir(agentName, uuid string, tick int64) (string, error) {
 	return defaultResolver.GraveyardAgentDir(agentName, uuid, tick)
+}
+
+// GraveyardMemoryDBPath returns memory.db path for deceased agent via the default resolver.
+func GraveyardMemoryDBPath(agentName, uuid string, tick int64) (string, error) {
+	return defaultResolver.GraveyardMemoryDBPath(agentName, uuid, tick)
+}
+
+// GraveyardDeathCertificatePath returns death certificate path for deceased agent via the default resolver.
+func GraveyardDeathCertificatePath(agentName, uuid string, tick int64) (string, error) {
+	return defaultResolver.GraveyardDeathCertificatePath(agentName, uuid, tick)
+}
+
+// GraveyardEpitaphPath returns epitaph path for deceased agent via the default resolver.
+func GraveyardEpitaphPath(agentName, uuid string, tick int64) (string, error) {
+	return defaultResolver.GraveyardEpitaphPath(agentName, uuid, tick)
 }
 
 // AgentStateDir returns $XDG_STATE_HOME/civquest/agents/{agent_name} via the default resolver.

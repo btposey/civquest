@@ -3,8 +3,10 @@ package xdg
 import (
 	"errors"
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -15,8 +17,11 @@ var (
 	ErrNilConfig          = errors.New("configuration cannot be nil")
 	ErrTraitOutOfBounds   = errors.New("personality trait out of bounds [0.0, 1.0]")
 	ErrInvalidSkinModel   = errors.New("skin model must be 'default' or 'slim'")
+	ErrInvalidSkinTexture = errors.New("invalid skin texture path")
 	ErrInvalidGRPCAddress = errors.New("invalid gRPC host or port")
 )
+
+var uuidRegex = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
 
 // ==================== GLOBAL CONFIG ====================
 
@@ -111,10 +116,10 @@ func (c *GlobalConfig) Validate() error {
 	if strings.TrimSpace(c.LLMGateway.EmbeddingModel) == "" {
 		return errors.New("llm_gateway.embedding_model must not be empty")
 	}
-	if c.LLMGateway.StructuredTemperature < 0.0 || c.LLMGateway.StructuredTemperature > 2.0 {
+	if math.IsNaN(c.LLMGateway.StructuredTemperature) || c.LLMGateway.StructuredTemperature < 0.0 || c.LLMGateway.StructuredTemperature > 2.0 {
 		return fmt.Errorf("llm_gateway.structured_temperature %f out of range [0.0, 2.0]", c.LLMGateway.StructuredTemperature)
 	}
-	if c.LLMGateway.CreativeTemperature < 0.0 || c.LLMGateway.CreativeTemperature > 2.0 {
+	if math.IsNaN(c.LLMGateway.CreativeTemperature) || c.LLMGateway.CreativeTemperature < 0.0 || c.LLMGateway.CreativeTemperature > 2.0 {
 		return fmt.Errorf("llm_gateway.creative_temperature %f out of range [0.0, 2.0]", c.LLMGateway.CreativeTemperature)
 	}
 	if strings.TrimSpace(c.GRPC.Host) == "" {
@@ -161,7 +166,7 @@ type AgentTraits struct {
 // Validate checks that each trait falls within the [0.0, 1.0] interval.
 func (t *AgentTraits) Validate() error {
 	check := func(name string, val float64) error {
-		if val < 0.0 || val > 1.0 {
+		if math.IsNaN(val) || val < 0.0 || val > 1.0 {
 			return fmt.Errorf("%w: %s has value %f", ErrTraitOutOfBounds, name, val)
 		}
 		return nil
@@ -223,8 +228,23 @@ func (c *AgentIdentityConfig) Validate() error {
 	if err := validateIdentifier(c.ClanID); err != nil {
 		return fmt.Errorf("%w: %s", ErrInvalidClanID, err)
 	}
+	if c.UUID != "" {
+		if !uuidRegex.MatchString(c.UUID) {
+			return fmt.Errorf("%w: %q does not match canonical UUID format", ErrInvalidUUID, c.UUID)
+		}
+	}
 	if err := c.Traits.Validate(); err != nil {
 		return fmt.Errorf("traits validation failed for agent %q: %w", c.Name, err)
+	}
+
+	// Validate skin texture path if provided
+	if c.Skin.TexturePath != "" {
+		if strings.Contains(c.Skin.TexturePath, "..") {
+			return fmt.Errorf("%w: path traversal sequence detected in %q", ErrInvalidSkinTexture, c.Skin.TexturePath)
+		}
+		if !strings.HasSuffix(strings.ToLower(c.Skin.TexturePath), ".png") {
+			return fmt.Errorf("%w: texture must have .png extension: %q", ErrInvalidSkinTexture, c.Skin.TexturePath)
+		}
 	}
 
 	// Normalize skin model
@@ -244,11 +264,12 @@ func (c *AgentIdentityConfig) Validate() error {
 
 // LoadGlobalConfig loads and validates a GlobalConfig from the specified file path.
 // If path is empty, it uses the package default GlobalConfigPath().
+// Unspecified fields retain defaults from DefaultGlobalConfig().
 func LoadGlobalConfig(path string) (*GlobalConfig, error) {
 	if path == "" {
 		path = GlobalConfigPath()
 	}
-	cfg := &GlobalConfig{}
+	cfg := DefaultGlobalConfig()
 	if err := readYAMLFile(path, cfg); err != nil {
 		return nil, err
 	}
@@ -305,6 +326,9 @@ func SaveAgentConfig(cfg *AgentIdentityConfig, path string) error {
 
 // LoadAgentConfigByName loads an agent config by name from the standard config directory.
 func LoadAgentConfigByName(agentName string) (*AgentIdentityConfig, error) {
+	if err := validateIdentifier(agentName); err != nil {
+		return nil, fmt.Errorf("%w: %s", ErrInvalidAgentName, err)
+	}
 	return LoadAgentConfig(AgentConfigPath(agentName))
 }
 
@@ -330,6 +354,9 @@ func (r *Resolver) SaveGlobalConfig(cfg *GlobalConfig) error {
 
 // LoadAgentConfig loads agent identity config using the resolver's configured paths.
 func (r *Resolver) LoadAgentConfig(agentName string) (*AgentIdentityConfig, error) {
+	if err := validateIdentifier(agentName); err != nil {
+		return nil, fmt.Errorf("%w: %s", ErrInvalidAgentName, err)
+	}
 	return LoadAgentConfig(r.AgentConfigPath(agentName))
 }
 
@@ -378,10 +405,16 @@ func writeYAMLFile(path string, data any) error {
 		return fmt.Errorf("failed to write temp file: %w", err)
 	}
 
-	if err := tmpFile.Chmod(0640); err != nil {
+	if err := tmpFile.Chmod(0600); err != nil {
 		_ = tmpFile.Close()
 		_ = os.Remove(tmpName)
 		return fmt.Errorf("failed to chmod temp file: %w", err)
+	}
+
+	if err := tmpFile.Sync(); err != nil {
+		_ = tmpFile.Close()
+		_ = os.Remove(tmpName)
+		return fmt.Errorf("failed to sync temp file: %w", err)
 	}
 
 	if err := tmpFile.Close(); err != nil {

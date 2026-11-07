@@ -1,8 +1,10 @@
 package xdg_test
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
+	"syscall"
 	"testing"
 
 	"github.com/btposey/civquest/orchestrator-go/internal/xdg"
@@ -114,17 +116,33 @@ func TestDefaultResolution(t *testing.T) {
 		t.Errorf("GraveyardDir() = %q", got)
 	}
 	expectedGrave := filepath.Join(expectedData, "graveyard", "aria_uuid-42_tick12000")
-	if got := r.GraveyardAgentDir("aria", "uuid-42", 12000); got != expectedGrave {
-		t.Errorf("GraveyardAgentDir() = %q", got)
+	gotGrave, err := r.GraveyardAgentDir("aria", "uuid-42", 12000)
+	if err != nil {
+		t.Fatalf("GraveyardAgentDir() error: %v", err)
 	}
-	if got := r.GraveyardMemoryDBPath("aria", "uuid-42", 12000); got != filepath.Join(expectedGrave, "memory.db") {
-		t.Errorf("GraveyardMemoryDBPath() = %q", got)
+	if gotGrave != expectedGrave {
+		t.Errorf("GraveyardAgentDir() = %q, want %q", gotGrave, expectedGrave)
 	}
-	if got := r.GraveyardDeathCertificatePath("aria", "uuid-42", 12000); got != filepath.Join(expectedGrave, "death_certificate.json") {
-		t.Errorf("GraveyardDeathCertificatePath() = %q", got)
+	gotMem, err := r.GraveyardMemoryDBPath("aria", "uuid-42", 12000)
+	if err != nil {
+		t.Fatalf("GraveyardMemoryDBPath() error: %v", err)
 	}
-	if got := r.GraveyardEpitaphPath("aria", "uuid-42", 12000); got != filepath.Join(expectedGrave, "epitaph.txt") {
-		t.Errorf("GraveyardEpitaphPath() = %q", got)
+	if gotMem != filepath.Join(expectedGrave, "memory.db") {
+		t.Errorf("GraveyardMemoryDBPath() = %q", gotMem)
+	}
+	gotDeath, err := r.GraveyardDeathCertificatePath("aria", "uuid-42", 12000)
+	if err != nil {
+		t.Fatalf("GraveyardDeathCertificatePath() error: %v", err)
+	}
+	if gotDeath != filepath.Join(expectedGrave, "death_certificate.json") {
+		t.Errorf("GraveyardDeathCertificatePath() = %q", gotDeath)
+	}
+	gotEpi, err := r.GraveyardEpitaphPath("aria", "uuid-42", 12000)
+	if err != nil {
+		t.Fatalf("GraveyardEpitaphPath() error: %v", err)
+	}
+	if gotEpi != filepath.Join(expectedGrave, "epitaph.txt") {
+		t.Errorf("GraveyardEpitaphPath() = %q", gotEpi)
 	}
 
 	// State helpers
@@ -137,7 +155,7 @@ func TestDefaultResolution(t *testing.T) {
 	if got := r.AgentLogPath("aria"); got != filepath.Join(expectedState, "agents", "aria", "aria.log") {
 		t.Errorf("AgentLogPath() = %q", got)
 	}
-	if got := r.AgentSocketPath("aria"); got != filepath.Join(expectedState, "agents", "aria", "aria.sock") {
+	if got := r.AgentSocketPath("aria"); got != filepath.Join(expectedState, "agents", "aria.sock") {
 		t.Errorf("AgentSocketPath() = %q", got)
 	}
 	if got := r.SupervisorPIDPath(); got != filepath.Join(expectedState, "supervisor.pid") {
@@ -230,7 +248,7 @@ func TestInitDirectories(t *testing.T) {
 		t.Fatalf("InitDirectories() failed: %v", err)
 	}
 
-	expectedDirs := []string{
+	standardDirs := []string{
 		r.ConfigDir(),
 		r.AgentsConfigDir(),
 		r.BlueprintsDir(),
@@ -244,10 +262,9 @@ func TestInitDirectories(t *testing.T) {
 		r.StateDir(),
 		r.AgentsStateDir(),
 		r.CacheDir(),
-		r.RuntimeDir(),
 	}
 
-	for _, dir := range expectedDirs {
+	for _, dir := range standardDirs {
 		info, err := os.Stat(dir)
 		if err != nil {
 			t.Errorf("expected directory %s to exist, stat error: %v", dir, err)
@@ -257,9 +274,24 @@ func TestInitDirectories(t *testing.T) {
 			t.Errorf("expected %s to be a directory", dir)
 		}
 		perm := info.Mode().Perm()
-		if perm != 0750 {
-			t.Errorf("directory %s permission = %04o, want 0750", dir, perm)
+		if perm&0700 != 0700 {
+			t.Errorf("directory %s missing owner permissions: %04o", dir, perm)
 		}
+		if perm&0027 != 0 {
+			t.Errorf("directory %s has unauthorized permissions (group write or other access): %04o", dir, perm)
+		}
+	}
+
+	// Verify runtime dir permissions specifically (must be 0700 per XDG specification)
+	runtimeInfo, err := os.Stat(r.RuntimeDir())
+	if err != nil {
+		t.Fatalf("expected runtime directory %s to exist: %v", r.RuntimeDir(), err)
+	}
+	if !runtimeInfo.IsDir() {
+		t.Errorf("expected %s to be a directory", r.RuntimeDir())
+	}
+	if perm := runtimeInfo.Mode().Perm(); perm != 0700 {
+		t.Errorf("runtime directory %s permission = %04o, want 0700", r.RuntimeDir(), perm)
 	}
 
 	// Test agent and clan directory initialization
@@ -383,8 +415,12 @@ func TestPackageLevelConvenience(t *testing.T) {
 	if got := xdg.GraveyardDir(); got != filepath.Join(dataDir, "civquest", "graveyard") {
 		t.Errorf("package GraveyardDir() = %q", got)
 	}
-	if got := xdg.GraveyardAgentDir("aria", "u-1", 100); got != filepath.Join(dataDir, "civquest", "graveyard", "aria_u-1_tick100") {
-		t.Errorf("package GraveyardAgentDir() = %q", got)
+	gotGravePkg, err := xdg.GraveyardAgentDir("aria", "u-1", 100)
+	if err != nil {
+		t.Fatalf("package GraveyardAgentDir() error: %v", err)
+	}
+	if gotGravePkg != filepath.Join(dataDir, "civquest", "graveyard", "aria_u-1_tick100") {
+		t.Errorf("package GraveyardAgentDir() = %q", gotGravePkg)
 	}
 
 	// State paths
@@ -397,7 +433,7 @@ func TestPackageLevelConvenience(t *testing.T) {
 	if got := xdg.AgentLogPath("aria"); got != filepath.Join(stateDir, "civquest", "agents", "aria", "aria.log") {
 		t.Errorf("package AgentLogPath() = %q", got)
 	}
-	if got := xdg.AgentSocketPath("aria"); got != filepath.Join(stateDir, "civquest", "agents", "aria", "aria.sock") {
+	if got := xdg.AgentSocketPath("aria"); got != filepath.Join(stateDir, "civquest", "agents", "aria.sock") {
 		t.Errorf("package AgentSocketPath() = %q", got)
 	}
 	if got := xdg.SupervisorPIDPath(); got != filepath.Join(stateDir, "civquest", "supervisor.pid") {
@@ -421,5 +457,220 @@ func TestPackageLevelConvenience(t *testing.T) {
 	}
 	if err := xdg.InitClanDirectories("clan1"); err != nil {
 		t.Fatalf("package InitClanDirectories() error: %v", err)
+	}
+}
+
+func TestGraveyardPathTraversal(t *testing.T) {
+	r := xdg.NewResolver(xdg.WithCustomRoot(t.TempDir()))
+
+	invalidUUIDs := []string{
+		"../../escape",
+		"/absolute/path",
+		"foo/bar",
+		"foo\\bar",
+		"..",
+		".",
+		"",
+		"uuid:colon",
+		"uuid*star",
+	}
+
+	for _, badUUID := range invalidUUIDs {
+		t.Run("uuid_"+badUUID, func(t *testing.T) {
+			_, err := r.GraveyardAgentDir("aria", badUUID, 100)
+			if err == nil {
+				t.Errorf("expected error for invalid UUID %q, got nil", badUUID)
+			}
+			if !errors.Is(err, xdg.ErrInvalidUUID) {
+				t.Errorf("expected error to wrap ErrInvalidUUID, got: %v", err)
+			}
+
+			if _, err := r.GraveyardMemoryDBPath("aria", badUUID, 100); err == nil {
+				t.Errorf("expected error from GraveyardMemoryDBPath for %q", badUUID)
+			}
+			if _, err := r.GraveyardDeathCertificatePath("aria", badUUID, 100); err == nil {
+				t.Errorf("expected error from GraveyardDeathCertificatePath for %q", badUUID)
+			}
+			if _, err := r.GraveyardEpitaphPath("aria", badUUID, 100); err == nil {
+				t.Errorf("expected error from GraveyardEpitaphPath for %q", badUUID)
+			}
+		})
+	}
+
+	invalidAgentNames := []string{
+		"../aria",
+		"aria/sub",
+		"aria\\sub",
+		".",
+		"..",
+		"",
+	}
+
+	for _, badName := range invalidAgentNames {
+		t.Run("agent_"+badName, func(t *testing.T) {
+			_, err := r.GraveyardAgentDir(badName, "valid-uuid-1", 100)
+			if err == nil {
+				t.Errorf("expected error for invalid agentName %q in graveyard, got nil", badName)
+			}
+			if !errors.Is(err, xdg.ErrInvalidAgentName) {
+				t.Errorf("expected error to wrap ErrInvalidAgentName, got: %v", err)
+			}
+		})
+	}
+}
+
+func TestIdentifierValidation(t *testing.T) {
+	r := xdg.NewResolver(xdg.WithCustomRoot(t.TempDir()))
+
+	invalidIdentifiers := []struct {
+		name string
+		id   string
+	}{
+		{"single dot", "."},
+		{"double dot", ".."},
+		{"leading dot", ".hidden"},
+		{"dot in middle", "aria.name"},
+		{"trailing dot", "aria."},
+		{"empty string", ""},
+		{"whitespace only", "   "},
+		{"leading whitespace", " aria"},
+		{"trailing whitespace", "aria "},
+		{"slash", "aria/path"},
+		{"backslash", "aria\\path"},
+		{"colon", "aria:path"},
+		{"at symbol", "aria@path"},
+		{"dollar", "aria$path"},
+		{"exceeds 32 chars", "a12345678901234567890123456789012"}, // 33 chars
+		{"leading hyphen", "-aria"},
+		{"leading underscore", "_aria"},
+	}
+
+	for _, tc := range invalidIdentifiers {
+		t.Run(tc.name, func(t *testing.T) {
+			errAgent := r.InitAgentDirectories(tc.id)
+			if errAgent == nil {
+				t.Errorf("InitAgentDirectories(%q) expected error, got nil", tc.id)
+			}
+			if !errors.Is(errAgent, xdg.ErrInvalidAgentName) {
+				t.Errorf("InitAgentDirectories(%q) error should wrap ErrInvalidAgentName, got: %v", tc.id, errAgent)
+			}
+
+			errClan := r.InitClanDirectories(tc.id)
+			if errClan == nil {
+				t.Errorf("InitClanDirectories(%q) expected error, got nil", tc.id)
+			}
+			if !errors.Is(errClan, xdg.ErrInvalidClanID) {
+				t.Errorf("InitClanDirectories(%q) error should wrap ErrInvalidClanID, got: %v", tc.id, errClan)
+			}
+		})
+	}
+
+	validIdentifiers := []string{
+		"a",
+		"aria",
+		"settler_1",
+		"settler-alpha",
+		"Clan_42-Iron",
+		"a1234567890123456789012345678901", // exactly 32 chars
+	}
+
+	for _, valid := range validIdentifiers {
+		t.Run("valid_"+valid, func(t *testing.T) {
+			if err := r.InitAgentDirectories(valid); err != nil {
+				t.Errorf("InitAgentDirectories(%q) unexpected error: %v", valid, err)
+			}
+			if err := r.InitClanDirectories(valid); err != nil {
+				t.Errorf("InitClanDirectories(%q) unexpected error: %v", valid, err)
+			}
+		})
+	}
+}
+
+func TestRelativeXDGEnvironmentVariables(t *testing.T) {
+	mockHome := "/home/mockuser"
+	env := map[string]string{
+		"XDG_CONFIG_HOME": "relative/config",
+		"XDG_DATA_HOME":   "relative/data",
+		"XDG_STATE_HOME":  "relative/state",
+		"XDG_CACHE_HOME":  "relative/cache",
+		"XDG_RUNTIME_DIR": "relative/run",
+	}
+
+	r := xdg.NewResolver(
+		xdg.WithHomeDir(mockHome),
+		xdg.WithGetenv(func(k string) string { return env[k] }),
+	)
+
+	expectedConfig := filepath.Join(mockHome, ".config", "civquest")
+	expectedData := filepath.Join(mockHome, ".local", "share", "civquest")
+	expectedState := filepath.Join(mockHome, ".local", "state", "civquest")
+	expectedCache := filepath.Join(mockHome, ".cache", "civquest")
+	expectedRuntime := filepath.Join(expectedState, "run")
+
+	if got := r.ConfigDir(); got != expectedConfig {
+		t.Errorf("ConfigDir() with relative env = %q, want %q", got, expectedConfig)
+	}
+	if got := r.DataDir(); got != expectedData {
+		t.Errorf("DataDir() with relative env = %q, want %q", got, expectedData)
+	}
+	if got := r.StateDir(); got != expectedState {
+		t.Errorf("StateDir() with relative env = %q, want %q", got, expectedState)
+	}
+	if got := r.CacheDir(); got != expectedCache {
+		t.Errorf("CacheDir() with relative env = %q, want %q", got, expectedCache)
+	}
+	if got := r.RuntimeDir(); got != expectedRuntime {
+		t.Errorf("RuntimeDir() with relative env = %q, want %q", got, expectedRuntime)
+	}
+}
+
+func TestAgentSocketPathLength(t *testing.T) {
+	r := xdg.NewResolver(xdg.WithHomeDir("/home/mockuser"))
+	// Maximum valid 32-character agent identifier
+	maxLenAgentName := "a1234567890123456789012345678901"
+	socketPath := r.AgentSocketPath(maxLenAgentName)
+
+	expected := filepath.Join("/home/mockuser", ".local", "state", "civquest", "agents", maxLenAgentName+".sock")
+	if socketPath != expected {
+		t.Errorf("AgentSocketPath = %q, want %q", socketPath, expected)
+	}
+
+	// Linux sockaddr_un sun_path is 108 bytes; ADR-004 requires staying safely under 104 bytes
+	if len(socketPath) >= 104 {
+		t.Errorf("AgentSocketPath length %d exceeds safe limit of 104 bytes: %q", len(socketPath), socketPath)
+	}
+}
+
+func TestInitDirectoriesStrictUmask(t *testing.T) {
+	oldMask := syscall.Umask(0077)
+	defer syscall.Umask(oldMask)
+
+	tmpDir := t.TempDir()
+	r := xdg.NewResolver(xdg.WithCustomRoot(tmpDir))
+
+	if err := r.InitDirectories(); err != nil {
+		t.Fatalf("InitDirectories under strict umask 0077 failed: %v", err)
+	}
+
+	// Check runtime directory has 0700
+	runtimeInfo, err := os.Stat(r.RuntimeDir())
+	if err != nil {
+		t.Fatalf("stat runtime dir failed: %v", err)
+	}
+	if perm := runtimeInfo.Mode().Perm(); perm != 0700 {
+		t.Errorf("runtime directory permission under umask 0077 = %04o, want 0700", perm)
+	}
+
+	// Check config dir has owner permissions and no unauthorized bits
+	cfgInfo, err := os.Stat(r.ConfigDir())
+	if err != nil {
+		t.Fatalf("stat config dir failed: %v", err)
+	}
+	cfgPerm := cfgInfo.Mode().Perm()
+	if cfgPerm&0700 != 0700 {
+		t.Errorf("config dir under umask 0077 missing owner permissions: %04o", cfgPerm)
+	}
+	if cfgPerm&0027 != 0 {
+		t.Errorf("config dir under umask 0077 has unauthorized bits: %04o", cfgPerm)
 	}
 }

@@ -2,6 +2,7 @@ package xdg_test
 
 import (
 	"errors"
+	"math"
 	"os"
 	"path/filepath"
 	"testing"
@@ -586,5 +587,276 @@ func TestLoadNonExistent(t *testing.T) {
 	}
 	if err := xdg.SaveAgentConfig(nil, ""); err == nil {
 		t.Errorf("expected error saving nil AgentIdentityConfig")
+	}
+}
+
+func TestConfigFilePermissions(t *testing.T) {
+	tmpDir := t.TempDir()
+	globalPath := filepath.Join(tmpDir, "global.yaml")
+	agentPath := filepath.Join(tmpDir, "agent.yaml")
+
+	globalCfg := xdg.DefaultGlobalConfig()
+	if err := xdg.SaveGlobalConfig(globalCfg, globalPath); err != nil {
+		t.Fatalf("SaveGlobalConfig failed: %v", err)
+	}
+
+	info, err := os.Stat(globalPath)
+	if err != nil {
+		t.Fatalf("stat globalPath failed: %v", err)
+	}
+	if perm := info.Mode().Perm(); perm != 0600 {
+		t.Errorf("global config file permissions = %04o, want 0600", perm)
+	}
+
+	agentCfg := xdg.DefaultAgentIdentityConfig("settler_sec")
+	if err := xdg.SaveAgentConfig(agentCfg, agentPath); err != nil {
+		t.Fatalf("SaveAgentConfig failed: %v", err)
+	}
+
+	agentInfo, err := os.Stat(agentPath)
+	if err != nil {
+		t.Fatalf("stat agentPath failed: %v", err)
+	}
+	if perm := agentInfo.Mode().Perm(); perm != 0600 {
+		t.Errorf("agent config file permissions = %04o, want 0600", perm)
+	}
+}
+
+func TestNaNValidation(t *testing.T) {
+	t.Run("traits_nan", func(t *testing.T) {
+		traitFields := []struct {
+			name   string
+			modify func(*xdg.AgentTraits)
+		}{
+			{"bravery", func(tr *xdg.AgentTraits) { tr.Bravery = math.NaN() }},
+			{"industriousness", func(tr *xdg.AgentTraits) { tr.Industriousness = math.NaN() }},
+			{"sociability", func(tr *xdg.AgentTraits) { tr.Sociability = math.NaN() }},
+			{"curiosity", func(tr *xdg.AgentTraits) { tr.Curiosity = math.NaN() }},
+			{"aggressiveness", func(tr *xdg.AgentTraits) { tr.Aggressiveness = math.NaN() }},
+		}
+
+		for _, tc := range traitFields {
+			t.Run(tc.name, func(t *testing.T) {
+				traits := xdg.AgentTraits{
+					Bravery:         0.5,
+					Industriousness: 0.5,
+					Sociability:     0.5,
+					Curiosity:       0.5,
+					Aggressiveness:  0.5,
+				}
+				tc.modify(&traits)
+				err := traits.Validate()
+				if err == nil {
+					t.Errorf("expected error for NaN trait %s, got nil", tc.name)
+				}
+				if !errors.Is(err, xdg.ErrTraitOutOfBounds) {
+					t.Errorf("expected ErrTraitOutOfBounds, got: %v", err)
+				}
+			})
+		}
+	})
+
+	t.Run("global_config_nan", func(t *testing.T) {
+		cfgStructured := xdg.DefaultGlobalConfig()
+		cfgStructured.LLMGateway.StructuredTemperature = math.NaN()
+		if err := cfgStructured.Validate(); err == nil {
+			t.Errorf("expected error for NaN StructuredTemperature, got nil")
+		}
+
+		cfgCreative := xdg.DefaultGlobalConfig()
+		cfgCreative.LLMGateway.CreativeTemperature = math.NaN()
+		if err := cfgCreative.Validate(); err == nil {
+			t.Errorf("expected error for NaN CreativeTemperature, got nil")
+		}
+	})
+
+	t.Run("yaml_nan_parsing", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		nanYamlPath := filepath.Join(tmpDir, "nan_global.yaml")
+		nanContent := `
+llm_gateway:
+  base_url: "http://127.0.0.1:11434/v1"
+  model: "llama3.1"
+  embedding_model: "nomic-embed-text"
+  structured_temperature: .nan
+  creative_temperature: 0.85
+`
+		if err := os.WriteFile(nanYamlPath, []byte(nanContent), 0600); err != nil {
+			t.Fatalf("WriteFile failed: %v", err)
+		}
+
+		_, err := xdg.LoadGlobalConfig(nanYamlPath)
+		if err == nil {
+			t.Errorf("expected error loading global config with .nan temperature, got nil")
+		}
+	})
+}
+
+func TestPartialGlobalConfigLoad(t *testing.T) {
+	tmpDir := t.TempDir()
+	overridePath := filepath.Join(tmpDir, "partial_override.yaml")
+	overrideContent := `
+llm_gateway:
+  model: "custom-model-42"
+supervisor:
+  max_active_agents: 32
+`
+	if err := os.WriteFile(overridePath, []byte(overrideContent), 0600); err != nil {
+		t.Fatalf("WriteFile failed: %v", err)
+	}
+
+	loaded, err := xdg.LoadGlobalConfig(overridePath)
+	if err != nil {
+		t.Fatalf("LoadGlobalConfig failed on partial override: %v", err)
+	}
+
+	// Verify overrides took effect
+	if loaded.LLMGateway.Model != "custom-model-42" {
+		t.Errorf("Model = %q, want custom-model-42", loaded.LLMGateway.Model)
+	}
+	if loaded.Supervisor.MaxActiveAgents != 32 {
+		t.Errorf("MaxActiveAgents = %d, want 32", loaded.Supervisor.MaxActiveAgents)
+	}
+
+	// Verify unmentioned defaults were preserved
+	defaults := xdg.DefaultGlobalConfig()
+	if loaded.LLMGateway.BaseURL != defaults.LLMGateway.BaseURL {
+		t.Errorf("BaseURL = %q, want default %q", loaded.LLMGateway.BaseURL, defaults.LLMGateway.BaseURL)
+	}
+	if loaded.LLMGateway.EmbeddingModel != defaults.LLMGateway.EmbeddingModel {
+		t.Errorf("EmbeddingModel = %q, want default %q", loaded.LLMGateway.EmbeddingModel, defaults.LLMGateway.EmbeddingModel)
+	}
+	if loaded.LLMGateway.StructuredTemperature != defaults.LLMGateway.StructuredTemperature {
+		t.Errorf("StructuredTemperature = %f, want default %f", loaded.LLMGateway.StructuredTemperature, defaults.LLMGateway.StructuredTemperature)
+	}
+	if loaded.InferenceGovernor.MaxConcurrentLLMRequests != defaults.InferenceGovernor.MaxConcurrentLLMRequests {
+		t.Errorf("MaxConcurrentLLMRequests = %d, want default %d", loaded.InferenceGovernor.MaxConcurrentLLMRequests, defaults.InferenceGovernor.MaxConcurrentLLMRequests)
+	}
+	if loaded.GRPC.Host != defaults.GRPC.Host || loaded.GRPC.Port != defaults.GRPC.Port {
+		t.Errorf("GRPC = %s:%d, want default %s:%d", loaded.GRPC.Host, loaded.GRPC.Port, defaults.GRPC.Host, defaults.GRPC.Port)
+	}
+	if loaded.Supervisor.MinFoodSurplusDays != defaults.Supervisor.MinFoodSurplusDays {
+		t.Errorf("MinFoodSurplusDays = %d, want default %d", loaded.Supervisor.MinFoodSurplusDays, defaults.Supervisor.MinFoodSurplusDays)
+	}
+}
+
+func TestLoadAgentConfigByNameValidation(t *testing.T) {
+	invalidNames := []string{
+		"../traversal",
+		"../../etc/passwd",
+		".",
+		"..",
+		"bad/name",
+		"bad\\name",
+		"a12345678901234567890123456789012", // 33 chars
+	}
+
+	for _, badName := range invalidNames {
+		t.Run(badName, func(t *testing.T) {
+			_, err := xdg.LoadAgentConfigByName(badName)
+			if err == nil {
+				t.Errorf("LoadAgentConfigByName(%q) expected error, got nil", badName)
+			}
+			if !errors.Is(err, xdg.ErrInvalidAgentName) {
+				t.Errorf("LoadAgentConfigByName(%q) error should wrap ErrInvalidAgentName, got: %v", badName, err)
+			}
+		})
+	}
+
+	r := xdg.NewResolver(xdg.WithCustomRoot(t.TempDir()))
+	for _, badName := range invalidNames {
+		t.Run("resolver_"+badName, func(t *testing.T) {
+			_, err := r.LoadAgentConfig(badName)
+			if err == nil {
+				t.Errorf("r.LoadAgentConfig(%q) expected error, got nil", badName)
+			}
+			if !errors.Is(err, xdg.ErrInvalidAgentName) {
+				t.Errorf("r.LoadAgentConfig(%q) error should wrap ErrInvalidAgentName, got: %v", badName, err)
+			}
+		})
+	}
+}
+
+func TestAgentUUIDValidation(t *testing.T) {
+	t.Run("valid_canonical_uuid", func(t *testing.T) {
+		cfg := xdg.DefaultAgentIdentityConfig("settler_uuid")
+		cfg.UUID = "d9d06b5a-19fb-4395-9ff7-320c2423aef5"
+		if err := cfg.Validate(); err != nil {
+			t.Errorf("valid UUID failed validation: %v", err)
+		}
+	})
+
+	t.Run("empty_uuid_allowed", func(t *testing.T) {
+		cfg := xdg.DefaultAgentIdentityConfig("settler_uuid")
+		cfg.UUID = ""
+		if err := cfg.Validate(); err != nil {
+			t.Errorf("empty UUID should be allowed: %v", err)
+		}
+	})
+
+	invalidUUIDs := []string{
+		"not-a-uuid",
+		"../../escape",
+		"d9d06b5a-19fb-4395-9ff7-320c2423aef",   // 35 chars
+		"d9d06b5a-19fb-4395-9ff7-320c2423aef55", // 37 chars
+		"d9d06b5a_19fb_4395_9ff7_320c2423aef5",  // underscores instead of hyphens
+		"d9d06b5a-19fb-4395-9ff7/320c2423aef5",  // slash
+	}
+
+	for _, badUUID := range invalidUUIDs {
+		t.Run(badUUID, func(t *testing.T) {
+			cfg := xdg.DefaultAgentIdentityConfig("settler_uuid")
+			cfg.UUID = badUUID
+			err := cfg.Validate()
+			if err == nil {
+				t.Errorf("expected error for invalid UUID %q, got nil", badUUID)
+			}
+			if !errors.Is(err, xdg.ErrInvalidUUID) {
+				t.Errorf("expected error to wrap ErrInvalidUUID, got: %v", err)
+			}
+		})
+	}
+}
+
+func TestAgentSkinTextureValidation(t *testing.T) {
+	validTextures := []string{
+		"",
+		"textures/aria.png",
+		"aria.PNG",
+		"custom/skin_model.png",
+	}
+
+	for _, tex := range validTextures {
+		t.Run("valid_"+tex, func(t *testing.T) {
+			cfg := xdg.DefaultAgentIdentityConfig("settler_tex")
+			cfg.Skin.TexturePath = tex
+			if err := cfg.Validate(); err != nil {
+				t.Errorf("valid texture path %q failed: %v", tex, err)
+			}
+		})
+	}
+
+	invalidTextures := []string{
+		"../textures/aria.png",
+		"textures/../../secret.png",
+		"textures/aria.jpg",
+		"aria.jpeg",
+		"aria.png.exe",
+		"aria.png/sub",
+		"aria.txt",
+	}
+
+	for _, tex := range invalidTextures {
+		t.Run("invalid_"+tex, func(t *testing.T) {
+			cfg := xdg.DefaultAgentIdentityConfig("settler_tex")
+			cfg.Skin.TexturePath = tex
+			err := cfg.Validate()
+			if err == nil {
+				t.Errorf("expected error for invalid texture path %q, got nil", tex)
+			}
+			if !errors.Is(err, xdg.ErrInvalidSkinTexture) {
+				t.Errorf("expected error to wrap ErrInvalidSkinTexture, got: %v", err)
+			}
+		})
 	}
 }
