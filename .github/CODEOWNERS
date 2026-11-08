@@ -1,0 +1,33 @@
+# ==============================================================================
+# CivQuest Code Owners
+# https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/about-code-owners
+#
+# Global repository lockdown & ownership:
+# All pull requests require review approval from the repository owner.
+# ==============================================================================
+
+# Default owner for everything in the repository
+* @btposey
+
+# Infrastructure & CI
+/.github/ @btposey
+/.github/workflows/ @btposey
+
+# Mod Core & Game Engine Wrapper
+/mod-neoforge/ @btposey
+
+# External Go Agent Orchestrator & CLI
+/orchestrator-go/ @btposey
+
+# Protobuf Specification & Contracts
+/proto/ @btposey
+
+# Scripts & Deployment Tooling
+/scripts/ @btposey
+/setup.sh @btposey
+/install.sh @btposey
+
+# Documentation & Architecture Decisions
+/doc/ @btposey
+/README.md @btposey
+/AGENTS.md @btposey
