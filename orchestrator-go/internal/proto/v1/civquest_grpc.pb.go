@@ -33,7 +33,7 @@ const (
 type CivQuestBridgeServiceClient interface {
 	// Primary per-agent bidirectional control and telemetry stream
 	ConnectAgent(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[AgentIntent, TelemetryFrame], error)
-	// Administrative RPCs called by civctl supervisor
+	// Administrative RPCs called by cq supervisor
 	SpawnAgentEntity(ctx context.Context, in *SpawnAgentRequest, opts ...grpc.CallOption) (*SpawnAgentResponse, error)
 	DespawnAgentEntity(ctx context.Context, in *DespawnAgentRequest, opts ...grpc.CallOption) (*DespawnAgentResponse, error)
 	ExportRecipeGraph(ctx context.Context, in *ExportRecipeRequest, opts ...grpc.CallOption) (*ExportRecipeResponse, error)
@@ -98,7 +98,7 @@ func (c *civQuestBridgeServiceClient) ExportRecipeGraph(ctx context.Context, in 
 type CivQuestBridgeServiceServer interface {
 	// Primary per-agent bidirectional control and telemetry stream
 	ConnectAgent(grpc.BidiStreamingServer[AgentIntent, TelemetryFrame]) error
-	// Administrative RPCs called by civctl supervisor
+	// Administrative RPCs called by cq supervisor
 	SpawnAgentEntity(context.Context, *SpawnAgentRequest) (*SpawnAgentResponse, error)
 	DespawnAgentEntity(context.Context, *DespawnAgentRequest) (*DespawnAgentResponse, error)
 	ExportRecipeGraph(context.Context, *ExportRecipeRequest) (*ExportRecipeResponse, error)

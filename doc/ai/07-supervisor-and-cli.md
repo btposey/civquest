@@ -1,12 +1,12 @@
-# Progressive Discovery: Supervisor & Management CLI (`civctl`)
+# Progressive Discovery: Supervisor & Management CLI (`cq`)
 
 ## 1. Overview
-The `civctl` command-line tool (built with `spf13/cobra` in Go) serves as the primary management interface and supervisor daemon for CivQuest.
+The `cq` command-line tool (built with `spf13/cobra` in Go) serves as the primary management interface and supervisor daemon for CivQuest.
 
 ## 2. Command Tree
 
 ```text
-civctl
+cq
 ├── daemon start | stop | status            # Starts supervisor managing agent OS processes & reproduction
 ├── agent
 │   ├── create --name <n> --clan <c> --role <r> --skin <path>
@@ -15,6 +15,8 @@ civctl
 │   ├── stop <name>                         # Despawns entity & gracefully stops process
 │   ├── status [<name>]                     # Queries $XDG_STATE_HOME/civquest/agents/{name}.sock
 │   └── logs <name> [--follow]
+├── client
+│   └── install [--minecraft-dir <d>] [--mod-jar <j>]   # Installs NeoForge client, stages mod in $XDG_DATA_HOME/civquest/client, adds "CivQuest" launcher profile
 ├── clan
 │   ├── inspect <clan_id>                   # Displays granary surplus, functional zones & active BOMs
 │   ├── prestige <clan_id>                  # Prints human Hero Prestige leaderboard
@@ -42,4 +44,4 @@ civctl
      - Composites child skin, invokes `SpawnAgentEntity(is_child: true)`, and forks the new child agent process.
 3. **UNIX Socket IPC**:
    - Each agent process hosts a UNIX domain socket at `$XDG_STATE_HOME/civquest/agents/{name}.sock`.
-   - `civctl agent status <name>` queries this socket directly to retrieve live memory usage, current utility scores, active Baritone goals, and recent gRPC frame latencies.
+   - `cq agent status <name>` queries this socket directly to retrieve live memory usage, current utility scores, active Baritone goals, and recent gRPC frame latencies.

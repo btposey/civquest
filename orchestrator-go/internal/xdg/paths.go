@@ -405,6 +405,12 @@ func (r *Resolver) ServerDir() string {
 	return filepath.Join(r.DataDir(), "server")
 }
 
+// ClientDir returns $XDG_DATA_HOME/civquest/client, the isolated Minecraft game
+// directory used by the CivQuest launcher profile (saves, mods, options).
+func (r *Resolver) ClientDir() string {
+	return filepath.Join(r.DataDir(), "client")
+}
+
 // ServerModsDir returns $XDG_DATA_HOME/civquest/server/mods.
 func (r *Resolver) ServerModsDir() string {
 	return filepath.Join(r.ServerDir(), "mods")

@@ -28,7 +28,7 @@ flowchart TB
     end
 
     subgraph Go_Orchestrator ["External Go Multi-Process Orchestrator"]
-        Supervisor["civctl supervisor daemon"]
+        Supervisor["cq supervisor daemon"]
         Worker1["Agent Process: Kaelen (civquest-agent)"]
         Worker2["Agent Process: Lyra (civquest-agent)"]
 
@@ -63,7 +63,7 @@ The server-side Minecraft mod acts as the sensory input organ and physical actua
 
 ### Component 2: `orchestrator-go`
 The external Go orchestrator contains all cognitive, psychological, and civic logic:
-1. **`civctl` Supervisor**: Spawns and monitors agent worker processes, oversees dynastic reproduction, and exposes administrative CLI commands.
+1. **`cq` Supervisor**: Spawns and monitors agent worker processes, oversees dynastic reproduction, and exposes administrative CLI commands.
 2. **`civquest-agent`**: The single-agent runtime executing:
    - **System 1**: Immediate survival reflexes, fight-or-flight calculations, saturation management, and daily utility scheduling.
    - **System 2**: Asynchronous LLM interactions for dialogue, trade barter, book writing, and blueprint quadrant layout.

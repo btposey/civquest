@@ -22,7 +22,7 @@ CivQuest is an autonomous, dynastic settlement engine introducing intelligent, h
    - Functions: Spawns headless `AgentEntity` (`FakePlayer`) avatars; delivers dynamic agent skin packets; streams sensory frustum frames (5 Hz) over embedded Netty gRPC; delegates physical voxel pathfinding to an integrated Baritone API wrapper; preserves vanilla villages and villagers for rich inter-entity co-existence.
 2. **External Multi-Process Go Orchestrator (`orchestrator-go`)**:
    - Engine: **Go 1.23+**.
-   - Functions: Multi-process supervisor (`civctl`) spawning dedicated OS worker processes (`civquest-agent`) per agent.
+   - Functions: Multi-process supervisor (`cq`) spawning dedicated OS worker processes (`civquest-agent`) per agent.
    - **System 1 (Reactive Utility AI Engine)**: Sub-$5\text{ ms}$, zero-token deterministic loop handling combat reflexes, fight-or-flight confidence scoring, hunger, road paving, and daily career state transitions.
    - **System 2 (Deliberative LLM Engine)**: Asynchronous JSON-validated inference pipelines connected to local gateways (Ollama/vLLM) for dialogue, barter trade, Chronicler book writing, landmark toponymy, and Architect quadrant construction.
    - **Persistence Tier**: Embedded SQLite databases per agent and clan with `sqlite-vec` vector RAG.
@@ -55,7 +55,7 @@ Before beginning work on any subsystem, read the corresponding progressive disco
 - [04-system1-utility-engine.md](file:///home/brian/Workspaces/btposey/civquest/doc/ai/04-system1-utility-engine.md): Fight-or-flight mathematics, utility curves, daily schedules, and emergent hobbies.
 - [05-system2-llm-pipelines.md](file:///home/brian/Workspaces/btposey/civquest/doc/ai/05-system2-llm-pipelines.md): LLM gateway integration, dual-temperature sampling, JSON schemas, Chronicler pagination, and Architect grammar.
 - [06-storage-and-xdg.md](file:///home/brian/Workspaces/btposey/civquest/doc/ai/06-storage-and-xdg.md): SQLite relational schemas, `sqlite-vec` vector RAG, and filesystem layouts.
-- [07-supervisor-and-cli.md](file:///home/brian/Workspaces/btposey/civquest/doc/ai/07-supervisor-and-cli.md): `civctl` commands, supervisor daemon, UNIX socket telemetry, and process management.
+- [07-supervisor-and-cli.md](file:///home/brian/Workspaces/btposey/civquest/doc/ai/07-supervisor-and-cli.md): `cq` commands, supervisor daemon, UNIX socket telemetry, and process management.
 - [08-versioning-and-branching-strategy.md](file:///home/brian/Workspaces/btposey/civquest/doc/ai/08-versioning-and-branching-strategy.md): Minecraft/NeoForge version matrix, version branches, and backporting rules.
 - [09-adversarial-review-and-pr-lifecycle.md](file:///home/brian/Workspaces/btposey/civquest/doc/ai/09-adversarial-review-and-pr-lifecycle.md): Multi-agent adversarial review, hypothesis confirmation, PR comments, and Go/No-Go gates.
 

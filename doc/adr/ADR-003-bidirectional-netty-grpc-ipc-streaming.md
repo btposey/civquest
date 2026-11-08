@@ -15,7 +15,7 @@ We select **gRPC over HTTP/2 with Protocol Buffers v3**:
 - The NeoForge mod hosts an embedded Netty-based gRPC server listening on `127.0.0.1:50051`.
 - The primary contract is a bidirectional streaming RPC:
   `rpc ConnectAgent(stream AgentIntent) returns (stream TelemetryFrame);`
-- Administrative endpoints (`SpawnAgentEntity`, `DespawnAgentEntity`, `ExportRecipeGraph`) are unary RPCs invoked by the `civctl` supervisor.
+- Administrative endpoints (`SpawnAgentEntity`, `DespawnAgentEntity`, `ExportRecipeGraph`) are unary RPCs invoked by the `cq` supervisor.
 
 ## Consequences
 ### Positive

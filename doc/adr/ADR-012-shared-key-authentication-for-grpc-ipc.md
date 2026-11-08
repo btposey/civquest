@@ -8,7 +8,7 @@ CivQuest employs a dual-layer architecture where the physical simulation engine 
 
 While initial local development binds gRPC to `127.0.0.1`, real-world deployments frequently distribute workloads across multiple machines:
 1. **Dedicated Game Server Host**: Runs the NeoForge Minecraft server (CPU/RAM bound, low GPU requirements).
-2. **Agent Fleet & Inference Host(s)**: Runs `civctl`, multiple `civquest-agent` OS worker processes, and dedicated GPU hardware (e.g. RTX 3060 / 12GB) running local LLMs (e.g. SparkX 2.5).
+2. **Agent Fleet & Inference Host(s)**: Runs `cq`, multiple `civquest-agent` OS worker processes, and dedicated GPU hardware (e.g. RTX 3060 / 12GB) running local LLMs (e.g. SparkX 2.5).
 
 Exposing Netty gRPC across network boundaries (`0.0.0.0:50051`) creates an attack surface. Without authentication, unauthorized clients on the network could inject arbitrary `AgentIntent` commands, execute administrative RPCs (`SpawnAgentEntity`, `DespawnAgentEntity`), or snoop on 5 Hz sensory telemetry frames.
 

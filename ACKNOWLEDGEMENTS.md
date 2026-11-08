@@ -24,7 +24,7 @@ We express our sincere gratitude to the following open-source projects, tools, a
 
 ### 2. High-Performance Language Runtimes & IPC
 - **[The Go Programming Language](https://go.dev/)** (The Go Authors / Google LLC) — BSD-3-Clause License  
-  *Powers the multi-process supervisor (`civctl`), System 1 reactive utility loops, and System 2 deliberative agent worker binaries (`civquest-agent`).*
+  *Powers the multi-process supervisor (`cq`), System 1 reactive utility loops, and System 2 deliberative agent worker binaries (`civquest-agent`).*
 - **[Eclipse Temurin OpenJDK](https://adoptium.net/)** (Eclipse Adoptium / Eclipse Foundation) — GPL-2.0-with-classpath-exception License  
   *Provides the robust OpenJDK 21 Java runtime environment powering the server JVM mod.*
 - **[gRPC](https://grpc.io/) & [Protocol Buffers](https://protobuf.dev/)** (Google LLC / Cloud Native Computing Foundation) — Apache-2.0 & BSD-3-Clause Licenses  
@@ -46,7 +46,7 @@ We express our sincere gratitude to the following open-source projects, tools, a
 
 ### 5. CLI Tooling & Ecosystem Libraries
 - **[Cobra](https://github.com/spf13/cobra)** (Steve Francia & Contributors) — Apache-2.0 License  
-  *Powers the flexible and intuitive command-line interface for the `civctl` supervisor suite.*
+  *Powers the flexible and intuitive command-line interface for the `cq` supervisor suite.*
 - **[Buf](https://buf.build/)** (Buf Technologies, Inc.) — Apache-2.0 License  
   *Provides modern schema-driven Protocol Buffer linting, formatting, and cross-language stub generation.*
 

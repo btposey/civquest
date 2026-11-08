@@ -74,7 +74,7 @@ func newAgentListCmd() *cobra.Command {
 			fmt.Fprintln(out, "======================================================================")
 			if len(status.ConfiguredAgents) == 0 {
 				fmt.Fprintf(out, "No agent configurations found in %s.\n", r.AgentsConfigDir())
-				fmt.Fprintln(out, "Run './install.sh agents' or 'civctl agent create' to add agents.")
+				fmt.Fprintln(out, "Run './install.sh agents' or 'cq agent create' to add agents.")
 			} else {
 				for _, a := range status.ConfiguredAgents {
 					stateStr := "Inactive"
@@ -526,7 +526,7 @@ func newAgentStopCmd() *cobra.Command {
 		},
 	}
 
-	cmd.Flags().StringVar(&reason, "reason", "Stopped via civctl", "Despawn reason")
+	cmd.Flags().StringVar(&reason, "reason", "Stopped via cq", "Despawn reason")
 	return cmd
 }
 

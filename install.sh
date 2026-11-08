@@ -4,7 +4,7 @@ umask 0027
 
 # ==============================================================================
 # CivQuest Polyglot Settlement Engine - Deployment Script
-# Targets: server | agents | all
+# Targets: server | agents | client | all
 # ==============================================================================
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -59,12 +59,13 @@ usage() {
 ${COLOR_BOLD}CivQuest Deployment & Installer${COLOR_RESET}
 
 ${COLOR_BOLD}Usage:${COLOR_RESET}
-  $0 [options] <server|agents|all>
+  $0 [options] <server|agents|client|all>
 
 ${COLOR_BOLD}Directives:${COLOR_RESET}
-  server   Builds the NeoForge mod and configures server directories, EULA, and runner
-  agents   Compiles Go binaries (civctl, civquest-agent), registers XDG tree, and writes starter configs
-  all      Performs complete installation of both server and agent domains
+  server   Builds the NeoForge mod, installs a NeoForge dedicated server, and configures EULA and runner
+  agents   Compiles Go binaries (cq, civquest-agent), registers XDG tree, and writes starter configs
+  client   Installs the NeoForge client, stages the mod, and adds a "CivQuest" Minecraft launcher profile (cq client install)
+  all      Performs complete installation of server, agents, and client
 
 ${COLOR_BOLD}Options:${COLOR_RESET}
   -y, --yes    Non-interactive mode (accept all default prompts)
@@ -76,6 +77,9 @@ ${COLOR_BOLD}XDG Base Directory Environment Overrides:${COLOR_RESET}
   XDG_DATA_HOME    Base data path (default: ~/.local/share)
   XDG_STATE_HOME   Base state path (default: ~/.local/state)
   INSTALL_BIN_DIR  Binary installation directory (default: ~/.local/bin)
+
+${COLOR_BOLD}Other:${COLOR_RESET}
+  CIVQUEST_OFFLINE=1  Skip downloading NeoForge and skip Minecraft launcher configuration
 
 EOF
 }
@@ -101,7 +105,7 @@ while [ $# -gt 0 ]; do
             usage
             exit 0
             ;;
-        server|agents|all)
+        server|agents|client|all)
             if [ -n "${TARGET}" ]; then
                 log_error "Multiple targets specified: '${TARGET}' and '$1'"
                 usage
@@ -122,19 +126,21 @@ if [ -z "${TARGET}" ]; then
     if [ -t 0 ] && [ "${NON_INTERACTIVE}" != "true" ]; then
         echo -e "${COLOR_BOLD}Select CivQuest installation target:${COLOR_RESET}"
         echo "  1) server (NeoForge mod & dedicated server runtime)"
-        echo "  2) agents (Go orchestrator, civctl, civquest-agent, XDG dirs)"
-        echo "  3) all    (Both server and agents)"
+        echo "  2) agents (Go orchestrator, cq, civquest-agent, XDG dirs)"
+        echo "  3) client (NeoForge client, mod, and Minecraft launcher profile)"
+        echo "  4) all    (Server, agents, and client)"
         echo "  q) quit"
-        read -rp "Enter choice [1-3, q]: " CHOICE
+        read -rp "Enter choice [1-4, q]: " CHOICE
         case "${CHOICE}" in
             1|server) TARGET="server" ;;
             2|agents) TARGET="agents" ;;
-            3|all)    TARGET="all" ;;
+            3|client) TARGET="client" ;;
+            4|all)    TARGET="all" ;;
             q|Q|quit) echo "Installation aborted."; exit 0 ;;
             *) log_error "Invalid selection."; exit 1 ;;
         esac
     else
-        log_error "No target specified. Please provide 'server', 'agents', or 'all'."
+        log_error "No target specified. Please provide 'server', 'agents', 'client', or 'all'."
         usage
         exit 1
     fi
@@ -170,6 +176,57 @@ echo ""
 # ------------------------------------------------------------------------------
 # Target: Server Installation
 # ------------------------------------------------------------------------------
+NEOFORGE_VERSION="21.1.265"
+
+install_neoforge_server() {
+    if [ "${CIVQUEST_OFFLINE:-}" = "1" ]; then
+        log_warn "CIVQUEST_OFFLINE=1: skipping NeoForge server download (placeholder runner will be used)"
+        return 0
+    fi
+    if [ -f "${CIVQUEST_SERVER_DIR}/user_jvm_args.txt" ]; then
+        log_info "NeoForge server runtime already installed"
+        return 0
+    fi
+    command -v java >/dev/null 2>&1 || { log_error "Java 21+ is required to install the NeoForge server."; exit 1; }
+    command -v curl >/dev/null 2>&1 || { log_error "curl is required to download the NeoForge installer."; exit 1; }
+
+    local cache="${CIVQUEST_DATA_DIR}/cache"
+    local installer="${cache}/neoforge-${NEOFORGE_VERSION}-installer.jar"
+    mkdir -p "${cache}"
+    if [ ! -f "${installer}" ]; then
+        log_info "Downloading NeoForge ${NEOFORGE_VERSION} installer..."
+        curl -fL --retry 3 -o "${installer}.part" \
+            "https://maven.neoforged.net/releases/net/neoforged/neoforge/${NEOFORGE_VERSION}/neoforge-${NEOFORGE_VERSION}-installer.jar"
+        mv -f "${installer}.part" "${installer}"
+    fi
+    log_info "Installing NeoForge ${NEOFORGE_VERSION} dedicated server into ${CIVQUEST_SERVER_DIR}..."
+    (cd "${CIVQUEST_SERVER_DIR}" && java -jar "${installer}" --installServer > "${CIVQUEST_STATE_DIR}/neoforge-server-install.log" 2>&1) || {
+        log_error "NeoForge server installation failed; see ${CIVQUEST_STATE_DIR}/neoforge-server-install.log"
+        exit 1
+    }
+    printf '%s\n' "-Xms2G" "-Xmx4G" >> "${CIVQUEST_SERVER_DIR}/user_jvm_args.txt"
+}
+
+install_client() {
+    log_step "Installing CivQuest Minecraft Client Profile..."
+    if [ "${CIVQUEST_OFFLINE:-}" = "1" ]; then
+        log_warn "CIVQUEST_OFFLINE=1: skipping Minecraft launcher configuration"
+        return 0
+    fi
+    local cq_bin="${BIN_DIR}/cq"
+    [ -x "${cq_bin}" ] || cq_bin="${CIVQUEST_DATA_DIR}/bin/cq"
+    if [ ! -x "${cq_bin}" ]; then
+        log_error "cq is not installed; run './install.sh agents' (or 'all') first."
+        exit 1
+    fi
+    "${cq_bin}" \
+        --config-dir "${CIVQUEST_CONFIG_DIR}" \
+        --data-dir "${CIVQUEST_DATA_DIR}" \
+        --state-dir "${CIVQUEST_STATE_DIR}" \
+        client install
+    log_success "Client profile installed. Select the \"CivQuest\" profile in the Minecraft launcher."
+}
+
 install_server() {
     log_step "Installing CivQuest Server Domain..."
 
@@ -226,8 +283,13 @@ EOF
         log_info "Preserving existing server.properties (use -f to overwrite)"
     fi
 
+    # 6b. Install the official NeoForge dedicated server runtime (provides run.sh + libraries)
+    install_neoforge_server
+
     # 7. Write lightweight runner script run.sh
-    if [ ! -f "${CIVQUEST_SERVER_DIR}/run.sh" ] || [ "${FORCE_OVERWRITE}" = "true" ]; then
+    if [ -f "${CIVQUEST_SERVER_DIR}/user_jvm_args.txt" ]; then
+        log_info "Using NeoForge-provided ${CIVQUEST_SERVER_DIR}/run.sh"
+    elif [ ! -f "${CIVQUEST_SERVER_DIR}/run.sh" ] || [ "${FORCE_OVERWRITE}" = "true" ]; then
         log_info "Creating runner script ${CIVQUEST_SERVER_DIR}/run.sh..."
         cat > "${CIVQUEST_SERVER_DIR}/run.sh" << 'EOF'
 #!/usr/bin/env bash
@@ -294,21 +356,21 @@ EOF
 }
 EOF
 
-    # 9. Build and install civctl for server management if Go is available
+    # 9. Build and install cq for server management if Go is available
     if command -v go >/dev/null 2>&1; then
-        log_info "Go toolchain detected: compiling and installing civctl for server management..."
+        log_info "Go toolchain detected: compiling and installing cq for server management..."
         local server_build_tmp
         server_build_tmp="$(mktemp -d)"
         trap 'rm -rf "${server_build_tmp:-}"' EXIT INT TERM
         (
             cd "${SCRIPT_DIR}/orchestrator-go"
-            go build -o "${server_build_tmp}/civctl" ./cmd/civctl
+            go build -o "${server_build_tmp}/cq" ./cmd/cq
         )
         mkdir -p "${BIN_DIR}"
         mkdir -p "${CIVQUEST_DATA_DIR}/bin"
-        cp -f "${server_build_tmp}/civctl" "${BIN_DIR}/civctl"
-        cp -f "${server_build_tmp}/civctl" "${CIVQUEST_DATA_DIR}/bin/civctl"
-        chmod +x "${BIN_DIR}/civctl" "${CIVQUEST_DATA_DIR}/bin/civctl"
+        cp -f "${server_build_tmp}/cq" "${BIN_DIR}/cq"
+        cp -f "${server_build_tmp}/cq" "${CIVQUEST_DATA_DIR}/bin/cq"
+        chmod +x "${BIN_DIR}/cq" "${CIVQUEST_DATA_DIR}/bin/cq"
         rm -rf "${server_build_tmp}"
         trap - EXIT INT TERM
     fi
@@ -329,13 +391,13 @@ install_agents() {
     fi
 
     # 2. Build Go binaries
-    log_info "Building Go orchestrator binaries (civctl and civquest-agent)..."
+    log_info "Building Go orchestrator binaries (cq and civquest-agent)..."
     local build_tmp
     build_tmp="$(mktemp -d)"
     trap 'rm -rf "${build_tmp:-}"' EXIT INT TERM
     (
         cd "${SCRIPT_DIR}/orchestrator-go"
-        go build -o "${build_tmp}/civctl" ./cmd/civctl
+        go build -o "${build_tmp}/cq" ./cmd/cq
         go build -o "${build_tmp}/civquest-agent" ./cmd/civquest-agent
     )
 
@@ -344,14 +406,14 @@ install_agents() {
     mkdir -p "${CIVQUEST_DATA_DIR}/bin"
 
     log_info "Installing binaries into ${BIN_DIR}..."
-    cp -f "${build_tmp}/civctl" "${BIN_DIR}/civctl"
+    cp -f "${build_tmp}/cq" "${BIN_DIR}/cq"
     cp -f "${build_tmp}/civquest-agent" "${BIN_DIR}/civquest-agent"
-    chmod +x "${BIN_DIR}/civctl" "${BIN_DIR}/civquest-agent"
+    chmod +x "${BIN_DIR}/cq" "${BIN_DIR}/civquest-agent"
 
     log_info "Installing binaries into ${CIVQUEST_DATA_DIR}/bin..."
-    cp -f "${build_tmp}/civctl" "${CIVQUEST_DATA_DIR}/bin/civctl"
+    cp -f "${build_tmp}/cq" "${CIVQUEST_DATA_DIR}/bin/cq"
     cp -f "${build_tmp}/civquest-agent" "${CIVQUEST_DATA_DIR}/bin/civquest-agent"
-    chmod +x "${CIVQUEST_DATA_DIR}/bin/civctl" "${CIVQUEST_DATA_DIR}/bin/civquest-agent"
+    chmod +x "${CIVQUEST_DATA_DIR}/bin/cq" "${CIVQUEST_DATA_DIR}/bin/civquest-agent"
 
     rm -rf "${build_tmp}"
     trap - EXIT INT TERM
@@ -449,7 +511,7 @@ EOF
   "installed_at": "${timestamp}",
   "bin_dir": "${BIN_DIR}",
   "binaries": [
-    "civctl",
+    "cq",
     "civquest-agent"
   ],
   "config_dir": "${CIVQUEST_CONFIG_DIR}",
@@ -475,23 +537,28 @@ case "${TARGET}" in
     agents)
         install_agents
         ;;
+    client)
+        install_client
+        ;;
     all)
         install_server
         echo ""
         install_agents
+        echo ""
+        install_client
         ;;
 esac
 
 echo ""
 log_step "Installation Summary"
-if [ -x "${BIN_DIR}/civctl" ]; then
-    "${BIN_DIR}/civctl" \
+if [ -x "${BIN_DIR}/cq" ]; then
+    "${BIN_DIR}/cq" \
         --config-dir "${CIVQUEST_CONFIG_DIR}" \
         --data-dir "${CIVQUEST_DATA_DIR}" \
         --state-dir "${CIVQUEST_STATE_DIR}" \
         status
-elif [ -x "${CIVQUEST_DATA_DIR}/bin/civctl" ]; then
-    "${CIVQUEST_DATA_DIR}/bin/civctl" \
+elif [ -x "${CIVQUEST_DATA_DIR}/bin/cq" ]; then
+    "${CIVQUEST_DATA_DIR}/bin/cq" \
         --config-dir "${CIVQUEST_CONFIG_DIR}" \
         --data-dir "${CIVQUEST_DATA_DIR}" \
         --state-dir "${CIVQUEST_STATE_DIR}" \

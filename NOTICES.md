@@ -25,7 +25,7 @@ This file contains legal notices, copyright statements, and license texts for th
 | **sqlite-vec** | Alex Garcia | [Apache-2.0](https://spdx.org/licenses/Apache-2.0.html) / [MIT](https://spdx.org/licenses/MIT.html) | In-database 768-dim vector embeddings |
 | **Beads (`bd`)** | Gas Town Hall / Steve Yegge | [MIT](https://spdx.org/licenses/MIT.html) | Graph-based issue tracking & coordination |
 | **Dolt** | DoltHub, Inc. | [Apache-2.0](https://spdx.org/licenses/Apache-2.0.html) | Version-controlled issue tracking database |
-| **Cobra** | Steve Francia & Contributors | [Apache-2.0](https://spdx.org/licenses/Apache-2.0.html) | CLI command framework for civctl |
+| **Cobra** | Steve Francia & Contributors | [Apache-2.0](https://spdx.org/licenses/Apache-2.0.html) | CLI command framework for cq |
 | **Eclipse Temurin OpenJDK** | Eclipse Adoptium / Eclipse Foundation | [GPL-2.0-with-classpath-exception](https://spdx.org/licenses/GPL-2.0-with-classpath-exception.html) | Java 21 runtime environment |
 
 ---

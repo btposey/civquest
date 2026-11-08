@@ -12,7 +12,7 @@ Running dozens of autonomous agents inside a single OS process or single threade
 ## Decision
 1. **Process-Per-Agent Architecture**:
    - Each active agent runs as an independent operating system process (`civquest-agent`).
-   - A supervisor daemon (`civctl daemon`) manages process lifecycles, spawns, clean shutdowns, and restarts.
+   - A supervisor daemon (`cq daemon`) manages process lifecycles, spawns, clean shutdowns, and restarts.
    - Each agent process exposes a dedicated UNIX domain socket (`$XDG_STATE_HOME/civquest/agents/{name}.sock`) for live status inspections and diagnostics.
 2. **XDG Base Directory Compliance**:
    - All paths are resolved strictly through XDG environment variables with standard fallbacks:

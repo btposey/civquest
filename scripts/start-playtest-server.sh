@@ -87,13 +87,13 @@ fi
 
 # 3. Launch Server
 if [ "${MODE}" = "standalone" ]; then
-    log "Starting standalone XDG server via civctl..."
-    if [ ! -x "${REPO_ROOT}/bin/civctl" ]; then
-        log "Building civctl binary..."
+    log "Starting standalone XDG server via cq..."
+    if [ ! -x "${REPO_ROOT}/bin/cq" ]; then
+        log "Building cq binary..."
         mkdir -p "${REPO_ROOT}/bin"
-        (cd "${REPO_ROOT}/orchestrator-go" && go build -o "${REPO_ROOT}/bin/civctl" ./cmd/civctl)
+        (cd "${REPO_ROOT}/orchestrator-go" && go build -o "${REPO_ROOT}/bin/cq" ./cmd/cq)
     fi
-    "${REPO_ROOT}/bin/civctl" server setup --port "${PORT}" --start
+    "${REPO_ROOT}/bin/cq" server setup --port "${PORT}" --start
 else
     log "Launching Minecraft 1.21.1 NeoForge server via Gradle (:mod-neoforge:runServer)..."
     log "Players can connect in Minecraft client: Direct Connection -> localhost:${PORT}"

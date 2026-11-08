@@ -61,7 +61,7 @@ func (g GRPCConfig) Address() string {
 	return fmt.Sprintf("%s:%d", g.Host, g.Port)
 }
 
-// SupervisorConfig contains lifecycle and dynastic reproduction policies for civctl.
+// SupervisorConfig contains lifecycle and dynastic reproduction policies for cq.
 type SupervisorConfig struct {
 	MaxActiveAgents    int  `yaml:"max_active_agents"`
 	MinFoodSurplusDays int  `yaml:"min_food_surplus_days"`

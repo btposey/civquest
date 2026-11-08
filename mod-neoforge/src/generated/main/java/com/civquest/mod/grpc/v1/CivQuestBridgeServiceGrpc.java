@@ -205,7 +205,7 @@ public final class CivQuestBridgeServiceGrpc {
 
     /**
      * <pre>
-     * Administrative RPCs called by civctl supervisor
+     * Administrative RPCs called by cq supervisor
      * </pre>
      */
     default void spawnAgentEntity(com.civquest.mod.grpc.v1.SpawnAgentRequest request,
@@ -274,7 +274,7 @@ public final class CivQuestBridgeServiceGrpc {
 
     /**
      * <pre>
-     * Administrative RPCs called by civctl supervisor
+     * Administrative RPCs called by cq supervisor
      * </pre>
      */
     public void spawnAgentEntity(com.civquest.mod.grpc.v1.SpawnAgentRequest request,
@@ -321,7 +321,7 @@ public final class CivQuestBridgeServiceGrpc {
 
     /**
      * <pre>
-     * Administrative RPCs called by civctl supervisor
+     * Administrative RPCs called by cq supervisor
      * </pre>
      */
     public com.civquest.mod.grpc.v1.SpawnAgentResponse spawnAgentEntity(com.civquest.mod.grpc.v1.SpawnAgentRequest request) {
@@ -365,7 +365,7 @@ public final class CivQuestBridgeServiceGrpc {
 
     /**
      * <pre>
-     * Administrative RPCs called by civctl supervisor
+     * Administrative RPCs called by cq supervisor
      * </pre>
      */
     public com.google.common.util.concurrent.ListenableFuture<com.civquest.mod.grpc.v1.SpawnAgentResponse> spawnAgentEntity(

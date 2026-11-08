@@ -119,7 +119,7 @@ func newBlueprintListCmd() *cobra.Command {
 			fmt.Fprintln(out, "======================================================================")
 			if len(entries) == 0 {
 				fmt.Fprintln(out, "No blueprints found in official, player_imported, or llm_generated directories.")
-				fmt.Fprintln(out, "Run 'civctl blueprint generate' to create a new blueprint.")
+				fmt.Fprintln(out, "Run 'cq blueprint generate' to create a new blueprint.")
 			} else {
 				fmt.Fprintf(out, " %-16s %-24s %-12s %-10s %s\n", "Category", "Name", "Type", "Dimensions", "Blocks")
 				fmt.Fprintln(out, " --------------------------------------------------------------------")

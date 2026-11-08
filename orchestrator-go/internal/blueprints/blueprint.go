@@ -224,7 +224,7 @@ func GenerateTemplate(bType, style string) *Blueprint {
 		Version: 1,
 		Type:    cleanType,
 		Style:   cleanStyle,
-		Author:  "civctl",
+		Author:  "cq",
 		Dimensions: Dimensions{
 			Width:  w,
 			Height: h,

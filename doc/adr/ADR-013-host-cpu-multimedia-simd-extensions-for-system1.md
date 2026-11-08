@@ -39,4 +39,4 @@ We mandate that **System 1 reactive logic, 3D spatial geometry, utility scoring,
 - **Hardware Portability**: Enables autonomous agent fleets to run on headless CPU-only cloud nodes or lightweight edge servers while directing System 2 inference to a centralized remote GPU server.
 
 ### Negative / Trade-offs
-- CPU utilization increases on machines running dozens of concurrent agent worker processes; requires thread pool governance via `civctl` supervisor.
+- CPU utilization increases on machines running dozens of concurrent agent worker processes; requires thread pool governance via `cq` supervisor.

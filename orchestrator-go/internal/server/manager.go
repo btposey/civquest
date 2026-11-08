@@ -434,7 +434,7 @@ func (m *Manager) Stop(ctx context.Context, timeout time.Duration) error {
 	for {
 		select {
 		case <-ctx.Done():
-			// Context was cancelled (e.g. user pressed Ctrl+C during civctl server stop)
+			// Context was cancelled (e.g. user pressed Ctrl+C during cq server stop)
 			// Do NOT send SIGKILL and do NOT remove server.pid!
 			// The server is continuing graceful shutdown in the background.
 			if logFile, err := os.OpenFile(m.resolver.ServerLogPath(), os.O_WRONLY|os.O_APPEND, 0640); err == nil {

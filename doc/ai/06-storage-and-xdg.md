@@ -45,7 +45,7 @@ $XDG_DATA_HOME/civquest/ (default: ~/.local/share/civquest)
 └── bin/                                # Downloaded binary dependencies
 
 $XDG_STATE_HOME/civquest/ (default: ~/.local/state/civquest)
-├── supervisor.pid                      # civctl daemon PID
+├── supervisor.pid                      # cq daemon PID
 └── servers/
     └── {server_id}/
         └── agents/
@@ -58,7 +58,7 @@ $XDG_STATE_HOME/civquest/ (default: ~/.local/state/civquest)
 1. **Explicit System Property / Environment Variable**: `civquest.server.id` or `CIVQUEST_SERVER_ID` takes first precedence.
 2. **Deterministic World Persistence**: The NeoForge mod reads or creates `civquest-server-id.txt` in `LevelResource.ROOT` (`<world_directory>/civquest-server-id.txt`). Format: `<world_name>-<short-uuid>` (max 32 characters, sanitized to alphanumeric, `-`, `_`).
 3. **Runtime Discovery Artifact**: Emitted to `civquest-server-meta.json` with `"server_id"` and `"world_name"`.
-4. **Agent CLI / Supervisor Override**: `--server-id <id>` flag on `civquest-agent` and persistent flag on `civctl`.
+4. **Agent CLI / Supervisor Override**: `--server-id <id>` flag on `civquest-agent` and persistent flag on `cq`.
 5. **Legacy / Backward Compatibility**: When `server_id` is empty (`""`), the resolver automatically falls back to un-namespaced paths (`$XDG_DATA_HOME/civquest/agents/...`), preserving full compatibility.
 6. **Socket Path Length Protection**: To comply with UNIX domain socket length limits (104-108 bytes), `AgentSocketPath` checks if the namespaced socket path is $\ge 104$ bytes, falling back to `$XDG_RUNTIME_DIR/civquest/{server_id}-{agent_name}.sock` or `os.TempDir()`.
 

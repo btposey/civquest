@@ -37,7 +37,7 @@ func TestCivctl_Status_Empty(t *testing.T) {
 		"status",
 	)
 	if err != nil {
-		t.Fatalf("civctl status failed: %v\nOutput: %s", err, out)
+		t.Fatalf("cq status failed: %v\nOutput: %s", err, out)
 	}
 
 	if !strings.Contains(out, "CivQuest Host Installation Topology") {
@@ -62,7 +62,7 @@ func TestCivctl_Status_JSON(t *testing.T) {
 		"status",
 	)
 	if err != nil {
-		t.Fatalf("civctl info --json failed: %v\nOutput: %s", err, out)
+		t.Fatalf("cq info --json failed: %v\nOutput: %s", err, out)
 	}
 
 	var top domain.Topology

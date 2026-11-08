@@ -11,7 +11,7 @@ service CivQuestBridgeService {
   // Primary per-agent bidirectional control and telemetry stream
   rpc ConnectAgent(stream AgentIntent) returns (stream TelemetryFrame);
 
-  // Administrative RPCs called by civctl supervisor
+  // Administrative RPCs called by cq supervisor
   rpc SpawnAgentEntity(SpawnAgentRequest) returns (SpawnAgentResponse);
   rpc DespawnAgentEntity(DespawnAgentRequest) returns (DespawnAgentResponse);
   rpc ExportRecipeGraph(ExportRecipeRequest) returns (ExportRecipeResponse);

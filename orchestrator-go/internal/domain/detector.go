@@ -233,10 +233,10 @@ func DetectAgents(r *xdg.Resolver) (AgentDomainStatus, error) {
 			status.Installed = true
 		} else if _, err := os.Stat(r.GlobalConfigPath()); err == nil {
 			status.Installed = true
-		} else if _, err := os.Stat(filepath.Join(r.BinDir(), "civctl")); err == nil {
+		} else if _, err := os.Stat(filepath.Join(r.BinDir(), "cq")); err == nil {
 			status.Installed = true
 			status.BinDir = r.BinDir()
-		} else if _, err := exec.LookPath("civctl"); err == nil {
+		} else if _, err := exec.LookPath("cq"); err == nil {
 			status.Installed = true
 		}
 	}

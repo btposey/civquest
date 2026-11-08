@@ -27,7 +27,7 @@ CivQuest is an autonomous, dynastic settlement engine introducing intelligent, h
    - Functions: Spawns headless `AgentEntity` (`FakePlayer`) avatars; delivers dynamic agent skin packets; streams sensory frustum frames (5 Hz) over embedded Netty gRPC; delegates physical voxel pathfinding to an integrated Baritone API wrapper; preserves vanilla villages and villagers for dynamic co-existence.
 2. **External Multi-Process Orchestrator (`orchestrator-go`)**:
    - Engine: **Go 1.23+**.
-   - Functions: Multi-process supervisor (`civctl`) spawning dedicated OS worker processes (`civquest-agent`) per agent.
+   - Functions: Multi-process supervisor (`cq`) spawning dedicated OS worker processes (`civquest-agent`) per agent.
    - **System 1 (Reactive Utility AI Engine)**: Sub-$5\text{ ms}$, zero-token deterministic loop handling combat reflexes, fight-or-flight confidence scoring, hunger, road paving, and daily career state transitions.
    - **System 2 (Deliberative LLM Engine)**: Asynchronous JSON-validated inference pipelines connected to local gateways (Ollama/vLLM) for dialogue, barter trade, Chronicler book writing, landmark toponymy, and Architect quadrant construction.
    - **Persistence Tier**: Embedded SQLite databases per agent and clan with `sqlite-vec` vector RAG.
@@ -60,7 +60,7 @@ Explore the progressive discovery documentation suite in `doc/`:
 - [System 1 Reactive Utility Engine](doc/ai/04-system1-utility-engine.md)
 - [System 2 Deliberative LLM Pipelines](doc/ai/05-system2-llm-pipelines.md)
 - [Storage, Databases & XDG](doc/ai/06-storage-and-xdg.md)
-- [Supervisor & Management CLI (`civctl`)](doc/ai/07-supervisor-and-cli.md)
+- [Supervisor & Management CLI (`cq`)](doc/ai/07-supervisor-and-cli.md)
 - [Branching & Release Strategy](doc/ai/08-versioning-and-branching-strategy.md)
 - [Architectural Decision Records (ADRs)](doc/adr/)
 

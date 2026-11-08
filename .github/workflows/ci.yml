@@ -47,7 +47,7 @@ jobs:
           echo "Artifact Base Name: ${ARTIFACT_BASE}"
 
   build-go:
-    name: Build Go Orchestrator (civctl & agent)
+    name: Build Go Orchestrator (cq & agent)
     needs: resolve-version
     runs-on: ubuntu-latest
     steps:
@@ -84,14 +84,14 @@ jobs:
           BUILD_DATE: ${{ needs.resolve-version.outputs.build_date }}
         run: |
           mkdir -p dist/bin
-          if [ -f "orchestrator-go/cmd/civctl/main.go" ]; then
+          if [ -f "orchestrator-go/cmd/cq/main.go" ]; then
             cd orchestrator-go
-            CGO_ENABLED=1 go build -ldflags "-X main.Version=${SEMVER}-${BUILD_DATE}" -o ../dist/bin/civctl ./cmd/civctl
+            CGO_ENABLED=1 go build -ldflags "-X main.Version=${SEMVER}-${BUILD_DATE}" -o ../dist/bin/cq ./cmd/cq
             CGO_ENABLED=1 go build -ldflags "-X main.Version=${SEMVER}-${BUILD_DATE}" -o ../dist/bin/civquest-agent ./cmd/civquest-agent
             cd ..
           else
             echo "Placeholder: Binary entrypoints will compile once orchestrator-go code is scaffolded"
-            touch dist/bin/civctl dist/bin/civquest-agent
+            touch dist/bin/cq dist/bin/civquest-agent
           fi
 
       - name: Upload Go Artifacts
