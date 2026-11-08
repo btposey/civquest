@@ -115,6 +115,8 @@ type AgentRuntime struct {
 
 	// System 1 Reflexes and Safe Node Graph Cache
 	safeNodesCache []db.MapNode
+	system1State   *system1.AgentState
+	pavingTracker  *system1.RoadPavingTracker
 
 	// System 2 Deliberative Dialogue Pipeline
 	dialogueService     *system2.DialogueService
@@ -170,6 +172,10 @@ func NewRuntime(cfg Config) (*AgentRuntime, error) {
 		connector = cfg.BridgeClient
 	}
 
+	pavingTracker := system1.NewRoadPavingTracker(1000, 3)
+	sys1State := system1.NewAgentState()
+	sys1State.PavingTracker = pavingTracker
+
 	runtime := &AgentRuntime{
 		agentID:         agentID,
 		clanID:          clanID,
@@ -188,6 +194,8 @@ func NewRuntime(cfg Config) (*AgentRuntime, error) {
 		done:            make(chan struct{}),
 		socketDone:      make(chan struct{}),
 		lastCachedItems: nil,
+		system1State:    sys1State,
+		pavingTracker:   pavingTracker,
 	}
 
 	runtime.loadSafeNodes()
@@ -237,6 +245,39 @@ func (r *AgentRuntime) DialogueService() *system2.DialogueService {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	return r.dialogueService
+}
+
+// System1State returns the volatile System 1 agent routine, needs, and paving state.
+func (r *AgentRuntime) System1State() *system1.AgentState {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.system1State
+}
+
+// PavingTracker returns the road paving tracker.
+func (r *AgentRuntime) PavingTracker() *system1.RoadPavingTracker {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.pavingTracker
+}
+
+// AssignedBed returns a defensive copy of the agent's assigned bed position.
+func (r *AgentRuntime) AssignedBed() *civquestv1.BlockPosProto {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	if r.system1State == nil {
+		return nil
+	}
+	return r.system1State.GetAssignedBed()
+}
+
+// SetAssignedBed assigns the designated bed block position.
+func (r *AgentRuntime) SetAssignedBed(pos *civquestv1.BlockPosProto) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.system1State != nil {
+		r.system1State.SetAssignedBed(pos)
+	}
 }
 
 // SocketPath returns the bound UNIX domain socket path.
@@ -647,6 +688,13 @@ func (r *AgentRuntime) recvLoop(ctx context.Context, stream civquestv1.CivQuestB
 
 // processFrame ingests a single TelemetryFrame in sub-millisecond time.
 func (r *AgentRuntime) processFrame(frame *civquestv1.TelemetryFrame) {
+	r.HandleTelemetryFrame(frame)
+}
+
+// HandleTelemetryFrame processes an incoming sensory TelemetryFrame through
+// System 1 survival reflexes, daily utility scheduler, biological needs FSM,
+// road paving reflexes, and System 2 deliberative dialogue dispatch.
+func (r *AgentRuntime) HandleTelemetryFrame(frame *civquestv1.TelemetryFrame) {
 	if frame == nil {
 		return
 	}
@@ -693,7 +741,7 @@ func (r *AgentRuntime) processFrame(frame *civquestv1.TelemetryFrame) {
 		r.onDeath(deathEv)
 	}
 
-	// Evaluate deterministic System 1 combat reflexes and survival panic
+	// Evaluate deterministic System 1 survival reflexes, daily routine, biological needs, and paving (<5 ms)
 	if deathEv == nil {
 		r.evaluateSystem1Reflexes(frame)
 	}
@@ -896,12 +944,14 @@ func (r *AgentRuntime) SafeNodes() []db.MapNode {
 	return res
 }
 
-// evaluateSystem1Reflexes evaluates deterministic fight-or-flight combat reflexes and survival panic.
+// evaluateSystem1Reflexes evaluates deterministic fight-or-flight combat reflexes,
+// daily utility scheduler, biological needs FSM, and road paving reflexes in <5ms.
 func (r *AgentRuntime) evaluateSystem1Reflexes(frame *civquestv1.TelemetryFrame) {
 	if frame == nil || frame.Status == nil || r.IsDead() {
 		return
 	}
 
+	// 1. Evaluate Combat Reflexes
 	hostilesPresent := false
 	for _, e := range frame.VisibleEntities {
 		if system1.IsHostile(e) {
@@ -918,83 +968,122 @@ func (r *AgentRuntime) evaluateSystem1Reflexes(frame *civquestv1.TelemetryFrame)
 	lowFood := frame.Status.FoodLevel <= 6
 	damageTaken := frame.LastDamageTaken != nil
 
-	if !hostilesPresent && !damageTaken && !lowHealth && !lowFood {
+	var combatResult system1.ReflexResult
+	if hostilesPresent || damageTaken || lowHealth || lowFood {
+		bravery := 0.5
+		if r.identityConfig != nil {
+			bravery = r.identityConfig.Traits.Bravery
+		}
+
+		r.mu.RLock()
+		var safeNodes []db.MapNode
+		if r.safeNodesCache != nil {
+			safeNodes = make([]db.MapNode, len(r.safeNodesCache))
+			copy(safeNodes, r.safeNodesCache)
+		}
+
+		canEat := true
+		if r.lastEatingTick > 0 && frame.WorldTick >= r.lastEatingTick && frame.WorldTick-r.lastEatingTick < 32 {
+			canEat = false
+		}
+		r.mu.RUnlock()
+
+		ctx := system1.ReflexContext{
+			AgentID:   r.agentID,
+			Bravery:   bravery,
+			SafeNodes: safeNodes,
+			Frame:     frame,
+			CanEat:    canEat,
+		}
+
+		combatResult = system1.EvaluateReflexes(ctx)
+		if combatResult.ShouldAct {
+			// MIN-02: Baritone Path Churn Mitigation
+			skipFleeNav := false
+			if combatResult.IsPanic && combatResult.FleeTarget != nil {
+				r.mu.Lock()
+				if r.lastFleeTarget != nil {
+					dx := combatResult.FleeTarget.X - r.lastFleeTarget.X
+					dy := combatResult.FleeTarget.Y - r.lastFleeTarget.Y
+					dz := combatResult.FleeTarget.Z - r.lastFleeTarget.Z
+					dist := math.Sqrt(dx*dx + dy*dy + dz*dz)
+					ticksElapsed := frame.WorldTick - r.lastFleeTick
+					if dist < 2.0 && ticksElapsed <= 10 && ticksElapsed >= 0 {
+						skipFleeNav = true
+					}
+				}
+				if !skipFleeNav {
+					r.lastFleeTarget = &civquestv1.Vec3{
+						X: combatResult.FleeTarget.X,
+						Y: combatResult.FleeTarget.Y,
+						Z: combatResult.FleeTarget.Z,
+					}
+					r.lastFleeTick = frame.WorldTick
+				}
+				r.mu.Unlock()
+			} else if !combatResult.IsPanic {
+				r.mu.Lock()
+				r.lastFleeTarget = nil
+				r.lastFleeTick = 0
+				r.mu.Unlock()
+			}
+
+			// Dispatch priority reflex intents; update eating cooldown only if UseItem was queued successfully
+			for _, intent := range combatResult.Intents {
+				if skipFleeNav && intent.GetNavigate() != nil {
+					continue
+				}
+				err := r.QueuePriorityIntent(intent)
+				if err == nil && intent.GetUseItem() != nil && intent.GetUseItem().IsEatingOrDrinking {
+					r.mu.Lock()
+					r.lastEatingTick = frame.WorldTick
+					r.mu.Unlock()
+					if r.system1State != nil {
+						r.system1State.SetLastEatingTick(frame.WorldTick)
+					}
+				}
+			}
+		}
+	}
+
+	// 2. Evaluate Daily Utility Schedule
+	_ = system1.EvaluateUtility(frame, r.identityConfig, r.system1State)
+
+	// If in combat panic, skip biological needs and road paving to prioritize survival
+	if combatResult.IsPanic {
 		return
 	}
 
-	bravery := 0.5
-	if r.identityConfig != nil {
-		bravery = r.identityConfig.Traits.Bravery
-	}
-
-	r.mu.RLock()
-	var safeNodes []db.MapNode
-	if r.safeNodesCache != nil {
-		safeNodes = make([]db.MapNode, len(r.safeNodesCache))
-		copy(safeNodes, r.safeNodesCache)
-	}
-
-	canEat := true
-	if r.lastEatingTick > 0 && frame.WorldTick >= r.lastEatingTick && frame.WorldTick-r.lastEatingTick < 32 {
-		canEat = false
-	}
-	r.mu.RUnlock()
-
-	ctx := system1.ReflexContext{
-		AgentID:   r.agentID,
-		Bravery:   bravery,
-		SafeNodes: safeNodes,
-		Frame:     frame,
-		CanEat:    canEat,
-	}
-
-	result := system1.EvaluateReflexes(ctx)
-	if !result.ShouldAct {
-		return
-	}
-
-	// MIN-02: Baritone Path Churn Mitigation
-	// When fleeing, only re-emit NavigateIntent if target shifted by >= 2.0 blocks
-	// or > 10 ticks (0.5s) have elapsed.
-	skipFleeNav := false
-	if result.IsPanic && result.FleeTarget != nil {
-		r.mu.Lock()
-		if r.lastFleeTarget != nil {
-			dx := result.FleeTarget.X - r.lastFleeTarget.X
-			dy := result.FleeTarget.Y - r.lastFleeTarget.Y
-			dz := result.FleeTarget.Z - r.lastFleeTarget.Z
-			dist := math.Sqrt(dx*dx + dy*dy + dz*dz)
-			ticksElapsed := frame.WorldTick - r.lastFleeTick
-			if dist < 2.0 && ticksElapsed <= 10 && ticksElapsed >= 0 {
-				skipFleeNav = true
+	// 3. Evaluate Biological Needs FSM (Hunger & Sleep/Wake)
+	needsIntents := system1.EvaluateBiologicalNeeds(r.agentID, frame, r.system1State)
+	for _, intent := range needsIntents {
+		if intent.GetUseItem() != nil && intent.GetUseItem().IsEatingOrDrinking {
+			r.mu.RLock()
+			canEat := (r.lastEatingTick == 0 || frame.WorldTick < r.lastEatingTick || frame.WorldTick-r.lastEatingTick >= 32)
+			r.mu.RUnlock()
+			if canEat {
+				err := r.QueuePriorityIntent(intent)
+				if err == nil {
+					r.mu.Lock()
+					r.lastEatingTick = frame.WorldTick
+					r.mu.Unlock()
+					if r.system1State != nil {
+						r.system1State.SetLastEatingTick(frame.WorldTick)
+					}
+				}
 			}
+		} else if intent.GetInteractBlock() != nil {
+			// Sleep in bed and wake up intents must use standard QueueIntent (not QueuePriorityIntent)
+			_ = r.QueueIntent(intent)
+		} else if intent.GetNavigate() != nil {
+			_ = r.QueueIntent(intent)
 		}
-		if !skipFleeNav {
-			r.lastFleeTarget = &civquestv1.Vec3{
-				X: result.FleeTarget.X,
-				Y: result.FleeTarget.Y,
-				Z: result.FleeTarget.Z,
-			}
-			r.lastFleeTick = frame.WorldTick
-		}
-		r.mu.Unlock()
-	} else if !result.IsPanic {
-		r.mu.Lock()
-		r.lastFleeTarget = nil
-		r.lastFleeTick = 0
-		r.mu.Unlock()
 	}
 
-	// Dispatch priority reflex intents; update eating cooldown only if UseItem was queued successfully
-	for _, intent := range result.Intents {
-		if skipFleeNav && intent.GetNavigate() != nil {
-			continue
-		}
-		err := r.QueuePriorityIntent(intent)
-		if err == nil && intent.GetUseItem() != nil && intent.GetUseItem().IsEatingOrDrinking {
-			r.mu.Lock()
-			r.lastEatingTick = frame.WorldTick
-			r.mu.Unlock()
+	// 4. Evaluate Road Paving Reflex
+	if frame.Status != nil && !frame.Status.IsSleeping && r.pavingTracker != nil {
+		if paveIntent := r.pavingTracker.EvaluatePaving(r.agentID, frame); paveIntent != nil {
+			_ = r.QueueIntent(paveIntent)
 		}
 	}
 }

@@ -349,60 +349,16 @@ func IsRangedAttacker(entity *civquestv1.VisibleEntity, lastDamage *civquestv1.D
 }
 
 // FoodScore ranks food items by saturation, restorative value, and safety.
-// Returns 0 (do not eat) for dangerous, poisonous, or hazardous items.
+// Delegates to CalculateFoodScore to ensure a single authoritative food scoring table across System 1.
 func FoodScore(itemID string) int {
-	id := strings.ToLower(itemID)
-	if idx := strings.Index(id, ":"); idx != -1 {
-		id = id[idx+1:]
-	}
-	switch {
-	case id == "suspicious_stew" || id == "poisonous_potato" || id == "pufferfish" ||
-		id == "rotten_flesh" || id == "spider_eye":
-		return 0
-	case id == "enchanted_golden_apple":
-		return 100
-	case id == "golden_apple":
-		return 95
-	case id == "golden_carrot":
-		return 90
-	case id == "cooked_porkchop" || id == "cooked_beef" || id == "steak":
-		return 80
-	case id == "cooked_mutton" || id == "cooked_salmon":
-		return 70
-	case id == "cooked_chicken" || id == "cooked_rabbit" || id == "rabbit_stew":
-		return 65
-	case strings.Contains(id, "soup") || strings.Contains(id, "stew") || strings.Contains(id, "roast") ||
-		strings.Contains(id, "pasta") || strings.Contains(id, "burger") || strings.Contains(id, "sandwich"):
-		return 75
-	case id == "bread" || id == "baked_potato" || id == "cooked_cod" || id == "pumpkin_pie":
-		return 50
-	case id == "apple" || id == "carrot" || id == "sweet_berries" || id == "glow_berries" || id == "melon_slice" || id == "cookie":
-		return 30
-	case id == "raw_beef" || id == "raw_porkchop" || id == "raw_chicken" || id == "raw_mutton" || id == "raw_salmon" || id == "raw_cod":
-		return 15
-	default:
-		return 0
-	}
+	return int(CalculateFoodScore(itemID))
 }
 
 // FindBestFoodItem locates the slot of the highest scoring food item in the agent's inventory.
+// Delegates to FindOptimalFood to ensure consistent food selection across System 1.
 func FindBestFoodItem(inventory []*civquestv1.ItemStackProto) (slot int32, found bool) {
-	bestScore := 0
-	bestSlot := int32(-1)
-	for _, item := range inventory {
-		if item == nil || item.Count <= 0 {
-			continue
-		}
-		score := FoodScore(item.ItemId)
-		if score > bestScore {
-			bestScore = score
-			bestSlot = item.Slot
-		}
-	}
-	if bestSlot >= 0 {
-		return bestSlot, true
-	}
-	return -1, false
+	s, _, ok := FindOptimalFood(inventory)
+	return s, ok
 }
 
 // ComputeFleeTarget computes a 3D escape position oriented away from the centroid of hostiles,

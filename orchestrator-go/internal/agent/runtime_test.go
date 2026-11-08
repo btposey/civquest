@@ -2008,3 +2008,284 @@ func TestRuntime_TradeDebounceTracking(t *testing.T) {
 	cancel()
 	_ = <-runErrCh
 }
+
+func TestRuntime_System1_DailyUtilityAndBiologicalNeeds(t *testing.T) {
+	mockSvc, client, cleanup := setupTestBridge(t)
+	defer cleanup()
+
+	tmpDir := t.TempDir()
+	resolver := xdg.NewResolver(xdg.WithCustomRoot(tmpDir))
+	_ = resolver.InitAgentDirectories("needs_agent")
+
+	agentCfg := &xdg.AgentIdentityConfig{
+		Name:           "needs_agent",
+		Profession:     "Farmer",
+		SecondaryHobby: "APIARIST",
+	}
+
+	cfg := agent.Config{
+		AgentID:        "needs_agent",
+		ClanID:         "pioneers",
+		IdentityConfig: agentCfg,
+		Resolver:       resolver,
+		BridgeClient:   client,
+	}
+
+	rt, err := agent.NewRuntime(cfg)
+	if err != nil {
+		t.Fatalf("failed creating runtime: %v", err)
+	}
+
+	bedPos := &civquestv1.BlockPosProto{X: 10, Y: 64, Z: 10}
+	rt.SetAssignedBed(bedPos)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	runErrCh := make(chan error, 1)
+	go func() {
+		runErrCh <- rt.Start(ctx)
+	}()
+
+	select {
+	case <-mockSvc.streamReady:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for stream readiness")
+	}
+
+	// Drain handshake intent
+	select {
+	case <-mockSvc.intentCh:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for handshake intent")
+	}
+
+	// 1. Critical hunger trigger at midday (time_of_day = 4000, food_level = 5)
+	hungerFrame := &civquestv1.TelemetryFrame{
+		WorldTick: 100,
+		TimeOfDay: 4000,
+		Status: &civquestv1.AgentStatus{
+			AgentId:   "needs_agent",
+			Health:    20.0,
+			MaxHealth: 20.0,
+			FoodLevel: 5, // Critical hunger <= 6
+			Position:  &civquestv1.Vec3{X: 100, Y: 64, Z: 100},
+			Inventory: []*civquestv1.ItemStackProto{
+				{ItemId: "minecraft:cooked_beef", Count: 5, Slot: 3},
+			},
+		},
+	}
+	if err := mockSvc.SendFrame(hungerFrame); err != nil {
+		t.Fatalf("failed sending hungerFrame: %v", err)
+	}
+
+	select {
+	case intent := <-mockSvc.intentCh:
+		useItem := intent.GetUseItem()
+		if useItem == nil || useItem.InventorySlot != 3 || !useItem.IsEatingOrDrinking {
+			t.Fatalf("expected eating UseItemIntent for cooked beef in slot 3, got %+v", intent)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for hunger UseItem intent")
+	}
+
+	// 2. Bedtime navigation trigger at night (time_of_day = 14000, agent at 50, 64, 50, far from bed 10, 64, 10)
+	nightFarFrame := &civquestv1.TelemetryFrame{
+		WorldTick: 200,
+		TimeOfDay: 14000,
+		Status: &civquestv1.AgentStatus{
+			AgentId:   "needs_agent",
+			Health:    20.0,
+			MaxHealth: 20.0,
+			FoodLevel: 20,
+			Position:  &civquestv1.Vec3{X: 50, Y: 64, Z: 50},
+		},
+	}
+	if err := mockSvc.SendFrame(nightFarFrame); err != nil {
+		t.Fatalf("failed sending nightFarFrame: %v", err)
+	}
+
+	select {
+	case intent := <-mockSvc.intentCh:
+		nav := intent.GetNavigate()
+		if nav == nil || nav.Target == nil {
+			t.Fatalf("expected NavigateIntent to bed, got %+v", intent)
+		}
+		if nav.Target.X != 10.5 || nav.Target.Z != 10.5 {
+			t.Errorf("expected bed target (10.5, 64, 10.5), got %+v", nav.Target)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for bed NavigateIntent")
+	}
+
+	// 3. Close to bed at night (agent at 11, 64, 10) -> SLEEP_IN_BED
+	nightCloseFrame := &civquestv1.TelemetryFrame{
+		WorldTick: 210,
+		TimeOfDay: 14000,
+		Status: &civquestv1.AgentStatus{
+			AgentId:   "needs_agent",
+			Health:    20.0,
+			MaxHealth: 20.0,
+			FoodLevel: 20,
+			Position:  &civquestv1.Vec3{X: 11.0, Y: 64, Z: 10.0}, // dist = 1.0 block
+		},
+	}
+	if err := mockSvc.SendFrame(nightCloseFrame); err != nil {
+		t.Fatalf("failed sending nightCloseFrame: %v", err)
+	}
+
+	select {
+	case intent := <-mockSvc.intentCh:
+		interact := intent.GetInteractBlock()
+		if interact == nil || interact.InteractionType != civquestv1.InteractBlockIntent_SLEEP_IN_BED {
+			t.Fatalf("expected SLEEP_IN_BED intent, got %+v", intent)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for SLEEP_IN_BED intent")
+	}
+
+	// 4. Dawn awakening (time_of_day = 23600, IsSleeping = true) -> WAKE_UP
+	dawnFrame := &civquestv1.TelemetryFrame{
+		WorldTick: 300,
+		TimeOfDay: 23600,
+		Status: &civquestv1.AgentStatus{
+			AgentId:    "needs_agent",
+			Health:     20.0,
+			MaxHealth:  20.0,
+			FoodLevel:  20,
+			Position:   &civquestv1.Vec3{X: 10.0, Y: 64, Z: 10.0},
+			IsSleeping: true,
+		},
+	}
+	if err := mockSvc.SendFrame(dawnFrame); err != nil {
+		t.Fatalf("failed sending dawnFrame: %v", err)
+	}
+
+	select {
+	case intent := <-mockSvc.intentCh:
+		interact := intent.GetInteractBlock()
+		if interact == nil || interact.InteractionType != civquestv1.InteractBlockIntent_WAKE_UP {
+			t.Fatalf("expected WAKE_UP intent at dawn, got %+v", intent)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for WAKE_UP intent")
+	}
+
+	rt.Stop()
+	cancel()
+	_ = <-runErrCh
+}
+
+func TestRuntime_System1_RoadPavingIntegration(t *testing.T) {
+	mockSvc, client, cleanup := setupTestBridge(t)
+	defer cleanup()
+
+	tmpDir := t.TempDir()
+	resolver := xdg.NewResolver(xdg.WithCustomRoot(tmpDir))
+	_ = resolver.InitAgentDirectories("paving_agent")
+
+	cfg := agent.Config{
+		AgentID:      "paving_agent",
+		ClanID:       "pioneers",
+		Resolver:     resolver,
+		BridgeClient: client,
+	}
+
+	rt, err := agent.NewRuntime(cfg)
+	if err != nil {
+		t.Fatalf("failed creating runtime: %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	runErrCh := make(chan error, 1)
+	go func() {
+		runErrCh <- rt.Start(ctx)
+	}()
+
+	select {
+	case <-mockSvc.streamReady:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for stream readiness")
+	}
+
+	// Drain handshake intent
+	select {
+	case <-mockSvc.intentCh:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for handshake intent")
+	}
+
+	// Move back and forth across (10.5, 64, 10.5) [below is (10, 63, 10)] and (11.5, 64, 10.5)
+	framePos1 := &civquestv1.TelemetryFrame{
+		WorldTick: 100,
+		TimeOfDay: 2000,
+		Status: &civquestv1.AgentStatus{
+			AgentId:   "paving_agent",
+			Health:    20.0,
+			MaxHealth: 20.0,
+			FoodLevel: 20,
+			Position:  &civquestv1.Vec3{X: 10.5, Y: 64.0, Z: 10.5},
+		},
+		InterestingBlocks: []*civquestv1.VisibleBlock{
+			{Pos: &civquestv1.BlockPosProto{X: 10, Y: 63, Z: 10}, BlockId: "minecraft:grass_block"},
+		},
+	}
+
+	framePos2 := &civquestv1.TelemetryFrame{
+		WorldTick: 105,
+		TimeOfDay: 2005,
+		Status: &civquestv1.AgentStatus{
+			AgentId:   "paving_agent",
+			Health:    20.0,
+			MaxHealth: 20.0,
+			FoodLevel: 20,
+			Position:  &civquestv1.Vec3{X: 11.5, Y: 64.0, Z: 10.5},
+		},
+		InterestingBlocks: []*civquestv1.VisibleBlock{
+			{Pos: &civquestv1.BlockPosProto{X: 11, Y: 63, Z: 10}, BlockId: "minecraft:grass_block"},
+		},
+	}
+
+	// Step 1 on (10, 63, 10)
+	if err := mockSvc.SendFrame(framePos1); err != nil {
+		t.Fatalf("failed sending frame: %v", err)
+	}
+	// Step 1 on (11, 63, 10)
+	if err := mockSvc.SendFrame(framePos2); err != nil {
+		t.Fatalf("failed sending frame: %v", err)
+	}
+	// Step 2 on (10, 63, 10)
+	framePos1.WorldTick = 110
+	if err := mockSvc.SendFrame(framePos1); err != nil {
+		t.Fatalf("failed sending frame: %v", err)
+	}
+	// Step 2 on (11, 63, 10)
+	framePos2.WorldTick = 115
+	if err := mockSvc.SendFrame(framePos2); err != nil {
+		t.Fatalf("failed sending frame: %v", err)
+	}
+	// Step 3 on (10, 63, 10) -> Should trigger PAVE_ROAD_PATH!
+	framePos1.WorldTick = 120
+	if err := mockSvc.SendFrame(framePos1); err != nil {
+		t.Fatalf("failed sending frame: %v", err)
+	}
+
+	select {
+	case intent := <-mockSvc.intentCh:
+		interact := intent.GetInteractBlock()
+		if interact == nil || interact.InteractionType != civquestv1.InteractBlockIntent_PAVE_ROAD_PATH {
+			t.Fatalf("expected PAVE_ROAD_PATH intent, got %+v", intent)
+		}
+		if interact.Pos.X != 10 || interact.Pos.Y != 63 || interact.Pos.Z != 10 {
+			t.Fatalf("expected pave pos (10, 63, 10), got %+v", interact.Pos)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for PAVE_ROAD_PATH intent")
+	}
+
+	rt.Stop()
+	cancel()
+	_ = <-runErrCh
+}

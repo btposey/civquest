@@ -57,8 +57,10 @@ import org.slf4j.LoggerFactory;
 
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.stream.Collectors;
 
 /**
@@ -204,111 +206,7 @@ public class SensoryFrustumCollector {
 
         // 6. Interesting Blocks & Farmland Survey within R = 16 blocks
         if (deathEvent == null && level != null) {
-            BlockPos center = settler.blockPosition();
-            int radius = BLOCK_SCAN_RADIUS;
-            int radiusSq = radius * radius;
-            BlockPos.MutableBlockPos mpos = new BlockPos.MutableBlockPos();
-
-            int totalFarmlandBlocks = 0;
-            int matureCropCount = 0;
-            Map<String, Integer> matureCropFrequency = new HashMap<>();
-            int farmMinX = Integer.MAX_VALUE, farmMinY = Integer.MAX_VALUE, farmMinZ = Integer.MAX_VALUE;
-            int farmMaxX = Integer.MIN_VALUE, farmMaxY = Integer.MIN_VALUE, farmMaxZ = Integer.MIN_VALUE;
-
-            int minBuildHeight = level.getMinBuildHeight();
-            int maxBuildHeight = level.getMaxBuildHeight();
-
-            int lastChunkX = Integer.MIN_VALUE;
-            int lastChunkZ = Integer.MIN_VALUE;
-            boolean lastChunkLoaded = false;
-
-            for (int dy = -radius; dy <= radius; dy++) {
-                int y = center.getY() + dy;
-                if (y < minBuildHeight || y >= maxBuildHeight) {
-                    continue;
-                }
-                int remRadiusSq = radiusSq - dy * dy;
-                if (remRadiusSq < 0) continue;
-                int maxDx = (int) Math.sqrt(remRadiusSq);
-                for (int dx = -maxDx; dx <= maxDx; dx++) {
-                    int remZSq = remRadiusSq - dx * dx;
-                    if (remZSq < 0) continue;
-                    int maxDz = (int) Math.sqrt(remZSq);
-                    for (int dz = -maxDz; dz <= maxDz; dz++) {
-                        mpos.set(center.getX() + dx, y, center.getZ() + dz);
-                        int curChunkX = mpos.getX() >> 4;
-                        int curChunkZ = mpos.getZ() >> 4;
-                        if (curChunkX != lastChunkX || curChunkZ != lastChunkZ) {
-                            lastChunkX = curChunkX;
-                            lastChunkZ = curChunkZ;
-                            lastChunkLoaded = level.hasChunkAt(mpos);
-                        }
-                        if (!lastChunkLoaded) {
-                            continue;
-                        }
-
-                        BlockState state = level.getBlockState(mpos);
-                        if (state.isAir()) {
-                            continue;
-                        }
-
-                        if (isInterestingBlock(state)) {
-                            if (frameBuilder.getInterestingBlocksCount() < MAX_INTERESTING_BLOCKS) {
-                                String blockId = BuiltInRegistries.BLOCK.getKey(state.getBlock()).toString();
-                                String stateString = formatBlockProperties(state);
-                                frameBuilder.addInterestingBlocks(VisibleBlock.newBuilder()
-                                        .setPos(toBlockPosProto(mpos))
-                                        .setBlockId(blockId)
-                                        .setBlockStateString(stateString)
-                                        .build());
-                            }
-                        }
-
-                        if (isFarmland(state)) {
-                            totalFarmlandBlocks++;
-                            farmMinX = Math.min(farmMinX, mpos.getX());
-                            farmMinY = Math.min(farmMinY, mpos.getY());
-                            farmMinZ = Math.min(farmMinZ, mpos.getZ());
-                            farmMaxX = Math.max(farmMaxX, mpos.getX());
-                            farmMaxY = Math.max(farmMaxY, mpos.getY());
-                            farmMaxZ = Math.max(farmMaxZ, mpos.getZ());
-                        }
-
-                        if (isCrop(state)) {
-                            if (isMatureCrop(state)) {
-                                matureCropCount++;
-                                String cropId = BuiltInRegistries.BLOCK.getKey(state.getBlock()).toString();
-                                matureCropFrequency.merge(cropId, 1, Integer::sum);
-                                farmMinX = Math.min(farmMinX, mpos.getX());
-                                farmMinY = Math.min(farmMinY, mpos.getY());
-                                farmMinZ = Math.min(farmMinZ, mpos.getZ());
-                                farmMaxX = Math.max(farmMaxX, mpos.getX());
-                                farmMaxY = Math.max(farmMaxY, mpos.getY());
-                                farmMaxZ = Math.max(farmMaxZ, mpos.getZ());
-                            }
-                        }
-                    }
-                }
-            }
-
-            if ((totalFarmlandBlocks > 0 || matureCropCount > 0) && farmMinX <= farmMaxX) {
-                String primaryCropId = matureCropCount > 0 ? matureCropFrequency.entrySet().stream()
-                        .max(Map.Entry.comparingByValue())
-                        .map(Map.Entry::getKey)
-                        .orElse("") : "";
-
-                FarmlandSurveyEvent survey = FarmlandSurveyEvent.newBuilder()
-                        .setBounds(BoundingBoxProto.newBuilder()
-                                .setMin(BlockPosProto.newBuilder().setX(farmMinX).setY(farmMinY).setZ(farmMinZ).build())
-                                .setMax(BlockPosProto.newBuilder().setX(farmMaxX).setY(farmMaxY).setZ(farmMaxZ).build())
-                                .build())
-                        .setPrimaryCropId(primaryCropId)
-                        .setMatureCropCount(matureCropCount)
-                        .setTotalFarmlandBlocks(totalFarmlandBlocks)
-                        .setInferredOwnerUuid("")
-                        .build();
-                frameBuilder.setFarmlandSurvey(survey);
-            }
+            collectInterestingBlocks(settler, level, frameBuilder);
         }
 
         // 7. Events
@@ -392,6 +290,146 @@ public class SensoryFrustumCollector {
             return Math.round(swelling * 30.0f);
         }
         return 0;
+    }
+
+    /**
+     * Collects visible interesting blocks within R = 16 and performs farmland survey.
+     * Explicitly samples blocks at and directly below settler's feet (feetPos = settler.blockPosition(),
+     * belowFeet = feetPos.below()) to ensure underfoot terrain (grass_block, dirt, dirt_path) is always
+     * delivered in interesting_blocks for paving and locomotion reflexes.
+     */
+    public void collectInterestingBlocks(SettlerEntity settler, Level level, TelemetryFrame.Builder frameBuilder) {
+        if (settler == null || level == null) {
+            return;
+        }
+
+        Set<BlockPos> addedPositions = new HashSet<>();
+        BlockPos center = settler.blockPosition();
+        BlockPos feetPos = center;
+        BlockPos belowFeet = feetPos.below();
+
+        // Explicitly sample blocks at and directly below settler's feet
+        for (BlockPos footPos : new BlockPos[]{feetPos, belowFeet}) {
+            if (level.hasChunkAt(footPos)) {
+                BlockState state = level.getBlockState(footPos);
+                if (!state.isAir()) {
+                    String blockId = BuiltInRegistries.BLOCK.getKey(state.getBlock()).toString();
+                    String stateString = formatBlockProperties(state);
+                    frameBuilder.addInterestingBlocks(VisibleBlock.newBuilder()
+                            .setPos(toBlockPosProto(footPos))
+                            .setBlockId(blockId)
+                            .setBlockStateString(stateString)
+                            .build());
+                    addedPositions.add(footPos.immutable());
+                }
+            }
+        }
+
+        int radius = BLOCK_SCAN_RADIUS;
+        int radiusSq = radius * radius;
+        BlockPos.MutableBlockPos mpos = new BlockPos.MutableBlockPos();
+
+        int totalFarmlandBlocks = 0;
+        int matureCropCount = 0;
+        Map<String, Integer> matureCropFrequency = new HashMap<>();
+        int farmMinX = Integer.MAX_VALUE, farmMinY = Integer.MAX_VALUE, farmMinZ = Integer.MAX_VALUE;
+        int farmMaxX = Integer.MIN_VALUE, farmMaxY = Integer.MIN_VALUE, farmMaxZ = Integer.MIN_VALUE;
+
+        int minBuildHeight = level.getMinBuildHeight();
+        int maxBuildHeight = level.getMaxBuildHeight();
+
+        int lastChunkX = Integer.MIN_VALUE;
+        int lastChunkZ = Integer.MIN_VALUE;
+        boolean lastChunkLoaded = false;
+
+        for (int dy = -radius; dy <= radius; dy++) {
+            int y = center.getY() + dy;
+            if (y < minBuildHeight || y >= maxBuildHeight) {
+                continue;
+            }
+            int remRadiusSq = radiusSq - dy * dy;
+            if (remRadiusSq < 0) continue;
+            int maxDx = (int) Math.sqrt(remRadiusSq);
+            for (int dx = -maxDx; dx <= maxDx; dx++) {
+                int remZSq = remRadiusSq - dx * dx;
+                if (remZSq < 0) continue;
+                int maxDz = (int) Math.sqrt(remZSq);
+                for (int dz = -maxDz; dz <= maxDz; dz++) {
+                    mpos.set(center.getX() + dx, y, center.getZ() + dz);
+                    int curChunkX = mpos.getX() >> 4;
+                    int curChunkZ = mpos.getZ() >> 4;
+                    if (curChunkX != lastChunkX || curChunkZ != lastChunkZ) {
+                        lastChunkX = curChunkX;
+                        lastChunkZ = curChunkZ;
+                        lastChunkLoaded = level.hasChunkAt(mpos);
+                    }
+                    if (!lastChunkLoaded) {
+                        continue;
+                    }
+
+                    BlockState state = level.getBlockState(mpos);
+                    if (state.isAir()) {
+                        continue;
+                    }
+
+                    if (isInterestingBlock(state)) {
+                        if (frameBuilder.getInterestingBlocksCount() < MAX_INTERESTING_BLOCKS && !addedPositions.contains(mpos)) {
+                            String blockId = BuiltInRegistries.BLOCK.getKey(state.getBlock()).toString();
+                            String stateString = formatBlockProperties(state);
+                            frameBuilder.addInterestingBlocks(VisibleBlock.newBuilder()
+                                    .setPos(toBlockPosProto(mpos))
+                                    .setBlockId(blockId)
+                                    .setBlockStateString(stateString)
+                                    .build());
+                            addedPositions.add(mpos.immutable());
+                        }
+                    }
+
+                    if (isFarmland(state)) {
+                        totalFarmlandBlocks++;
+                        farmMinX = Math.min(farmMinX, mpos.getX());
+                        farmMinY = Math.min(farmMinY, mpos.getY());
+                        farmMinZ = Math.min(farmMinZ, mpos.getZ());
+                        farmMaxX = Math.max(farmMaxX, mpos.getX());
+                        farmMaxY = Math.max(farmMaxY, mpos.getY());
+                        farmMaxZ = Math.max(farmMaxZ, mpos.getZ());
+                    }
+
+                    if (isCrop(state)) {
+                        if (isMatureCrop(state)) {
+                            matureCropCount++;
+                            String cropId = BuiltInRegistries.BLOCK.getKey(state.getBlock()).toString();
+                            matureCropFrequency.merge(cropId, 1, Integer::sum);
+                            farmMinX = Math.min(farmMinX, mpos.getX());
+                            farmMinY = Math.min(farmMinY, mpos.getY());
+                            farmMinZ = Math.min(farmMinZ, mpos.getZ());
+                            farmMaxX = Math.max(farmMaxX, mpos.getX());
+                            farmMaxY = Math.max(farmMaxY, mpos.getY());
+                            farmMaxZ = Math.max(farmMaxZ, mpos.getZ());
+                        }
+                    }
+                }
+            }
+        }
+
+        if ((totalFarmlandBlocks > 0 || matureCropCount > 0) && farmMinX <= farmMaxX) {
+            String primaryCropId = matureCropCount > 0 ? matureCropFrequency.entrySet().stream()
+                    .max(Map.Entry.comparingByValue())
+                    .map(Map.Entry::getKey)
+                    .orElse("") : "";
+
+            FarmlandSurveyEvent survey = FarmlandSurveyEvent.newBuilder()
+                    .setBounds(BoundingBoxProto.newBuilder()
+                            .setMin(BlockPosProto.newBuilder().setX(farmMinX).setY(farmMinY).setZ(farmMinZ).build())
+                            .setMax(BlockPosProto.newBuilder().setX(farmMaxX).setY(farmMaxY).setZ(farmMaxZ).build())
+                            .build())
+                    .setPrimaryCropId(primaryCropId)
+                    .setMatureCropCount(matureCropCount)
+                    .setTotalFarmlandBlocks(totalFarmlandBlocks)
+                    .setInferredOwnerUuid("")
+                    .build();
+            frameBuilder.setFarmlandSurvey(survey);
+        }
     }
 
     public static boolean isInterestingBlock(BlockState state) {

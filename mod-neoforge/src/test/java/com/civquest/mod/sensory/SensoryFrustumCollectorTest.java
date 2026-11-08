@@ -172,6 +172,14 @@ public class SensoryFrustumCollectorTest {
     }
 
     @Test
+    @DisplayName("collectInterestingBlocks handles null arguments safely")
+    void testCollectInterestingBlocksNullSafe() {
+        TelemetryFrame.Builder builder = TelemetryFrame.newBuilder();
+        collector.collectInterestingBlocks(null, null, builder);
+        assertEquals(0, builder.getInterestingBlocksCount());
+    }
+
+    @Test
     @DisplayName("TelemetryFrame assembly roundtrip preserves all sensory frustum components")
     void testTelemetryFrameAssembly() {
         TelemetryFrame frame = TelemetryFrame.newBuilder()
