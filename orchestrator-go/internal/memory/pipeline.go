@@ -4,11 +4,14 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math"
 	"strings"
 	"sync"
 
 	"github.com/btposey/civquest/orchestrator-go/internal/db"
 )
+
+var newlineSanitizer = strings.NewReplacer("\r\n", " ", "\r", " ", "\n", " ")
 
 // Option defines a functional configuration option for Pipeline.
 type Option func(*Pipeline)
@@ -17,7 +20,7 @@ type Option func(*Pipeline)
 // Events with saliency below this threshold are skipped (or stored unvectorized if configured).
 func WithMinSaliency(minSaliency float64) Option {
 	return func(p *Pipeline) {
-		if minSaliency >= 0.0 && minSaliency <= 1.0 {
+		if !math.IsNaN(minSaliency) && !math.IsInf(minSaliency, 0) && minSaliency >= 0.0 && minSaliency <= 1.0 {
 			p.minSaliency = minSaliency
 		}
 	}
@@ -26,7 +29,10 @@ func WithMinSaliency(minSaliency float64) Option {
 // WithMinSimilarity configures a minimum cosine similarity threshold for retrieved results.
 func WithMinSimilarity(minSimilarity float32) Option {
 	return func(p *Pipeline) {
-		p.minSimilarity = minSimilarity
+		f := float64(minSimilarity)
+		if !math.IsNaN(f) && !math.IsInf(f, 0) && minSimilarity >= -1.0 && minSimilarity <= 1.0 {
+			p.minSimilarity = minSimilarity
+		}
 	}
 }
 
@@ -87,6 +93,48 @@ func (p *Pipeline) MinSaliency() float64 {
 	return p.minSaliency
 }
 
+// MinSimilarity returns the configured minimum similarity threshold.
+func (p *Pipeline) MinSimilarity() float32 {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	return p.minSimilarity
+}
+
+// StoreUnvectorized returns whether unvectorized low-saliency events are stored.
+func (p *Pipeline) StoreUnvectorized() bool {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	return p.storeUnvectorized
+}
+
+// SetMinSaliency dynamically updates the minimum saliency threshold with thread-safety.
+func (p *Pipeline) SetMinSaliency(minSaliency float64) {
+	if math.IsNaN(minSaliency) || math.IsInf(minSaliency, 0) || minSaliency < 0.0 || minSaliency > 1.0 {
+		return
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.minSaliency = minSaliency
+}
+
+// SetMinSimilarity dynamically updates the minimum similarity threshold with thread-safety.
+func (p *Pipeline) SetMinSimilarity(minSimilarity float32) {
+	f := float64(minSimilarity)
+	if math.IsNaN(f) || math.IsInf(f, 0) || minSimilarity < -1.0 || minSimilarity > 1.0 {
+		return
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.minSimilarity = minSimilarity
+}
+
+// SetStoreUnvectorized dynamically updates the unvectorized storage setting with thread-safety.
+func (p *Pipeline) SetStoreUnvectorized(store bool) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.storeUnvectorized = store
+}
+
 // AgentDB returns the underlying AgentDB.
 func (p *Pipeline) AgentDB() *db.AgentDB {
 	return p.agentDB
@@ -95,6 +143,33 @@ func (p *Pipeline) AgentDB() *db.AgentDB {
 // Embedder returns the underlying Embedder.
 func (p *Pipeline) Embedder() Embedder {
 	return p.embedder
+}
+
+// resolveActorsJSON validates and normalizes the actors JSON string representation.
+// It verifies that explicit actors_json is valid JSON and unmarshals into a slice of strings.
+func resolveActorsJSON(ev MemoryEvent) (string, error) {
+	if ev.ActorsJSON != "" {
+		raw := strings.TrimSpace(ev.ActorsJSON)
+		if !json.Valid([]byte(raw)) {
+			return "", ErrInvalidActorsJSON
+		}
+		if !strings.HasPrefix(raw, "[") || !strings.HasSuffix(raw, "]") {
+			return "", ErrInvalidActorsJSON
+		}
+		var actors []string
+		if err := json.Unmarshal([]byte(raw), &actors); err != nil {
+			return "", ErrInvalidActorsJSON
+		}
+		return raw, nil
+	}
+	if len(ev.Actors) > 0 {
+		b, err := json.Marshal(ev.Actors)
+		if err != nil {
+			return "", fmt.Errorf("marshaling actors: %w", err)
+		}
+		return string(b), nil
+	}
+	return "[]", nil
 }
 
 // Ingest processes a memory event: validates category and saliency, filters out low-saliency events (< minSaliency),
@@ -121,8 +196,13 @@ func (p *Pipeline) Ingest(ctx context.Context, ev MemoryEvent) (*db.EpisodicMemo
 	}
 
 	saliency := ev.EffectiveSaliency()
-	if saliency < 0.0 || saliency > 1.0 {
+	if math.IsNaN(saliency) || math.IsInf(saliency, 0) || saliency < 0.0 || saliency > 1.0 {
 		return nil, fmt.Errorf("%w: got %f", ErrInvalidSaliencyScore, saliency)
+	}
+
+	actorsJSON, err := resolveActorsJSON(ev)
+	if err != nil {
+		return nil, err
 	}
 
 	p.mu.RLock()
@@ -160,19 +240,6 @@ func (p *Pipeline) Ingest(ctx context.Context, ev MemoryEvent) (*db.EpisodicMemo
 		return nil, fmt.Errorf("validating memory embedding: %w", err)
 	}
 
-	actorsJSON := ev.ActorsJSON
-	if actorsJSON == "" {
-		if len(ev.Actors) > 0 {
-			b, mErr := json.Marshal(ev.Actors)
-			if mErr != nil {
-				return nil, fmt.Errorf("marshaling actors: %w", mErr)
-			}
-			actorsJSON = string(b)
-		} else {
-			actorsJSON = "[]"
-		}
-	}
-
 	mem := db.EpisodicMemory{
 		WorldTick:      ev.WorldTick,
 		EventCategory:  string(ev.Category),
@@ -193,17 +260,9 @@ func (p *Pipeline) Ingest(ctx context.Context, ev MemoryEvent) (*db.EpisodicMemo
 }
 
 func (p *Pipeline) insertRelationalOnly(ctx context.Context, ev MemoryEvent, saliency float64, summary string) (*db.EpisodicMemory, error) {
-	actorsJSON := ev.ActorsJSON
-	if actorsJSON == "" {
-		if len(ev.Actors) > 0 {
-			b, mErr := json.Marshal(ev.Actors)
-			if mErr != nil {
-				return nil, fmt.Errorf("marshaling actors: %w", mErr)
-			}
-			actorsJSON = string(b)
-		} else {
-			actorsJSON = "[]"
-		}
+	actorsJSON, err := resolveActorsJSON(ev)
+	if err != nil {
+		return nil, err
 	}
 
 	mem := db.EpisodicMemory{
@@ -245,6 +304,8 @@ func (p *Pipeline) Retrieve(ctx context.Context, query string, limit int) ([]db.
 
 	if limit <= 0 {
 		limit = DefaultRetrieveLimit
+	} else if limit > MaxRetrieveLimit {
+		limit = MaxRetrieveLimit
 	}
 
 	queryEmbedding, err := p.embedder.CreateEmbedding(ctx, trimmedQuery)
@@ -276,6 +337,7 @@ func (p *Pipeline) Retrieve(ctx context.Context, query string, limit int) ([]db.
 
 // FormatPromptContext formats a slice of EpisodicMemoryMatch records into a clean,
 // structured context block suitable for inclusion in System 2 LLM prompts.
+// Embedded newlines (\r\n, \r, \n) are replaced by single spaces.
 // Returns an empty string if matches is empty.
 func FormatPromptContext(matches []db.EpisodicMemoryMatch) string {
 	if len(matches) == 0 {
@@ -290,7 +352,8 @@ func FormatPromptContext(matches []db.EpisodicMemoryMatch) string {
 		if mem.LocationCoords != "" && mem.LocationCoords != "0,0,0" {
 			locPart = fmt.Sprintf(" | Loc: %s", mem.LocationCoords)
 		}
-		sb.WriteString(fmt.Sprintf("- [%s | Tick: %d%s]: %s\n", mem.EventCategory, mem.WorldTick, locPart, mem.SummaryText))
+		cleanSummary := newlineSanitizer.Replace(mem.SummaryText)
+		sb.WriteString(fmt.Sprintf("- [%s | Tick: %d%s]: %s\n", mem.EventCategory, mem.WorldTick, locPart, cleanSummary))
 	}
 	return strings.TrimRight(sb.String(), "\n")
 }

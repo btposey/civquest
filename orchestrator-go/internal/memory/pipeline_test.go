@@ -2,6 +2,7 @@ package memory
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"math"
@@ -762,4 +763,417 @@ func BenchmarkRetrieve(b *testing.B) {
 			b.Fatalf("Retrieve failed: %v", err)
 		}
 	}
+}
+
+func TestPipeline_NaNAndInfSaliencyValidation(t *testing.T) {
+	agentDB, cleanup := openTestAgentDB(t)
+	defer cleanup()
+
+	embedder := &mockEmbedder{}
+	p := NewPipeline(agentDB, embedder)
+
+	invalidSaliencies := []struct {
+		name  string
+		score float64
+	}{
+		{"NaN", math.NaN()},
+		{"+Inf", math.Inf(1)},
+		{"-Inf", math.Inf(-1)},
+		{"Negative", -0.01},
+		{"AboveOne", 1.01},
+	}
+
+	for _, tc := range invalidSaliencies {
+		t.Run(tc.name, func(t *testing.T) {
+			ev := MemoryEvent{
+				WorldTick:     1,
+				Category:      CategoryCombat,
+				SaliencyScore: tc.score,
+				SummaryText:   "Combat skirmish",
+			}
+
+			_, err := p.Ingest(context.Background(), ev)
+			if !errors.Is(err, ErrInvalidSaliencyScore) {
+				t.Fatalf("expected ErrInvalidSaliencyScore for %s, got: %v", tc.name, err)
+			}
+		})
+	}
+
+	if embedder.CallCount() != 0 {
+		t.Fatalf("embedder was invoked %d times during invalid saliency tests; expected 0", embedder.CallCount())
+	}
+
+	matches, err := p.Retrieve(context.Background(), "Combat", 10)
+	if err != nil {
+		t.Fatalf("Retrieve failed: %v", err)
+	}
+	if len(matches) != 0 {
+		t.Fatalf("expected 0 memories in database, found %d", len(matches))
+	}
+}
+
+func TestPipeline_ExplicitZeroSaliencyIngestion(t *testing.T) {
+	agentDB, cleanup := openTestAgentDB(t)
+	defer cleanup()
+
+	embedder := &mockEmbedder{}
+	pDefault := NewPipeline(agentDB, embedder, WithMinSaliency(0.50))
+
+	// 1. In Go struct with ExplicitSaliency: true and SaliencyScore: 0.0
+	evExplicitZero := MemoryEvent{
+		WorldTick:        10,
+		Category:         CategoryCombat,
+		SaliencyScore:    0.0,
+		ExplicitSaliency: true,
+		SummaryText:      "Trivial touch combat",
+	}
+
+	if eff := evExplicitZero.EffectiveSaliency(); eff != 0.0 {
+		t.Fatalf("expected EffectiveSaliency() to be 0.0, got %f", eff)
+	}
+
+	// Should be skipped because 0.0 < 0.50 and storeUnvectorized=false
+	res, err := pDefault.Ingest(context.Background(), evExplicitZero)
+	if err != nil {
+		t.Fatalf("unexpected error ingesting explicit zero saliency: %v", err)
+	}
+	if res != nil {
+		t.Fatalf("expected event to be skipped (nil result), got: %+v", res)
+	}
+
+	// 2. With StoreUnvectorized: true, should insert into DB with score 0.0
+	pUnvec := NewPipeline(agentDB, embedder, WithMinSaliency(0.50), WithStoreUnvectorized(true))
+	resUnvec, err := pUnvec.Ingest(context.Background(), evExplicitZero)
+	if err != nil {
+		t.Fatalf("unexpected error ingesting unvectorized explicit zero: %v", err)
+	}
+	if resUnvec == nil {
+		t.Fatal("expected unvectorized memory to be inserted, got nil")
+	}
+	if resUnvec.SaliencyScore != 0.0 {
+		t.Fatalf("expected stored SaliencyScore to be 0.0, got %f", resUnvec.SaliencyScore)
+	}
+
+	// 3. Verify JSON unmarshaling sets ExplicitSaliency
+	rawJSON := []byte(`{"world_tick":20,"category":"COMBAT","saliency_score":0.0,"summary_text":"Explicit zero via json"}`)
+	var evJSON MemoryEvent
+	if err := json.Unmarshal(rawJSON, &evJSON); err != nil {
+		t.Fatalf("json.Unmarshal failed: %v", err)
+	}
+	if !evJSON.ExplicitSaliency {
+		t.Fatal("expected ExplicitSaliency to be true after unmarshaling explicit saliency_score: 0.0")
+	}
+	if evJSON.SaliencyScore != 0.0 {
+		t.Fatalf("expected SaliencyScore 0.0, got %f", evJSON.SaliencyScore)
+	}
+	if eff := evJSON.EffectiveSaliency(); eff != 0.0 {
+		t.Fatalf("expected EffectiveSaliency() 0.0 from unmarshaled event, got %f", eff)
+	}
+
+	// 4. Default uninitialized saliency (0.0 with ExplicitSaliency: false) should fall back to Category default
+	evDefault := MemoryEvent{
+		Category:    CategoryCombat,
+		SummaryText: "Default combat",
+	}
+	if evDefault.ExplicitSaliency {
+		t.Fatal("expected ExplicitSaliency to be false by default")
+	}
+	if eff := evDefault.EffectiveSaliency(); eff != SaliencyCombat {
+		t.Fatalf("expected default saliency %f for COMBAT, got %f", SaliencyCombat, eff)
+	}
+}
+
+func TestPipeline_ActorsJSONValidation(t *testing.T) {
+	agentDB, cleanup := openTestAgentDB(t)
+	defer cleanup()
+
+	embedder := &mockEmbedder{}
+	p := NewPipeline(agentDB, embedder)
+
+	invalidJSONs := []struct {
+		name string
+		raw  string
+	}{
+		{"InvalidSyntax", "not-json-content"},
+		{"JSONObject", `{"actor": "Steve"}`},
+		{"JSONArrayOfNumbers", `[1, 2, 3]`},
+		{"JSONNull", "null"},
+		{"JSONNumber", "42"},
+		{"MixedTypes", `["Steve", 100]`},
+	}
+
+	for _, tc := range invalidJSONs {
+		t.Run(tc.name, func(t *testing.T) {
+			ev := MemoryEvent{
+				WorldTick:   10,
+				Category:    CategoryCombat,
+				SummaryText: "Combat skirmish",
+				ActorsJSON:  tc.raw,
+			}
+			_, err := p.Ingest(context.Background(), ev)
+			if !errors.Is(err, ErrInvalidActorsJSON) {
+				t.Fatalf("expected ErrInvalidActorsJSON for %s (%q), got: %v", tc.name, tc.raw, err)
+			}
+		})
+	}
+
+	// Verify unvectorized path also validates actors JSON
+	pUnvec := NewPipeline(agentDB, embedder, WithMinSaliency(0.90), WithStoreUnvectorized(true))
+	lowSalEv := MemoryEvent{
+		WorldTick:     15,
+		Category:      CategoryChat, // default 0.60 < 0.90
+		SummaryText:   "Chat event",
+		ActorsJSON:    "not-json",
+		SaliencyScore: 0.1,
+	}
+	_, err := pUnvec.Ingest(context.Background(), lowSalEv)
+	if !errors.Is(err, ErrInvalidActorsJSON) {
+		t.Fatalf("expected ErrInvalidActorsJSON on unvectorized path, got: %v", err)
+	}
+
+	// Valid cases
+	validCases := []struct {
+		name     string
+		ev       MemoryEvent
+		expected string
+	}{
+		{
+			name: "ValidArrayString",
+			ev: MemoryEvent{
+				Category:    CategoryCombat,
+				SummaryText: "Combat",
+				ActorsJSON:  `["Steve", "Alex"]`,
+			},
+			expected: `["Steve", "Alex"]`,
+		},
+		{
+			name: "ActorsSlice",
+			ev: MemoryEvent{
+				Category:    CategoryCombat,
+				SummaryText: "Combat",
+				Actors:      []string{"Steve", "Villager"},
+			},
+			expected: `["Steve","Villager"]`,
+		},
+		{
+			name: "EmptyActors",
+			ev: MemoryEvent{
+				Category:    CategoryCombat,
+				SummaryText: "Combat",
+			},
+			expected: `[]`,
+		},
+	}
+
+	for _, tc := range validCases {
+		t.Run(tc.name, func(t *testing.T) {
+			mem, err := p.Ingest(context.Background(), tc.ev)
+			if err != nil {
+				t.Fatalf("expected success for %s, got err: %v", tc.name, err)
+			}
+			if mem.ActorsJSON != tc.expected {
+				t.Fatalf("expected actors_json %q, got %q", tc.expected, mem.ActorsJSON)
+			}
+		})
+	}
+}
+
+func TestPipeline_RetrieveLimitBounding(t *testing.T) {
+	agentDB, cleanup := openTestAgentDB(t)
+	defer cleanup()
+
+	embedder := &mockEmbedder{}
+	p := NewPipeline(agentDB, embedder)
+	ctx := context.Background()
+
+	// Seed 110 memories
+	totalMemories := 110
+	for i := 0; i < totalMemories; i++ {
+		ev := MemoryEvent{
+			WorldTick:   int64(i),
+			Category:    CategoryCombat,
+			SummaryText: fmt.Sprintf("Combat encounter number %d", i),
+		}
+		if _, err := p.Ingest(ctx, ev); err != nil {
+			t.Fatalf("seeding memory %d failed: %v", i, err)
+		}
+	}
+
+	// Test limit <= 0 defaults to DefaultRetrieveLimit (10)
+	matchesZero, err := p.Retrieve(ctx, "Combat", 0)
+	if err != nil {
+		t.Fatalf("Retrieve with limit 0 failed: %v", err)
+	}
+	if len(matchesZero) != DefaultRetrieveLimit {
+		t.Fatalf("expected default %d matches for limit 0, got %d", DefaultRetrieveLimit, len(matchesZero))
+	}
+
+	matchesNeg, err := p.Retrieve(ctx, "Combat", -10)
+	if err != nil {
+		t.Fatalf("Retrieve with negative limit failed: %v", err)
+	}
+	if len(matchesNeg) != DefaultRetrieveLimit {
+		t.Fatalf("expected default %d matches for negative limit, got %d", DefaultRetrieveLimit, len(matchesNeg))
+	}
+
+	// Test limit > MaxRetrieveLimit (100) is capped to MaxRetrieveLimit
+	matchesCapped, err := p.Retrieve(ctx, "Combat", 250)
+	if err != nil {
+		t.Fatalf("Retrieve with large limit failed: %v", err)
+	}
+	if len(matchesCapped) != MaxRetrieveLimit {
+		t.Fatalf("expected capped %d matches for limit 250, got %d", MaxRetrieveLimit, len(matchesCapped))
+	}
+}
+
+func TestPipeline_FormatPromptContext_NewlineSanitization(t *testing.T) {
+	matches := []db.EpisodicMemoryMatch{
+		{
+			Memory: db.EpisodicMemory{
+				WorldTick:      100,
+				EventCategory:  "COMBAT",
+				LocationCoords: "10,64,-20",
+				SummaryText:    "First line\r\nSecond line\nThird line\rFourth line",
+			},
+			Similarity: 0.95,
+		},
+		{
+			Memory: db.EpisodicMemory{
+				WorldTick:      105,
+				EventCategory:  "CHAT",
+				LocationCoords: "0,0,0",
+				SummaryText:    "Dialogue line 1\nDialogue line 2",
+			},
+			Similarity: 0.88,
+		},
+	}
+
+	formatted := FormatPromptContext(matches)
+
+	expectedFlattened1 := "First line Second line Third line Fourth line"
+	expectedFlattened2 := "Dialogue line 1 Dialogue line 2"
+
+	if !strings.Contains(formatted, expectedFlattened1) {
+		t.Fatalf("expected prompt context to contain flattened summary %q, got:\n%s", expectedFlattened1, formatted)
+	}
+	if !strings.Contains(formatted, expectedFlattened2) {
+		t.Fatalf("expected prompt context to contain flattened summary %q, got:\n%s", expectedFlattened2, formatted)
+	}
+
+	// Split by newline and verify total bullet points
+	lines := strings.Split(formatted, "\n")
+	// Expected lines: "Relevant Memories:", bullet 1, bullet 2 => exactly 3 lines
+	if len(lines) != 3 {
+		t.Fatalf("expected exactly 3 lines in formatted context, got %d lines:\n%s", len(lines), formatted)
+	}
+}
+
+func TestPipeline_ThreadSafeSettersAndOptionValidation(t *testing.T) {
+	agentDB, cleanup := openTestAgentDB(t)
+	defer cleanup()
+
+	embedder := &mockEmbedder{}
+
+	// 1. Option validation for WithMinSimilarity
+	pNaN := NewPipeline(agentDB, embedder, WithMinSimilarity(float32(math.NaN())))
+	if pNaN.MinSimilarity() != -1.0 {
+		t.Fatalf("expected default MinSimilarity -1.0 after NaN option, got %f", pNaN.MinSimilarity())
+	}
+
+	pInf := NewPipeline(agentDB, embedder, WithMinSimilarity(float32(math.Inf(1))))
+	if pInf.MinSimilarity() != -1.0 {
+		t.Fatalf("expected default MinSimilarity -1.0 after Inf option, got %f", pInf.MinSimilarity())
+	}
+
+	pHigh := NewPipeline(agentDB, embedder, WithMinSimilarity(1.5))
+	if pHigh.MinSimilarity() != -1.0 {
+		t.Fatalf("expected default MinSimilarity -1.0 after >1.0 option, got %f", pHigh.MinSimilarity())
+	}
+
+	pLow := NewPipeline(agentDB, embedder, WithMinSimilarity(-2.0))
+	if pLow.MinSimilarity() != -1.0 {
+		t.Fatalf("expected default MinSimilarity -1.0 after <-1.0 option, got %f", pLow.MinSimilarity())
+	}
+
+	pValid := NewPipeline(agentDB, embedder, WithMinSimilarity(0.75))
+	if pValid.MinSimilarity() != 0.75 {
+		t.Fatalf("expected MinSimilarity 0.75, got %f", pValid.MinSimilarity())
+	}
+
+	// 2. Setters validation
+	p := NewPipeline(agentDB, embedder)
+
+	p.SetMinSimilarity(0.80)
+	if p.MinSimilarity() != 0.80 {
+		t.Fatalf("expected MinSimilarity 0.80, got %f", p.MinSimilarity())
+	}
+	p.SetMinSimilarity(float32(math.NaN()))
+	if p.MinSimilarity() != 0.80 {
+		t.Fatalf("expected MinSimilarity 0.80 unchanged after NaN setter, got %f", p.MinSimilarity())
+	}
+
+	p.SetMinSaliency(0.70)
+	if p.MinSaliency() != 0.70 {
+		t.Fatalf("expected MinSaliency 0.70, got %f", p.MinSaliency())
+	}
+	p.SetMinSaliency(math.NaN())
+	if p.MinSaliency() != 0.70 {
+		t.Fatalf("expected MinSaliency 0.70 unchanged after NaN setter, got %f", p.MinSaliency())
+	}
+
+	p.SetStoreUnvectorized(true)
+	if !p.StoreUnvectorized() {
+		t.Fatal("expected StoreUnvectorized to be true")
+	}
+
+	// 3. Concurrent read/write stress test
+	var wg sync.WaitGroup
+	ctx := context.Background()
+
+	// Writers
+	for i := 0; i < 10; i++ {
+		wg.Add(1)
+		go func(workerID int) {
+			defer wg.Done()
+			for j := 0; j < 50; j++ {
+				sal := 0.1 + float64(j%8)*0.1
+				sim := float32(-1.0 + float32(j%10)*0.2)
+				p.SetMinSaliency(sal)
+				p.SetMinSimilarity(sim)
+				p.SetStoreUnvectorized(j%2 == 0)
+			}
+		}(i)
+	}
+
+	// Readers
+	for i := 0; i < 10; i++ {
+		wg.Add(1)
+		go func(workerID int) {
+			defer wg.Done()
+			for j := 0; j < 50; j++ {
+				_ = p.MinSaliency()
+				_ = p.MinSimilarity()
+				_ = p.StoreUnvectorized()
+			}
+		}(i)
+	}
+
+	// Ingesters and Retrievers
+	for i := 0; i < 4; i++ {
+		wg.Add(1)
+		go func(workerID int) {
+			defer wg.Done()
+			for j := 0; j < 20; j++ {
+				ev := MemoryEvent{
+					WorldTick:   int64(j),
+					Category:    CategoryCombat,
+					SummaryText: fmt.Sprintf("Concurrent event %d-%d", workerID, j),
+				}
+				_, _ = p.Ingest(ctx, ev)
+				_, _ = p.Retrieve(ctx, "Concurrent", 5)
+			}
+		}(i)
+	}
+
+	wg.Wait()
 }

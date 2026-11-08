@@ -2,6 +2,7 @@ package memory
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 )
 
@@ -53,6 +54,7 @@ const (
 
 	DefaultMinSaliency   = 0.50
 	DefaultRetrieveLimit = 10
+	MaxRetrieveLimit     = 100
 )
 
 // DefaultSaliency returns the canonical default saliency score for a memory category.
@@ -78,20 +80,41 @@ func DefaultSaliency(cat Category) float64 {
 // MemoryEvent encapsulates raw experiential telemetry, observation, or narrative
 // event to be processed and ingested by the episodic memory pipeline.
 type MemoryEvent struct {
-	WorldTick      int64    `json:"world_tick"`
-	Category       Category `json:"category"`
-	SaliencyScore  float64  `json:"saliency_score,omitempty"`
-	Actors         []string `json:"actors,omitempty"`
-	ActorsJSON     string   `json:"actors_json,omitempty"`
-	LocationCoords string   `json:"location_coords,omitempty"`
-	SummaryText    string   `json:"summary_text"`
-	Chronicled     bool     `json:"chronicled,omitempty"`
+	WorldTick        int64    `json:"world_tick"`
+	Category         Category `json:"category"`
+	SaliencyScore    float64  `json:"saliency_score,omitempty"`
+	ExplicitSaliency bool     `json:"explicit_saliency,omitempty"`
+	Actors           []string `json:"actors,omitempty"`
+	ActorsJSON       string   `json:"actors_json,omitempty"`
+	LocationCoords   string   `json:"location_coords,omitempty"`
+	SummaryText      string   `json:"summary_text"`
+	Chronicled       bool     `json:"chronicled,omitempty"`
+}
+
+// UnmarshalJSON unmarshals JSON data into MemoryEvent, automatically setting
+// ExplicitSaliency to true if saliency_score is explicitly provided in the payload.
+func (ev *MemoryEvent) UnmarshalJSON(data []byte) error {
+	type Alias MemoryEvent
+	aux := struct {
+		SaliencyScore *float64 `json:"saliency_score"`
+		*Alias
+	}{
+		Alias: (*Alias)(ev),
+	}
+	if err := json.Unmarshal(data, &aux); err != nil {
+		return err
+	}
+	if aux.SaliencyScore != nil {
+		ev.SaliencyScore = *aux.SaliencyScore
+		ev.ExplicitSaliency = true
+	}
+	return nil
 }
 
 // EffectiveSaliency returns the saliency score for this event, falling back to
-// DefaultSaliency(Category) if SaliencyScore is 0.
+// DefaultSaliency(Category) if SaliencyScore is uninitialized (0 and not explicit).
 func (ev MemoryEvent) EffectiveSaliency() float64 {
-	if ev.SaliencyScore != 0 {
+	if ev.ExplicitSaliency || ev.SaliencyScore != 0 {
 		return ev.SaliencyScore
 	}
 	return DefaultSaliency(ev.Category)
@@ -108,6 +131,7 @@ var (
 	ErrInvalidCategory      = errors.New("invalid memory event category")
 	ErrEmptySummaryText     = errors.New("memory summary text cannot be empty")
 	ErrInvalidSaliencyScore = errors.New("saliency score must be between 0.0 and 1.0")
+	ErrInvalidActorsJSON    = errors.New("actors_json must be a valid JSON array of strings")
 	ErrEmptyQuery           = errors.New("query cannot be empty")
 	ErrNilDatabase          = errors.New("agent database cannot be nil")
 	ErrNilEmbedder          = errors.New("embedder cannot be nil")
