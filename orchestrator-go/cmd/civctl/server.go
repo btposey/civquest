@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -9,6 +10,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	civquestv1 "github.com/btposey/civquest/orchestrator-go/internal/proto/v1"
 	"github.com/btposey/civquest/orchestrator-go/internal/server"
 )
 
@@ -25,6 +27,7 @@ the CivQuest mod, sensor frustum broadcaster, and Baritone pathfinder.`,
 	serverCmd.AddCommand(newServerStopCmd())
 	serverCmd.AddCommand(newServerStatusCmd())
 	serverCmd.AddCommand(newServerLogsCmd())
+	serverCmd.AddCommand(newServerExportRecipesCmd())
 
 	return serverCmd
 }
@@ -254,5 +257,69 @@ func newServerLogsCmd() *cobra.Command {
 
 	cmd.Flags().BoolVarP(&follow, "follow", "f", false, "Follow log output in real time")
 	cmd.Flags().IntVarP(&lines, "lines", "n", 50, "Number of lines to display")
+	return cmd
+}
+
+func newServerExportRecipesCmd() *cobra.Command {
+	var outputFile string
+
+	cmd := &cobra.Command{
+		Use:   "export-recipes",
+		Short: "Request and export Minecraft recipe graph from the server mod over gRPC",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			r := getResolver()
+			admin, err := GetAdminClient(r)
+			if err != nil {
+				return fmt.Errorf("connecting to administrative gRPC bridge: %w", err)
+			}
+			defer admin.Close()
+
+			ctx, cancel := context.WithTimeout(cmd.Context(), 10*time.Second)
+			defer cancel()
+
+			resp, err := admin.ExportRecipeGraph(ctx, &civquestv1.ExportRecipeRequest{})
+			if err != nil {
+				return fmt.Errorf("failed exporting recipe graph from server: %w", err)
+			}
+
+			if outputFile != "" {
+				data, err := json.MarshalIndent(resp.GetRecipes(), "", "  ")
+				if err != nil {
+					return err
+				}
+				if err := os.WriteFile(outputFile, data, 0644); err != nil {
+					return fmt.Errorf("writing recipes to %s: %w", outputFile, err)
+				}
+				fmt.Fprintf(cmd.OutOrStdout(), "✓ Exported %d recipes to %s\n", len(resp.GetRecipes()), outputFile)
+				return nil
+			}
+
+			if flagJSON {
+				data, err := json.MarshalIndent(resp.GetRecipes(), "", "  ")
+				if err != nil {
+					return err
+				}
+				fmt.Fprintln(cmd.OutOrStdout(), string(data))
+				return nil
+			}
+
+			out := cmd.OutOrStdout()
+			fmt.Fprintln(out, "======================================================================")
+			fmt.Fprintf(out, " CivQuest Server Recipe Graph (%d recipes)\n", len(resp.GetRecipes()))
+			fmt.Fprintln(out, "======================================================================")
+			for idx, rc := range resp.GetRecipes() {
+				if idx >= 20 {
+					fmt.Fprintf(out, " ... and %d more recipes (use --output or --json to export all)\n", len(resp.GetRecipes())-20)
+					break
+				}
+				fmt.Fprintf(out, " • %-36s [%s] -> %s x%d\n",
+					rc.GetRecipeId(), rc.GetRecipeType(), rc.GetResult().GetItemId(), rc.GetResult().GetCount())
+			}
+			fmt.Fprintln(out, "======================================================================")
+			return nil
+		},
+	}
+
+	cmd.Flags().StringVarP(&outputFile, "output", "o", "", "Destination JSON file for exported recipe graph")
 	return cmd
 }

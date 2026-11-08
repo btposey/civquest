@@ -82,11 +82,16 @@ clans, blueprints, and system health.`,
 	cmd.PersistentFlags().StringVar(&flagDataDir, "data-dir", "", "Path to CivQuest data directory (default: $XDG_DATA_HOME/civquest)")
 	cmd.PersistentFlags().StringVar(&flagStateDir, "state-dir", "", "Path to CivQuest state directory (default: $XDG_STATE_HOME/civquest)")
 	cmd.PersistentFlags().StringVar(&flagServerID, "server-id", "", "CivQuest server instance identifier")
+	cmd.PersistentFlags().StringVar(&flagTarget, "target", "", "CivQuest server gRPC target address (e.g. 127.0.0.1:50051)")
+	cmd.PersistentFlags().StringVar(&flagSharedKey, "shared-key", "", "Shared-key bearer token for gRPC authentication")
 	cmd.PersistentFlags().BoolVar(&flagJSON, "json", false, "Output results in JSON format")
 
 	cmd.AddCommand(newStatusCmd())
 	cmd.AddCommand(newServerCmd())
 	cmd.AddCommand(newAgentCmd())
+	cmd.AddCommand(newClanCmd())
+	cmd.AddCommand(newBlueprintCmd())
+	cmd.AddCommand(newGatewayCmd())
 
 	return cmd
 }

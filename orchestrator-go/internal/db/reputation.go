@@ -219,6 +219,50 @@ func (r *ReputationDB) GetHeroPrestigeOrDefault(ctx context.Context, playerUUID 
 	return hp, nil
 }
 
+// ListHeroPrestigeContext returns the top hero prestige records ordered by score descending.
+func (r *ReputationDB) ListHeroPrestigeContext(ctx context.Context, limit int) ([]*HeroPrestige, error) {
+	if limit <= 0 {
+		limit = 50
+	}
+
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	if r.isClosed {
+		return nil, ErrClosed
+	}
+
+	query := `
+		SELECT player_uuid, player_name, score, title, last_interaction_tick, updated_at
+		FROM hero_prestige
+		ORDER BY score DESC
+		LIMIT ?;
+	`
+	rows, err := r.db.QueryContext(ctx, query, limit)
+	if err != nil {
+		return nil, fmt.Errorf("listing hero prestige: %w", err)
+	}
+	defer rows.Close()
+
+	var list []*HeroPrestige
+	for rows.Next() {
+		var hp HeroPrestige
+		var updatedAtStr string
+		if err := rows.Scan(
+			&hp.PlayerUUID, &hp.PlayerName, &hp.Score, &hp.Title, &hp.LastInteractionTick, &updatedAtStr,
+		); err != nil {
+			return nil, fmt.Errorf("scanning hero prestige row: %w", err)
+		}
+		hp.UpdatedAt = parseDBTimestamp(updatedAtStr)
+		list = append(list, &hp)
+	}
+	return list, rows.Err()
+}
+
+// ListHeroPrestige returns the top hero prestige records with background context.
+func (r *ReputationDB) ListHeroPrestige(limit int) ([]*HeroPrestige, error) {
+	return r.ListHeroPrestigeContext(context.Background(), limit)
+}
+
 // RecordPrestigeDelta atomically modifies a player's hero prestige score and records
 // an audit entry into prestige_ledger within a single transaction using SQLite UPSERT.
 // Returns the newly updated cumulative prestige score.

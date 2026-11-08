@@ -496,6 +496,11 @@ func (r *Resolver) AgentLogPath(agentName string) string {
 	return filepath.Join(r.AgentStateDir(agentName), fmt.Sprintf("%s.log", agentName))
 }
 
+// AgentPIDPath returns $XDG_STATE_HOME/civquest/agents/{agent_name}/{agent_name}.pid.
+func (r *Resolver) AgentPIDPath(agentName string) string {
+	return filepath.Join(r.AgentStateDir(agentName), fmt.Sprintf("%s.pid", agentName))
+}
+
 // AgentSocketPath returns $XDG_STATE_HOME/civquest/agents/{agent_name}.sock.
 // If the candidate path length is >= 104 bytes, it falls back to $XDG_RUNTIME_DIR/civquest or os.TempDir().
 func (r *Resolver) AgentSocketPath(agentName string) string {
@@ -819,6 +824,9 @@ func AgentStateDir(agentName string) string { return defaultResolver.AgentStateD
 
 // AgentLogPath returns {agent_name}.log path via the default resolver.
 func AgentLogPath(agentName string) string { return defaultResolver.AgentLogPath(agentName) }
+
+// AgentPIDPath returns {agent_name}.pid path via the default resolver.
+func AgentPIDPath(agentName string) string { return defaultResolver.AgentPIDPath(agentName) }
 
 // AgentSocketPath returns {agent_name}.sock path via the default resolver.
 func AgentSocketPath(agentName string) string { return defaultResolver.AgentSocketPath(agentName) }
