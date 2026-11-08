@@ -77,6 +77,7 @@ Major technical decisions are formally recorded in `doc/adr/`:
 - [ADR-011: In-Game Integration Test Harness](file:///home/brian/Workspaces/btposey/civquest/doc/adr/ADR-011-in-game-integration-test-harness.md)
 - [ADR-012: Shared-Key Authentication for Cross-Host gRPC IPC](file:///home/brian/Workspaces/btposey/civquest/doc/adr/ADR-012-shared-key-authentication-for-grpc-ipc.md)
 - [ADR-013: Host CPU Multimedia SIMD Extensions (AVX2/AVX-512) for System 1 Reflexes and Vector Operations](file:///home/brian/Workspaces/btposey/civquest/doc/adr/ADR-013-host-cpu-multimedia-simd-extensions-for-system1.md)
+- [ADR-014: Jar-in-Jar Dependency Packaging & Client-Safe Mod Lifecycle Isolation](file:///home/brian/Workspaces/btposey/civquest/doc/adr/ADR-014-jarjar-dependency-packaging-and-client-safe-lifecycle.md)
 
 ---
 

@@ -92,7 +92,12 @@ dependencies {
     implementation 'com.google.guava:failureaccess:1.0.1'
     implementation 'org.slf4j:slf4j-api:2.0.9'
     implementation 'com.google.protobuf:protobuf-java:4.28.3'
+    jarJar 'com.google.protobuf:protobuf-java:4.28.3'
     implementation('io.grpc:grpc-stub:1.68.1') {
+        exclude group: 'com.google.guava'
+        exclude group: 'com.google.code.gson'
+    }
+    jarJar('io.grpc:grpc-stub:1.68.1') {
         exclude group: 'com.google.guava'
         exclude group: 'com.google.code.gson'
     }
@@ -100,7 +105,15 @@ dependencies {
         exclude group: 'com.google.guava'
         exclude group: 'com.google.code.gson'
     }
+    jarJar('io.grpc:grpc-protobuf:1.68.1') {
+        exclude group: 'com.google.guava'
+        exclude group: 'com.google.code.gson'
+    }
     implementation('io.grpc:grpc-netty-shaded:1.68.1') {
+        exclude group: 'com.google.guava'
+        exclude group: 'com.google.code.gson'
+    }
+    jarJar('io.grpc:grpc-netty-shaded:1.68.1') {
         exclude group: 'com.google.guava'
         exclude group: 'com.google.code.gson'
     }
@@ -108,6 +121,27 @@ dependencies {
         exclude group: 'com.google.guava'
         exclude group: 'com.google.code.gson'
     }
+    jarJar('io.grpc:grpc-services:1.68.1') {
+        exclude group: 'com.google.guava'
+        exclude group: 'com.google.code.gson'
+    }
+    jarJar('io.grpc:grpc-api:1.68.1') {
+        exclude group: 'com.google.guava'
+    }
+    jarJar('io.grpc:grpc-core:1.68.1') {
+        exclude group: 'com.google.guava'
+    }
+    jarJar('io.grpc:grpc-context:1.68.1')
+    jarJar('io.grpc:grpc-util:1.68.1') {
+        exclude group: 'com.google.guava'
+    }
+    jarJar('io.grpc:grpc-protobuf-lite:1.68.1') {
+        exclude group: 'com.google.guava'
+    }
+    jarJar('com.google.api.grpc:proto-google-common-protos:2.41.0') {
+        exclude group: 'com.google.guava'
+    }
+    jarJar('io.perfmark:perfmark-api:0.27.0')
     compileOnly 'javax.annotation:javax.annotation-api:1.3.2' // for javax.annotation.Generated
 
     testImplementation 'org.junit.jupiter:junit-jupiter:5.11.3'
@@ -139,4 +173,51 @@ sourceSets {
             srcDirs = ['src/main/java', 'src/generated/main/java']
         }
     }
+}
+
+def verifyJarJarPackaging = tasks.register('verifyJarJarPackaging') {
+    description = 'Verifies that the built mod JAR contains META-INF/jarjar/metadata.json and all required gRPC and protobuf libraries'
+    group = 'verification'
+    dependsOn tasks.named('jar')
+
+    doLast {
+        def jarFile = tasks.named('jar').get().archiveFile.get().asFile
+        if (!jarFile.exists()) {
+            throw new GradleException("JAR file not found: ${jarFile}")
+        }
+
+        def expectedEntries = [
+            'META-INF/jarjar/metadata.json',
+            'META-INF/jarjar/protobuf-java-',
+            'META-INF/jarjar/grpc-api-',
+            'META-INF/jarjar/grpc-core-',
+            'META-INF/jarjar/grpc-netty-shaded-',
+            'META-INF/jarjar/grpc-protobuf-',
+            'META-INF/jarjar/grpc-stub-',
+            'META-INF/jarjar/grpc-services-'
+        ]
+
+        def foundEntries = []
+        new java.util.zip.ZipFile(jarFile).withCloseable { zip ->
+            zip.entries().each { entry ->
+                foundEntries << entry.name
+            }
+        }
+
+        def missing = []
+        for (pattern in expectedEntries) {
+            if (!foundEntries.any { it.contains(pattern) }) {
+                missing << pattern
+            }
+        }
+
+        if (!missing.isEmpty()) {
+            throw new GradleException("Jar-in-Jar packaging verification failed! The following required entries are missing from ${jarFile.name}: ${missing}")
+        }
+        logger.lifecycle("✓ Jar-in-Jar packaging verified successfully in ${jarFile.name} (${foundEntries.findAll { it.startsWith('META-INF/jarjar/') }.size()} jarjar entries)")
+    }
+}
+
+tasks.named('check').configure {
+    dependsOn(verifyJarJarPackaging)
 }

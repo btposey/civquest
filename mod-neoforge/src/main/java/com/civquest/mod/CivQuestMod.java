@@ -25,14 +25,13 @@ import java.util.List;
 public class CivQuestMod {
     public static final String MOD_ID = "civquest";
     private static final Logger LOGGER = LogUtils.getLogger();
-    private final CivQuestBridgeServer bridgeServer;
+    private CivQuestBridgeServer bridgeServer;
 
     public CivQuestMod(IEventBus modEventBus) {
         LOGGER.info("CivQuest mod initializing");
         modEventBus.addListener(this::onRegisterGameTests);
         modEventBus.addListener(this::onRegisterPayloadHandlers);
 
-        this.bridgeServer = new CivQuestBridgeServer();
         NeoForge.EVENT_BUS.addListener(this::onServerStarting);
         NeoForge.EVENT_BUS.addListener(this::onServerStarted);
         NeoForge.EVENT_BUS.addListener(this::onServerStopping);
@@ -43,7 +42,7 @@ public class CivQuestMod {
 
     private void onRegisterPayloadHandlers(RegisterPayloadHandlersEvent event) {
         LOGGER.info("Registering CivQuest network payloads");
-        PayloadRegistrar registrar = event.registrar("1");
+        PayloadRegistrar registrar = event.registrar("1").optional();
         registrar.playToClient(
                 ClientboundSettlerSkinPacket.TYPE,
                 ClientboundSettlerSkinPacket.STREAM_CODEC,
@@ -60,15 +59,22 @@ public class CivQuestMod {
     }
 
     private void onServerStarting(ServerStartingEvent event) {
+        if (bridgeServer == null) {
+            bridgeServer = new CivQuestBridgeServer();
+        }
         bridgeServer.onServerStarting(event);
     }
 
     private void onServerStarted(ServerStartedEvent event) {
-        bridgeServer.onServerStarted(event);
+        if (bridgeServer != null) {
+            bridgeServer.onServerStarted(event);
+        }
     }
 
     private void onServerStopping(ServerStoppingEvent event) {
-        bridgeServer.onServerStopping(event);
+        if (bridgeServer != null) {
+            bridgeServer.onServerStopping(event);
+        }
     }
 
     private void onServerTick(ServerTickEvent.Post event) {
@@ -122,6 +128,6 @@ public class CivQuestMod {
     }
 
     public SettlerEntityManager getSettlerEntityManager() {
-        return bridgeServer.getSettlerEntityManager();
+        return bridgeServer != null ? bridgeServer.getSettlerEntityManager() : null;
     }
 }
