@@ -554,6 +554,15 @@ func ValidateAgentName(agentName string) error {
 	return nil
 }
 
+// ValidateClanID validates a clan ID using the identifier allowlist rules, returning ErrInvalidClanID
+// if validation fails.
+func ValidateClanID(clanID string) error {
+	if err := validateIdentifier(clanID); err != nil {
+		return fmt.Errorf("%w: %s", ErrInvalidClanID, err)
+	}
+	return nil
+}
+
 func validateIdentifier(id string) error {
 	trimmed := strings.TrimSpace(id)
 	if trimmed == "" {

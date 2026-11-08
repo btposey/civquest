@@ -447,7 +447,16 @@ func (c *Client) ChatCompletion(ctx context.Context, req ChatCompletionRequest) 
 // It uses StructuredTemperature (~0.20), sets response_format: {"type": "json_object"},
 // strips markdown fences, and retries up to 2 times on validation error by feeding back
 // the syntax or unmarshal error to the LLM.
+// CompleteStructured executes a structured JSON chat completion with retries, unmarshaling the result into dest.
 func (c *Client) CompleteStructured(ctx context.Context, messages []ChatMessage, dest any) error {
+	c.mu.RLock()
+	temp := c.structuredTemp
+	c.mu.RUnlock()
+	return c.CompleteStructuredWithTemp(ctx, messages, dest, temp)
+}
+
+// CompleteStructuredWithTemp executes a structured JSON chat completion with an explicit sampling temperature.
+func (c *Client) CompleteStructuredWithTemp(ctx context.Context, messages []ChatMessage, dest any, temperature float64) error {
 	if len(messages) == 0 {
 		return ErrEmptyInput
 	}
@@ -493,7 +502,7 @@ func (c *Client) CompleteStructured(ctx context.Context, messages []ChatMessage,
 		req := ChatCompletionRequest{
 			Model:          c.model,
 			Messages:       history,
-			Temperature:    c.structuredTemp,
+			Temperature:    temperature,
 			ResponseFormat: &ResponseFormat{Type: "json_object"},
 		}
 

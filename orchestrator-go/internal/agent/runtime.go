@@ -19,6 +19,7 @@ import (
 	"github.com/btposey/civquest/orchestrator-go/internal/db"
 	civquestv1 "github.com/btposey/civquest/orchestrator-go/internal/proto/v1"
 	"github.com/btposey/civquest/orchestrator-go/internal/system1"
+	"github.com/btposey/civquest/orchestrator-go/internal/system2"
 	"github.com/btposey/civquest/orchestrator-go/internal/xdg"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -31,6 +32,7 @@ var (
 	ErrRuntimeStopped = errors.New("agent runtime is stopped")
 	ErrQueueFull      = errors.New("outbound intent queue is full")
 	ErrNilIntent      = errors.New("intent cannot be nil")
+	ErrAgentDead      = errors.New("agent is dead; permadeath lifecycle prohibits new intents")
 )
 
 // StreamConnector is an interface allowing abstraction over bridge.Client or custom stream providers.
@@ -50,6 +52,7 @@ type Config struct {
 	SocketPath      string
 	IntentQueueSize int
 	OnDeath         func(*civquestv1.DeathEvent)
+	DialogueService *system2.DialogueService
 }
 
 // SocketPosition represents 3D coordinates in the diagnostic socket payload.
@@ -113,6 +116,14 @@ type AgentRuntime struct {
 	// System 1 Reflexes and Safe Node Graph Cache
 	safeNodesCache []db.MapNode
 
+	// System 2 Deliberative Dialogue Pipeline
+	dialogueService     *system2.DialogueService
+	dialogueWg          sync.WaitGroup
+	tradeActive         atomic.Bool
+	lastTradeTick       int64
+	lastTradePlayerUUID string
+	lastTradeAttemptAt  time.Time
+
 	// Callbacks
 	onDeath func(*civquestv1.DeathEvent)
 
@@ -167,6 +178,7 @@ func NewRuntime(cfg Config) (*AgentRuntime, error) {
 		agentDB:         cfg.AgentDB,
 		bridgeClient:    cfg.BridgeClient,
 		connector:       connector,
+		dialogueService: cfg.DialogueService,
 		intentQueue:     make(chan *civquestv1.AgentIntent, queueSize),
 		socketPath:      sockPath,
 		pid:             os.Getpid(),
@@ -211,6 +223,20 @@ func (r *AgentRuntime) BridgeClient() *bridge.Client {
 // IdentityConfig returns the loaded identity YAML profile.
 func (r *AgentRuntime) IdentityConfig() *xdg.AgentIdentityConfig {
 	return r.identityConfig
+}
+
+// SetDialogueService assigns the System 2 deliberative dialogue service.
+func (r *AgentRuntime) SetDialogueService(d *system2.DialogueService) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.dialogueService = d
+}
+
+// DialogueService returns the configured System 2 dialogue service, or nil if unset.
+func (r *AgentRuntime) DialogueService() *system2.DialogueService {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.dialogueService
 }
 
 // SocketPath returns the bound UNIX domain socket path.
@@ -329,6 +355,13 @@ func (r *AgentRuntime) QueueIntent(intent *civquestv1.AgentIntent) error {
 		return ErrNilIntent
 	}
 
+	r.mu.RLock()
+	if r.isDead {
+		r.mu.RUnlock()
+		return ErrAgentDead
+	}
+	r.mu.RUnlock()
+
 	select {
 	case <-r.done:
 		return ErrRuntimeStopped
@@ -364,6 +397,13 @@ func (r *AgentRuntime) QueuePriorityIntent(intent *civquestv1.AgentIntent) error
 	if intent == nil {
 		return ErrNilIntent
 	}
+
+	r.mu.RLock()
+	if r.isDead {
+		r.mu.RUnlock()
+		return ErrAgentDead
+	}
+	r.mu.RUnlock()
 
 	select {
 	case <-r.done:
@@ -472,7 +512,15 @@ func (r *AgentRuntime) Start(parentCtx context.Context) error {
 	}
 
 	r.mu.Lock()
-	r.status = "RUNNING"
+	select {
+	case <-r.done:
+		r.mu.Unlock()
+		return ErrRuntimeStopped
+	default:
+	}
+	if !r.isDead && r.status != "STOPPED" {
+		r.status = "RUNNING"
+	}
 	r.startTime = time.Now().UTC()
 	r.mu.Unlock()
 
@@ -529,6 +577,15 @@ func (r *AgentRuntime) Stop() {
 		}
 
 		r.stopSocketServer()
+
+		// Await pending asynchronous dialogue tasks
+		r.tradeActive.Store(false)
+		r.dialogueWg.Wait()
+
+		// Close dialogue service if assigned
+		if r.dialogueService != nil {
+			_ = r.dialogueService.Close()
+		}
 
 		// Close agent database if open
 		if r.agentDB != nil {
@@ -639,6 +696,154 @@ func (r *AgentRuntime) processFrame(frame *civquestv1.TelemetryFrame) {
 	// Evaluate deterministic System 1 combat reflexes and survival panic
 	if deathEv == nil {
 		r.evaluateSystem1Reflexes(frame)
+	}
+
+	// Dispatch System 2 dialogue and barter haggling asynchronously (non-blocking)
+	if deathEv == nil && (len(frame.IncomingChats) > 0 || frame.PendingTrade != nil) {
+		r.dispatchDialogue(frame)
+	}
+}
+
+// dispatchDialogue asynchronously processes incoming chat messages and pending trade requests
+// via System 2 without blocking System 1 survival reflexes.
+func (r *AgentRuntime) dispatchDialogue(frame *civquestv1.TelemetryFrame) {
+	r.mu.RLock()
+	svc := r.dialogueService
+	isDead := r.isDead
+	ctx := r.ctx
+	r.mu.RUnlock()
+
+	if svc == nil || isDead {
+		return
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if ctx.Err() != nil {
+		return
+	}
+
+	chats := frame.IncomingChats
+	pendingTrade := frame.PendingTrade
+	worldTick := frame.WorldTick
+
+	var vitals *system2.DialogueVitals
+	if frame.Status != nil {
+		vitals = &system2.DialogueVitals{
+			Health:    frame.Status.Health,
+			FoodLevel: frame.Status.FoodLevel,
+		}
+	}
+
+	// 1. Dispatch incoming chats asynchronously
+	for _, chat := range chats {
+		if chat == nil || chat.SenderUuid == r.agentID || (r.identityConfig != nil && chat.SenderName == r.identityConfig.Name) {
+			continue
+		}
+
+		r.mu.RLock()
+		if r.status != "RUNNING" || r.isDead || r.dialogueService == nil {
+			r.mu.RUnlock()
+			return
+		}
+		r.dialogueWg.Add(1)
+		r.mu.RUnlock()
+
+		c := chat
+		go func() {
+			defer r.dialogueWg.Done()
+			select {
+			case <-ctx.Done():
+				return
+			default:
+			}
+
+			req := system2.ChatDialogueRequest{
+				PlayerUUID:   c.SenderUuid,
+				PlayerName:   c.SenderName,
+				Message:      c.Message,
+				Distance:     c.Distance,
+				WorldTick:    worldTick,
+				Vitals:       vitals,
+				SurplusState: system2.SurplusStable,
+			}
+			res, err := svc.ProcessChat(ctx, req)
+			if err != nil {
+				log.Printf("[WARN] agent %s: dialogue ProcessChat failed: %v", r.agentID, err)
+				return
+			}
+			if res != nil && res.ChatIntent != nil {
+				if !r.IsDead() && ctx.Err() == nil {
+					_ = r.QueueIntent(&civquestv1.AgentIntent{
+						AgentId: r.agentID,
+						Action: &civquestv1.AgentIntent_Chat{
+							Chat: res.ChatIntent,
+						},
+					})
+				}
+			}
+		}()
+	}
+
+	// 2. Dispatch pending trade asynchronously (prevent duplicate concurrent negotiations and debounce identical proposals)
+	if pendingTrade != nil {
+		r.mu.Lock()
+		debounced := pendingTrade.PlayerUuid == r.lastTradePlayerUUID &&
+			((worldTick >= r.lastTradeTick && worldTick-r.lastTradeTick < 100) || time.Since(r.lastTradeAttemptAt) < 5*time.Second)
+		if !debounced {
+			r.lastTradePlayerUUID = pendingTrade.PlayerUuid
+			r.lastTradeTick = worldTick
+			r.lastTradeAttemptAt = time.Now()
+		}
+		r.mu.Unlock()
+
+		if !debounced && r.tradeActive.CompareAndSwap(false, true) {
+			r.mu.RLock()
+			if r.status != "RUNNING" || r.isDead || r.dialogueService == nil {
+				r.mu.RUnlock()
+				r.tradeActive.Store(false)
+				return
+			}
+			r.dialogueWg.Add(1)
+			r.mu.RUnlock()
+
+			trade := pendingTrade
+			go func() {
+				defer r.dialogueWg.Done()
+				defer r.tradeActive.Store(false)
+				select {
+				case <-ctx.Done():
+					return
+				default:
+				}
+
+				req := system2.TradeDialogueRequest{
+					PlayerEntityID: trade.PlayerEntityId,
+					PlayerUUID:     trade.PlayerUuid,
+					PlayerName:     trade.PlayerName,
+					OfferedItems:   trade.PlayerOfferedItems,
+					SpokenProposal: trade.SpokenProposal,
+					WorldTick:      worldTick,
+					Vitals:         vitals,
+					SurplusState:   system2.SurplusStable,
+				}
+				res, err := svc.ProcessTrade(ctx, req)
+				if err != nil {
+					log.Printf("[WARN] agent %s: dialogue ProcessTrade failed: %v", r.agentID, err)
+					return
+				}
+				if res != nil && res.TradeIntent != nil {
+					if !r.IsDead() && ctx.Err() == nil {
+						_ = r.QueueIntent(&civquestv1.AgentIntent{
+							AgentId: r.agentID,
+							Action: &civquestv1.AgentIntent_TradeResponse{
+								TradeResponse: res.TradeIntent,
+							},
+						})
+					}
+				}
+			}()
+		}
 	}
 }
 

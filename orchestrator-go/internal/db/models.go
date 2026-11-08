@@ -1,5 +1,7 @@
 package db
 
+import "time"
+
 // EpisodicMemory represents a single experiential event or observation recorded by an agent.
 // Stored in memory.db in the episodic_memories table.
 type EpisodicMemory struct {
@@ -63,4 +65,28 @@ type MapEdge struct {
 	Distance    float64 `json:"distance"`
 	DangerLevel float64 `json:"danger_level"`
 	IsPaved     bool    `json:"is_paved"`
+}
+
+// HeroPrestige tracks human player reputation and honorary title within a clan.
+// Stored in reputation.db in the hero_prestige table.
+type HeroPrestige struct {
+	PlayerUUID          string    `json:"player_uuid"`
+	PlayerName          string    `json:"player_name"`
+	Score               float64   `json:"score"`
+	Title               string    `json:"title"`
+	LastInteractionTick int64     `json:"last_interaction_tick"`
+	UpdatedAt           time.Time `json:"updated_at"`
+}
+
+// PrestigeLedgerEntry records an individual delta change to a player's hero prestige score.
+// Stored in reputation.db in the prestige_ledger table.
+type PrestigeLedgerEntry struct {
+	ID         int64     `json:"id,omitempty"`
+	PlayerUUID string    `json:"player_uuid"`
+	PlayerName string    `json:"player_name,omitempty"`
+	AgentID    string    `json:"agent_id"`
+	Delta      float64   `json:"delta"`
+	Reason     string    `json:"reason"`
+	WorldTick  int64     `json:"world_tick"`
+	CreatedAt  time.Time `json:"created_at,omitempty"`
 }

@@ -4,9 +4,13 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net"
+	"net/http"
+	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -17,6 +21,7 @@ import (
 	"github.com/btposey/civquest/orchestrator-go/internal/bridge"
 	"github.com/btposey/civquest/orchestrator-go/internal/db"
 	civquestv1 "github.com/btposey/civquest/orchestrator-go/internal/proto/v1"
+	"github.com/btposey/civquest/orchestrator-go/internal/system2"
 	"github.com/btposey/civquest/orchestrator-go/internal/xdg"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
@@ -1401,6 +1406,605 @@ drainLoop:
 		}
 	}
 
+	cancel()
+	_ = <-runErrCh
+}
+
+func TestRuntime_AsynchronousDialogueDispatch(t *testing.T) {
+	mockSvc, bridgeClient, cleanup := setupTestBridge(t)
+	defer cleanup()
+
+	// Mock LLM server with deliberate 50ms delay to prove non-blocking execution of System 1 reflexes
+	llmServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		time.Sleep(50 * time.Millisecond)
+
+		var capturedReq system2.ChatCompletionRequest
+		_ = json.NewDecoder(r.Body).Decode(&capturedReq)
+
+		userContent := ""
+		for _, m := range capturedReq.Messages {
+			if m.Role == system2.RoleUser {
+				userContent = m.Content
+			}
+		}
+
+		var mockResp system2.DialogueResponse
+		if strings.Contains(strings.ToLower(userContent), "emerald") || strings.Contains(strings.ToLower(userContent), "trade") {
+			mockResp = system2.DialogueResponse{
+				SpokenReply:   "Trade accepted from System 2!",
+				TradeDecision: "ACCEPT",
+				PrestigeDelta: 5.0,
+				MemorySummary: "Accepted emeralds trade.",
+			}
+		} else {
+			mockResp = system2.DialogueResponse{
+				SpokenReply:   "Greetings from System 2!",
+				TradeDecision: "NONE",
+				PrestigeDelta: 1.0,
+				MemorySummary: "Friendly greeting.",
+			}
+		}
+
+		respBytes, _ := json.Marshal(mockResp)
+		resp := system2.ChatCompletionResponse{
+			ID:      "chatcmpl-async",
+			Object:  "chat.completion",
+			Created: time.Now().Unix(),
+			Model:   capturedReq.Model,
+			Choices: []system2.ChatCompletionChoice{
+				{
+					Index: 0,
+					Message: system2.ChatMessage{
+						Role:    system2.RoleAssistant,
+						Content: string(respBytes),
+					},
+					FinishReason: "stop",
+				},
+			},
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(resp)
+	}))
+	defer llmServer.Close()
+
+	llmClient, err := system2.NewClientWithConfig(
+		xdg.LLMGatewayConfig{BaseURL: llmServer.URL},
+		xdg.InferenceGovernorConfig{MaxConcurrentLLMRequests: 2},
+		system2.WithHTTPClient(llmServer.Client()),
+	)
+	if err != nil {
+		t.Fatalf("failed creating llm client: %v", err)
+	}
+	defer llmClient.Close()
+
+	agentCfg := &xdg.AgentIdentityConfig{
+		Name:       "aria",
+		ClanID:     "clan_async",
+		Profession: "FARMER",
+		Traits: xdg.AgentTraits{
+			Bravery:         0.8,
+			Sociability:     0.7,
+			Industriousness: 0.6,
+		},
+	}
+
+	dialogueSvc, err := system2.NewDialogueService(llmClient, agentCfg)
+	if err != nil {
+		t.Fatalf("failed creating dialogue service: %v", err)
+	}
+
+	tmpDir := t.TempDir()
+	resolver := xdg.NewResolver(xdg.WithCustomRoot(tmpDir))
+	_ = resolver.InitAgentDirectories("aria")
+
+	cfg := agent.Config{
+		AgentID:         "aria",
+		ClanID:          "clan_async",
+		IdentityConfig:  agentCfg,
+		Resolver:        resolver,
+		BridgeClient:    bridgeClient,
+		DialogueService: dialogueSvc,
+	}
+
+	rt, err := agent.NewRuntime(cfg)
+	if err != nil {
+		t.Fatalf("failed creating runtime: %v", err)
+	}
+
+	if rt.DialogueService() != dialogueSvc {
+		t.Errorf("expected DialogueService to be assigned")
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	runErrCh := make(chan error, 1)
+	go func() {
+		runErrCh <- rt.Start(ctx)
+	}()
+
+	select {
+	case <-mockSvc.streamReady:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for stream readiness")
+	}
+
+	// Handshake intent
+	select {
+	case <-mockSvc.intentCh:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for handshake intent")
+	}
+
+	// 1. Send frame containing both:
+	//    - A hissing Creeper (triggers immediate System 1 combat panic)
+	//    - An incoming chat message from Steve (triggers asynchronous System 2 dialogue)
+	frame := &civquestv1.TelemetryFrame{
+		WorldTick: 500,
+		Status: &civquestv1.AgentStatus{
+			Position:  &civquestv1.Vec3{X: 100, Y: 64, Z: 100},
+			Health:    20.0,
+			FoodLevel: 20,
+		},
+		VisibleEntities: []*civquestv1.VisibleEntity{
+			{
+				EntityId:   99,
+				EntityType: "minecraft:creeper",
+				Position:   &civquestv1.Vec3{X: 102, Y: 64, Z: 100},
+				Distance:   2.0,
+				FuseTicks:  10, // hissing!
+			},
+		},
+		IncomingChats: []*civquestv1.ChatEvent{
+			{
+				SenderUuid: "player-steve",
+				SenderName: "Steve",
+				Message:    "Hello Aria!",
+				Distance:   2.0,
+			},
+		},
+	}
+
+	if err := mockSvc.SendFrame(frame); err != nil {
+		t.Fatalf("failed sending frame: %v", err)
+	}
+
+	// First intents received MUST be System 1 reflexes (Attack + Navigate), completed immediately without waiting for LLM
+	var gotAttackReflex, gotNavigateReflex bool
+	reflexDeadline := time.After(500 * time.Millisecond)
+	for !gotAttackReflex || !gotNavigateReflex {
+		select {
+		case reflexIntent := <-mockSvc.intentCh:
+			if reflexIntent.GetAttack() != nil {
+				gotAttackReflex = true
+				if !reflexIntent.GetAttack().RaiseShield {
+					t.Errorf("expected shield raised in reflex")
+				}
+			}
+			if reflexIntent.GetNavigate() != nil {
+				gotNavigateReflex = true
+			}
+		case <-reflexDeadline:
+			t.Fatalf("timed out waiting for System 1 reflexes (gotAttack=%v, gotNavigate=%v)", gotAttackReflex, gotNavigateReflex)
+		}
+	}
+
+	// Subsequent intent received is asynchronous System 2 SendChatIntent (after 50ms LLM delay)
+	select {
+	case chatIntent := <-mockSvc.intentCh:
+		if chatIntent.GetChat() == nil {
+			t.Fatalf("expected System 2 ChatIntent, got: %T", chatIntent.Action)
+		}
+		if chatIntent.GetChat().Message != "Greetings from System 2!" {
+			t.Errorf("expected chat message 'Greetings from System 2!', got %q", chatIntent.GetChat().Message)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for System 2 chat intent")
+	}
+
+	// 2. Send frame with PendingTrade
+	tradeFrame := &civquestv1.TelemetryFrame{
+		WorldTick: 510,
+		Status: &civquestv1.AgentStatus{
+			Position:  &civquestv1.Vec3{X: 100, Y: 64, Z: 100},
+			Health:    20.0,
+			FoodLevel: 20,
+		},
+		PendingTrade: &civquestv1.TradeRequest{
+			PlayerEntityId: 42,
+			PlayerUuid:     "player-steve",
+			PlayerName:     "Steve",
+			SpokenProposal: "Trade emerald for wheat?",
+			PlayerOfferedItems: []*civquestv1.ItemStackProto{
+				{ItemId: "minecraft:emerald", Count: 1},
+			},
+		},
+	}
+
+	if err := mockSvc.SendFrame(tradeFrame); err != nil {
+		t.Fatalf("failed sending trade frame: %v", err)
+	}
+
+	// Expect RespondTradeIntent
+	select {
+	case tradeIntent := <-mockSvc.intentCh:
+		if tradeIntent.GetTradeResponse() == nil {
+			t.Fatalf("expected RespondTradeIntent, got: %T", tradeIntent.Action)
+		}
+		resp := tradeIntent.GetTradeResponse()
+		if !resp.AcceptDeal {
+			t.Errorf("expected AcceptDeal true")
+		}
+		if resp.PlayerEntityId != 42 {
+			t.Errorf("expected player entity ID 42, got %d", resp.PlayerEntityId)
+		}
+		if resp.SpokenResponse != "Trade accepted from System 2!" {
+			t.Errorf("expected spoken response 'Trade accepted from System 2!', got %q", resp.SpokenResponse)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for trade response intent")
+	}
+
+	cancel()
+	_ = <-runErrCh
+}
+
+func TestRuntime_DeadAgentIntentSuppression(t *testing.T) {
+	mockSvc, client, cleanup := setupTestBridge(t)
+	defer cleanup()
+
+	tmpDir := t.TempDir()
+	resolver := xdg.NewResolver(xdg.WithCustomRoot(tmpDir))
+	_ = resolver.InitAgentDirectories("dead_agent")
+
+	sockPath := filepath.Join(os.TempDir(), fmt.Sprintf("dead_%d.sock", time.Now().UnixNano()))
+	defer os.Remove(sockPath)
+
+	rt, err := agent.NewRuntime(agent.Config{
+		AgentID:      "dead_agent",
+		ClanID:       "pioneers",
+		Resolver:     resolver,
+		SocketPath:   sockPath,
+		BridgeClient: client,
+	})
+	if err != nil {
+		t.Fatalf("failed creating runtime: %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	runErrCh := make(chan error, 1)
+	go func() {
+		runErrCh <- rt.Start(ctx)
+	}()
+
+	select {
+	case err := <-runErrCh:
+		t.Fatalf("runtime exited prematurely: %v", err)
+	case <-mockSvc.streamReady:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for bridge connect")
+	}
+
+	// 1. Deliver DeathEvent frame
+	deathFrame := &civquestv1.TelemetryFrame{
+		WorldTick: 100,
+		DeathEvent: &civquestv1.DeathEvent{
+			AgentId:           "dead_agent",
+			KillerDisplayName: "Creeper",
+			DamageSource:      "minecraft:creeper",
+			WorldTick:         100,
+		},
+	}
+	if err := mockSvc.SendFrame(deathFrame); err != nil {
+		t.Fatalf("failed sending death frame: %v", err)
+	}
+
+	// Wait for runtime to mark dead and exit
+	select {
+	case err := <-runErrCh:
+		if err != nil {
+			t.Fatalf("unexpected runtime error on death: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for runtime to terminate on death")
+	}
+
+	if !rt.IsDead() {
+		t.Fatal("expected runtime.IsDead() to be true")
+	}
+
+	// 2. Outbound QueueIntent and QueuePriorityIntent MUST fail with ErrAgentDead
+	intent := &civquestv1.AgentIntent{
+		Action: &civquestv1.AgentIntent_Chat{
+			Chat: &civquestv1.SendChatIntent{Message: "I am dead"},
+		},
+	}
+	if err := rt.QueueIntent(intent); !errors.Is(err, agent.ErrAgentDead) {
+		t.Errorf("expected ErrAgentDead on QueueIntent, got %v", err)
+	}
+	if err := rt.QueuePriorityIntent(intent); !errors.Is(err, agent.ErrAgentDead) {
+		t.Errorf("expected ErrAgentDead on QueuePriorityIntent, got %v", err)
+	}
+}
+
+func TestRuntime_GracefulShutdownWithoutWaitGroupPanic(t *testing.T) {
+	// Verify that rapid incoming dialogue events racing with Stop()
+	// never cause a sync.WaitGroup panic because r.dialogueWg.Add(1)
+	// is properly guarded under r.mu.RLock() checking r.status == "RUNNING".
+	mockSvc, client, cleanup := setupTestBridge(t)
+	defer cleanup()
+
+	tmpDir := t.TempDir()
+	resolver := xdg.NewResolver(xdg.WithCustomRoot(tmpDir))
+	_ = resolver.InitAgentDirectories("hammer_agent")
+
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		time.Sleep(5 * time.Millisecond)
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(system2.ChatCompletionResponse{
+			Choices: []system2.ChatCompletionChoice{
+				{
+					Message: system2.ChatMessage{
+						Role:    system2.RoleAssistant,
+						Content: `{"spoken_reply":"hi","trade_decision":"NONE","counter_offer_items":[],"prestige_delta":0.0}`,
+					},
+				},
+			},
+		})
+	})
+	srv := httptest.NewServer(handler)
+	defer srv.Close()
+
+	llmClient, _ := system2.NewClientWithConfig(
+		xdg.LLMGatewayConfig{BaseURL: srv.URL},
+		xdg.InferenceGovernorConfig{MaxConcurrentLLMRequests: 10, RequestTimeoutSeconds: 2},
+	)
+	defer llmClient.Close()
+	dialogueSvc, _ := system2.NewDialogueService(llmClient, &xdg.AgentIdentityConfig{Name: "hammer_agent"})
+	defer dialogueSvc.Close()
+
+	sockPath := filepath.Join(os.TempDir(), fmt.Sprintf("hammer_%d.sock", time.Now().UnixNano()))
+	defer os.Remove(sockPath)
+
+	rt, err := agent.NewRuntime(agent.Config{
+		AgentID:         "hammer_agent",
+		ClanID:          "pioneers",
+		Resolver:        resolver,
+		SocketPath:      sockPath,
+		BridgeClient:    client,
+		DialogueService: dialogueSvc,
+	})
+	if err != nil {
+		t.Fatalf("failed creating runtime: %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	runErrCh := make(chan error, 1)
+	go func() {
+		runErrCh <- rt.Start(ctx)
+	}()
+
+	select {
+	case err := <-runErrCh:
+		t.Fatalf("runtime exited prematurely: %v", err)
+	case <-mockSvc.streamReady:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for bridge connect")
+	}
+
+	select {
+	case <-mockSvc.intentCh:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for handshake")
+	}
+
+	var sendWg sync.WaitGroup
+	const numSenders = 30
+	for i := 0; i < numSenders; i++ {
+		sendWg.Add(1)
+		go func(idx int) {
+			defer sendWg.Done()
+			_ = mockSvc.SendFrame(&civquestv1.TelemetryFrame{
+				WorldTick: int64(100 + idx),
+				IncomingChats: []*civquestv1.ChatEvent{
+					{
+						SenderUuid: fmt.Sprintf("player-%d", idx),
+						SenderName: "Rapid",
+						Message:    "Hello rapid",
+					},
+				},
+			})
+		}(i)
+	}
+
+	// Concurrently stop while frames are being dispatched
+	time.Sleep(2 * time.Millisecond)
+	rt.Stop()
+
+	sendWg.Wait()
+	_ = <-runErrCh
+}
+
+func TestRuntime_TradeDebounceTracking(t *testing.T) {
+	mockSvc, client, cleanup := setupTestBridge(t)
+	defer cleanup()
+
+	tmpDir := t.TempDir()
+	resolver := xdg.NewResolver(xdg.WithCustomRoot(tmpDir))
+	_ = resolver.InitAgentDirectories("trade_debounce_agent")
+
+	var callCount atomic.Int32
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		callCount.Add(1)
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(system2.ChatCompletionResponse{
+			Choices: []system2.ChatCompletionChoice{
+				{
+					Message: system2.ChatMessage{
+						Role:    system2.RoleAssistant,
+						Content: `{"spoken_reply":"Accepted","trade_decision":"ACCEPT","counter_offer_items":[],"prestige_delta":1.0}`,
+					},
+				},
+			},
+		})
+	})
+	srv := httptest.NewServer(handler)
+	defer srv.Close()
+
+	llmClient, _ := system2.NewClientWithConfig(
+		xdg.LLMGatewayConfig{BaseURL: srv.URL},
+		xdg.InferenceGovernorConfig{MaxConcurrentLLMRequests: 5, RequestTimeoutSeconds: 2},
+	)
+	defer llmClient.Close()
+	dialogueSvc, _ := system2.NewDialogueService(llmClient, &xdg.AgentIdentityConfig{Name: "trade_debounce_agent"})
+	defer dialogueSvc.Close()
+
+	sockPath := filepath.Join(os.TempDir(), fmt.Sprintf("tr_deb_%d.sock", time.Now().UnixNano()))
+	defer os.Remove(sockPath)
+
+	rt, err := agent.NewRuntime(agent.Config{
+		AgentID:         "trade_debounce_agent",
+		ClanID:          "pioneers",
+		Resolver:        resolver,
+		SocketPath:      sockPath,
+		BridgeClient:    client,
+		DialogueService: dialogueSvc,
+	})
+	if err != nil {
+		t.Fatalf("failed creating runtime: %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	runErrCh := make(chan error, 1)
+	go func() {
+		runErrCh <- rt.Start(ctx)
+	}()
+
+	select {
+	case err := <-runErrCh:
+		t.Fatalf("runtime exited prematurely: %v", err)
+	case <-mockSvc.streamReady:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for bridge connect")
+	}
+
+	// Wait for handshake
+	select {
+	case <-mockSvc.intentCh:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for handshake")
+	}
+
+	// 1. Initial trade proposal at tick 100 for player-A
+	frame1 := &civquestv1.TelemetryFrame{
+		WorldTick: 100,
+		PendingTrade: &civquestv1.TradeRequest{
+			PlayerEntityId: 1,
+			PlayerUuid:     "player-A",
+			PlayerName:     "PlayerA",
+			SpokenProposal: "Trade wheat",
+		},
+	}
+	if err := mockSvc.SendFrame(frame1); err != nil {
+		t.Fatalf("failed sending frame1: %v", err)
+	}
+
+	// Wait for trade response
+	select {
+	case intent := <-mockSvc.intentCh:
+		if intent.GetTradeResponse() == nil {
+			t.Fatalf("expected trade response, got %T", intent.Action)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for trade response 1")
+	}
+
+	countAfterFirst := callCount.Load()
+	if countAfterFirst != 1 {
+		t.Fatalf("expected 1 LLM call, got %d", countAfterFirst)
+	}
+
+	// 2. Duplicate trade proposal at tick 120 (worldTick - lastTradeTick = 20 < 100) -> DEBOUNCED
+	frame2 := &civquestv1.TelemetryFrame{
+		WorldTick: 120,
+		PendingTrade: &civquestv1.TradeRequest{
+			PlayerEntityId: 1,
+			PlayerUuid:     "player-A",
+			PlayerName:     "PlayerA",
+			SpokenProposal: "Trade wheat",
+		},
+	}
+	if err := mockSvc.SendFrame(frame2); err != nil {
+		t.Fatalf("failed sending frame2: %v", err)
+	}
+
+	// Brief pause to allow processing
+	time.Sleep(100 * time.Millisecond)
+	if callCount.Load() != 1 {
+		t.Errorf("expected debounced trade to NOT make LLM call, got %d calls", callCount.Load())
+	}
+
+	// 3. Different player (player-B) at tick 130 -> NOT debounced
+	frame3 := &civquestv1.TelemetryFrame{
+		WorldTick: 130,
+		PendingTrade: &civquestv1.TradeRequest{
+			PlayerEntityId: 2,
+			PlayerUuid:     "player-B",
+			PlayerName:     "PlayerB",
+			SpokenProposal: "Trade iron",
+		},
+	}
+	if err := mockSvc.SendFrame(frame3); err != nil {
+		t.Fatalf("failed sending frame3: %v", err)
+	}
+
+	select {
+	case intent := <-mockSvc.intentCh:
+		if intent.GetTradeResponse() == nil {
+			t.Fatalf("expected trade response, got %T", intent.Action)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for trade response 3")
+	}
+
+	if callCount.Load() != 2 {
+		t.Errorf("expected 2 LLM calls after player-B, got %d", callCount.Load())
+	}
+
+	// 4. Player-A again at tick 250 (tick 250 - tick 100 = 150 >= 100) -> NOT debounced
+	frame4 := &civquestv1.TelemetryFrame{
+		WorldTick: 250,
+		PendingTrade: &civquestv1.TradeRequest{
+			PlayerEntityId: 1,
+			PlayerUuid:     "player-A",
+			PlayerName:     "PlayerA",
+			SpokenProposal: "Trade wheat again",
+		},
+	}
+	if err := mockSvc.SendFrame(frame4); err != nil {
+		t.Fatalf("failed sending frame4: %v", err)
+	}
+
+	select {
+	case intent := <-mockSvc.intentCh:
+		if intent.GetTradeResponse() == nil {
+			t.Fatalf("expected trade response, got %T", intent.Action)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for trade response 4")
+	}
+
+	if callCount.Load() != 3 {
+		t.Errorf("expected 3 LLM calls after player-A at tick 250, got %d", callCount.Load())
+	}
+
+	rt.Stop()
 	cancel()
 	_ = <-runErrCh
 }
