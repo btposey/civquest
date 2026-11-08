@@ -326,3 +326,36 @@ func TestCivctl_ServerSetup_PortValidation(t *testing.T) {
 		}
 	}
 }
+
+func TestCivctl_ServerIDValidation(t *testing.T) {
+	tmpDir := t.TempDir()
+	cfgDir := filepath.Join(tmpDir, "config")
+	dataDir := filepath.Join(tmpDir, "data")
+	stateDir := filepath.Join(tmpDir, "state")
+
+	invalidIDs := []string{"../traversal", "bad/name", "server:id", "..", ".", "has spaces", "-leading-dash"}
+	for _, id := range invalidIDs {
+		_, err := executeCommand(
+			"--config-dir", cfgDir,
+			"--data-dir", dataDir,
+			"--state-dir", stateDir,
+			"--server-id", id,
+			"status",
+		)
+		if err == nil {
+			t.Errorf("expected error for invalid server-id %q, got nil", id)
+		}
+	}
+
+	// Valid server ID should not trigger validation error
+	out, err := executeCommand(
+		"--config-dir", cfgDir,
+		"--data-dir", dataDir,
+		"--state-dir", stateDir,
+		"--server-id", "valid-server-123",
+		"status",
+	)
+	if err != nil {
+		t.Fatalf("expected valid server ID to succeed, got error: %v, output: %s", err, out)
+	}
+}

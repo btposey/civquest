@@ -14,6 +14,7 @@ import (
 	"github.com/btposey/civquest/orchestrator-go/internal/bridge"
 	"github.com/btposey/civquest/orchestrator-go/internal/db"
 	civquestv1 "github.com/btposey/civquest/orchestrator-go/internal/proto/v1"
+	"github.com/btposey/civquest/orchestrator-go/internal/system2"
 	"github.com/btposey/civquest/orchestrator-go/internal/xdg"
 )
 
@@ -35,6 +36,7 @@ func run(parentCtx context.Context, args []string, stdout, stderr io.Writer, r *
 	sharedKeyFlag := flags.String("shared-key", "", "Shared secret authentication key (ADR-012)")
 	authTokenFlag := flags.String("auth-token", "", "Shared secret authentication key (alias for --shared-key)")
 	socketPathFlag := flags.String("socket-path", "", "Override UNIX domain socket path")
+	serverIDFlag := flags.String("server-id", "", "CivQuest server instance identifier for namespaced storage")
 
 	if err := flags.Parse(args); err != nil {
 		return err
@@ -67,6 +69,27 @@ func run(parentCtx context.Context, args []string, stdout, stderr io.Writer, r *
 		r = xdg.DefaultResolver()
 	}
 
+	// Read discovery metadata if available
+	var meta *bridge.ServerMeta
+	if metaRead, discErr := bridge.ReadDiscovery(""); discErr == nil && metaRead.IsReady() {
+		meta = metaRead
+	}
+
+	// Resolve server ID: flag takes precedence, then discovery artifact, fallback to resolver's ServerID
+	serverID := *serverIDFlag
+	if serverID == "" && meta != nil && meta.ServerID != "" {
+		serverID = meta.ServerID
+	}
+	if serverID == "" && r != nil {
+		serverID = r.ServerID()
+	}
+	if serverID != "" {
+		if err := xdg.ValidateServerID(serverID); err != nil {
+			return fmt.Errorf("invalid server identifier %q: %w", serverID, err)
+		}
+	}
+	r = r.ForServer(serverID)
+
 	// Load or create agent identity YAML profile
 	var cfg *xdg.AgentIdentityConfig
 	var err error
@@ -88,13 +111,17 @@ func run(parentCtx context.Context, args []string, stdout, stderr io.Writer, r *
 		}
 	}
 
-	// Initialize agent-specific XDG directories ($XDG_DATA_HOME/civquest/agents/{name}, etc.)
+	// Initialize agent-specific XDG directories ($XDG_DATA_HOME/civquest/servers/{server_id}/agents/{name}, etc.)
 	if err := r.InitAgentDirectories(cfg.Name); err != nil {
 		return fmt.Errorf("initializing directories for agent %s: %w", cfg.Name, err)
 	}
 
 	// Resolve gRPC and SharedKey from flags, discovery artifact, or global config
 	globalCfg, _ := r.LoadGlobalConfig()
+	if globalCfg == nil {
+		globalCfg = xdg.DefaultGlobalConfig()
+	}
+
 	grpcAddr := *grpcAddrFlag
 	sharedKey := *sharedKeyFlag
 	if sharedKey == "" {
@@ -102,15 +129,11 @@ func run(parentCtx context.Context, args []string, stdout, stderr io.Writer, r *
 	}
 
 	// Attempt discovery artifact lookup if gRPC address or shared key are unset
-	if grpcAddr == "" || sharedKey == "" {
-		if meta, discErr := bridge.ReadDiscovery(""); discErr == nil && meta.IsReady() {
-			if grpcAddr == "" {
-				grpcAddr = meta.Addr()
-			}
-			if sharedKey == "" {
-				sharedKey = meta.SharedKey
-			}
-		}
+	if grpcAddr == "" && meta != nil {
+		grpcAddr = meta.Addr()
+	}
+	if sharedKey == "" && meta != nil {
+		sharedKey = meta.SharedKey
 	}
 
 	// Fallback to global config if discovery was not found
@@ -123,13 +146,32 @@ func run(parentCtx context.Context, args []string, stdout, stderr io.Writer, r *
 	}
 
 	llmGateway := "http://127.0.0.1:11434/v1"
-	if globalCfg != nil && globalCfg.LLMGateway.BaseURL != "" {
+	if globalCfg.LLMGateway.BaseURL != "" {
 		llmGateway = globalCfg.LLMGateway.BaseURL
+	} else {
+		globalCfg.LLMGateway.BaseURL = llmGateway
 	}
 
+	llmClient, err := system2.NewClient(globalCfg)
+	if err != nil {
+		return fmt.Errorf("creating System 2 LLM client: %w", err)
+	}
+	defer llmClient.Close()
+
+	dialogueSvc, err := system2.NewDialogueService(llmClient, cfg)
+	if err != nil {
+		return fmt.Errorf("creating System 2 dialogue service: %w", err)
+	}
+	defer dialogueSvc.Close()
+
+	displayServerID := serverID
+	if displayServerID == "" {
+		displayServerID = "default"
+	}
 	fmt.Fprintln(stdout, "======================================================================")
 	fmt.Fprintf(stdout, " [civquest-agent] Starting Settler Avatar: %s (PID: %d)\n", cfg.Name, os.Getpid())
 	fmt.Fprintln(stdout, "======================================================================")
+	fmt.Fprintf(stdout, " Server ID:      %s\n", displayServerID)
 	fmt.Fprintf(stdout, " Clan:           %s\n", cfg.ClanID)
 	fmt.Fprintf(stdout, " Profession:     %s\n", cfg.Profession)
 	if cfg.SecondaryHobby != "" {
@@ -165,13 +207,14 @@ func run(parentCtx context.Context, args []string, stdout, stderr io.Writer, r *
 	}
 
 	rt, err := agent.NewRuntime(agent.Config{
-		AgentID:        cfg.Name,
-		ClanID:         cfg.ClanID,
-		IdentityConfig: cfg,
-		Resolver:       r,
-		AgentDB:        agentDB,
-		BridgeClient:   bridgeClient,
-		SocketPath:     sockPath,
+		AgentID:         cfg.Name,
+		ClanID:          cfg.ClanID,
+		IdentityConfig:  cfg,
+		Resolver:        r,
+		AgentDB:         agentDB,
+		BridgeClient:    bridgeClient,
+		SocketPath:      sockPath,
+		DialogueService: dialogueSvc,
 		OnDeath: func(e *civquestv1.DeathEvent) {
 			fmt.Fprintf(stdout, "[civquest-agent] Permadeath event recorded at tick %d (cause: %s)\n",
 				e.GetWorldTick(), e.GetDamageSource())

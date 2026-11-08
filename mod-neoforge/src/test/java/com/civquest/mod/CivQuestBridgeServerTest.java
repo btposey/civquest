@@ -19,6 +19,8 @@ import io.grpc.health.v1.HealthCheckResponse;
 import io.grpc.health.v1.HealthGrpc;
 import io.grpc.stub.MetadataUtils;
 import io.grpc.stub.StreamObserver;
+import net.minecraft.server.MinecraftServer;
+import net.minecraft.world.level.storage.LevelResource;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -37,6 +39,7 @@ import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.TimeUnit;
 
 import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.Mockito.*;
 
 public class CivQuestBridgeServerTest {
 
@@ -89,6 +92,8 @@ public class CivQuestBridgeServerTest {
         assertTrue(jsonContent.contains("\"grpc_host\": \"127.0.0.1\""), "Must contain host");
         assertTrue(jsonContent.contains("\"server_pid\": " + ProcessHandle.current().pid()), "Must contain current PID");
         assertTrue(jsonContent.contains("\"shared_key\": \"" + sharedKey + "\""), "Must contain shared key");
+        assertTrue(jsonContent.contains("\"server_id\": \"default\""), "Must contain default server_id");
+        assertTrue(jsonContent.contains("\"world_name\": \"default\""), "Must contain default world_name");
         assertTrue(jsonContent.contains("\"timestamp_ms\": "), "Must contain timestamp_ms");
 
         if (FileSystems.getDefault().supportedFileAttributeViews().contains("posix")) {
@@ -287,5 +292,93 @@ public class CivQuestBridgeServerTest {
         assertTrue(Files.exists(discoveryPath), "Discovery JSON must exist after shutdown");
         String content = Files.readString(discoveryPath);
         assertTrue(content.contains("\"status\": \"STOPPED\""), "Status must be updated to STOPPED");
+    }
+
+    @Test
+    @DisplayName("Server ID resolution from system property and explicit setter")
+    void testServerIdResolution() throws IOException {
+        System.setProperty(CivQuestBridgeServer.PROP_SERVER_ID, "test-server-alpha_1");
+        try {
+            CivQuestBridgeServer server = new CivQuestBridgeServer("127.0.0.1", 0, "test-key", tempDir.resolve("sysprop-meta.json"));
+            assertEquals("test-server-alpha_1", server.getServerId());
+            assertEquals("test-server-alpha_1", server.resolveServerId());
+
+            server.writeDiscoveryFile("READY");
+            String json = Files.readString(tempDir.resolve("sysprop-meta.json"));
+            assertTrue(json.contains("\"server_id\": \"test-server-alpha_1\""), "Discovery JSON must contain resolved server ID");
+        } finally {
+            System.clearProperty(CivQuestBridgeServer.PROP_SERVER_ID);
+        }
+
+        // Test explicit setter
+        bridgeServer.setServerId("custom-override-id");
+        bridgeServer.setWorldName("Overworld-Prime");
+        assertEquals("custom-override-id", bridgeServer.getServerId());
+        assertEquals("Overworld-Prime", bridgeServer.getWorldName());
+
+        bridgeServer.writeDiscoveryFile("READY");
+        String json = Files.readString(discoveryPath);
+        assertTrue(json.contains("\"server_id\": \"custom-override-id\""));
+        assertTrue(json.contains("\"world_name\": \"Overworld-Prime\""));
+    }
+
+    @Test
+    @DisplayName("Server ID generation and persistence in Minecraft world LevelResource.ROOT")
+    void testServerIdWorldPersistence() throws IOException {
+        Path worldDir = tempDir.resolve("saves").resolve("World_1");
+        Files.createDirectories(worldDir);
+
+        CivQuestBridgeServer server = new CivQuestBridgeServer("127.0.0.1", 0, "test-key", tempDir.resolve("world-meta.json"));
+        server.setWorldName("TestWorld");
+
+        String generatedId = server.resolveServerIdFromWorldPath(worldDir);
+        assertNotNull(generatedId);
+        assertTrue(generatedId.startsWith("TestWorld-"), "Generated server ID must start with sanitized world name");
+        assertTrue(generatedId.length() <= 32, "Server ID must not exceed 32 characters");
+        assertTrue(generatedId.matches("^[a-zA-Z0-9][a-zA-Z0-9_-]{0,31}$"), "Server ID must match identifier regex");
+
+        Path idFile = worldDir.resolve("civquest-server-id.txt");
+        assertTrue(Files.exists(idFile), "civquest-server-id.txt must be persisted in world directory");
+        assertEquals(generatedId, Files.readString(idFile).trim());
+
+        // Second instance with the same world directory must read the existing file
+        CivQuestBridgeServer server2 = new CivQuestBridgeServer("127.0.0.1", 0, "test-key-2", tempDir.resolve("world-meta-2.json"));
+        server2.setWorldName("DifferentWorldName");
+        assertEquals(generatedId, server2.resolveServerIdFromWorldPath(worldDir), "Must reuse persisted server ID from civquest-server-id.txt");
+    }
+
+    @Test
+    @DisplayName("SanitizeServerId handles edge cases, lengths, and special characters")
+    void testSanitizeServerId() {
+        assertEquals("default", CivQuestBridgeServer.sanitizeServerId(null));
+        assertEquals("default", CivQuestBridgeServer.sanitizeServerId(""));
+        assertEquals("default", CivQuestBridgeServer.sanitizeServerId("!!!$$$###"));
+        assertEquals("alpha-beta", CivQuestBridgeServer.sanitizeServerId("alpha-beta"));
+        assertEquals("hello-world", CivQuestBridgeServer.sanitizeServerId("hello world!"));
+        assertEquals("server_123", CivQuestBridgeServer.sanitizeServerId("--server_123--"));
+
+        // Max 32 chars length
+        String longId = "a".repeat(50);
+        String sanitized = CivQuestBridgeServer.sanitizeServerId(longId);
+        assertEquals(32, sanitized.length());
+        assertTrue(sanitized.matches("^[a-zA-Z0-9][a-zA-Z0-9_-]{0,31}$"));
+    }
+
+    @Test
+    @DisplayName("getWorldName returns cached worldName once set or resolved")
+    void testGetWorldNameCaching() {
+        assertEquals("default", bridgeServer.getWorldName());
+
+        bridgeServer.setWorldName("CachedWorldAlpha");
+        assertEquals("CachedWorldAlpha", bridgeServer.getWorldName());
+
+        // System property fallback test
+        System.setProperty("civquest.world.name", "SysPropWorld");
+        try {
+            CivQuestBridgeServer uninitServer = new CivQuestBridgeServer("127.0.0.1", 0, "test-key", tempDir.resolve("prop-meta.json"));
+            assertEquals("SysPropWorld", uninitServer.getWorldName());
+        } finally {
+            System.clearProperty("civquest.world.name");
+        }
     }
 }

@@ -71,6 +71,20 @@ func (s *mockTestServer) ConnectAgent(stream civquestv1.CivQuestBridgeService_Co
 	}
 }
 
+func (s *mockTestServer) SpawnAgentEntity(ctx context.Context, req *civquestv1.SpawnAgentRequest) (*civquestv1.SpawnAgentResponse, error) {
+	return &civquestv1.SpawnAgentResponse{
+		Success:           true,
+		MinecraftEntityId: 42,
+		OfflineUuid:       "00000000-0000-0000-0000-000000000001",
+	}, nil
+}
+
+func (s *mockTestServer) DespawnAgentEntity(ctx context.Context, req *civquestv1.DespawnAgentRequest) (*civquestv1.DespawnAgentResponse, error) {
+	return &civquestv1.DespawnAgentResponse{
+		Success: true,
+	}, nil
+}
+
 func startTestServer(t *testing.T, sendDead bool) (string, func()) {
 	t.Helper()
 	lis, err := net.Listen("tcp", "127.0.0.1:0")
@@ -248,5 +262,49 @@ func TestCivquestAgent_CorruptedConfigRefusal(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "loading agent config for aria") {
 		t.Errorf("expected loading agent config error, got: %v", err)
+	}
+}
+
+func TestCivquestAgent_ServerIDFlag(t *testing.T) {
+	serverAddr, cleanupServer := startTestServer(t, false)
+	defer cleanupServer()
+
+	tmpDir := t.TempDir()
+	resolver := xdg.NewResolver(xdg.WithCustomRoot(tmpDir))
+
+	var stdout, stderr bytes.Buffer
+	ctx, cancel := context.WithCancel(context.Background())
+
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- run(ctx, []string{
+			"--agent-id", "server_avatar",
+			"--server-id", "server_cluster_1",
+			"--grpc-addr", serverAddr,
+			"--shared-key", "test-key-123",
+		}, &stdout, &stderr, resolver)
+	}()
+
+	time.Sleep(100 * time.Millisecond)
+	cancel()
+
+	select {
+	case err := <-errCh:
+		if err != nil {
+			t.Fatalf("run returned error: %v (stderr: %s)", err, stderr.String())
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("timed out waiting for agent run() to exit")
+	}
+
+	outStr := stdout.String()
+	if !strings.Contains(outStr, "Server ID:      server_cluster_1") {
+		t.Errorf("expected Server ID in stdout banner, got:\n%s", outStr)
+	}
+
+	// Verify database was initialized in namespaced data dir
+	expectedDB := filepath.Join(resolver.DataDir(), "servers", "server_cluster_1", "agents", "server_avatar", "memory.db")
+	if _, err := os.Stat(expectedDB); os.IsNotExist(err) {
+		t.Errorf("expected namespaced memory.db at %s", expectedDB)
 	}
 }

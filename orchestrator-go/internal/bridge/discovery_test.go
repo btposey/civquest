@@ -57,11 +57,59 @@ func TestReadDiscoveryValid(t *testing.T) {
 	if meta.TimestampMs != 1731000000000 {
 		t.Errorf("Expected timestamp_ms 1731000000000, got %d", meta.TimestampMs)
 	}
+	if meta.ServerID != "" {
+		t.Errorf("Expected raw server_id to be empty when omitted from JSON, got %s", meta.ServerID)
+	}
+	if meta.GetServerID() != "default" {
+		t.Errorf("Expected GetServerID() == 'default', got %s", meta.GetServerID())
+	}
+	if meta.WorldName != "default" {
+		t.Errorf("Expected default world_name, got %s", meta.WorldName)
+	}
 	if !meta.IsReady() {
 		t.Errorf("IsReady() should be true")
 	}
 	if meta.Addr() != "127.0.0.1:54321" {
 		t.Errorf("Expected addr 127.0.0.1:54321, got %s", meta.Addr())
+	}
+}
+
+func TestReadDiscoveryServerIDAndWorldName(t *testing.T) {
+	tempDir := t.TempDir()
+	filePath := filepath.Join(tempDir, "civquest-server-meta.json")
+
+	pid := os.Getpid()
+	content := fmt.Sprintf(`{
+  "status": "READY",
+  "grpc_transport": "tcp",
+  "grpc_port": 54321,
+  "grpc_host": "127.0.0.1",
+  "server_pid": %d,
+  "shared_key": "test-key-abc-123",
+  "server_id": "test-server-42",
+  "world_name": "Overworld_Prime",
+  "timestamp_ms": 1731000000000
+}`, pid)
+	if err := os.WriteFile(filePath, []byte(content), 0600); err != nil {
+		t.Fatalf("Failed writing test file: %v", err)
+	}
+
+	meta, err := bridge.ReadDiscovery(filePath)
+	if err != nil {
+		t.Fatalf("ReadDiscovery failed: %v", err)
+	}
+
+	if meta.ServerID != "test-server-42" {
+		t.Errorf("Expected server_id 'test-server-42', got %s", meta.ServerID)
+	}
+	if meta.GetServerID() != "test-server-42" {
+		t.Errorf("Expected GetServerID() 'test-server-42', got %s", meta.GetServerID())
+	}
+	if meta.WorldName != "Overworld_Prime" {
+		t.Errorf("Expected world_name 'Overworld_Prime', got %s", meta.WorldName)
+	}
+	if meta.GetWorldName() != "Overworld_Prime" {
+		t.Errorf("Expected GetWorldName() 'Overworld_Prime', got %s", meta.GetWorldName())
 	}
 }
 

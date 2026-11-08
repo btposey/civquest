@@ -758,6 +758,8 @@ func (r *AgentRuntime) dispatchDialogue(frame *civquestv1.TelemetryFrame) {
 			default:
 			}
 
+			log.Printf("[civquest-agent] Received chat from %s (dist=%.1f): %q", c.SenderName, c.Distance, c.Message)
+
 			req := system2.ChatDialogueRequest{
 				PlayerUUID:   c.SenderUuid,
 				PlayerName:   c.SenderName,
@@ -773,6 +775,7 @@ func (r *AgentRuntime) dispatchDialogue(frame *civquestv1.TelemetryFrame) {
 				return
 			}
 			if res != nil && res.ChatIntent != nil {
+				log.Printf("[civquest-agent] %s responding to %s: %q", r.agentID, c.SenderName, res.ChatIntent.Message)
 				if !r.IsDead() && ctx.Err() == nil {
 					_ = r.QueueIntent(&civquestv1.AgentIntent{
 						AgentId: r.agentID,

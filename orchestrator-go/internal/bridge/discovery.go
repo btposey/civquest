@@ -35,6 +35,8 @@ type ServerMeta struct {
 	Host        string `json:"grpc_host"`
 	ServerPID   int64  `json:"server_pid"`
 	SharedKey   string `json:"shared_key"`
+	ServerID    string `json:"server_id"`
+	WorldName   string `json:"world_name"`
 	TimestampMs int64  `json:"timestamp_ms"`
 }
 
@@ -47,8 +49,24 @@ func (m *ServerMeta) String() string {
 	if m.SharedKey != "" {
 		maskedKey = "[REDACTED]"
 	}
-	return fmt.Sprintf("ServerMeta{status: %q, host: %q, port: %d, server_pid: %d, shared_key: %s}",
-		m.Status, m.Host, m.Port, m.ServerPID, maskedKey)
+	return fmt.Sprintf("ServerMeta{status: %q, host: %q, port: %d, server_id: %q, world_name: %q, server_pid: %d, shared_key: %s}",
+		m.Status, m.Host, m.Port, m.GetServerID(), m.GetWorldName(), m.ServerPID, maskedKey)
+}
+
+// GetServerID returns the server ID or "default" if empty.
+func (m *ServerMeta) GetServerID() string {
+	if m == nil || strings.TrimSpace(m.ServerID) == "" {
+		return "default"
+	}
+	return strings.TrimSpace(m.ServerID)
+}
+
+// GetWorldName returns the world name or "default" if empty.
+func (m *ServerMeta) GetWorldName() string {
+	if m == nil || strings.TrimSpace(m.WorldName) == "" {
+		return "default"
+	}
+	return strings.TrimSpace(m.WorldName)
 }
 
 // Addr formats the dialable host:port address for the gRPC bridge.
@@ -158,6 +176,9 @@ func ReadDiscovery(path string) (*ServerMeta, error) {
 			if err := json.Unmarshal(data, &meta); err != nil {
 				continue
 			}
+			if meta.WorldName == "" {
+				meta.WorldName = "default"
+			}
 			if meta.IsReady() && meta.IsProcessAlive() {
 				return &meta, nil
 			}
@@ -176,6 +197,9 @@ func ReadDiscovery(path string) (*ServerMeta, error) {
 	var meta ServerMeta
 	if err := json.Unmarshal(data, &meta); err != nil {
 		return nil, fmt.Errorf("failed parsing discovery JSON from %s: %w", resolved, err)
+	}
+	if meta.WorldName == "" {
+		meta.WorldName = "default"
 	}
 
 	if meta.ServerPID > 1 && isLocalHost(meta.Host) {

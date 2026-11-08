@@ -15,12 +15,14 @@ var (
 	ErrInvalidClanID     = errors.New("invalid clan ID")
 	ErrInvalidUUID       = errors.New("invalid UUID")
 	ErrInvalidIdentifier = errors.New("invalid identifier")
+	ErrInvalidServerID   = errors.New("invalid server ID")
 )
 
 var validIdentifierRegex = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_-]{0,31}$`)
 
 // Resolver resolves filesystem paths in compliance with the XDG Base Directory specification.
 type Resolver struct {
+	serverID          string
 	homeDir           string
 	configHome        string
 	dataHome          string
@@ -36,6 +38,13 @@ type Resolver struct {
 
 // Option configures a Resolver instance.
 type Option func(*Resolver)
+
+// WithServerID configures a server instance identifier for namespaced paths.
+func WithServerID(serverID string) Option {
+	return func(r *Resolver) {
+		r.serverID = strings.TrimSpace(serverID)
+	}
+}
 
 // WithHomeDir overrides the home directory.
 func WithHomeDir(homeDir string) Option {
@@ -127,6 +136,18 @@ func NewResolver(opts ...Option) *Resolver {
 // NewPaths creates a new Resolver, serving as an alias for NewResolver.
 func NewPaths(opts ...Option) *Resolver {
 	return NewResolver(opts...)
+}
+
+// ForServer returns a copy of the resolver configured for the specified server ID.
+func (r *Resolver) ForServer(serverID string) *Resolver {
+	cp := *r
+	cp.serverID = strings.TrimSpace(serverID)
+	return &cp
+}
+
+// ServerID returns the server identifier configured on this resolver.
+func (r *Resolver) ServerID() string {
+	return r.serverID
 }
 
 func (r *Resolver) getHomeDir() string {
@@ -234,8 +255,24 @@ func (r *Resolver) AgentsConfigDir() string {
 	return filepath.Join(r.ConfigDir(), "agents")
 }
 
-// AgentConfigPath returns $XDG_CONFIG_HOME/civquest/agents/{agent_name}.yaml.
+// ServerAgentsConfigDir returns $XDG_CONFIG_HOME/civquest/servers/{server_id}/agents when serverID is set,
+// or $XDG_CONFIG_HOME/civquest/agents when serverID is empty.
+func (r *Resolver) ServerAgentsConfigDir() string {
+	if r.serverID != "" {
+		return filepath.Join(r.ConfigDir(), "servers", r.serverID, "agents")
+	}
+	return r.AgentsConfigDir()
+}
+
+// AgentConfigPath returns $XDG_CONFIG_HOME/civquest/servers/{server_id}/agents/{agent_name}.yaml if it exists on disk,
+// falling back to $XDG_CONFIG_HOME/civquest/agents/{agent_name}.yaml.
 func (r *Resolver) AgentConfigPath(agentName string) string {
+	if r.serverID != "" {
+		serverPath := filepath.Join(r.ServerAgentsConfigDir(), fmt.Sprintf("%s.yaml", agentName))
+		if fi, err := os.Stat(serverPath); err == nil && !fi.IsDir() {
+			return serverPath
+		}
+	}
 	return filepath.Join(r.AgentsConfigDir(), fmt.Sprintf("%s.yaml", agentName))
 }
 
@@ -261,9 +298,19 @@ func (r *Resolver) LLMGeneratedBlueprintsDir() string {
 
 // ==================== DATA PATHS ====================
 
-// AgentsDataDir returns $XDG_DATA_HOME/civquest/agents.
+// ServerDataDir returns $XDG_DATA_HOME/civquest/servers/{server_id} when serverID is set,
+// or $XDG_DATA_HOME/civquest when serverID is empty.
+func (r *Resolver) ServerDataDir() string {
+	if r.serverID != "" {
+		return filepath.Join(r.DataDir(), "servers", r.serverID)
+	}
+	return r.DataDir()
+}
+
+// AgentsDataDir returns $XDG_DATA_HOME/civquest/servers/{server_id}/agents when serverID is set,
+// or $XDG_DATA_HOME/civquest/agents when serverID is empty.
 func (r *Resolver) AgentsDataDir() string {
-	return filepath.Join(r.DataDir(), "agents")
+	return filepath.Join(r.ServerDataDir(), "agents")
 }
 
 // AgentDataDir returns $XDG_DATA_HOME/civquest/agents/{agent_name}.
@@ -296,9 +343,10 @@ func (r *Resolver) AgentSkinPath(agentName string) string {
 	return filepath.Join(r.AgentTexturesDir(agentName), "skin.png")
 }
 
-// ClansDataDir returns $XDG_DATA_HOME/civquest/clans.
+// ClansDataDir returns $XDG_DATA_HOME/civquest/servers/{server_id}/clans when serverID is set,
+// or $XDG_DATA_HOME/civquest/clans when serverID is empty.
 func (r *Resolver) ClansDataDir() string {
-	return filepath.Join(r.DataDir(), "clans")
+	return filepath.Join(r.ServerDataDir(), "clans")
 }
 
 // ClanDataDir returns $XDG_DATA_HOME/civquest/clans/{clan_id}.
@@ -336,9 +384,10 @@ func (r *Resolver) ClanContractsDBPath(clanID string) string {
 	return filepath.Join(r.ClanDataDir(clanID), "contracts.db")
 }
 
-// GraveyardDir returns $XDG_DATA_HOME/civquest/graveyard.
+// GraveyardDir returns $XDG_DATA_HOME/civquest/servers/{server_id}/graveyard when serverID is set,
+// or $XDG_DATA_HOME/civquest/graveyard when serverID is empty.
 func (r *Resolver) GraveyardDir() string {
-	return filepath.Join(r.DataDir(), "graveyard")
+	return filepath.Join(r.ServerDataDir(), "graveyard")
 }
 
 // BinDir returns $XDG_DATA_HOME/civquest/bin.
@@ -422,9 +471,19 @@ func (r *Resolver) GraveyardEpitaphPath(agentName, uuid string, tick int64) (str
 
 // ==================== STATE PATHS ====================
 
-// AgentsStateDir returns $XDG_STATE_HOME/civquest/agents.
+// ServerStateDir returns $XDG_STATE_HOME/civquest/servers/{server_id} when serverID is set,
+// or $XDG_STATE_HOME/civquest when serverID is empty.
+func (r *Resolver) ServerStateDir() string {
+	if r.serverID != "" {
+		return filepath.Join(r.StateDir(), "servers", r.serverID)
+	}
+	return r.StateDir()
+}
+
+// AgentsStateDir returns $XDG_STATE_HOME/civquest/servers/{server_id}/agents when serverID is set,
+// or $XDG_STATE_HOME/civquest/agents when serverID is empty.
 func (r *Resolver) AgentsStateDir() string {
-	return filepath.Join(r.StateDir(), "agents")
+	return filepath.Join(r.ServerStateDir(), "agents")
 }
 
 // AgentStateDir returns $XDG_STATE_HOME/civquest/agents/{agent_name}.
@@ -438,8 +497,23 @@ func (r *Resolver) AgentLogPath(agentName string) string {
 }
 
 // AgentSocketPath returns $XDG_STATE_HOME/civquest/agents/{agent_name}.sock.
+// If the candidate path length is >= 104 bytes, it falls back to $XDG_RUNTIME_DIR/civquest or os.TempDir().
 func (r *Resolver) AgentSocketPath(agentName string) string {
-	return filepath.Join(r.AgentsStateDir(), fmt.Sprintf("%s.sock", agentName))
+	candidate := filepath.Join(r.AgentsStateDir(), fmt.Sprintf("%s.sock", agentName))
+	if len(candidate) >= 104 {
+		var sockName string
+		if r.serverID != "" {
+			sockName = fmt.Sprintf("%s-%s.sock", r.serverID, agentName)
+		} else {
+			sockName = fmt.Sprintf("%s.sock", agentName)
+		}
+		fallback := filepath.Join(r.RuntimeDir(), sockName)
+		if len(fallback) >= 104 {
+			fallback = filepath.Join(os.TempDir(), sockName)
+		}
+		return fallback
+	}
+	return candidate
 }
 
 // SupervisorPIDPath returns $XDG_STATE_HOME/civquest/supervisor.pid.
@@ -462,6 +536,12 @@ func (r *Resolver) ServerLogPath() string {
 // InitDirectories creates the standard CivQuest directory skeleton with 0750 permissions,
 // and the runtime directory with strict 0700 permissions per XDG specification.
 func (r *Resolver) InitDirectories() error {
+	if r.serverID != "" {
+		if err := ValidateServerID(r.serverID); err != nil {
+			return fmt.Errorf("invalid server ID for directory initialization: %w", err)
+		}
+	}
+
 	dirs := []string{
 		r.ConfigDir(),
 		r.AgentsConfigDir(),
@@ -476,6 +556,14 @@ func (r *Resolver) InitDirectories() error {
 		r.StateDir(),
 		r.AgentsStateDir(),
 		r.CacheDir(),
+	}
+
+	if r.serverID != "" {
+		dirs = append(dirs,
+			r.ServerDataDir(),
+			r.ServerStateDir(),
+			r.ServerAgentsConfigDir(),
+		)
 	}
 
 	for _, dir := range dirs {
@@ -559,6 +647,15 @@ func ValidateAgentName(agentName string) error {
 func ValidateClanID(clanID string) error {
 	if err := validateIdentifier(clanID); err != nil {
 		return fmt.Errorf("%w: %s", ErrInvalidClanID, err)
+	}
+	return nil
+}
+
+// ValidateServerID validates a server ID using the identifier allowlist rules, returning ErrInvalidServerID
+// if validation fails.
+func ValidateServerID(serverID string) error {
+	if err := validateIdentifier(serverID); err != nil {
+		return fmt.Errorf("%w: %s", ErrInvalidServerID, err)
 	}
 	return nil
 }
@@ -772,3 +869,18 @@ func InitAgentDirectories(agentName string) error {
 
 // InitClanDirectories initializes directories for a clan via the default resolver.
 func InitClanDirectories(clanID string) error { return defaultResolver.InitClanDirectories(clanID) }
+
+// ServerDataDir returns $XDG_DATA_HOME/civquest/servers/{server_id} via the default resolver.
+func ServerDataDir() string { return defaultResolver.ServerDataDir() }
+
+// ServerStateDir returns $XDG_STATE_HOME/civquest/servers/{server_id} via the default resolver.
+func ServerStateDir() string { return defaultResolver.ServerStateDir() }
+
+// ServerAgentsConfigDir returns $XDG_CONFIG_HOME/civquest/servers/{server_id}/agents via the default resolver.
+func ServerAgentsConfigDir() string { return defaultResolver.ServerAgentsConfigDir() }
+
+// ServerID returns the server ID configured on the default resolver.
+func ServerID() string { return defaultResolver.ServerID() }
+
+// ForServer returns a copy of the default resolver configured for the specified server ID.
+func ForServer(serverID string) *Resolver { return defaultResolver.ForServer(serverID) }

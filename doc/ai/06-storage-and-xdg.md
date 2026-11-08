@@ -2,47 +2,65 @@
 
 ## 1. XDG Base Directory Layout
 
-All CivQuest binaries dynamically resolve paths using standard XDG Base Directory environment variables with automatic fallbacks:
+All CivQuest binaries dynamically resolve paths using standard XDG Base Directory environment variables with automatic fallbacks. Storage and state are isolated per server instance (`server_id`) to prevent database corruption, map pollution, and clan state collisions across distinct Minecraft worlds:
 
 ```text
 $XDG_CONFIG_HOME/civquest/ (default: ~/.config/civquest)
 ├── global.yaml                         # Global inference governor, gRPC host, timeouts
 ├── agents/
-│   └── {agent_name}.yaml               # Identity, clan, professions, personality traits
+│   └── {agent_name}.yaml               # Global identity, clan, professions, personality traits
+├── servers/
+│   └── {server_id}/
+│       └── agents/
+│           └── {agent_name}.yaml       # Server-specific identity overrides (takes precedence over global)
 └── blueprints/
     ├── official/                       # Tier 1 & Tier 2 official blueprints
     ├── player_imported/                # Blueprints saved via drafting quill
     └── llm_generated/                  # Procedural designs synthesized by System 2
 
 $XDG_DATA_HOME/civquest/ (default: ~/.local/share/civquest)
-├── agents/
-│   └── {agent_name}/
-│       ├── memory.db                   # Episodic memory (sqlite-vec), relationships, skills
-│       ├── map_graph.db                # Discovered topological navigation nodes & edges
-│       ├── inventory_cache.json        # Last known inventory & position snapshot
-│       └── textures/
-│           └── skin.png                # 64x64 Minecraft skin texture
-├── clans/
-│   └── {clan_id}/
-│       ├── civic_registry.db           # Granary ledger, active build projects, functional zones
-│       ├── reputation.db               # Human Hero Prestige scores & ledger
-│       ├── diplomacy.db                # Inter-clan affinity matrix & treaties
-│       ├── landmarks.db                # Named landmarks, coordinates, and lore
-│       ├── rumors.db                   # Tavern intelligence & hazard reports
-│       └── contracts.db                # Player-agent sharecropping tenancy agreements
-└── graveyard/
-    └── {agent_name}_{uuid}_tick{N}/    # Cold archive moved upon permadeath
-        ├── memory.db                   # Preserved read-only for Chronicler queries
-        ├── death_certificate.json      # Cause, killer, coords, final inventory
-        └── epitaph.txt
+├── servers/
+│   └── {server_id}/
+│       ├── agents/
+│       │   └── {agent_name}/
+│       │       ├── memory.db           # Episodic memory (sqlite-vec), relationships, skills
+│       │       ├── map_graph.db        # Discovered topological navigation nodes & edges
+│       │       ├── inventory_cache.json# Last known inventory & position snapshot
+│       │       └── textures/
+│       │           └── skin.png        # 64x64 Minecraft skin texture
+│       ├── clans/
+│       │   └── {clan_id}/
+│       │       ├── civic_registry.db   # Granary ledger, active build projects, functional zones
+│       │       ├── reputation.db       # Human Hero Prestige scores & ledger
+│       │       ├── diplomacy.db        # Inter-clan affinity matrix & treaties
+│       │       ├── landmarks.db        # Named landmarks, coordinates, and lore
+│       │       ├── rumors.db           # Tavern intelligence & hazard reports
+│       │       └── contracts.db        # Player-agent sharecropping tenancy agreements
+│       └── graveyard/
+│           └── {agent_name}_{uuid}_tick{N}/ # Cold archive moved upon permadeath
+│               ├── memory.db           # Preserved read-only for Chronicler queries
+│               ├── death_certificate.json # Cause, killer, coords, final inventory
+│               └── epitaph.txt
+├── server/                             # Dedicated server runtime installation and jars
+└── bin/                                # Downloaded binary dependencies
 
 $XDG_STATE_HOME/civquest/ (default: ~/.local/state/civquest)
 ├── supervisor.pid                      # civctl daemon PID
-└── agents/
-    └── {agent_name}/
-        ├── {agent_name}.log            # Structured JSONL runtime logs
-        └── {agent_name}.sock           # UNIX domain socket for live civctl queries
+└── servers/
+    └── {server_id}/
+        └── agents/
+            ├── {agent_name}.sock       # UNIX domain socket (fallback to runtime/tmp if >= 104 bytes)
+            └── {agent_name}/
+                └── {agent_name}.log    # Structured JSONL runtime logs
 ```
+
+### 1.1 Server ID Resolution & Multi-World Isolation
+1. **Explicit System Property / Environment Variable**: `civquest.server.id` or `CIVQUEST_SERVER_ID` takes first precedence.
+2. **Deterministic World Persistence**: The NeoForge mod reads or creates `civquest-server-id.txt` in `LevelResource.ROOT` (`<world_directory>/civquest-server-id.txt`). Format: `<world_name>-<short-uuid>` (max 32 characters, sanitized to alphanumeric, `-`, `_`).
+3. **Runtime Discovery Artifact**: Emitted to `civquest-server-meta.json` with `"server_id"` and `"world_name"`.
+4. **Agent CLI / Supervisor Override**: `--server-id <id>` flag on `civquest-agent` and persistent flag on `civctl`.
+5. **Legacy / Backward Compatibility**: When `server_id` is empty (`""`), the resolver automatically falls back to un-namespaced paths (`$XDG_DATA_HOME/civquest/agents/...`), preserving full compatibility.
+6. **Socket Path Length Protection**: To comply with UNIX domain socket length limits (104-108 bytes), `AgentSocketPath` checks if the namespaced socket path is $\ge 104$ bytes, falling back to `$XDG_RUNTIME_DIR/civquest/{server_id}-{agent_name}.sock` or `os.TempDir()`.
 
 ## 2. Database Schemas
 

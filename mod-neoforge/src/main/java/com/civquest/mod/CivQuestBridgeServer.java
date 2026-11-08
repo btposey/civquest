@@ -7,6 +7,7 @@ import io.grpc.netty.shaded.io.grpc.netty.NettyServerBuilder;
 import io.grpc.protobuf.services.HealthStatusManager;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.world.level.GameRules;
+import net.minecraft.world.level.storage.LevelResource;
 import net.neoforged.neoforge.event.server.ServerStartedEvent;
 import net.neoforged.neoforge.event.server.ServerStartingEvent;
 import net.neoforged.neoforge.event.server.ServerStoppingEvent;
@@ -28,6 +29,7 @@ import java.security.SecureRandom;
 import java.util.HexFormat;
 import java.util.Locale;
 import java.util.Set;
+import java.util.UUID;
 import java.util.concurrent.TimeUnit;
 
 /**
@@ -44,6 +46,8 @@ public class CivQuestBridgeServer {
     public static final String ENV_GRPC_ADVERTISED_HOST = "CIVQUEST_GRPC_ADVERTISED_HOST";
     public static final String PROP_DISCOVERY_PATH = "civquest.discovery.path";
     public static final String PROP_GRPC_ENABLED = "civquest.grpc.enabled";
+    public static final String PROP_SERVER_ID = "civquest.server.id";
+    public static final String ENV_SERVER_ID = "CIVQUEST_SERVER_ID";
 
     public static final String DEFAULT_BIND = "127.0.0.1:0";
     public static final String DEFAULT_DISCOVERY_PATH = "civquest-server-meta.json";
@@ -62,6 +66,8 @@ public class CivQuestBridgeServer {
     private final StreamRegistry streamRegistry;
     private final SettlerEntityManager settlerEntityManager;
     private volatile MinecraftServer minecraftServer;
+    private volatile String serverId;
+    private volatile String worldName;
 
     private Server server;
     private HealthStatusManager healthStatusManager;
@@ -279,6 +285,8 @@ public class CivQuestBridgeServer {
                 "  \"grpc_host\": \"%s\",\n" +
                 "  \"server_pid\": %d,\n" +
                 "  \"shared_key\": \"%s\",\n" +
+                "  \"server_id\": \"%s\",\n" +
+                "  \"world_name\": \"%s\",\n" +
                 "  \"timestamp_ms\": %d\n" +
                 "}\n",
                 escapeJson(status),
@@ -287,6 +295,8 @@ public class CivQuestBridgeServer {
                 escapeJson(resolveAdvertisedHost()),
                 pid,
                 escapeJson(sharedKey),
+                escapeJson(getServerId()),
+                escapeJson(getWorldName()),
                 timestampMs
         );
 
@@ -379,8 +389,8 @@ public class CivQuestBridgeServer {
         if (settlerEntityManager != null) {
             settlerEntityManager.clearAll();
         }
-        setMinecraftServer(null);
         stop();
+        setMinecraftServer(null);
     }
 
     public MinecraftServer getMinecraftServer() {
@@ -393,6 +403,149 @@ public class CivQuestBridgeServer {
 
     public SettlerEntityManager getSettlerEntityManager() {
         return settlerEntityManager;
+    }
+
+    public static String sanitizeServerId(String input) {
+        if (input == null) {
+            return "default";
+        }
+        String cleaned = input.replaceAll("[^a-zA-Z0-9_-]", "-");
+        cleaned = cleaned.replaceAll("^[^a-zA-Z0-9]+", "");
+        cleaned = cleaned.replaceAll("[^a-zA-Z0-9]+$", "");
+        if (cleaned.length() > 32) {
+            cleaned = cleaned.substring(0, 32);
+            cleaned = cleaned.replaceAll("[^a-zA-Z0-9]+$", "");
+        }
+        if (cleaned.isEmpty()) {
+            return "default";
+        }
+        return cleaned;
+    }
+
+    public synchronized String resolveServerId() {
+        // 1) Check system property civquest.server.id or env var CIVQUEST_SERVER_ID
+        String prop = System.getProperty(PROP_SERVER_ID);
+        if (prop != null && !prop.isBlank()) {
+            String sanitized = sanitizeServerId(prop.trim());
+            if (!"default".equals(sanitized)) {
+                this.serverId = sanitized;
+                return sanitized;
+            }
+        }
+        String env = System.getenv(ENV_SERVER_ID);
+        if (env != null && !env.isBlank()) {
+            String sanitized = sanitizeServerId(env.trim());
+            if (!"default".equals(sanitized)) {
+                this.serverId = sanitized;
+                return sanitized;
+            }
+        }
+
+        // If explicitly set and not "default"
+        if (this.serverId != null && !this.serverId.isBlank() && !"default".equals(this.serverId)) {
+            return this.serverId;
+        }
+
+        // 2) If minecraftServer != null, read or persist civquest-server-id.txt in LevelResource.ROOT
+        if (minecraftServer != null) {
+            try {
+                Path rootPath = minecraftServer.getWorldPath(LevelResource.ROOT);
+                return resolveServerIdFromWorldPath(rootPath);
+            } catch (Exception e) {
+                LOGGER.warn("Failed to resolve server ID from Minecraft server: {}", e.getMessage());
+            }
+        }
+
+        // 3) Fallback: return "default"
+        return "default";
+    }
+
+    public synchronized String resolveServerIdFromWorldPath(Path rootPath) {
+        if (rootPath != null) {
+            Path idFile = rootPath.resolve("civquest-server-id.txt");
+            if (Files.exists(idFile)) {
+                try {
+                    String content = Files.readString(idFile, StandardCharsets.UTF_8).trim();
+                    String sanitized = sanitizeServerId(content);
+                    if (!"default".equals(sanitized)) {
+                        this.serverId = sanitized;
+                        return sanitized;
+                    }
+                } catch (IOException e) {
+                    LOGGER.warn("Failed to read civquest-server-id.txt from {}: {}", idFile, e.getMessage());
+                }
+            }
+            // Generate new ID: <world_name>-<short-uuid>
+            String rawWorld = getWorldName();
+            String worldClean = sanitizeServerId(rawWorld);
+            if ("default".equals(worldClean)) {
+                worldClean = "world";
+            }
+            if (worldClean.length() > 23) {
+                worldClean = worldClean.substring(0, 23).replaceAll("[^a-zA-Z0-9]+$", "");
+            }
+            String shortUuid = UUID.randomUUID().toString().replace("-", "").substring(0, 8);
+            String generated = sanitizeServerId(worldClean + "-" + shortUuid);
+            try {
+                if (!Files.exists(rootPath)) {
+                    Files.createDirectories(rootPath);
+                }
+                Files.writeString(idFile, generated, StandardCharsets.UTF_8,
+                        StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING);
+            } catch (IOException e) {
+                LOGGER.warn("Failed to write civquest-server-id.txt to {}: {}", idFile, e.getMessage());
+            }
+            this.serverId = generated;
+            return generated;
+        }
+        return "default";
+    }
+
+    public synchronized String getServerId() {
+        if (serverId != null && !serverId.isBlank() && !"default".equals(serverId)) {
+            return serverId;
+        }
+        return resolveServerId();
+    }
+
+    public synchronized void setServerId(String serverId) {
+        if (serverId != null && !serverId.isBlank()) {
+            this.serverId = sanitizeServerId(serverId.trim());
+        } else {
+            this.serverId = serverId;
+        }
+    }
+
+    public synchronized String getWorldName() {
+        if (worldName != null && !worldName.isBlank()) {
+            return worldName;
+        }
+        if (minecraftServer != null) {
+            try {
+                if (minecraftServer.getWorldData() != null && minecraftServer.getWorldData().getLevelName() != null) {
+                    this.worldName = minecraftServer.getWorldData().getLevelName();
+                    return this.worldName;
+                }
+            } catch (Exception ignored) {
+            }
+            try {
+                Path root = minecraftServer.getWorldPath(LevelResource.ROOT);
+                if (root != null && root.getFileName() != null) {
+                    this.worldName = root.getFileName().toString();
+                    return this.worldName;
+                }
+            } catch (Exception ignored) {
+            }
+        }
+        String prop = System.getProperty("civquest.world.name");
+        if (prop != null && !prop.isBlank()) {
+            return prop.trim();
+        }
+        return "default";
+    }
+
+    public synchronized void setWorldName(String worldName) {
+        this.worldName = worldName;
     }
 
     // Accessors

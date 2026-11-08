@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"testing"
 
@@ -704,5 +705,197 @@ func TestInitDirectoriesStrictUmask(t *testing.T) {
 	}
 	if cfgPerm&0027 != 0 {
 		t.Errorf("config dir under umask 0077 has unauthorized bits: %04o", cfgPerm)
+	}
+}
+
+func TestServerNamespacedIsolation(t *testing.T) {
+	tmpDir := t.TempDir()
+	baseResolver := xdg.NewResolver(xdg.WithCustomRoot(tmpDir))
+
+	rAlpha := baseResolver.ForServer("server-alpha")
+	rBeta := baseResolver.ForServer("server-beta")
+
+	if rAlpha.ServerID() != "server-alpha" {
+		t.Errorf("rAlpha.ServerID() = %q, want 'server-alpha'", rAlpha.ServerID())
+	}
+	if rBeta.ServerID() != "server-beta" {
+		t.Errorf("rBeta.ServerID() = %q, want 'server-beta'", rBeta.ServerID())
+	}
+
+	// Verify DataDir namespacing
+	expectedAlphaData := filepath.Join(baseResolver.DataDir(), "servers", "server-alpha")
+	expectedBetaData := filepath.Join(baseResolver.DataDir(), "servers", "server-beta")
+	if rAlpha.ServerDataDir() != expectedAlphaData {
+		t.Errorf("rAlpha.ServerDataDir() = %q, want %q", rAlpha.ServerDataDir(), expectedAlphaData)
+	}
+	if rBeta.ServerDataDir() != expectedBetaData {
+		t.Errorf("rBeta.ServerDataDir() = %q, want %q", rBeta.ServerDataDir(), expectedBetaData)
+	}
+
+	// Verify StateDir namespacing
+	expectedAlphaState := filepath.Join(baseResolver.StateDir(), "servers", "server-alpha")
+	expectedBetaState := filepath.Join(baseResolver.StateDir(), "servers", "server-beta")
+	if rAlpha.ServerStateDir() != expectedAlphaState {
+		t.Errorf("rAlpha.ServerStateDir() = %q, want %q", rAlpha.ServerStateDir(), expectedAlphaState)
+	}
+	if rBeta.ServerStateDir() != expectedBetaState {
+		t.Errorf("rBeta.ServerStateDir() = %q, want %q", rBeta.ServerStateDir(), expectedBetaState)
+	}
+
+	// Verify complete agent database isolation
+	memAlpha := rAlpha.AgentMemoryDBPath("aria")
+	memBeta := rBeta.AgentMemoryDBPath("aria")
+	if memAlpha == memBeta {
+		t.Errorf("AgentMemoryDBPath collision: alpha=%q, beta=%q", memAlpha, memBeta)
+	}
+	if !strings.Contains(memAlpha, "server-alpha") {
+		t.Errorf("memAlpha must contain server-alpha: %s", memAlpha)
+	}
+	if !strings.Contains(memBeta, "server-beta") {
+		t.Errorf("memBeta must contain server-beta: %s", memBeta)
+	}
+
+	mapAlpha := rAlpha.AgentMapGraphDBPath("aria")
+	mapBeta := rBeta.AgentMapGraphDBPath("aria")
+	if mapAlpha == mapBeta {
+		t.Errorf("AgentMapGraphDBPath collision: alpha=%q, beta=%q", mapAlpha, mapBeta)
+	}
+
+	// Verify clan database isolation
+	clanAlpha := rAlpha.ClanCivicRegistryDBPath("clan_iron")
+	clanBeta := rBeta.ClanCivicRegistryDBPath("clan_iron")
+	if clanAlpha == clanBeta {
+		t.Errorf("ClanCivicRegistryDBPath collision: alpha=%q, beta=%q", clanAlpha, clanBeta)
+	}
+
+	// Verify Graveyard isolation
+	graveAlpha := rAlpha.GraveyardDir()
+	graveBeta := rBeta.GraveyardDir()
+	if graveAlpha == graveBeta {
+		t.Errorf("GraveyardDir collision: alpha=%q, beta=%q", graveAlpha, graveBeta)
+	}
+
+	// Verify InitDirectories and InitAgentDirectories create proper directory structures
+	if err := rAlpha.InitDirectories(); err != nil {
+		t.Fatalf("rAlpha.InitDirectories() failed: %v", err)
+	}
+	if err := rBeta.InitDirectories(); err != nil {
+		t.Fatalf("rBeta.InitDirectories() failed: %v", err)
+	}
+	if err := rAlpha.InitAgentDirectories("aria"); err != nil {
+		t.Fatalf("rAlpha.InitAgentDirectories() failed: %v", err)
+	}
+	if err := rBeta.InitAgentDirectories("aria"); err != nil {
+		t.Fatalf("rBeta.InitAgentDirectories() failed: %v", err)
+	}
+
+	if fi, err := os.Stat(rAlpha.AgentDataDir("aria")); err != nil || !fi.IsDir() {
+		t.Errorf("rAlpha agent data dir was not created: %v", err)
+	}
+	if fi, err := os.Stat(rBeta.AgentDataDir("aria")); err != nil || !fi.IsDir() {
+		t.Errorf("rBeta agent data dir was not created: %v", err)
+	}
+}
+
+func TestServerConfigOverride(t *testing.T) {
+	tmpDir := t.TempDir()
+	rBase := xdg.NewResolver(xdg.WithCustomRoot(tmpDir))
+	rServer := rBase.ForServer("server-prime")
+
+	// Initially, no server-specific config exists -> returns global path
+	expectedGlobal := filepath.Join(rBase.AgentsConfigDir(), "aria.yaml")
+	if got := rServer.AgentConfigPath("aria"); got != expectedGlobal {
+		t.Errorf("Expected fallback to global config %q, got %q", expectedGlobal, got)
+	}
+
+	// Create server-specific config
+	serverConfigDir := rServer.ServerAgentsConfigDir()
+	if err := os.MkdirAll(serverConfigDir, 0750); err != nil {
+		t.Fatalf("failed to create server config dir: %v", err)
+	}
+	overrideFile := filepath.Join(serverConfigDir, "aria.yaml")
+	if err := os.WriteFile(overrideFile, []byte("name: aria\nserver: override\n"), 0640); err != nil {
+		t.Fatalf("failed to write override config: %v", err)
+	}
+
+	// Now it should return the server-specific path
+	if got := rServer.AgentConfigPath("aria"); got != overrideFile {
+		t.Errorf("Expected server override path %q, got %q", overrideFile, got)
+	}
+}
+
+func TestBackwardCompatibilityWhenServerIDEmpty(t *testing.T) {
+	tmpDir := t.TempDir()
+	r := xdg.NewResolver(xdg.WithCustomRoot(tmpDir))
+
+	if r.ServerID() != "" {
+		t.Errorf("Expected empty ServerID, got %q", r.ServerID())
+	}
+	if got := r.ServerDataDir(); got != r.DataDir() {
+		t.Errorf("ServerDataDir() = %q, want DataDir() %q", got, r.DataDir())
+	}
+	if got := r.ServerStateDir(); got != r.StateDir() {
+		t.Errorf("ServerStateDir() = %q, want StateDir() %q", got, r.StateDir())
+	}
+	if got := r.AgentsDataDir(); got != filepath.Join(r.DataDir(), "agents") {
+		t.Errorf("AgentsDataDir() = %q", got)
+	}
+	if got := r.ClansDataDir(); got != filepath.Join(r.DataDir(), "clans") {
+		t.Errorf("ClansDataDir() = %q", got)
+	}
+	if got := r.GraveyardDir(); got != filepath.Join(r.DataDir(), "graveyard") {
+		t.Errorf("GraveyardDir() = %q", got)
+	}
+	if got := r.AgentsStateDir(); got != filepath.Join(r.StateDir(), "agents") {
+		t.Errorf("AgentsStateDir() = %q", got)
+	}
+}
+
+func TestValidateServerID(t *testing.T) {
+	validIDs := []string{"server-1", "server_alpha", "world-12345", "a", "s-123_abc"}
+	for _, id := range validIDs {
+		if err := xdg.ValidateServerID(id); err != nil {
+			t.Errorf("ValidateServerID(%q) expected valid, got error: %v", id, err)
+		}
+	}
+
+	invalidIDs := []string{"", "..", "server/1", "server\\1", "has spaces", "-starts-with-dash", "_starts-with-underscore"}
+	for _, id := range invalidIDs {
+		if err := xdg.ValidateServerID(id); err == nil {
+			t.Errorf("ValidateServerID(%q) expected error, got nil", id)
+		} else if !errors.Is(err, xdg.ErrInvalidServerID) {
+			t.Errorf("ValidateServerID(%q) expected ErrInvalidServerID, got: %v", id, err)
+		}
+	}
+}
+
+func TestInitDirectories_InvalidServerID(t *testing.T) {
+	tmpDir := t.TempDir()
+	r := xdg.NewResolver(xdg.WithCustomRoot(tmpDir)).ForServer("../../escape")
+	err := r.InitDirectories()
+	if err == nil {
+		t.Fatalf("expected error from InitDirectories with invalid server ID, got nil")
+	}
+	if !strings.Contains(err.Error(), "invalid server ID for directory initialization") {
+		t.Errorf("expected 'invalid server ID for directory initialization' in error, got: %v", err)
+	}
+}
+
+func TestSocketPathLengthFallback(t *testing.T) {
+	// 1. Normal short path
+	tmpDir := t.TempDir()
+	r := xdg.NewResolver(xdg.WithCustomRoot(tmpDir)).ForServer("srv-1")
+	shortPath := r.AgentSocketPath("aria")
+	if len(shortPath) >= 104 {
+		t.Errorf("Expected short path to be < 104 bytes, got %d", len(shortPath))
+	}
+
+	// 2. Extremely long nested path exceeding 104 bytes
+	deepNestedRoot := filepath.Join(tmpDir, strings.Repeat("very_long_path_segment_", 5))
+	rLong := xdg.NewResolver(xdg.WithCustomRoot(deepNestedRoot)).ForServer("very_long_server_id_123")
+	fallbackPath := rLong.AgentSocketPath("very_long_agent_name_456")
+
+	if len(fallbackPath) >= 104 {
+		t.Errorf("AgentSocketPath failed to keep fallback under 104 bytes: len=%d (%q)", len(fallbackPath), fallbackPath)
 	}
 }
