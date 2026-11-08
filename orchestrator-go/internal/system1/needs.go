@@ -381,10 +381,16 @@ func EvaluateBiologicalNeeds(agentID string, frame *civquestv1.TelemetryFrame, s
 		}
 	}
 
-	// 1. Hunger - eating takes priority over sleep in the current tick
+	// 1. Hunger - eating takes priority over sleep in the current tick (including active 32-tick eating window)
 	if eatIntent := EvaluateHunger(agentID, frame, state, isIdle); eatIntent != nil {
 		intents = append(intents, eatIntent)
 		return intents
+	}
+	if state != nil {
+		lastEat := state.GetLastEatingTick()
+		if lastEat > 0 && frame.WorldTick >= lastEat && frame.WorldTick-lastEat < 32 {
+			return intents
+		}
 	}
 
 	// 2. Sleep

@@ -499,13 +499,11 @@ func (c *Client) CompleteStructuredWithTemp(ctx context.Context, messages []Chat
 			return err
 		}
 
-		zeroBudget := 0
 		req := ChatCompletionRequest{
 			Model:              c.model,
 			Messages:           history,
 			Temperature:        temperature,
-			MaxTokens:          1024,
-			ReasoningBudget:    &zeroBudget,
+			MaxTokens:          512,
 			ResponseFormat:     &ResponseFormat{Type: "json_object"},
 			ChatTemplateKwargs: map[string]any{"enable_thinking": false},
 		}

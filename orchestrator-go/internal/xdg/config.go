@@ -142,16 +142,130 @@ func (c *GlobalConfig) Validate() error {
 
 // ==================== AGENT IDENTITY CONFIG ====================
 
-// AgentIdentityConfig holds the identity, personality, and skin configuration for an agent.
+// AgentIdentityConfig holds the identity, personality, voice, and skin configuration for an agent.
 type AgentIdentityConfig struct {
-	Name           string          `yaml:"name"`
-	UUID           string          `yaml:"uuid"`
-	ClanID         string          `yaml:"clan_id"`
-	Profession     string          `yaml:"profession"`
-	SecondaryHobby string          `yaml:"secondary_hobby,omitempty"`
-	SystemPrompt   string          `yaml:"system_prompt,omitempty"`
-	Traits         AgentTraits     `yaml:"traits"`
-	Skin           AgentSkinConfig `yaml:"skin"`
+	Name           string           `yaml:"name"`
+	UUID           string           `yaml:"uuid"`
+	ClanID         string           `yaml:"clan_id"`
+	Profession     string           `yaml:"profession"`
+	SecondaryHobby string           `yaml:"secondary_hobby,omitempty"`
+	SystemPrompt   string           `yaml:"system_prompt,omitempty"`
+	Voice          AgentVoiceConfig `yaml:"voice,omitempty"`
+	Traits         AgentTraits      `yaml:"traits"`
+	Skin           AgentSkinConfig  `yaml:"skin"`
+}
+
+// AgentVoiceConfig defines individualized speech cadence, diction, quirks, and persona parameters
+// injected into System 2 dialogue prompts so each agent sounds like a distinct individual.
+type AgentVoiceConfig struct {
+	Cadence      string   `yaml:"cadence,omitempty"`       // e.g. "clipped and brisk", "warm and unhurried"
+	Diction      string   `yaml:"diction,omitempty"`       // e.g. "earthy frontier vernacular", "precise craft terminology"
+	Disposition  string   `yaml:"disposition,omitempty"`   // e.g. "cheerful and welcoming", "gruff and practical"
+	SpeechQuirks []string `yaml:"speech_quirks,omitempty"` // e.g. ["uses farming metaphors", "addresses travelers as friend"]
+	Catchphrase  string   `yaml:"catchphrase,omitempty"`   // Optional recurring idiom or expression
+	Backstory    string   `yaml:"backstory,omitempty"`     // Short individualized origin note
+}
+
+// EffectiveVoice returns the agent's individualized AgentVoiceConfig, deterministically synthesizing
+// any unset fields from the agent's Name, Profession, SecondaryHobby, and continuous Traits so every
+// agent has a distinct, consistent voice even when YAML fields are omitted.
+func (c *AgentIdentityConfig) EffectiveVoice() AgentVoiceConfig {
+	if c == nil {
+		return AgentVoiceConfig{
+			Cadence:     "plainspoken and direct",
+			Diction:     "frontier settler vernacular",
+			Disposition: "practical and observant",
+		}
+	}
+	v := c.Voice
+
+	// Deterministic hash of agent name for stable individualized quirk selection
+	var nameHash uint32 = 2166136261
+	for i := 0; i < len(c.Name); i++ {
+		nameHash ^= uint32(c.Name[i])
+		nameHash *= 16777619
+	}
+
+	if strings.TrimSpace(v.Cadence) == "" {
+		switch {
+		case c.Traits.Industriousness >= 0.75 && c.Traits.Sociability < 0.5:
+			v.Cadence = "clipped, brisk, and work-focused"
+		case c.Traits.Sociability >= 0.70:
+			v.Cadence = "warm, lively, and conversational"
+		case c.Traits.Bravery >= 0.75:
+			v.Cadence = "steady, bold, and commanding"
+		case c.Traits.Bravery <= 0.30:
+			v.Cadence = "cautious, hesitant, and quick-spoken"
+		default:
+			cadences := []string{
+				"measured and matter-of-fact",
+				"unhurried and grounded",
+				"crisp and observant",
+				"earnest and direct",
+			}
+			v.Cadence = cadences[nameHash%uint32(len(cadences))]
+		}
+	}
+
+	if strings.TrimSpace(v.Diction) == "" {
+		switch strings.ToUpper(strings.TrimSpace(c.Profession)) {
+		case "FARMER":
+			v.Diction = "earthy agrarian vernacular rich with weather, soil, and harvest idioms"
+		case "BLACKSMITH", "WEAPONSMITH", "ARMORER":
+			v.Diction = "blunt artisan speech seasoned with forge, iron, and anvil metaphors"
+		case "CHRONICLER", "HISTORIAN":
+			v.Diction = "vivid, lore-steeped storytelling diction with reverence for clan history"
+		case "EXPLORER", "TRAILBLAZER":
+			v.Diction = "trail-worn scout vernacular referencing landmarks, horizons, and compass directions"
+		case "GUARD", "SOLDIER":
+			v.Diction = "tactical, watch-post vocabulary focused on perimeter safety and discipline"
+		case "ENGINEER":
+			v.Diction = "precise mechanical and redstone-logic terminology"
+		default:
+			dictions := []string{
+				"plainspoken frontier vernacular",
+				"rustic homestead idioms",
+				"practical tradesperson speech",
+				"folksy campfire phrasing",
+			}
+			v.Diction = dictions[(nameHash/7)%uint32(len(dictions))]
+		}
+	}
+
+	if strings.TrimSpace(v.Disposition) == "" {
+		switch {
+		case c.Traits.Sociability >= 0.70 && c.Traits.Aggressiveness <= 0.30:
+			v.Disposition = "hospitable, good-humored, and neighborly"
+		case c.Traits.Aggressiveness >= 0.65:
+			v.Disposition = "stern, no-nonsense, and fiercely protective of the clan"
+		case c.Traits.Curiosity >= 0.70:
+			v.Disposition = "inquisitive, keen-eyed, and eager for news from afar"
+		case c.Traits.Bravery <= 0.30:
+			v.Disposition = "vigilant, risk-averse, and easily rattled by danger"
+		default:
+			v.Disposition = "pragmatic, steady, and loyal to the settlement"
+		}
+	}
+
+	if len(v.SpeechQuirks) == 0 {
+		quirkPool := []string{
+			"occasionally references the time of day or weather",
+			"prefers concrete sensory details over abstract talk",
+			"speaks in short, punchy clauses without wasted words",
+			"frequently nods to the hard work of the clan",
+			"uses craft or homestead comparisons when making a point",
+			"addresses trusted interlocutors by name",
+		}
+		q1 := quirkPool[nameHash%uint32(len(quirkPool))]
+		q2 := quirkPool[(nameHash/13+1)%uint32(len(quirkPool))]
+		if q1 != q2 {
+			v.SpeechQuirks = []string{q1, q2}
+		} else {
+			v.SpeechQuirks = []string{q1}
+		}
+	}
+
+	return v
 }
 
 // AgentTraits contains the 5 continuous personality dimensions bounded in [0.0, 1.0].

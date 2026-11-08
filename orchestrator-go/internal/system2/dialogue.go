@@ -2,6 +2,7 @@ package system2
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"math"
 	"math/rand"
@@ -61,6 +62,36 @@ type CounterOfferItem struct {
 	Count  int32  `json:"count"`
 }
 
+// CounterOfferList is a slice of CounterOfferItem that also tolerates null, "NONE", or single-object JSON outputs from 4B/7B LLMs.
+type CounterOfferList []CounterOfferItem
+
+// UnmarshalJSON implements json.Unmarshaler for CounterOfferList.
+func (l *CounterOfferList) UnmarshalJSON(data []byte) error {
+	trimmed := strings.TrimSpace(string(data))
+	if trimmed == "" || trimmed == "null" || strings.HasPrefix(trimmed, "\"") {
+		*l = nil
+		return nil
+	}
+	if strings.HasPrefix(trimmed, "{") {
+		var single CounterOfferItem
+		if err := json.Unmarshal(data, &single); err != nil {
+			return err
+		}
+		if single.ItemID != "" {
+			*l = []CounterOfferItem{single}
+		} else {
+			*l = nil
+		}
+		return nil
+	}
+	var items []CounterOfferItem
+	if err := json.Unmarshal(data, &items); err != nil {
+		return err
+	}
+	*l = items
+	return nil
+}
+
 // DelegatedTask represents an optional player task delegation.
 type DelegatedTask struct {
 	TaskType          string `json:"task_type"` // NONE, ESCORT_PLAYER, GATHER_RESOURCE, SHARE_CROP_PROPOSAL
@@ -68,14 +99,43 @@ type DelegatedTask struct {
 	Quota             int32  `json:"quota,omitempty"`
 }
 
+// UnmarshalJSON allows DelegatedTask to unmarshal from either a JSON object
+// ({"task_type": "NONE"}) or a shorthand string ("NONE", "ESCORT_PLAYER") emitted by 4B/7B LLMs.
+func (d *DelegatedTask) UnmarshalJSON(data []byte) error {
+	trimmed := strings.TrimSpace(string(data))
+	if trimmed == "" || trimmed == "null" {
+		d.TaskType = "NONE"
+		return nil
+	}
+	if strings.HasPrefix(trimmed, "\"") {
+		var s string
+		if err := json.Unmarshal(data, &s); err != nil {
+			return err
+		}
+		s = strings.ToUpper(strings.TrimSpace(s))
+		if s == "" || s == "NULL" {
+			s = "NONE"
+		}
+		d.TaskType = s
+		return nil
+	}
+	type plainDelegatedTask DelegatedTask
+	var plain plainDelegatedTask
+	if err := json.Unmarshal(data, &plain); err != nil {
+		return err
+	}
+	*d = DelegatedTask(plain)
+	return nil
+}
+
 // DialogueResponse is the structured JSON output conforming to doc/ai/05 Pipeline A.
 type DialogueResponse struct {
-	SpokenReply       string             `json:"spoken_reply"`
-	TradeDecision     string             `json:"trade_decision"` // ACCEPT | COUNTER | REJECT | NONE
-	CounterOfferItems []CounterOfferItem `json:"counter_offer_items"`
-	DelegatedTask     *DelegatedTask     `json:"delegated_task,omitempty"`
-	PrestigeDelta     float64            `json:"prestige_delta"`
-	MemorySummary     string             `json:"memory_summary"`
+	SpokenReply       string           `json:"spoken_reply"`
+	TradeDecision     string           `json:"trade_decision"` // ACCEPT | COUNTER | REJECT | NONE
+	CounterOfferItems CounterOfferList `json:"counter_offer_items"`
+	DelegatedTask     *DelegatedTask   `json:"delegated_task,omitempty"`
+	PrestigeDelta     float64          `json:"prestige_delta"`
+	MemorySummary     string           `json:"memory_summary"`
 }
 
 // DialogueResult is the complete evaluated outcome of a dialogue or trade turn.
@@ -84,12 +144,23 @@ type DialogueResult struct {
 	Disobeyed       bool
 	DisobeyReason   string
 	ChatIntent      *civquestv1.SendChatIntent
+	PacedSegments   []PacedChatSegment
 	TradeIntent     *civquestv1.RespondTradeIntent
 	UpdatedPrestige float64
 }
 
 // DialogueOption provides functional configuration for DialogueService.
 type DialogueOption func(*DialogueService)
+
+// WithChatTokensPerSec configures the comfortable human-reading-speed regulator (tokens/sec)
+// used to pace multi-utterance chat responses (such as Historian oral storytelling).
+func WithChatTokensPerSec(tokPerSec float64) DialogueOption {
+	return func(s *DialogueService) {
+		if tokPerSec > 0 {
+			s.chatTokensPerSec = tokPerSec
+		}
+	}
+}
 
 // WithDialogueMemory assigns an episodic vector RAG memory pipeline.
 func WithDialogueMemory(mem *memory.Pipeline) DialogueOption {
@@ -126,14 +197,15 @@ func WithDialogueRand(randFn func() float64) DialogueOption {
 // DialogueService orchestrates Pipeline A: conversational dialogue, barter haggling,
 // Hero Prestige progression, and stochastic disobedience evaluation.
 type DialogueService struct {
-	mu             sync.RWMutex
-	client         *Client
-	memory         *memory.Pipeline
-	reputation     *db.ReputationDB
-	agentConfig    *xdg.AgentIdentityConfig
-	randFn         func() float64
-	ownsReputation bool
-	isClosed       bool
+	mu               sync.RWMutex
+	client           *Client
+	memory           *memory.Pipeline
+	reputation       *db.ReputationDB
+	agentConfig      *xdg.AgentIdentityConfig
+	randFn           func() float64
+	chatTokensPerSec float64
+	ownsReputation   bool
+	isClosed         bool
 }
 
 // NewDialogueService constructs a new DialogueService instance.
@@ -157,9 +229,10 @@ func NewDialogueService(client *Client, agentConfig *xdg.AgentIdentityConfig, op
 	}
 
 	svc := &DialogueService{
-		client:      client,
-		agentConfig: agentConfig,
-		randFn:      rand.Float64,
+		client:           client,
+		agentConfig:      agentConfig,
+		randFn:           rand.Float64,
+		chatTokensPerSec: DefaultChatTokensPerSec,
 	}
 
 	for _, opt := range opts {
@@ -314,16 +387,23 @@ func (s *DialogueService) ProcessChat(ctx context.Context, req ChatDialogueReque
 		})
 	}
 
-	// 8. Assemble result
+	// 8. Assemble result and compute paced chat schedule
 	if resp.SpokenReply == "" {
 		resp.SpokenReply = "..."
 	}
+
+	s.mu.RLock()
+	tokPerSec := s.chatTokensPerSec
+	s.mu.RUnlock()
+
+	paced := ComputePacedSchedule(resp.SpokenReply, tokPerSec, DefaultMaxChatUtteranceRunes)
 
 	result := &DialogueResult{
 		Response:        resp,
 		Disobeyed:       disobeyed,
 		DisobeyReason:   disobeyReason,
 		UpdatedPrestige: updatedPrestige,
+		PacedSegments:   paced,
 		ChatIntent: &civquestv1.SendChatIntent{
 			Message:       resp.SpokenReply,
 			TargetChannel: civquestv1.ChatChannel_CHAT_CHANNEL_LOCAL,
@@ -473,11 +553,18 @@ func (s *DialogueService) ProcessTrade(ctx context.Context, req TradeDialogueReq
 
 	acceptDeal := !disobeyed && strings.EqualFold(resp.TradeDecision, "ACCEPT")
 
+	s.mu.RLock()
+	tokPerSec := s.chatTokensPerSec
+	s.mu.RUnlock()
+
+	paced := ComputePacedSchedule(resp.SpokenReply, tokPerSec, DefaultMaxChatUtteranceRunes)
+
 	result := &DialogueResult{
 		Response:        resp,
 		Disobeyed:       disobeyed,
 		DisobeyReason:   disobeyReason,
 		UpdatedPrestige: updatedPrestige,
+		PacedSegments:   paced,
 		TradeIntent: &civquestv1.RespondTradeIntent{
 			PlayerEntityId:    req.PlayerEntityID,
 			AcceptDeal:        acceptDeal,
@@ -516,6 +603,8 @@ func (s *DialogueService) buildChatPrompt(
 	}
 
 	cleanPlayerName := sanitizePlayerName(req.PlayerName)
+	voiceSection := formatVoiceProfileSection(cfg)
+	brevityRule := formatChatBrevityDirective(cfg, req.Message)
 
 	systemPrompt := fmt.Sprintf(`You are %s, an autonomous agent in the settlement simulation CivQuest.
 Clan: %s | Profession: %s | Secondary Hobby: %s
@@ -526,6 +615,8 @@ Personality Traits:
 - Thrift: %.2f (reluctance to give away resources easily)
 - Aggressiveness: %.2f
 - Curiosity: %.2f
+
+%s
 
 Current Status:
 - Vitals: %s
@@ -542,22 +633,28 @@ Title: %s
 
 %s
 
+%s
+
 Instructions:
-1. Respond to the player in-character reflecting your traits, clan surplus state, and the player's prestige standing.
+1. Respond to the player in-character reflecting your individualized voice profile, traits, clan surplus state, and the player's prestige standing.
 2. If the player requests dangerous suicide missions or sacrifices, reflect your Bravery trait.
 3. If the player requests clan food during DEFICIT, be fiercely protective.
-4. Output MUST conform strictly to the required JSON schema with:
-   - "spoken_reply": Your in-game dialogue spoken to the player.
-   - "trade_decision": "NONE" (or ACCEPT/COUNTER/REJECT if trading).
-   - "counter_offer_items": []
-   - "delegated_task": optional task agreement, else {"task_type": "NONE"}.
-   - "prestige_delta": float score change for player's conduct (-10.0 to +10.0, e.g. +1.0 for polite/helpful talk, -2.0 for threats/insults).
-   - "memory_summary": concise one-sentence episodic summary.`,
+4. Return a JSON object conforming strictly to this JSON schema:
+{
+  "spoken_reply": "Concise in-game dialogue spoken to the player",
+  "trade_decision": "NONE",
+  "counter_offer_items": [],
+  "delegated_task": {"task_type": "NONE"},
+  "prestige_delta": 1.0,
+  "memory_summary": "Concise one-sentence episodic summary."
+}`,
 		cfg.Name, cfg.ClanID, cfg.Profession, cfg.SecondaryHobby,
 		cfg.Traits.Bravery, cfg.Traits.Sociability, cfg.Traits.Industriousness, thrift, cfg.Traits.Aggressiveness, cfg.Traits.Curiosity,
+		voiceSection,
 		vitalsInfo, surplus,
 		cleanPlayerName, req.PlayerUUID, prestigeScore, prestigeTitle,
 		formatMemorySection(historicalContext),
+		brevityRule,
 	)
 
 	if cfg.SystemPrompt != "" {
@@ -607,6 +704,7 @@ func (s *DialogueService) buildTradePrompt(
 	}
 
 	cleanPlayerName := sanitizePlayerName(req.PlayerName)
+	voiceSection := formatVoiceProfileSection(cfg)
 
 	systemPrompt := fmt.Sprintf(`You are %s, an autonomous agent negotiating barter trade in CivQuest.
 Clan: %s | Profession: %s | Secondary Hobby: %s
@@ -616,6 +714,8 @@ Personality Traits:
 - Diligence / Industriousness: %.2f
 - Thrift: %.2f (higher thrift means demanding better barter margins)
 - Aggressiveness: %.2f
+
+%s
 
 Status & Economy:
 - Vitals: %s
@@ -632,19 +732,25 @@ Title: %s
 
 %s
 
+CRITICAL IN-GAME CHAT BREVITY RULE:
+Your "spoken_reply" is printed directly into live Minecraft chat. Keep "spoken_reply" concise, natural, and punchy—strictly 1 to 2 short sentences (maximum 140 characters / 25 words). Never output verbose walls of text.
+
 Instructions:
 1. Evaluate the player's barter offer and proposal.
 2. Choose trade_decision: "ACCEPT", "COUNTER", or "REJECT".
-3. If COUNTER, specify counter_offer_items: [{"item_id": "...", "count": N}].
-4. Output MUST conform strictly to the required JSON schema with:
-   - "spoken_reply": Your in-character negotiation remark.
-   - "trade_decision": "ACCEPT" | "COUNTER" | "REJECT" | "NONE".
-   - "counter_offer_items": list of counter-offered items.
-   - "delegated_task": {"task_type": "NONE"}.
-   - "prestige_delta": float score change for player's generosity or greed (-5.0 to +5.0).
-   - "memory_summary": concise one-sentence episodic trade summary.`,
+3. If COUNTER, specify counter_offer_items: [{"item_id": "minecraft:emerald", "count": 4}].
+4. Return a JSON object conforming strictly to this JSON schema:
+{
+  "spoken_reply": "Your concise in-character negotiation remark (1-2 short sentences, <= 140 chars)",
+  "trade_decision": "ACCEPT",
+  "counter_offer_items": [],
+  "delegated_task": {"task_type": "NONE"},
+  "prestige_delta": 1.5,
+  "memory_summary": "Concise one-sentence episodic trade summary."
+}`,
 		cfg.Name, cfg.ClanID, cfg.Profession, cfg.SecondaryHobby,
 		cfg.Traits.Bravery, cfg.Traits.Sociability, cfg.Traits.Industriousness, thrift, cfg.Traits.Aggressiveness,
+		voiceSection,
 		vitalsInfo, surplus,
 		cleanPlayerName, req.PlayerUUID, prestigeScore, prestigeTitle,
 		formatMemorySection(historicalContext),
@@ -693,4 +799,45 @@ var dangerRegex = regexp.MustCompile(`(?i)\b(kill|attack|die|sacrifice|warden|wi
 
 func isDangerousText(text string) bool {
 	return dangerRegex.MatchString(text)
+}
+
+var storytellingRegex = regexp.MustCompile(`(?i)\b(story|tale|history|legend|chronicle|recount|lore|what happened|tell me about the)\b`)
+
+func isStorytellingRequest(cfg *xdg.AgentIdentityConfig, message string) bool {
+	if cfg == nil {
+		return false
+	}
+	prof := strings.ToUpper(strings.TrimSpace(cfg.Profession))
+	hobby := strings.ToUpper(strings.TrimSpace(cfg.SecondaryHobby))
+	isLoreRole := prof == "HISTORIAN" || prof == "CHRONICLER" || hobby == "HISTORIAN" || hobby == "CHRONICLER"
+	return isLoreRole && storytellingRegex.MatchString(message)
+}
+
+func formatVoiceProfileSection(cfg *xdg.AgentIdentityConfig) string {
+	v := cfg.EffectiveVoice()
+	var sb strings.Builder
+	sb.WriteString("<agent_voice_profile>\n")
+	sb.WriteString(fmt.Sprintf("- Speech Cadence: %s\n", v.Cadence))
+	sb.WriteString(fmt.Sprintf("- Diction & Register: %s\n", v.Diction))
+	sb.WriteString(fmt.Sprintf("- Disposition: %s\n", v.Disposition))
+	if len(v.SpeechQuirks) > 0 {
+		sb.WriteString(fmt.Sprintf("- Speech Quirks: %s\n", strings.Join(v.SpeechQuirks, "; ")))
+	}
+	if strings.TrimSpace(v.Catchphrase) != "" {
+		sb.WriteString(fmt.Sprintf("- Signature Expression (use sparingly): %q\n", v.Catchphrase))
+	}
+	if strings.TrimSpace(v.Backstory) != "" {
+		sb.WriteString(fmt.Sprintf("- Personal Backstory: %s\n", v.Backstory))
+	}
+	sb.WriteString("</agent_voice_profile>")
+	return sb.String()
+}
+
+func formatChatBrevityDirective(cfg *xdg.AgentIdentityConfig, message string) string {
+	if isStorytellingRequest(cfg, message) {
+		return `ORAL STORYTELLING PACING RULE:
+You are recounting clan history or lore aloud in chat. Write 2 to 4 vivid, atmospheric sentences separated by clear periods (each sentence <= 120 characters) so the in-game chat pacing regulator can deliver your story beat-by-beat at a comfortable human reading speed.`
+	}
+	return `CRITICAL IN-GAME CHAT BREVITY RULE:
+Your "spoken_reply" is printed directly into live Minecraft chat where human players hate reading walls of text. Keep "spoken_reply" concise, natural, and punchy—strictly 1 to 2 short sentences (maximum 140 characters / 25 words). NEVER output verbose paragraphs, bullet lists, or formal LLM monologues.`
 }

@@ -14,6 +14,7 @@ import (
 
 func TestDetectTopology_Empty(t *testing.T) {
 	tmpDir := t.TempDir()
+	t.Setenv("PATH", tmpDir)
 	r := xdg.NewResolver(xdg.WithCustomRoot(tmpDir))
 
 	topology, err := domain.DetectTopology(r)

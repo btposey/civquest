@@ -542,6 +542,26 @@ func (r *Resolver) ServerLogPath() string {
 	return filepath.Join(r.StateDir(), "server.log")
 }
 
+// LogsDir returns the well-known centralized log directory ($XDG_STATE_HOME/civquest/logs).
+func (r *Resolver) LogsDir() string {
+	return filepath.Join(r.StateDir(), "logs")
+}
+
+// AgentDebugJSONLPath returns $XDG_STATE_HOME/civquest/logs/agent-{agent_name}-debug.jsonl.
+func (r *Resolver) AgentDebugJSONLPath(agentName string) string {
+	return filepath.Join(r.LogsDir(), fmt.Sprintf("agent-%s-debug.jsonl", agentName))
+}
+
+// PlaytestEventsJSONLPath returns $XDG_STATE_HOME/civquest/logs/playtest-events.jsonl.
+func (r *Resolver) PlaytestEventsJSONLPath() string {
+	return filepath.Join(r.LogsDir(), "playtest-events.jsonl")
+}
+
+// AgentHumanLogPath returns $XDG_STATE_HOME/civquest/logs/{agent_name}.log.
+func (r *Resolver) AgentHumanLogPath(agentName string) string {
+	return filepath.Join(r.LogsDir(), fmt.Sprintf("%s.log", agentName))
+}
+
 // ==================== DIRECTORY INITIALIZATION ====================
 
 // InitDirectories creates the standard CivQuest directory skeleton with 0750 permissions,
@@ -565,6 +585,7 @@ func (r *Resolver) InitDirectories() error {
 		r.ClansDataDir(),
 		r.GraveyardDir(),
 		r.StateDir(),
+		r.LogsDir(),
 		r.AgentsStateDir(),
 		r.CacheDir(),
 	}
@@ -603,6 +624,7 @@ func (r *Resolver) InitAgentDirectories(agentName string) error {
 		r.AgentDataDir(agentName),
 		r.AgentTexturesDir(agentName),
 		r.AgentStateDir(agentName),
+		r.LogsDir(),
 	}
 	for _, dir := range dirs {
 		if err := os.MkdirAll(dir, 0750); err != nil {

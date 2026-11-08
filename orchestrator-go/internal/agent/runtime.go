@@ -148,6 +148,8 @@ type AgentRuntime struct {
 	lastTradeTick        int64
 	lastTradePlayerUUID  string
 	lastTradeAttemptAt   time.Time
+	debugLogger          *DebugLogger
+	lastLoggedRoutine    system1.RoutineState
 
 	// Callbacks
 	onDeath func(*civquestv1.DeathEvent)
@@ -209,6 +211,16 @@ func NewRuntime(cfg Config) (*AgentRuntime, error) {
 		companionService = system2.NewCompanionService(cfg.AgentDB, cfg.ReputationDB, cfg.IdentityConfig)
 	}
 
+	var debugLog *DebugLogger
+	if r != nil {
+		debugLog = NewDebugLogger(
+			r.AgentDebugJSONLPath(agentID),
+			r.PlaytestEventsJSONLPath(),
+			agentID,
+			clanID,
+		)
+	}
+
 	runtime := &AgentRuntime{
 		agentID:           agentID,
 		agentUUID:         agentUUID,
@@ -224,6 +236,7 @@ func NewRuntime(cfg Config) (*AgentRuntime, error) {
 		toponymyService:   cfg.ToponymyService,
 		companionService:  companionService,
 		landmarksDB:       cfg.LandmarksDB,
+		debugLogger:       debugLog,
 		intentQueue:       make(chan *civquestv1.AgentIntent, queueSize),
 		socketPath:        sockPath,
 		pid:               os.Getpid(),
@@ -235,6 +248,19 @@ func NewRuntime(cfg Config) (*AgentRuntime, error) {
 		lastCachedItems:   nil,
 		system1State:      sys1State,
 		pavingTracker:     pavingTracker,
+	}
+
+	if debugLog != nil {
+		var voice any
+		if cfg.IdentityConfig != nil {
+			voice = cfg.IdentityConfig.EffectiveVoice()
+		}
+		debugLog.Emit(0, "RUNTIME_INIT", fmt.Sprintf("Initialized agent runtime %s", agentID), map[string]any{
+			"pid":          runtime.pid,
+			"agent_uuid":   agentUUID,
+			"socket_path":  sockPath,
+			"voice_config": voice,
+		})
 	}
 
 	runtime.loadSafeNodes()
@@ -570,6 +596,12 @@ func (r *AgentRuntime) QueueIntent(intent *civquestv1.AgentIntent) error {
 
 	select {
 	case r.intentQueue <- intent:
+		if r.debugLogger != nil {
+			r.debugLogger.Emit(r.WorldTick(), "INTENT_OUT", intentActionName(intent), map[string]any{
+				"sequence_id": intent.SequenceId,
+				"action":      intentActionName(intent),
+			})
+		}
 		return nil
 	case <-r.done:
 		return ErrRuntimeStopped
@@ -581,6 +613,11 @@ func (r *AgentRuntime) QueueIntent(intent *civquestv1.AgentIntent) error {
 // EnqueueIntent is an alias for QueueIntent.
 func (r *AgentRuntime) EnqueueIntent(intent *civquestv1.AgentIntent) error {
 	return r.QueueIntent(intent)
+}
+
+// IntentQueue returns the read-only outbound intent channel for inspection by test harnesses.
+func (r *AgentRuntime) IntentQueue() <-chan *civquestv1.AgentIntent {
+	return r.intentQueue
 }
 
 // QueuePriorityIntent enqueues a critical reflex intent into the outbound queue.
@@ -616,6 +653,13 @@ func (r *AgentRuntime) QueuePriorityIntent(intent *civquestv1.AgentIntent) error
 		case <-r.done:
 			return ErrRuntimeStopped
 		case r.intentQueue <- intent:
+			if r.debugLogger != nil {
+				r.debugLogger.Emit(r.WorldTick(), "INTENT_OUT", intentActionName(intent), map[string]any{
+					"sequence_id": intent.SequenceId,
+					"action":      intentActionName(intent),
+					"priority":    true,
+				})
+			}
 			return nil
 		default:
 		}
@@ -1030,6 +1074,14 @@ func (r *AgentRuntime) dispatchDialogue(frame *civquestv1.TelemetryFrame) {
 			}
 
 			log.Printf("[civquest-agent] Received chat from %s (dist=%.1f): %q", c.SenderName, c.Distance, c.Message)
+			if r.debugLogger != nil {
+				r.debugLogger.Emit(worldTick, "INCOMING_CHAT", fmt.Sprintf("Chat from %s: %s", c.SenderName, c.Message), map[string]any{
+					"sender_name": c.SenderName,
+					"sender_uuid": c.SenderUuid,
+					"distance":    c.Distance,
+					"message":     c.Message,
+				})
+			}
 
 			// 1. Check for companion voice/chat command ('follow me', 'wait here', 'return home')
 			r.mu.RLock()
@@ -1040,6 +1092,14 @@ func (r *AgentRuntime) dispatchDialogue(frame *civquestv1.TelemetryFrame) {
 				if cmdRes, isCmd := compSvc.ProcessCommand(ctx, c.SenderUuid, c.SenderName, c.Message, worldTick); isCmd {
 					log.Printf("[civquest-agent] Companion command %s from %s (stage=%s, obeyed=%v)",
 						cmdRes.Command, c.SenderName, cmdRes.BondStage, cmdRes.Obeyed)
+					if r.debugLogger != nil {
+						r.debugLogger.Emit(worldTick, "COMPANION_COMMAND", fmt.Sprintf("Command %s from %s (obeyed=%v)", cmdRes.Command, c.SenderName, cmdRes.Obeyed), map[string]any{
+							"command":    cmdRes.Command,
+							"bond_stage": cmdRes.BondStage,
+							"obeyed":     cmdRes.Obeyed,
+							"reply_text": cmdRes.ReplyText,
+						})
+					}
 
 					if r.system1State != nil {
 						r.system1State.SetCompanionActive(compSvc.IsActive())
@@ -1082,20 +1142,97 @@ func (r *AgentRuntime) dispatchDialogue(frame *civquestv1.TelemetryFrame) {
 				Vitals:       vitals,
 				SurplusState: system2.SurplusStable,
 			}
+			startChat := time.Now()
 			res, err := svc.ProcessChat(ctx, req)
+			chatLatency := time.Since(startChat)
 			if err != nil {
 				log.Printf("[WARN] agent %s: dialogue ProcessChat failed: %v", r.agentID, err)
+				if r.debugLogger != nil {
+					r.debugLogger.Emit(worldTick, "DIALOGUE_ERROR", err.Error(), map[string]any{
+						"sender_name": c.SenderName,
+						"message":     c.Message,
+						"latency_ms":  chatLatency.Milliseconds(),
+					})
+				}
 				return
+			}
+			if res != nil && r.debugLogger != nil {
+				activeTask := ""
+				if res.Response.DelegatedTask != nil {
+					activeTask = res.Response.DelegatedTask.TaskType
+				}
+				checks := system1.EvaluateDialogueOutcome(
+					res.Response.SpokenReply,
+					res.Response.TradeDecision,
+					res.Response.PrestigeDelta,
+					res.Response.MemorySummary,
+					res.Disobeyed,
+					activeTask,
+					res.ChatIntent,
+					res.TradeIntent,
+					system1.DialogueEvalSpec{
+						ExpectNonEmptyReply: true,
+						MaxReplyRunes:       250,
+						MinPrestigeDelta:    -10.0,
+						MaxPrestigeDelta:    10.0,
+						RequireChatIntent:   true,
+						ForbiddenSubstrings: []string{"```json", "{\"spoken_reply\""},
+					},
+				)
+				sample := system1.ScoreChecks(0, checks, chatLatency, 0.75, nil)
+				r.debugLogger.Emit(worldTick, "DIALOGUE_EVAL", fmt.Sprintf("Reply to %s (score=%.2f, passed=%v)", c.SenderName, sample.Score, sample.Passed), map[string]any{
+					"player_name":     c.SenderName,
+					"player_message":  c.Message,
+					"spoken_reply":    res.Response.SpokenReply,
+					"paced_segments":  res.PacedSegments,
+					"trade_decision":  res.Response.TradeDecision,
+					"delegated_task":  res.Response.DelegatedTask,
+					"prestige_delta":  res.Response.PrestigeDelta,
+					"memory_summary":  res.Response.MemorySummary,
+					"disobeyed":       res.Disobeyed,
+					"disobey_reason":  res.DisobeyReason,
+					"latency_ms":      chatLatency.Milliseconds(),
+					"eval_score":      sample.Score,
+					"eval_passed":     sample.Passed,
+					"eval_checks":     sample.Checks,
+				})
 			}
 			if res != nil && res.ChatIntent != nil {
 				log.Printf("[civquest-agent] %s responding to %s: %q", r.agentID, c.SenderName, res.ChatIntent.Message)
-				if !r.IsDead() && ctx.Err() == nil {
-					_ = r.QueueIntent(&civquestv1.AgentIntent{
-						AgentId: r.agentID,
-						Action: &civquestv1.AgentIntent_Chat{
-							Chat: res.ChatIntent,
-						},
-					})
+				segments := res.PacedSegments
+				if len(segments) <= 1 {
+					if !r.IsDead() && ctx.Err() == nil {
+						_ = r.QueueIntent(&civquestv1.AgentIntent{
+							AgentId: r.agentID,
+							Action: &civquestv1.AgentIntent_Chat{
+								Chat: res.ChatIntent,
+							},
+						})
+					}
+				} else {
+					for _, seg := range segments {
+						if seg.Delay > 0 {
+							timer := time.NewTimer(seg.Delay)
+							select {
+							case <-ctx.Done():
+								timer.Stop()
+								return
+							case <-timer.C:
+							}
+						}
+						if r.IsDead() || ctx.Err() != nil {
+							return
+						}
+						_ = r.QueueIntent(&civquestv1.AgentIntent{
+							AgentId: r.agentID,
+							Action: &civquestv1.AgentIntent_Chat{
+								Chat: &civquestv1.SendChatIntent{
+									Message:       seg.Text,
+									TargetChannel: res.ChatIntent.TargetChannel,
+								},
+							},
+						})
+					}
 				}
 			}
 
@@ -1743,7 +1880,20 @@ func (r *AgentRuntime) evaluateSystem1Reflexes(frame *civquestv1.TelemetryFrame)
 	}
 
 	// 2. Evaluate Daily Utility Schedule
-	_ = system1.EvaluateUtility(frame, r.identityConfig, r.system1State)
+	utilRes := system1.EvaluateUtility(frame, r.identityConfig, r.system1State)
+	if utilRes != nil && utilRes.State != "" && utilRes.State != r.lastLoggedRoutine {
+		oldRoutine := r.lastLoggedRoutine
+		r.lastLoggedRoutine = utilRes.State
+		if r.debugLogger != nil {
+			r.debugLogger.Emit(frame.WorldTick, "SYSTEM1_ROUTINE", fmt.Sprintf("Routine %s -> %s (%s)", oldRoutine, utilRes.State, utilRes.Reason), map[string]any{
+				"previous_routine": oldRoutine,
+				"current_routine":  utilRes.State,
+				"utility_score":    utilRes.Utility,
+				"reason":           utilRes.Reason,
+				"time_of_day":      frame.TimeOfDay,
+			})
+		}
+	}
 
 	// If in combat panic, skip biological needs and road paving to prioritize survival
 	if combatResult.IsPanic {

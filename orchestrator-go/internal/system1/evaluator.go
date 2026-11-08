@@ -551,11 +551,18 @@ func FormatSuiteReportMarkdown(reports []EvaluationReport) string {
 			r.WilsonLowerBound95, r.WilsonUpperBound95,
 			r.MeanScore, r.StdDevScore,
 			r.Threshold.MinMeanScore,
-			r.P50Latency.Round(time.Millisecond),
-			r.P95Latency.Round(time.Millisecond),
+			formatLatency(r.P50Latency),
+			formatLatency(r.P95Latency),
 		))
 	}
 	return sb.String()
+}
+
+func formatLatency(d time.Duration) string {
+	if d < time.Millisecond {
+		return d.Round(time.Microsecond).String()
+	}
+	return d.Round(time.Millisecond).String()
 }
 
 func boolScore(b bool) float64 {

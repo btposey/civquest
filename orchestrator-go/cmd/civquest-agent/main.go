@@ -6,6 +6,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"log"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -123,6 +124,24 @@ func run(parentCtx context.Context, args []string, stdout, stderr io.Writer, r *
 		return fmt.Errorf("initializing directories for agent %s: %w", cfg.Name, err)
 	}
 
+	// Configure multi-writer logging to well-known $XDG_STATE_HOME/civquest/logs/ directory
+	var logWriters []io.Writer
+	if stderr != nil {
+		logWriters = append(logWriters, stderr)
+	}
+	if centralLogFile, err := os.OpenFile(r.AgentHumanLogPath(cfg.Name), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o640); err == nil {
+		defer centralLogFile.Close()
+		logWriters = append(logWriters, centralLogFile)
+	}
+	if stateLogFile, err := os.OpenFile(r.AgentLogPath(cfg.Name), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o640); err == nil {
+		defer stateLogFile.Close()
+		logWriters = append(logWriters, stateLogFile)
+	}
+	if len(logWriters) > 0 {
+		log.SetOutput(io.MultiWriter(logWriters...))
+		log.SetFlags(log.Ldate | log.Ltime | log.Lmicroseconds)
+	}
+
 	// Resolve gRPC and SharedKey from flags, discovery artifact, or global config
 	globalCfg, _ := r.LoadGlobalConfig()
 	if globalCfg == nil {
@@ -165,7 +184,25 @@ func run(parentCtx context.Context, args []string, stdout, stderr io.Writer, r *
 	}
 	defer llmClient.Close()
 
-	dialogueSvc, err := system2.NewDialogueService(llmClient, cfg)
+	// Open per-agent SQLite database (memory.db and map_graph.db with sqlite-vec)
+	agentDB, err := db.OpenAgentDBForAgent(r, cfg.Name)
+	if err != nil {
+		return fmt.Errorf("opening agent database: %w", err)
+	}
+	defer agentDB.Close()
+
+	// Open clan reputation database if available for companion and murder prestige scoring
+	var repDB *db.ReputationDB
+	if rep, repErr := db.OpenReputationDBForClan(r, cfg.ClanID); repErr == nil {
+		repDB = rep
+		defer repDB.Close()
+	}
+
+	var dialogueOpts []system2.DialogueOption
+	if repDB != nil {
+		dialogueOpts = append(dialogueOpts, system2.WithDialogueReputation(repDB))
+	}
+	dialogueSvc, err := system2.NewDialogueService(llmClient, cfg, dialogueOpts...)
 	if err != nil {
 		return fmt.Errorf("creating System 2 dialogue service: %w", err)
 	}
@@ -196,20 +233,7 @@ func run(parentCtx context.Context, args []string, stdout, stderr io.Writer, r *
 		fmt.Fprintf(stdout, " Authentication: None\n")
 	}
 	fmt.Fprintf(stdout, " LLM Gateway:    %s\n", llmGateway)
-
-	// Open per-agent SQLite database (memory.db and map_graph.db with sqlite-vec)
-	agentDB, err := db.OpenAgentDBForAgent(r, cfg.Name)
-	if err != nil {
-		return fmt.Errorf("opening agent database: %w", err)
-	}
-	defer agentDB.Close()
-
-	// Open clan reputation database if available for companion and murder prestige scoring
-	var repDB *db.ReputationDB
-	if rep, repErr := db.OpenReputationDBForClan(r, cfg.ClanID); repErr == nil {
-		repDB = rep
-		defer repDB.Close()
-	}
+	fmt.Fprintf(stdout, " Debug Logs Dir: %s\n", r.LogsDir())
 
 	// Open clan landmarks database if available for cultural toponymy
 	var lmDB *db.LandmarksDB

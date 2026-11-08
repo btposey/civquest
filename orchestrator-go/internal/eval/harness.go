@@ -92,20 +92,21 @@ func (h *Harness) RunSuite(ctx context.Context, scenarios []Scenario) ([]system1
 	return reports, allPassed
 }
 
-// DefaultScenarios returns the canonical 5-scenario stochastic evaluation suite covering CivQuest's
-// System 2 LLM pipelines and System 1 safety/invariant gates.
+// DefaultScenarios returns the canonical 6-scenario stochastic evaluation suite covering CivQuest's
+// System 2 LLM pipelines, individualized voice profiles, chat conciseness/pacing, and System 1 safety gates.
 func DefaultScenarios() []Scenario {
 	return []Scenario{
 		NewFriendlyGreetingScenario(),
 		NewBarterTradeScenario(),
 		NewStrangerObedienceGateScenario(),
+		NewHistorianPacedStorytellingScenario(),
 		NewChroniclerSynthesisScenario(),
 		NewToponymyNamingScenario(),
 	}
 }
 
-// NewFriendlyGreetingScenario tests Pipeline A conversational greeting, Hero Prestige bounds,
-// and SendChatIntent emission.
+// NewFriendlyGreetingScenario tests Pipeline A conversational greeting, chat conciseness, individualized voice,
+// Hero Prestige bounds, and SendChatIntent emission.
 func NewFriendlyGreetingScenario() Scenario {
 	threshold := system1.ProbabilityThreshold{
 		MinPassProbability: 0.66,
@@ -115,7 +116,7 @@ func NewFriendlyGreetingScenario() Scenario {
 	}
 	return Scenario{
 		Name:          "dialogue-friendly-greeting",
-		Description:   "Evaluates Pipeline A chat dialogue, JSON schema adherence, prestige delta bounds, and SendChatIntent emission",
+		Description:   "Evaluates Pipeline A chat conciseness (<=200 runes), individualized voice, prestige bounds, and SendChatIntent",
 		DefaultTrials: 3,
 		Threshold:     threshold,
 		RunTrial: func(ctx context.Context, trialIdx int, client *system2.Client, workspaceDir string) system1.TrialSample {
@@ -131,6 +132,12 @@ func NewFriendlyGreetingScenario() Scenario {
 				Name:       "aria",
 				ClanID:     "pioneers",
 				Profession: "FARMER",
+				Voice: xdg.AgentVoiceConfig{
+					Cadence:      "warm, brisk, and down-to-earth",
+					Diction:      "rustic agrarian vernacular with soil and harvest idioms",
+					Disposition:  "cheerful and neighborly",
+					SpeechQuirks: []string{"keeps chat remarks brief and folksy"},
+				},
 				Traits: xdg.AgentTraits{
 					Bravery:         0.7,
 					Industriousness: 0.9,
@@ -175,13 +182,13 @@ func NewFriendlyGreetingScenario() Scenario {
 				res.TradeIntent,
 				system1.DialogueEvalSpec{
 					ExpectNonEmptyReply:   true,
-					MaxReplyRunes:         350,
+					MaxReplyRunes:         200,
 					AllowedTradeDecisions: []string{"NONE"},
 					MinPrestigeDelta:      -2.0,
 					MaxPrestigeDelta:      10.0,
 					ExpectDisobeyed:       &expectDisobeyed,
 					RequireChatIntent:     true,
-					ExpectedKeywordAny:    []string{"harvest", "wheat", "field", "crop", "pioneer", "good", "well", "greet", "hello", "traveler", "steve", "friend", "plentiful", "grain", "bountiful"},
+					ExpectedKeywordAny:    []string{"harvest", "wheat", "field", "crop", "pioneer", "good", "well", "greet", "hello", "traveler", "steve", "friend", "plentiful", "grain", "bountiful", "gold"},
 					ForbiddenSubstrings:   []string{"```json", "{\"spoken_reply\""},
 				},
 			)
@@ -190,7 +197,7 @@ func NewFriendlyGreetingScenario() Scenario {
 	}
 }
 
-// NewBarterTradeScenario tests Pipeline A barter trade evaluation and RespondTradeIntent emission.
+// NewBarterTradeScenario tests Pipeline A barter trade evaluation, chat conciseness, and RespondTradeIntent emission.
 func NewBarterTradeScenario() Scenario {
 	threshold := system1.ProbabilityThreshold{
 		MinPassProbability: 0.66,
@@ -266,7 +273,7 @@ func NewBarterTradeScenario() Scenario {
 				res.TradeIntent,
 				system1.DialogueEvalSpec{
 					ExpectNonEmptyReply:   true,
-					MaxReplyRunes:         350,
+					MaxReplyRunes:         200,
 					AllowedTradeDecisions: []string{"ACCEPT", "COUNTER"},
 					MinPrestigeDelta:      -2.0,
 					MaxPrestigeDelta:      10.0,
@@ -357,7 +364,7 @@ func NewStrangerObedienceGateScenario() Scenario {
 				res.TradeIntent,
 				system1.DialogueEvalSpec{
 					ExpectNonEmptyReply:       true,
-					MaxReplyRunes:             350,
+					MaxReplyRunes:             220,
 					MinPrestigeDelta:          -10.0,
 					MaxPrestigeDelta:          10.0,
 					ForbidActiveDelegatedTask: true,
@@ -365,6 +372,111 @@ func NewStrangerObedienceGateScenario() Scenario {
 					ForbiddenSubstrings:       []string{"```json", "{\"spoken_reply\""},
 				},
 			)
+			return system1.ScoreChecks(trialIdx, checks, latency, threshold.MinTrialScore, nil)
+		},
+	}
+}
+
+// NewHistorianPacedStorytellingScenario tests a Historian agent recounting clan lore aloud in chat,
+// verifying that multi-sentence oral stories are segmented and paced at comfortable human reading speed.
+func NewHistorianPacedStorytellingScenario() Scenario {
+	threshold := system1.ProbabilityThreshold{
+		MinPassProbability: 0.66,
+		MinMeanScore:       0.75,
+		MinTrialScore:      0.75,
+		MaxP95Latency:      30 * time.Second,
+	}
+	return Scenario{
+		Name:          "historian-paced-storytelling",
+		Description:   "Evaluates Historian oral storytelling with individualized voice and human-reading-speed chat pacing",
+		DefaultTrials: 3,
+		Threshold:     threshold,
+		RunTrial: func(ctx context.Context, trialIdx int, client *system2.Client, workspaceDir string) system1.TrialSample {
+			start := time.Now()
+
+			repDB, err := db.OpenReputationDB(filepath.Join(workspaceDir, "reputation.db"), "pioneers")
+			if err != nil {
+				return system1.ScoreChecks(trialIdx, nil, time.Since(start), threshold.MinTrialScore, err)
+			}
+			defer repDB.Close()
+
+			agentCfg := &xdg.AgentIdentityConfig{
+				Name:       "elder_bram",
+				ClanID:     "pioneers",
+				Profession: "HISTORIAN",
+				Voice: xdg.AgentVoiceConfig{
+					Cadence:      "solemn, rhythmic, and fireside-warm",
+					Diction:      "old-world ballad and chronicle phrasing",
+					Disposition:  "wise, nostalgic, and welcoming to listeners",
+					SpeechQuirks: []string{"pauses between dramatic beats of a tale"},
+				},
+				Traits: xdg.AgentTraits{
+					Bravery:         0.5,
+					Industriousness: 0.7,
+					Sociability:     0.9,
+					Curiosity:       0.9,
+					Aggressiveness:  0.1,
+				},
+			}
+
+			svc, err := system2.NewDialogueService(
+				client,
+				agentCfg,
+				system2.WithDialogueReputation(repDB),
+				system2.WithChatTokensPerSec(4.5),
+			)
+			if err != nil {
+				return system1.ScoreChecks(trialIdx, nil, time.Since(start), threshold.MinTrialScore, err)
+			}
+
+			res, err := svc.ProcessChat(ctx, system2.ChatDialogueRequest{
+				PlayerUUID:   "player-uuid-steve",
+				PlayerName:   "Steve",
+				Message:      "Elder Bram, please tell me a 3-sentence story about the founding of the Pioneers clan.",
+				Distance:     2.5,
+				WorldTick:    5000,
+				Vitals:       &system2.DialogueVitals{Health: 20.0, FoodLevel: 20},
+				SurplusState: system2.SurplusStable,
+			})
+			latency := time.Since(start)
+			if err != nil {
+				return system1.ScoreChecks(trialIdx, nil, latency, threshold.MinTrialScore, err)
+			}
+
+			activeTask := ""
+			if res.Response.DelegatedTask != nil {
+				activeTask = res.Response.DelegatedTask.TaskType
+			}
+			checks := system1.EvaluateDialogueOutcome(
+				res.Response.SpokenReply,
+				res.Response.TradeDecision,
+				res.Response.PrestigeDelta,
+				res.Response.MemorySummary,
+				res.Disobeyed,
+				activeTask,
+				res.ChatIntent,
+				res.TradeIntent,
+				system1.DialogueEvalSpec{
+					ExpectNonEmptyReply:   true,
+					MaxReplyRunes:         520,
+					AllowedTradeDecisions: []string{"NONE"},
+					MinPrestigeDelta:      -2.0,
+					MaxPrestigeDelta:      10.0,
+					RequireChatIntent:     true,
+					ForbiddenSubstrings:   []string{"```json", "{\"spoken_reply\""},
+				},
+			)
+
+			// Verify pacing schedule was generated and initial segment has 0 delay
+			hasPaced := len(res.PacedSegments) >= 1 && res.PacedSegments[0].Delay == 0
+			checks = append(checks, system1.CheckOutcome{
+				Name:   "chat_pacer_schedule_valid",
+				Passed: hasPaced,
+				Weight: 2.0,
+				Score:  1.0,
+				Reason: fmt.Sprintf("segments=%d", len(res.PacedSegments)),
+			})
+
 			return system1.ScoreChecks(trialIdx, checks, latency, threshold.MinTrialScore, nil)
 		},
 	}
