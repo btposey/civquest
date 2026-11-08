@@ -12,15 +12,15 @@ const (
 	// (~4.5 tokens/sec ≈ 18 characters/sec ≈ 215 words/minute).
 	DefaultChatTokensPerSec = 4.5
 
-	// DefaultMaxChatUtteranceRunes is the maximum character length of a single in-game chat utterance
-	// before the pacer splits multi-sentence output into sequential paced lines.
+	// DefaultMaxChatUtteranceRunes is the maximum character length of a single in-game chat sentence
+	// before wrapping an overly long sentence on word boundaries.
 	DefaultMaxChatUtteranceRunes = 140
 
-	// DefaultMinChatSegmentDelay is the minimum pause between sequential chat utterances.
-	DefaultMinChatSegmentDelay = 600 * time.Millisecond
+	// DefaultMinChatSegmentDelay is the minimum pause between sequential chat sentences (2 seconds).
+	DefaultMinChatSegmentDelay = 2000 * time.Millisecond
 
-	// DefaultMaxChatSegmentDelay is the maximum pause between sequential chat utterances.
-	DefaultMaxChatSegmentDelay = 5 * time.Second
+	// DefaultMaxChatSegmentDelay is the maximum pause between sequential chat sentences (3 seconds).
+	DefaultMaxChatSegmentDelay = 3000 * time.Millisecond
 )
 
 // PacedChatSegment represents a single utterance in a multi-part chat response
@@ -40,10 +40,10 @@ func EstimateReadingTokens(text string) float64 {
 	return math.Max(1.0, float64(runes)/4.0)
 }
 
-// SegmentChatUtterances splits a spoken reply into concise, natural chat utterances
+// SegmentChatUtterances splits a spoken reply into strictly one sentence per chat write
 // suitable for sequential display in Minecraft chat.
-// Short replies (<= maxUtteranceRunes) remain a single utterance. Longer multi-sentence
-// stories (such as Historian oral recounts) are broken cleanly on sentence/clause boundaries.
+// Each sentence is emitted as its own segment; if an individual sentence exceeds maxUtteranceRunes,
+// it is wrapped cleanly on word boundaries.
 func SegmentChatUtterances(text string, maxUtteranceRunes int) []string {
 	if maxUtteranceRunes <= 0 {
 		maxUtteranceRunes = DefaultMaxChatUtteranceRunes
@@ -54,13 +54,8 @@ func SegmentChatUtterances(text string, maxUtteranceRunes int) []string {
 		return nil
 	}
 
-	if utf8.RuneCountInString(cleaned) <= maxUtteranceRunes && !strings.Contains(cleaned, "\n") {
-		return []string{cleaned}
-	}
-
 	sentences := splitSentences(cleaned)
 	var chunks []string
-	var current string
 
 	for _, sent := range sentences {
 		sent = strings.TrimSpace(sent)
@@ -70,26 +65,11 @@ func SegmentChatUtterances(text string, maxUtteranceRunes int) []string {
 
 		// If a single sentence exceeds maxUtteranceRunes, wrap it on word boundaries
 		if utf8.RuneCountInString(sent) > maxUtteranceRunes {
-			if current != "" {
-				chunks = append(chunks, current)
-				current = ""
-			}
 			chunks = append(chunks, wrapWords(sent, maxUtteranceRunes)...)
 			continue
 		}
 
-		if current == "" {
-			current = sent
-		} else if utf8.RuneCountInString(current)+1+utf8.RuneCountInString(sent) <= maxUtteranceRunes {
-			current = current + " " + sent
-		} else {
-			chunks = append(chunks, current)
-			current = sent
-		}
-	}
-
-	if current != "" {
-		chunks = append(chunks, current)
+		chunks = append(chunks, sent)
 	}
 
 	return chunks

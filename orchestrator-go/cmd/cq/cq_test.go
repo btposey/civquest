@@ -50,6 +50,7 @@ func TestCivctl_Status_Empty(t *testing.T) {
 
 func TestCivctl_Status_JSON(t *testing.T) {
 	tmpDir := t.TempDir()
+	t.Setenv("PATH", tmpDir)
 	cfgDir := filepath.Join(tmpDir, "config")
 	dataDir := filepath.Join(tmpDir, "data")
 	stateDir := filepath.Join(tmpDir, "state")
@@ -185,6 +186,7 @@ while true; do sleep 0.05; done
 
 func TestCivctl_Agent_Commands(t *testing.T) {
 	tmpDir := t.TempDir()
+	t.Setenv("PATH", "/usr/bin:/bin")
 	r := xdg.NewResolver(xdg.WithCustomRoot(tmpDir))
 
 	// 1. Agent list before installation

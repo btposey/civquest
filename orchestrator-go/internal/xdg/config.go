@@ -217,6 +217,10 @@ func (c *AgentIdentityConfig) EffectiveVoice() AgentVoiceConfig {
 			v.Diction = "vivid, lore-steeped storytelling diction with reverence for clan history"
 		case "EXPLORER", "TRAILBLAZER":
 			v.Diction = "trail-worn scout vernacular referencing landmarks, horizons, and compass directions"
+		case "CARTOGRAPHER":
+			v.Diction = "measured cartographic phrasing referencing terrain contours, compass bearings, and charted routes"
+		case "MERCHANT", "TRADER":
+			v.Diction = "shrewd, hospitable caravan speech versed in barter, trade routes, and regional goods"
 		case "GUARD", "SOLDIER":
 			v.Diction = "tactical, watch-post vocabulary focused on perimeter safety and discipline"
 		case "ENGINEER":
@@ -438,12 +442,9 @@ func SaveAgentConfig(cfg *AgentIdentityConfig, path string) error {
 	return writeYAMLFile(path, cfg)
 }
 
-// LoadAgentConfigByName loads an agent config by name from the standard config directory.
+// LoadAgentConfigByName loads an agent config by name from the standard config directory (case-insensitively).
 func LoadAgentConfigByName(agentName string) (*AgentIdentityConfig, error) {
-	if err := validateIdentifier(agentName); err != nil {
-		return nil, fmt.Errorf("%w: %s", ErrInvalidAgentName, err)
-	}
-	return LoadAgentConfig(AgentConfigPath(agentName))
+	return DefaultResolver().LoadAgentConfig(agentName)
 }
 
 // SaveAgentConfigByName saves an agent config by name to the standard config directory.
@@ -466,10 +467,142 @@ func (r *Resolver) SaveGlobalConfig(cfg *GlobalConfig) error {
 	return SaveGlobalConfig(cfg, r.GlobalConfigPath())
 }
 
-// LoadAgentConfig loads agent identity config using the resolver's configured paths.
+// ResolveAgentName resolves an agent name case-insensitively against configured agents
+// in AgentsConfigDir() or existing state directories, returning the canonical agent name.
+// If no existing match is found, returns the trimmed input name.
+func (r *Resolver) ResolveAgentName(agentName string) string {
+	trimmed := strings.TrimSpace(agentName)
+	if trimmed == "" {
+		return trimmed
+	}
+
+	// 1. Exact match in AgentsConfigDir
+	if _, err := os.Stat(r.AgentConfigPath(trimmed)); err == nil {
+		if cfg, loadErr := LoadAgentConfig(r.AgentConfigPath(trimmed)); loadErr == nil && cfg.Name != "" {
+			return cfg.Name
+		}
+		return trimmed
+	}
+
+	// 2. Case-insensitive match in AgentsConfigDir
+	if entries, err := os.ReadDir(r.AgentsConfigDir()); err == nil {
+		for _, entry := range entries {
+			if entry.IsDir() {
+				continue
+			}
+			fname := entry.Name()
+			ext := filepath.Ext(fname)
+			if !strings.EqualFold(ext, ".yaml") && !strings.EqualFold(ext, ".yml") {
+				continue
+			}
+			stem := strings.TrimSuffix(fname, ext)
+			if strings.EqualFold(stem, trimmed) {
+				fullPath := filepath.Join(r.AgentsConfigDir(), fname)
+				if cfg, loadErr := LoadAgentConfig(fullPath); loadErr == nil && cfg.Name != "" {
+					return cfg.Name
+				}
+				return stem
+			}
+		}
+		// Also check inside YAML files in case filename stem differs from cfg.Name
+		for _, entry := range entries {
+			if entry.IsDir() {
+				continue
+			}
+			fname := entry.Name()
+			ext := filepath.Ext(fname)
+			if !strings.EqualFold(ext, ".yaml") && !strings.EqualFold(ext, ".yml") {
+				continue
+			}
+			fullPath := filepath.Join(r.AgentsConfigDir(), fname)
+			if cfg, loadErr := LoadAgentConfig(fullPath); loadErr == nil && strings.EqualFold(cfg.Name, trimmed) {
+				return cfg.Name
+			}
+		}
+	}
+
+	// 3. Case-insensitive match in state directories (current server or default)
+	stateAgentsDir := filepath.Dir(r.AgentStateDir(trimmed))
+	if entries, err := os.ReadDir(stateAgentsDir); err == nil {
+		for _, entry := range entries {
+			if entry.IsDir() && strings.EqualFold(entry.Name(), trimmed) {
+				return entry.Name()
+			}
+		}
+	}
+
+	return trimmed
+}
+
+// CheckAgentNameUnique verifies that no existing agent configuration conflicts with agentName
+// on a case-insensitive basis. If a conflict exists, returns the existing canonical name and an error.
+func (r *Resolver) CheckAgentNameUnique(agentName string) (string, error) {
+	trimmed := strings.TrimSpace(agentName)
+	if err := validateIdentifier(trimmed); err != nil {
+		return "", fmt.Errorf("%w: %s", ErrInvalidAgentName, err)
+	}
+
+	entries, err := os.ReadDir(r.AgentsConfigDir())
+	if err != nil {
+		if os.IsNotExist(err) {
+			return "", nil
+		}
+		return "", err
+	}
+
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		fname := entry.Name()
+		ext := filepath.Ext(fname)
+		if !strings.EqualFold(ext, ".yaml") && !strings.EqualFold(ext, ".yml") {
+			continue
+		}
+		stem := strings.TrimSuffix(fname, ext)
+		fullPath := filepath.Join(r.AgentsConfigDir(), fname)
+		if cfg, loadErr := LoadAgentConfig(fullPath); loadErr == nil && cfg.Name != "" {
+			if strings.EqualFold(cfg.Name, trimmed) {
+				return cfg.Name, fmt.Errorf("agent %q already exists (as %q); agent names must be unique (case-insensitive)", trimmed, cfg.Name)
+			}
+		}
+		if strings.EqualFold(stem, trimmed) {
+			return stem, fmt.Errorf("agent %q already exists (as %q); agent names must be unique (case-insensitive)", trimmed, stem)
+		}
+	}
+	return "", nil
+}
+
+// LoadAgentConfig loads agent identity config using the resolver's configured paths (case-insensitively).
 func (r *Resolver) LoadAgentConfig(agentName string) (*AgentIdentityConfig, error) {
 	if err := validateIdentifier(agentName); err != nil {
 		return nil, fmt.Errorf("%w: %s", ErrInvalidAgentName, err)
+	}
+	canonical := r.ResolveAgentName(agentName)
+	directPath := r.AgentConfigPath(canonical)
+	if _, err := os.Stat(directPath); err == nil {
+		return LoadAgentConfig(directPath)
+	}
+	// Fallback: scan AgentsConfigDir case-insensitively for the YAML file
+	if entries, err := os.ReadDir(r.AgentsConfigDir()); err == nil {
+		for _, entry := range entries {
+			if entry.IsDir() {
+				continue
+			}
+			fname := entry.Name()
+			ext := filepath.Ext(fname)
+			if !strings.EqualFold(ext, ".yaml") && !strings.EqualFold(ext, ".yml") {
+				continue
+			}
+			stem := strings.TrimSuffix(fname, ext)
+			fullPath := filepath.Join(r.AgentsConfigDir(), fname)
+			if strings.EqualFold(stem, agentName) {
+				return LoadAgentConfig(fullPath)
+			}
+			if cfg, loadErr := LoadAgentConfig(fullPath); loadErr == nil && strings.EqualFold(cfg.Name, agentName) {
+				return cfg, nil
+			}
+		}
 	}
 	return LoadAgentConfig(r.AgentConfigPath(agentName))
 }

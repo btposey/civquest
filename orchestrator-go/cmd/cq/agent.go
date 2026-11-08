@@ -111,10 +111,13 @@ func newAgentStatusCmd() *cobra.Command {
 				return newAgentListCmd().RunE(cmd, args)
 			}
 
-			agentName := args[0]
+			agentName := r.ResolveAgentName(args[0])
 			agentCfg, err := r.LoadAgentConfig(agentName)
 			if err != nil {
 				return fmt.Errorf("agent %q not found or invalid in %s: %w", agentName, r.AgentsConfigDir(), err)
+			}
+			if agentCfg.Name != "" {
+				agentName = agentCfg.Name
 			}
 
 			sockPath := r.AgentSocketPath(agentName)
@@ -215,6 +218,10 @@ clan membership, and skin textures, saving the profile to XDG configuration dire
 			}
 
 			r := getResolver()
+
+			if _, err := r.CheckAgentNameUnique(name); err != nil {
+				return err
+			}
 
 			// Prepare agent config
 			cfg := xdg.DefaultAgentIdentityConfig(name)
@@ -329,6 +336,9 @@ connects to the bridge server, and spawns the agent avatar into Minecraft.`,
 			if err != nil {
 				return fmt.Errorf("agent %q configuration not found in %s: %w", agentName, r.AgentsConfigDir(), err)
 			}
+			if cfg.Name != "" {
+				agentName = cfg.Name
+			}
 
 			// Check if already running
 			pidPath := r.AgentPIDPath(agentName)
@@ -356,10 +366,11 @@ connects to the bridge server, and spawns the agent avatar into Minecraft.`,
 				return execCmd.Run()
 			}
 
-			// Prepare agent state dir and logs
+			// Prepare agent state dir and well-known logs dir
 			if err := os.MkdirAll(r.AgentStateDir(agentName), 0755); err != nil {
 				return fmt.Errorf("failed creating agent state dir: %w", err)
 			}
+			_ = os.MkdirAll(r.LogsDir(), 0750)
 
 			logPath := r.AgentLogPath(agentName)
 			logFile, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0640)
@@ -460,8 +471,8 @@ func newAgentStopCmd() *cobra.Command {
 		Short: "Gracefully stop an active agent process and despawn avatar",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			agentName := args[0]
 			r := getResolver()
+			agentName := r.ResolveAgentName(args[0])
 
 			pidPath := r.AgentPIDPath(agentName)
 			pidData, err := os.ReadFile(pidPath)
@@ -597,10 +608,17 @@ func newAgentLogsCmd() *cobra.Command {
 		Short: "View or tail the log file of an autonomous agent",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			agentName := args[0]
 			r := getResolver()
+			agentName := r.ResolveAgentName(args[0])
 
 			logPath := r.AgentLogPath(agentName)
+			if _, statErr := os.Stat(logPath); os.IsNotExist(statErr) {
+				if _, centralErr := os.Stat(r.AgentHumanLogPath(agentName)); centralErr == nil {
+					logPath = r.AgentHumanLogPath(agentName)
+				} else if matches, _ := filepath.Glob(filepath.Join(r.StateDir(), "servers", "*", "agents", agentName, agentName+".log")); len(matches) > 0 {
+					logPath = matches[len(matches)-1]
+				}
+			}
 			file, err := os.Open(logPath)
 			if err != nil {
 				if os.IsNotExist(err) {
@@ -672,18 +690,25 @@ func newAgentLogsCmd() *cobra.Command {
 }
 
 func resolveAgentBinary(r *xdg.Resolver) (string, error) {
-	candidates := []string{
-		filepath.Join("bin", "civquest-agent"),
-		filepath.Join(r.BinDir(), "civquest-agent"),
+	var candidates []string
+
+	if envPath := os.Getenv("CIVQUEST_AGENT_BIN"); envPath != "" {
+		candidates = append(candidates, envPath)
 	}
 
 	if exe, err := os.Executable(); err == nil {
 		candidates = append(candidates, filepath.Join(filepath.Dir(exe), "civquest-agent"))
 	}
 
-	if envPath := os.Getenv("CIVQUEST_AGENT_BIN"); envPath != "" {
-		candidates = append([]string{envPath}, candidates...)
+	if r != nil {
+		candidates = append(candidates, filepath.Join(r.BinDir(), "civquest-agent"))
 	}
+
+	if path, err := exec.LookPath("civquest-agent"); err == nil {
+		candidates = append(candidates, path)
+	}
+
+	candidates = append(candidates, filepath.Join("bin", "civquest-agent"))
 
 	for _, c := range candidates {
 		if fi, err := os.Stat(c); err == nil && !fi.IsDir() && (fi.Mode()&0111 != 0) {
@@ -695,11 +720,7 @@ func resolveAgentBinary(r *xdg.Resolver) (string, error) {
 		}
 	}
 
-	if path, err := exec.LookPath("civquest-agent"); err == nil {
-		return path, nil
-	}
-
-	return "", fmt.Errorf("civquest-agent binary not found in standard paths; build it via 'go build -o bin/civquest-agent ./cmd/civquest-agent'")
+	return "", fmt.Errorf("civquest-agent binary not found in standard paths; build it via 'go build -o ~/.local/bin/civquest-agent ./cmd/civquest-agent'")
 }
 
 func createDefaultSkinPNG(targetPath string) error {

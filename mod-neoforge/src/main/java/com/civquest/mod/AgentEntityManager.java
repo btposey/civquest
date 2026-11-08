@@ -135,11 +135,12 @@ public class AgentEntityManager {
             displayName = agentId;
         }
 
-        // Check if agentId already exists: cleanly discard and despawn old entity before spawning
-        AgentEntity existing = agents.remove(agentId);
+        // Check if agentId already exists (case-insensitively): cleanly discard and despawn old entity before spawning
+        String existingKey = findCanonicalAgentKey(agentId);
+        AgentEntity existing = existingKey != null ? agents.remove(existingKey) : null;
         if (existing != null) {
-            LOGGER.warn("Duplicate agent spawn detected for agentId='{}'. Despawning old entity (uuid='{}')",
-                    agentId, existing.getUUID());
+            LOGGER.warn("Duplicate agent spawn detected for agentId='{}' (existing='{}'). Despawning old entity (uuid='{}')",
+                    agentId, existingKey, existing.getUUID());
             existing.releaseForcedChunk();
             existing.discard();
             if (server != null && server.getPlayerList() != null) {
@@ -311,7 +312,8 @@ public class AgentEntityManager {
         }
 
         Supplier<Boolean> despawnSupplier = () -> {
-            AgentEntity removed = agents.remove(agentId);
+            String canonicalKey = findCanonicalAgentKey(agentId);
+            AgentEntity removed = canonicalKey != null ? agents.remove(canonicalKey) : null;
             if (removed != null) {
                 removed.releaseForcedChunk();
                 removed.discard();
@@ -320,7 +322,7 @@ public class AgentEntityManager {
                             new ClientboundPlayerInfoRemovePacket(List.of(removed.getUUID()));
                     server.getPlayerList().broadcastAll(removePacket);
                 }
-                LOGGER.info("AgentEntity despawned and discarded: agentId='{}'", agentId);
+                LOGGER.info("AgentEntity despawned and discarded: agentId='{}'", canonicalKey);
                 return true;
             }
             return false;
@@ -333,11 +335,30 @@ public class AgentEntityManager {
         }
     }
 
-    public AgentEntity getAgent(String agentId) {
-        if (agentId == null) {
+    public String findCanonicalAgentKey(String agentId) {
+        if (agentId == null || agentId.isBlank()) {
             return null;
         }
-        return agents.get(agentId);
+        if (agents.containsKey(agentId)) {
+            return agentId;
+        }
+        for (Map.Entry<String, AgentEntity> entry : agents.entrySet()) {
+            if (entry.getKey().equalsIgnoreCase(agentId)) {
+                return entry.getKey();
+            }
+            AgentEntity ent = entry.getValue();
+            if (ent != null && ent.getGameProfile() != null
+                    && ent.getGameProfile().getName() != null
+                    && ent.getGameProfile().getName().equalsIgnoreCase(agentId)) {
+                return entry.getKey();
+            }
+        }
+        return null;
+    }
+
+    public AgentEntity getAgent(String agentId) {
+        String key = findCanonicalAgentKey(agentId);
+        return key != null ? agents.get(key) : null;
     }
 
     public Map<String, AgentEntity> getAllAgents() {
@@ -418,7 +439,7 @@ public class AgentEntityManager {
                     return;
                 }
 
-                AgentEntity agent = agents.get(agentId);
+                AgentEntity agent = getAgent(agentId);
                 if (agent == null || agent.isRemoved() || !agent.isAlive()) {
                     LOGGER.warn("Received intent {} for unknown or inactive agent '{}'",
                             intent.getActionCase(), agentId);

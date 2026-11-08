@@ -84,7 +84,7 @@ var (
 	// Command matching regexes strictly anchored or matching explicit multi-word phrases to avoid dialogue false-positives
 	reReturnHome = regexp.MustCompile(`(?i)(^\s*(return\s+home|go\s+home|head\s+home|dismiss|leave\s+me)[\.!\?]?$|\b(return\s+home|go\s+home|head\s+home)\b)`)
 	reWait       = regexp.MustCompile(`(?i)(^\s*(wait\s+here|stay\s+here|hold\s+position|wait|stay)[\.!\?]?$|\b(wait\s+here|stay\s+here|hold\s+position)\b)`)
-	reFollow     = regexp.MustCompile(`(?i)(^\s*(follow\s+me|come\s+with\s+me|with\s+me|let's\s+go|lets\s+go)[\.!\?]?$|\b(follow\s+me|come\s+with\s+me)\b)`)
+	reFollow     = regexp.MustCompile(`(?i)^\s*(please\s+)?(follow\s+me|come\s+with\s+me|with\s+me|let's\s+go|lets\s+go)\b`)
 )
 
 // ParseCompanionCommand detects natural voice/chat commands from player messages.

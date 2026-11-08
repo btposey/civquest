@@ -47,6 +47,15 @@ type AgentState struct {
 	lastEatingTick       int64
 	lastSleepAttemptTick int64
 	PavingTracker        *RoadPavingTracker
+
+	// Autonomous exploration & topological mapping state
+	homeOrigin          *civquestv1.Vec3
+	lastExploreTick     int64
+	exploreStepIndex    int
+	lastHeadingRad      float64
+	lastMapNodeID       string
+	lastMapPos          *civquestv1.Vec3
+	telemetryFramesSeen int64
 }
 
 // NewAgentState creates an initialized AgentState.

@@ -303,6 +303,16 @@ public class AgentNavigator {
         // Movement velocity
         double dirX = dx / Math.max(horizontalDist, 0.001);
         double dirZ = dz / Math.max(horizontalDist, 0.001);
+        if (this.agent != null && this.agent.horizontalCollision && this.stuckTicks >= 8) {
+            // Lateral hill-contouring deflection when blocked by a 2+ block cliff face
+            double angleOffset = ((this.stuckTicks / 16) % 2 == 0) ? (Math.PI * 0.42) : -(Math.PI * 0.42);
+            double cos = Math.cos(angleOffset);
+            double sin = Math.sin(angleOffset);
+            double rotX = dirX * cos - dirZ * sin;
+            double rotZ = dirX * sin + dirZ * cos;
+            dirX = rotX;
+            dirZ = rotZ;
+        }
         double baseSpeed = this.sprint ? 0.28 : 0.21;
         double moveSpeed = baseSpeed * this.speedMultiplier;
 

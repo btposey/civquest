@@ -18,6 +18,7 @@ import (
 
 	"github.com/btposey/civquest/orchestrator-go/internal/bridge"
 	"github.com/btposey/civquest/orchestrator-go/internal/db"
+	"github.com/btposey/civquest/orchestrator-go/internal/memory"
 	civquestv1 "github.com/btposey/civquest/orchestrator-go/internal/proto/v1"
 	"github.com/btposey/civquest/orchestrator-go/internal/system1"
 	"github.com/btposey/civquest/orchestrator-go/internal/system2"
@@ -50,6 +51,7 @@ type Config struct {
 	Resolver          *xdg.Resolver
 	AgentDB           *db.AgentDB
 	ReputationDB      *db.ReputationDB
+	MemoryPipeline    *memory.Pipeline
 	BridgeClient      *bridge.Client
 	StreamConnector   StreamConnector
 	SocketPath        string
@@ -124,9 +126,15 @@ type AgentRuntime struct {
 	lastFleeTick       int64
 
 	// System 1 Reflexes and Safe Node Graph Cache
-	safeNodesCache []db.MapNode
-	system1State   *system1.AgentState
-	pavingTracker  *system1.RoadPavingTracker
+	safeNodesCache        []db.MapNode
+	tradeValuations       map[string]db.TradeValuation
+	system1State          *system1.AgentState
+	pavingTracker         *system1.RoadPavingTracker
+	memoryPipeline        *memory.Pipeline
+	lastCombatMemoryTick  int64
+	lastCombatSummary     string
+	lastMapPersistTick    int64
+	lastTradeReassessTick int64
 
 	// System 2 Deliberative Dialogue Pipeline
 	dialogueService      *system2.DialogueService
@@ -211,6 +219,11 @@ func NewRuntime(cfg Config) (*AgentRuntime, error) {
 		companionService = system2.NewCompanionService(cfg.AgentDB, cfg.ReputationDB, cfg.IdentityConfig)
 	}
 
+	memPipe := cfg.MemoryPipeline
+	if memPipe == nil && cfg.AgentDB != nil {
+		memPipe = memory.NewPipeline(cfg.AgentDB, memory.NewResilientEmbedder(nil))
+	}
+
 	var debugLog *DebugLogger
 	if r != nil {
 		debugLog = NewDebugLogger(
@@ -229,6 +242,7 @@ func NewRuntime(cfg Config) (*AgentRuntime, error) {
 		resolver:          r,
 		agentDB:           cfg.AgentDB,
 		reputationDB:      cfg.ReputationDB,
+		memoryPipeline:    memPipe,
 		bridgeClient:      cfg.BridgeClient,
 		connector:         connector,
 		dialogueService:   cfg.DialogueService,
@@ -264,6 +278,7 @@ func NewRuntime(cfg Config) (*AgentRuntime, error) {
 	}
 
 	runtime.loadSafeNodes()
+	runtime.loadTradeValuations()
 
 	return runtime, nil
 }
@@ -1042,17 +1057,17 @@ func (r *AgentRuntime) dispatchDialogue(frame *civquestv1.TelemetryFrame) {
 	pendingTrade := frame.PendingTrade
 	worldTick := frame.WorldTick
 
-	var vitals *system2.DialogueVitals
-	if frame.Status != nil {
-		vitals = &system2.DialogueVitals{
-			Health:    frame.Status.Health,
-			FoodLevel: frame.Status.FoodLevel,
-		}
-	}
+	vitals := r.buildDialogueVitals(frame)
 
 	// 1. Dispatch incoming chats asynchronously
 	for _, chat := range chats {
 		if chat == nil || chat.SenderUuid == r.agentID || (r.identityConfig != nil && chat.SenderName == r.identityConfig.Name) {
+			continue
+		}
+
+		// Handle deterministic in-game gift/trade notifications without invoking an LLM round-trip
+		if strings.HasPrefix(chat.Message, "[DETERMINISTIC_GIFT]") || strings.HasPrefix(chat.Message, "[DETERMINISTIC_TRADE]") {
+			r.recordDeterministicTradeEvent(ctx, chat, frame, worldTick)
 			continue
 		}
 
@@ -1181,22 +1196,35 @@ func (r *AgentRuntime) dispatchDialogue(frame *civquestv1.TelemetryFrame) {
 				)
 				sample := system1.ScoreChecks(0, checks, chatLatency, 0.75, nil)
 				r.debugLogger.Emit(worldTick, "DIALOGUE_EVAL", fmt.Sprintf("Reply to %s (score=%.2f, passed=%v)", c.SenderName, sample.Score, sample.Passed), map[string]any{
-					"player_name":     c.SenderName,
-					"player_message":  c.Message,
-					"spoken_reply":    res.Response.SpokenReply,
-					"paced_segments":  res.PacedSegments,
-					"trade_decision":  res.Response.TradeDecision,
-					"delegated_task":  res.Response.DelegatedTask,
-					"prestige_delta":  res.Response.PrestigeDelta,
-					"memory_summary":  res.Response.MemorySummary,
-					"disobeyed":       res.Disobeyed,
-					"disobey_reason":  res.DisobeyReason,
-					"latency_ms":      chatLatency.Milliseconds(),
-					"eval_score":      sample.Score,
-					"eval_passed":     sample.Passed,
-					"eval_checks":     sample.Checks,
+					"player_name":    c.SenderName,
+					"player_message": c.Message,
+					"spoken_reply":   res.Response.SpokenReply,
+					"paced_segments": res.PacedSegments,
+					"trade_decision": res.Response.TradeDecision,
+					"delegated_task": res.Response.DelegatedTask,
+					"prestige_delta": res.Response.PrestigeDelta,
+					"memory_summary": res.Response.MemorySummary,
+					"disobeyed":      res.Disobeyed,
+					"disobey_reason": res.DisobeyReason,
+					"latency_ms":     chatLatency.Milliseconds(),
+					"eval_score":     sample.Score,
+					"eval_passed":    sample.Passed,
+					"eval_checks":    sample.Checks,
 				})
 			}
+
+			// Activate companion follow mode when LLM agrees to ESCORT_PLAYER
+			if res != nil && !res.Disobeyed && res.Response.DelegatedTask != nil &&
+				strings.EqualFold(res.Response.DelegatedTask.TaskType, "ESCORT_PLAYER") && compSvc != nil {
+				compSvc.SetBondedPlayer(c.SenderUuid, c.SenderName)
+				compSvc.SetState(system2.CompanionStateFollow)
+				compSvc.SetWaitPosition(nil)
+				if r.system1State != nil {
+					r.system1State.SetCompanionActive(true)
+				}
+				log.Printf("[civquest-agent] %s accepted ESCORT_PLAYER task; now following %s", r.agentID, c.SenderName)
+			}
+
 			if res != nil && res.ChatIntent != nil {
 				log.Printf("[civquest-agent] %s responding to %s: %q", r.agentID, c.SenderName, res.ChatIntent.Message)
 				segments := res.PacedSegments
@@ -1243,7 +1271,7 @@ func (r *AgentRuntime) dispatchDialogue(frame *civquestv1.TelemetryFrame) {
 		}()
 	}
 
-	// 2. Dispatch pending trade asynchronously (prevent duplicate concurrent negotiations and debounce identical proposals)
+	// 2. Dispatch pending trade (System 1 Quid-Pro-Quo evaluator for deterministic offers, or System 2 with System 1 fallback)
 	if pendingTrade != nil {
 		r.mu.Lock()
 		debounced := pendingTrade.PlayerUuid == r.lastTradePlayerUUID &&
@@ -1254,6 +1282,14 @@ func (r *AgentRuntime) dispatchDialogue(frame *civquestv1.TelemetryFrame) {
 			r.lastTradeAttemptAt = time.Now()
 		}
 		r.mu.Unlock()
+
+		isDeterministicOffer := strings.HasPrefix(pendingTrade.SpokenProposal, "[SYSTEM1_TRADE]") ||
+			strings.HasPrefix(pendingTrade.SpokenProposal, "[GIFT]")
+
+		if !debounced && (isDeterministicOffer || svc == nil) {
+			r.executeSystem1Trade(ctx, pendingTrade, frame, vitals, worldTick)
+			return
+		}
 
 		if !debounced && r.tradeActive.CompareAndSwap(false, true) {
 			r.mu.RLock()
@@ -1287,7 +1323,8 @@ func (r *AgentRuntime) dispatchDialogue(frame *civquestv1.TelemetryFrame) {
 				}
 				res, err := svc.ProcessTrade(ctx, req)
 				if err != nil {
-					log.Printf("[WARN] agent %s: dialogue ProcessTrade failed: %v", r.agentID, err)
+					log.Printf("[WARN] agent %s: dialogue ProcessTrade failed (%v); falling back to System 1 trade evaluator", r.agentID, err)
+					r.executeSystem1Trade(ctx, trade, frame, vitals, worldTick)
 					return
 				}
 				if res != nil && res.TradeIntent != nil {
@@ -1640,6 +1677,217 @@ func (r *AgentRuntime) loadSafeNodes() {
 	}
 }
 
+// loadTradeValuations loads persisted System 1 quid-pro-quo trade valuations from memory.db,
+// merging any stored LLM-reassessed overrides onto the baseline profession-weighted valuations.
+func (r *AgentRuntime) loadTradeValuations() {
+	prof := "EXPLORER"
+	if r.identityConfig != nil && r.identityConfig.Profession != "" {
+		prof = r.identityConfig.Profession
+	}
+	defaults := system1.DefaultTradeValuations(prof)
+	if r.agentDB != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+		defer cancel()
+		if stored, err := r.agentDB.GetTradeValuations(ctx); err == nil && len(stored) > 0 {
+			for k, v := range stored {
+				defaults[k] = v
+			}
+		}
+	}
+	r.mu.Lock()
+	r.tradeValuations = defaults
+	r.mu.Unlock()
+}
+
+// buildDialogueVitals constructs comprehensive sensory, temporal, and threat context for System 2 prompts.
+func (r *AgentRuntime) buildDialogueVitals(frame *civquestv1.TelemetryFrame) *system2.DialogueVitals {
+	if frame == nil || frame.Status == nil {
+		return nil
+	}
+	bravery := 0.5
+	if r.identityConfig != nil {
+		bravery = r.identityConfig.Traits.Bravery
+	}
+	threatStatus, conf, _ := system1.AssessImmediateThreats(frame, bravery)
+	var posStr string
+	if p := frame.Status.Position; p != nil {
+		posStr = fmt.Sprintf("(%.0f, %.0f, %.0f)", p.X, p.Y, p.Z)
+	}
+	var routineStr string
+	if r.system1State != nil {
+		routineStr = string(r.system1State.GetCurrentRoutine())
+	}
+	r.mu.RLock()
+	recentCombat := r.lastCombatSummary
+	r.mu.RUnlock()
+
+	return &system2.DialogueVitals{
+		Health:           frame.Status.Health,
+		FoodLevel:        frame.Status.FoodLevel,
+		TimeOfDay:        frame.TimeOfDay,
+		DayPhase:         system1.FormatDayPhase(frame.TimeOfDay),
+		Weather:          system1.FormatWeather(frame.Weather),
+		BiomeID:          frame.BiomeId,
+		Position:         posStr,
+		CurrentRoutine:   routineStr,
+		ThreatStatus:     threatStatus,
+		CombatConfidence: conf,
+		RecentCombat:     recentCombat,
+		InventorySummary: formatInventorySummary(frame.Status.Inventory),
+	}
+}
+
+func formatInventorySummary(inv []*civquestv1.ItemStackProto) string {
+	if len(inv) == 0 {
+		return "Empty (unarmed, no food)"
+	}
+	var parts []string
+	for _, it := range inv {
+		if it == nil || it.Count <= 0 || it.ItemId == "" {
+			continue
+		}
+		short := strings.TrimPrefix(strings.ToLower(it.ItemId), "minecraft:")
+		parts = append(parts, fmt.Sprintf("%dx %s", it.Count, short))
+		if len(parts) >= 8 {
+			break
+		}
+	}
+	if len(parts) == 0 {
+		return "Empty (unarmed, no food)"
+	}
+	return strings.Join(parts, ", ")
+}
+
+// recordDeterministicTradeEvent records a completed deterministic gift or GUI barter in memory.db and relationships
+// without invoking an LLM round-trip.
+func (r *AgentRuntime) recordDeterministicTradeEvent(
+	ctx context.Context,
+	chat *civquestv1.ChatEvent,
+	frame *civquestv1.TelemetryFrame,
+	worldTick int64,
+) {
+	summary := strings.TrimSpace(chat.Message)
+	summary = strings.TrimPrefix(summary, "[DETERMINISTIC_GIFT]")
+	summary = strings.TrimPrefix(summary, "[DETERMINISTIC_TRADE]")
+	summary = strings.TrimSpace(summary)
+
+	r.mu.RLock()
+	compSvc := r.companionService
+	memPipe := r.memoryPipeline
+	r.mu.RUnlock()
+
+	if compSvc != nil && chat.SenderUuid != "" {
+		_, _ = compSvc.RecordDialogueInteraction(ctx, chat.SenderUuid, chat.SenderName, 4.0, worldTick)
+	}
+	if memPipe != nil && summary != "" {
+		memCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+		defer cancel()
+		_, _ = memPipe.Ingest(memCtx, memory.MemoryEvent{
+			WorldTick:     worldTick,
+			Category:      memory.CategoryTrade,
+			SummaryText:   summary,
+			Actors:        []string{r.agentID, chat.SenderName},
+			SaliencyScore: memory.SaliencyTrade,
+		})
+	}
+}
+
+// executeSystem1Trade evaluates a PendingTrade synchronously in <1ms using persisted quid-pro-quo thresholds,
+// queues the RespondToTradeIntent, records episodic memory and relationship progression, and schedules periodic
+// System 2 valuation table reassessment.
+func (r *AgentRuntime) executeSystem1Trade(
+	ctx context.Context,
+	trade *civquestv1.TradeRequest,
+	frame *civquestv1.TelemetryFrame,
+	vitals *system2.DialogueVitals,
+	worldTick int64,
+) {
+	prof := "EXPLORER"
+	if r.identityConfig != nil && r.identityConfig.Profession != "" {
+		prof = r.identityConfig.Profession
+	}
+
+	r.mu.RLock()
+	compSvc := r.companionService
+	memPipe := r.memoryPipeline
+	svc := r.dialogueService
+	agentDB := r.agentDB
+	valCopy := make(map[string]db.TradeValuation, len(r.tradeValuations))
+	for k, v := range r.tradeValuations {
+		valCopy[k] = v
+	}
+	r.mu.RUnlock()
+
+	var disp float64
+	if compSvc != nil && trade.PlayerUuid != "" {
+		if rel, err := compSvc.GetRelationship(ctx, trade.PlayerUuid); err == nil && rel != nil {
+			disp = rel.DispositionScore
+		}
+	}
+
+	decision := system1.EvaluateTradeQuidProQuo(trade, frame, prof, disp, valCopy)
+	if decision.TradeIntent != nil && !r.IsDead() && ctx.Err() == nil {
+		_ = r.QueueIntent(&civquestv1.AgentIntent{
+			AgentId: r.agentID,
+			Action: &civquestv1.AgentIntent_TradeResponse{
+				TradeResponse: decision.TradeIntent,
+			},
+		})
+	}
+
+	if r.debugLogger != nil {
+		r.debugLogger.Emit(worldTick, "SYSTEM1_TRADE_EVAL", decision.SpokenReply, map[string]any{
+			"player_name":     trade.PlayerName,
+			"decision":        decision.Decision,
+			"offered_value":   decision.OfferedValue,
+			"requested_value": decision.RequestedValue,
+			"required_ratio":  decision.RequiredRatio,
+			"prestige_delta":  decision.PrestigeDelta,
+		})
+	}
+
+	if compSvc != nil && trade.PlayerUuid != "" && decision.PrestigeDelta != 0 {
+		_, _ = compSvc.RecordDialogueInteraction(ctx, trade.PlayerUuid, trade.PlayerName, decision.PrestigeDelta, worldTick)
+	}
+
+	if memPipe != nil && decision.MemorySummary != "" {
+		go func() {
+			memCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+			defer cancel()
+			_, _ = memPipe.Ingest(memCtx, memory.MemoryEvent{
+				WorldTick:     worldTick,
+				Category:      memory.CategoryTrade,
+				SummaryText:   decision.MemorySummary,
+				Actors:        []string{r.agentID, trade.PlayerName},
+				SaliencyScore: memory.SaliencyTrade,
+			})
+		}()
+	}
+
+	// Periodically trigger asynchronous System 2 reassessment of the trade valuation table
+	r.mu.Lock()
+	shouldReassess := svc != nil && agentDB != nil && (r.lastTradeReassessTick == 0 || worldTick-r.lastTradeReassessTick >= 1200)
+	if shouldReassess {
+		r.lastTradeReassessTick = worldTick
+	}
+	r.mu.Unlock()
+
+	if shouldReassess {
+		go func() {
+			reCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+			defer cancel()
+			updated, err := svc.ReassessTradeValuations(reCtx, agentDB, vitals, worldTick)
+			if err == nil && len(updated) > 0 {
+				r.mu.Lock()
+				for _, u := range updated {
+					r.tradeValuations[u.ItemID] = u
+				}
+				r.mu.Unlock()
+			}
+		}()
+	}
+}
+
 // SetSafeNodes sets cached safe nodes for flee calculations using a defensive copy.
 func (r *AgentRuntime) SetSafeNodes(nodes []db.MapNode) {
 	r.mu.Lock()
@@ -1876,7 +2124,89 @@ func (r *AgentRuntime) evaluateSystem1Reflexes(frame *civquestv1.TelemetryFrame)
 					}
 				}
 			}
+
+			// Record combat/aggro encounter in recent summary and episodic memory (cooldown: 200 ticks / 10s)
+			if hostilesPresent || damageTaken {
+				_, _, hostileList := system1.AssessImmediateThreats(frame, bravery)
+				dayPhase := system1.FormatDayPhase(frame.TimeOfDay)
+				actionDesc := "engaged in combat with"
+				if combatResult.IsPanic {
+					actionDesc = "fled from"
+				}
+				targetDesc := "hostile mob"
+				if len(hostileList) > 0 {
+					targetDesc = strings.Join(hostileList, ", ")
+				} else if frame.LastDamageTaken != nil && frame.LastDamageTaken.GetAttackerName() != "" {
+					targetDesc = frame.LastDamageTaken.GetAttackerName()
+				} else if frame.LastDamageTaken != nil {
+					targetDesc = frame.LastDamageTaken.GetSourceType().String()
+				}
+				summary := fmt.Sprintf("At tick %d during %s, %s %s (HP: %.1f/%.1f).",
+					frame.WorldTick, dayPhase, actionDesc, targetDesc, frame.Status.Health, maxHP)
+
+				r.mu.Lock()
+				r.lastCombatSummary = summary
+				shouldIngestCombat := r.memoryPipeline != nil && (r.lastCombatMemoryTick == 0 || frame.WorldTick < r.lastCombatMemoryTick || frame.WorldTick-r.lastCombatMemoryTick >= 200)
+				if shouldIngestCombat {
+					r.lastCombatMemoryTick = frame.WorldTick
+				}
+				memPipe := r.memoryPipeline
+				r.mu.Unlock()
+
+				if shouldIngestCombat && memPipe != nil {
+					var locCoords string
+					if frame.Status.Position != nil {
+						locCoords = fmt.Sprintf("(%.0f, %.0f, %.0f)", frame.Status.Position.X, frame.Status.Position.Y, frame.Status.Position.Z)
+					}
+					go func(tick int64, text string, coords string) {
+						cCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+						defer cancel()
+						_, _ = memPipe.Ingest(cCtx, memory.MemoryEvent{
+							WorldTick:      tick,
+							Category:       memory.CategoryCombat,
+							SummaryText:    text,
+							Actors:         []string{r.agentID},
+							LocationCoords: coords,
+							SaliencyScore:  memory.SaliencyCombat,
+						})
+					}(frame.WorldTick, summary, locCoords)
+				}
+			}
 		}
+	}
+
+	// 1b. Evaluate Topological Mapping (records 8x8 sector nodes and edges into map_graph.db)
+	if node, edge := system1.EvaluateTopologicalMapping(frame, r.system1State); node != nil && r.agentDB != nil {
+		if node.SafetyScore >= 0.7 {
+			r.mu.Lock()
+			updatedSafe := false
+			for i := range r.safeNodesCache {
+				if r.safeNodesCache[i].ID == node.ID {
+					r.safeNodesCache[i] = *node
+					updatedSafe = true
+					break
+				}
+			}
+			if !updatedSafe {
+				r.safeNodesCache = append(r.safeNodesCache, *node)
+			}
+			r.mu.Unlock()
+		}
+		nCopy := *node
+		var eCopy *db.MapEdge
+		if edge != nil {
+			ec := *edge
+			eCopy = &ec
+		}
+		agentDB := r.agentDB
+		go func() {
+			mCtx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
+			defer cancel()
+			_ = agentDB.AddMapNode(mCtx, nCopy)
+			if eCopy != nil {
+				_ = agentDB.AddMapEdge(mCtx, *eCopy)
+			}
+		}()
 	}
 
 	// 2. Evaluate Daily Utility Schedule
@@ -1930,6 +2260,14 @@ func (r *AgentRuntime) evaluateSystem1Reflexes(frame *civquestv1.TelemetryFrame)
 	if frame.Status != nil && !frame.Status.IsSleeping && r.pavingTracker != nil {
 		if paveIntent := r.pavingTracker.EvaluatePaving(r.agentID, frame); paveIntent != nil {
 			_ = r.QueueIntent(paveIntent)
+		}
+	}
+
+	// 5. Evaluate Autonomous Exploration & Terrain Unsticking when not in combat/needs emergency or active player interaction
+	if !hostilesPresent && !damageTaken && !lowHealth && !lowFood && !combatResult.ShouldAct &&
+		len(needsIntents) == 0 && len(frame.IncomingChats) == 0 && frame.PendingTrade == nil {
+		if exploreIntent := system1.EvaluateExploration(r.agentID, frame, r.identityConfig, r.system1State); exploreIntent != nil {
+			_ = r.QueueIntent(exploreIntent)
 		}
 	}
 }

@@ -8,6 +8,7 @@ import com.civquest.mod.grpc.v1.CreateWrittenBookIntent;
 import com.civquest.mod.grpc.v1.InteractBlockIntent;
 import com.civquest.mod.grpc.v1.NavigateIntent;
 import com.civquest.mod.grpc.v1.PlaceSignpostIntent;
+import com.civquest.mod.grpc.v1.RespondTradeIntent;
 import com.civquest.mod.grpc.v1.SendChatIntent;
 import com.civquest.mod.grpc.v1.UseItemIntent;
 import com.mojang.logging.LogUtils;
@@ -75,8 +76,63 @@ public class IntentActuator {
             case CREATE_BOOK -> actuateCreateWrittenBook(agent, intent.getCreateBook());
             case PLACE_SIGNPOST -> actuatePlaceSignpost(agent, intent.getPlaceSignpost());
             case CHAT -> actuateSendChat(agent, intent.getChat());
+            case TRADE_RESPONSE -> actuateRespondTrade(agent, intent.getTradeResponse());
             default -> LOGGER.debug("Unhandled or unsupported intent action: {}", intent.getActionCase());
         }
+    }
+
+    public boolean actuateRespondTrade(AgentEntity agent, RespondTradeIntent intent) {
+        if (agent == null || intent == null) {
+            return false;
+        }
+        if (!intent.getSpokenResponse().isBlank()) {
+            actuateSendChat(agent, SendChatIntent.newBuilder()
+                    .setMessage(intent.getSpokenResponse())
+                    .setTargetChannel(ChatChannel.CHAT_CHANNEL_LOCAL)
+                    .build());
+        }
+        if (!intent.getAcceptDeal() || agent.level() == null) {
+            return false;
+        }
+        Entity entity = agent.level().getEntity(intent.getPlayerEntityId());
+        if (!(entity instanceof ServerPlayer player)) {
+            return true;
+        }
+
+        // Transfer player's held item (if offered) to agent and agent's counter-offer items to player
+        ItemStack playerHeld = player.getMainHandItem();
+        if (!playerHeld.isEmpty()) {
+            int transferCount = playerHeld.getMaxStackSize() == 1 ? 1 : Math.min(16, playerHeld.getCount());
+            ItemStack gift = playerHeld.copyWithCount(transferCount);
+            if (agent.getInventory().add(gift)) {
+                playerHeld.shrink(transferCount - gift.getCount());
+                agent.autoEquipBestGear();
+            }
+        }
+
+        for (com.civquest.mod.grpc.v1.ItemStackProto counter : intent.getAgentCounterOfferList()) {
+            if (counter.getCount() <= 0 || counter.getItemId().isBlank()) {
+                continue;
+            }
+            ResourceLocation id = ResourceLocation.tryParse(counter.getItemId());
+            if (id != null && BuiltInRegistries.ITEM.containsKey(id)) {
+                Item item = BuiltInRegistries.ITEM.get(id);
+                int remaining = counter.getCount();
+                for (int i = 0; i < agent.getInventory().items.size() && remaining > 0; i++) {
+                    ItemStack slotStack = agent.getInventory().items.get(i);
+                    if (slotStack.is(item)) {
+                        int take = Math.min(remaining, slotStack.getCount());
+                        ItemStack toGive = slotStack.copyWithCount(take);
+                        slotStack.shrink(take);
+                        remaining -= take;
+                        if (!player.getInventory().add(toGive)) {
+                            player.drop(toGive, false);
+                        }
+                    }
+                }
+            }
+        }
+        return true;
     }
 
     public boolean actuateSendChat(AgentEntity agent, SendChatIntent intent) {

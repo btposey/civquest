@@ -24,6 +24,7 @@ import net.neoforged.neoforge.event.RegisterGameTestsEvent;
 import net.neoforged.neoforge.event.ServerChatEvent;
 import net.neoforged.neoforge.event.entity.living.LivingDamageEvent;
 import net.neoforged.neoforge.event.entity.player.PlayerEvent;
+import net.neoforged.neoforge.event.entity.player.PlayerInteractEvent;
 import net.neoforged.neoforge.event.server.ServerStartedEvent;
 import net.neoforged.neoforge.event.server.ServerStartingEvent;
 import net.neoforged.neoforge.event.server.ServerStoppingEvent;
@@ -55,6 +56,7 @@ public class CivQuestMod {
         NeoForge.EVENT_BUS.addListener(this::onServerTick);
         NeoForge.EVENT_BUS.addListener(this::onLivingDamage);
         NeoForge.EVENT_BUS.addListener(this::onServerChat);
+        NeoForge.EVENT_BUS.addListener(this::onEntityInteract);
         NeoForge.EVENT_BUS.addListener(this::onCommand);
         NeoForge.EVENT_BUS.addListener(this::onRegisterCommands);
 
@@ -195,14 +197,160 @@ public class CivQuestMod {
         }
     }
 
+    private void onEntityInteract(PlayerInteractEvent.EntityInteract event) {
+        if (event == null || event.getLevel().isClientSide() || event.getHand() != net.minecraft.world.InteractionHand.MAIN_HAND) {
+            return;
+        }
+        if (!(event.getEntity() instanceof ServerPlayer player) || !(event.getTarget() instanceof AgentEntity agent)) {
+            return;
+        }
+        event.setCanceled(true);
+        event.setCancellationResult(net.minecraft.world.InteractionResult.SUCCESS);
+
+        net.minecraft.world.item.ItemStack held = player.getMainHandItem();
+        if (player.isShiftKeyDown() && !held.isEmpty()) {
+            // Shift + Right-Click with an item: deterministic instant gift & auto-equip
+            executeGift(player, agent);
+            return;
+        }
+
+        // Standard Right-Click: open deterministic Merchant Trade & Supply GUI
+        AgentMerchant merchant = new AgentMerchant(agent, player);
+        merchant.openScreen(player);
+    }
+
     private void onRegisterCommands(RegisterCommandsEvent event) {
         CommandDispatcher<CommandSourceStack> dispatcher = event.getDispatcher();
 
-        // Single canonical command: /cq tell <agent> <message>
+        // Canonical commands: /cq tell <agent> <message>, /cq gift <agent>, /cq trade <agent> [proposal]
         dispatcher.register(
                 Commands.literal("cq")
                         .then(buildTellSubcommand())
+                        .then(buildGiftSubcommand())
+                        .then(buildTradeSubcommand())
         );
+    }
+
+    private LiteralArgumentBuilder<CommandSourceStack> buildGiftSubcommand() {
+        return Commands.literal("gift")
+                .then(Commands.argument("agent", StringArgumentType.string())
+                        .suggests(this::suggestAgents)
+                        .executes(ctx -> executeGiftCommand(
+                                ctx.getSource(),
+                                StringArgumentType.getString(ctx, "agent")
+                        )));
+    }
+
+    private LiteralArgumentBuilder<CommandSourceStack> buildTradeSubcommand() {
+        return Commands.literal("trade")
+                .then(Commands.argument("agent", StringArgumentType.string())
+                        .suggests(this::suggestAgents)
+                        .executes(ctx -> executeTradeCommand(
+                                ctx.getSource(),
+                                StringArgumentType.getString(ctx, "agent"),
+                                ""
+                        ))
+                        .then(Commands.argument("proposal", StringArgumentType.greedyString())
+                                .executes(ctx -> executeTradeCommand(
+                                        ctx.getSource(),
+                                        StringArgumentType.getString(ctx, "agent"),
+                                        StringArgumentType.getString(ctx, "proposal")
+                                ))));
+    }
+
+    private AgentEntity findAgentByNameCaseInsensitive(String targetName) {
+        AgentEntityManager manager = getAgentEntityManager();
+        if (manager == null || targetName == null) {
+            return null;
+        }
+        for (AgentEntity agent : manager.getAllAgents().values()) {
+            if (agent != null && ((agent.getGameProfile() != null && agent.getGameProfile().getName().equalsIgnoreCase(targetName))
+                    || agent.getAgentId().equalsIgnoreCase(targetName))) {
+                return agent;
+            }
+        }
+        return null;
+    }
+
+    private int executeGiftCommand(CommandSourceStack source, String targetName) {
+        ServerPlayer player = source.getPlayer();
+        if (player == null) {
+            source.sendFailure(Component.literal("§cOnly in-game players can gift held items."));
+            return 0;
+        }
+        AgentEntity agent = findAgentByNameCaseInsensitive(targetName);
+        if (agent == null) {
+            source.sendFailure(Component.literal("§cNo agent found matching '" + targetName + "'"));
+            return 0;
+        }
+        return executeGift(player, agent);
+    }
+
+    private int executeGift(ServerPlayer player, AgentEntity agent) {
+        net.minecraft.world.item.ItemStack held = player.getMainHandItem();
+        if (held.isEmpty()) {
+            player.sendSystemMessage(Component.literal("§eHold an item in your main hand to gift it to " + agent.getGameProfile().getName() + "."));
+            return 0;
+        }
+        int giftCount = held.getMaxStackSize() == 1 ? 1 : Math.min(16, held.getCount());
+        net.minecraft.world.item.ItemStack giftStack = held.copyWithCount(giftCount);
+        String itemName = giftStack.getHoverName().getString();
+        if (!agent.getInventory().add(giftStack)) {
+            player.sendSystemMessage(Component.literal("§c" + agent.getGameProfile().getName() + "'s inventory is full."));
+            return 0;
+        }
+        int transferred = giftCount - giftStack.getCount();
+        held.shrink(transferred);
+        agent.autoEquipBestGear();
+
+        String agentName = agent.getGameProfile().getName();
+        player.sendSystemMessage(Component.literal("§aYou gifted " + transferred + "x " + itemName + " to " + agentName + "."));
+        player.sendSystemMessage(Component.literal("<" + agentName + "> Thank you kindly for the " + transferred + "x " + itemName + ", " + player.getName().getString() + "!"));
+
+        agent.queueIncomingChat(com.civquest.mod.grpc.v1.ChatEvent.newBuilder()
+                .setSenderUuid(player.getUUID().toString())
+                .setSenderName(player.getName().getString())
+                .setMessage("[DETERMINISTIC_GIFT] Gifted " + transferred + "x " + itemName + " to " + agentName + ".")
+                .setDistance((float) Math.sqrt(agent.distanceToSqr(player)))
+                .build());
+        return 1;
+    }
+
+    private int executeTradeCommand(CommandSourceStack source, String targetName, String proposal) {
+        ServerPlayer player = source.getPlayer();
+        if (player == null) {
+            source.sendFailure(Component.literal("§cOnly in-game players can trade with agents."));
+            return 0;
+        }
+        AgentEntity agent = findAgentByNameCaseInsensitive(targetName);
+        if (agent == null) {
+            source.sendFailure(Component.literal("§cNo agent found matching '" + targetName + "'"));
+            return 0;
+        }
+        net.minecraft.world.item.ItemStack held = player.getMainHandItem();
+        if (held.isEmpty() && (proposal == null || proposal.isBlank())) {
+            AgentMerchant merchant = new AgentMerchant(agent, player);
+            merchant.openScreen(player);
+            return 1;
+        }
+
+        com.civquest.mod.grpc.v1.TradeRequest.Builder reqBuilder = com.civquest.mod.grpc.v1.TradeRequest.newBuilder()
+                .setPlayerEntityId(player.getId())
+                .setPlayerUuid(player.getUUID().toString())
+                .setPlayerName(player.getName().getString())
+                .setSpokenProposal("[SYSTEM1_TRADE] " + (proposal != null ? proposal : ""));
+
+        if (!held.isEmpty()) {
+            int offerCount = held.getMaxStackSize() == 1 ? 1 : Math.min(16, held.getCount());
+            String itemId = net.minecraft.core.registries.BuiltInRegistries.ITEM.getKey(held.getItem()).toString();
+            reqBuilder.addPlayerOfferedItems(com.civquest.mod.grpc.v1.ItemStackProto.newBuilder()
+                    .setSlot(player.getInventory().selected)
+                    .setItemId(itemId)
+                    .setCount(offerCount)
+                    .build());
+        }
+        agent.queuePendingTrade(reqBuilder.build());
+        return 1;
     }
 
     private LiteralArgumentBuilder<CommandSourceStack> buildTellSubcommand() {

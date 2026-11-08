@@ -167,6 +167,14 @@ func (a *AgentDB) migrateMemoryDB(ctx context.Context) error {
 			workstation_pos TEXT
 		);`,
 		`CREATE INDEX IF NOT EXISTS idx_agent_skills_cat ON agent_skills(category);`,
+		`CREATE TABLE IF NOT EXISTS trade_valuations (
+			item_id TEXT PRIMARY KEY,
+			base_value REAL NOT NULL CHECK(base_value >= 0.0),
+			need_multiplier REAL NOT NULL DEFAULT 1.0 CHECK(need_multiplier >= 0.0),
+			min_accept_ratio REAL NOT NULL DEFAULT 0.85 CHECK(min_accept_ratio > 0.0),
+			rationale TEXT DEFAULT '',
+			updated_tick INTEGER DEFAULT 0
+		);`,
 	}
 
 	for _, q := range queries {
@@ -438,6 +446,44 @@ func (a *AgentDB) GetUnchronicledMemories(ctx context.Context, minSaliency float
 		return nil, fmt.Errorf("iterating unchronicled memory rows: %w", err)
 	}
 
+	return memories, nil
+}
+
+// GetRecentMemories retrieves the most recent episodic memories ordered by id DESC (up to limit).
+func (a *AgentDB) GetRecentMemories(ctx context.Context, limit int) ([]EpisodicMemory, error) {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+	if a.isClosed {
+		return nil, ErrClosed
+	}
+	if limit <= 0 {
+		limit = 5
+	}
+	rows, err := a.memoryDB.QueryContext(ctx, `
+		SELECT id, world_tick, event_category, saliency_score, actors_json, location_coords, summary_text, chronicled
+		FROM episodic_memories
+		ORDER BY id DESC
+		LIMIT ?;
+	`, limit)
+	if err != nil {
+		return nil, fmt.Errorf("querying recent memories: %w", err)
+	}
+	defer rows.Close()
+
+	var memories []EpisodicMemory
+	for rows.Next() {
+		var m EpisodicMemory
+		if err := rows.Scan(
+			&m.ID, &m.WorldTick, &m.EventCategory, &m.SaliencyScore,
+			&m.ActorsJSON, &m.LocationCoords, &m.SummaryText, &m.Chronicled,
+		); err != nil {
+			return nil, fmt.Errorf("scanning recent memory row: %w", err)
+		}
+		memories = append(memories, m)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterating recent memory rows: %w", err)
+	}
 	return memories, nil
 }
 
@@ -1200,4 +1246,115 @@ func (a *AgentDB) Close() error {
 	}
 
 	return errors.Join(errs...)
+}
+
+// TradeValuation represents a persisted System 1 quid-pro-quo valuation entry for an item.
+type TradeValuation struct {
+	ItemID         string
+	BaseValue      float64
+	NeedMultiplier float64
+	MinAcceptRatio float64
+	Rationale      string
+	UpdatedTick    int64
+}
+
+// UpsertTradeValuation inserts or updates a single item valuation entry in memory.db.
+func (a *AgentDB) UpsertTradeValuation(ctx context.Context, v TradeValuation) error {
+	return a.UpsertTradeValuationsBatch(ctx, []TradeValuation{v})
+}
+
+// UpsertTradeValuationsBatch inserts or updates multiple item valuation entries in a single write transaction.
+func (a *AgentDB) UpsertTradeValuationsBatch(ctx context.Context, valuations []TradeValuation) error {
+	if len(valuations) == 0 {
+		return nil
+	}
+	a.memWriteMu.Lock()
+	defer a.memWriteMu.Unlock()
+
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+	if a.isClosed {
+		return ErrClosed
+	}
+
+	tx, err := a.memoryDB.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("beginning trade_valuations batch tx: %w", err)
+	}
+	defer func() {
+		_ = tx.Rollback()
+	}()
+
+	stmt, err := tx.PrepareContext(ctx, `
+		INSERT INTO trade_valuations (item_id, base_value, need_multiplier, min_accept_ratio, rationale, updated_tick)
+		VALUES (?, ?, ?, ?, ?, ?)
+		ON CONFLICT(item_id) DO UPDATE SET
+			base_value = excluded.base_value,
+			need_multiplier = excluded.need_multiplier,
+			min_accept_ratio = excluded.min_accept_ratio,
+			rationale = excluded.rationale,
+			updated_tick = excluded.updated_tick;
+	`)
+	if err != nil {
+		return fmt.Errorf("preparing trade_valuations upsert statement: %w", err)
+	}
+	defer stmt.Close()
+
+	for _, v := range valuations {
+		itemID := strings.ToLower(strings.TrimSpace(v.ItemID))
+		if itemID == "" {
+			continue
+		}
+		if !strings.Contains(itemID, ":") {
+			itemID = "minecraft:" + itemID
+		}
+		baseVal := v.BaseValue
+		if baseVal < 0 {
+			baseVal = 0
+		}
+		needMult := v.NeedMultiplier
+		if needMult <= 0 {
+			needMult = 1.0
+		}
+		minRatio := v.MinAcceptRatio
+		if minRatio <= 0 {
+			minRatio = 0.85
+		}
+		if _, err := stmt.ExecContext(ctx, itemID, baseVal, needMult, minRatio, v.Rationale, v.UpdatedTick); err != nil {
+			return fmt.Errorf("upserting trade valuation %s: %w", itemID, err)
+		}
+	}
+
+	return tx.Commit()
+}
+
+// GetTradeValuations retrieves all persisted item valuations from memory.db keyed by normalized item_id.
+func (a *AgentDB) GetTradeValuations(ctx context.Context) (map[string]TradeValuation, error) {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+	if a.isClosed {
+		return nil, ErrClosed
+	}
+
+	rows, err := a.memoryDB.QueryContext(ctx, `
+		SELECT item_id, base_value, need_multiplier, min_accept_ratio, rationale, updated_tick
+		FROM trade_valuations;
+	`)
+	if err != nil {
+		return nil, fmt.Errorf("querying trade_valuations: %w", err)
+	}
+	defer rows.Close()
+
+	result := make(map[string]TradeValuation)
+	for rows.Next() {
+		var v TradeValuation
+		if err := rows.Scan(&v.ItemID, &v.BaseValue, &v.NeedMultiplier, &v.MinAcceptRatio, &v.Rationale, &v.UpdatedTick); err != nil {
+			return nil, fmt.Errorf("scanning trade_valuation row: %w", err)
+		}
+		result[strings.ToLower(strings.TrimSpace(v.ItemID))] = v
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterating trade_valuation rows: %w", err)
+	}
+	return result, nil
 }

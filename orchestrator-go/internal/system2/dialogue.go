@@ -25,10 +25,20 @@ const (
 	SurplusSurplus SurplusState = "SURPLUS"
 )
 
-// DialogueVitals encapsulates an agent's physical status for prompt context.
+// DialogueVitals encapsulates an agent's physical and environmental sensory status for prompt context.
 type DialogueVitals struct {
-	Health    float32 `json:"health"`
-	FoodLevel int32   `json:"food_level"`
+	Health           float32 `json:"health"`
+	FoodLevel        int32   `json:"food_level"`
+	TimeOfDay        int64   `json:"time_of_day,omitempty"`
+	DayPhase         string  `json:"day_phase,omitempty"`         // DAWN, MORNING, MIDDAY, AFTERNOON, DUSK, NIGHT
+	Weather          string  `json:"weather,omitempty"`           // CLEAR, RAIN, THUNDER
+	BiomeID          string  `json:"biome_id,omitempty"`          // e.g. minecraft:plains
+	Position         string  `json:"position,omitempty"`          // e.g. "(12, 64, -8)"
+	CurrentRoutine   string  `json:"current_routine,omitempty"`   // e.g. PRIMARY_DUTY, SLEEP
+	ThreatStatus     string  `json:"threat_status,omitempty"`     // e.g. "SAFE (0 hostiles within 24m)" or "THREAT PRESENT (2 hostiles: zombie, skeleton)"
+	CombatConfidence float64 `json:"combat_confidence,omitempty"` // System 1 confidence score
+	RecentCombat     string  `json:"recent_combat,omitempty"`     // e.g. "Fought minecraft:zombie during NIGHT (tick 14200)"
+	InventorySummary string  `json:"inventory_summary,omitempty"` // e.g. "1x iron_sword, 4x bread"
 }
 
 // ChatDialogueRequest represents an incoming verbal chat event from a player.
@@ -299,13 +309,11 @@ func (s *DialogueService) ProcessChat(ctx context.Context, req ChatDialogueReque
 		}
 	}
 
-	// 2. Retrieve episodic memories
+	// 2. Retrieve episodic memories (combining semantic top-k with recent combat/activity memories)
 	var historicalContext string
 	if memPipe != nil {
 		query := fmt.Sprintf("%s: %s", req.PlayerName, req.Message)
-		if matches, err := memPipe.Retrieve(ctx, query, 3); err == nil && len(matches) > 0 {
-			historicalContext = memPipe.FormatPromptContext(matches)
-		}
+		historicalContext = retrieveCombinedMemories(ctx, memPipe, query, 3)
 	}
 
 	// 3. Assemble prompt
@@ -434,13 +442,11 @@ func (s *DialogueService) ProcessTrade(ctx context.Context, req TradeDialogueReq
 		}
 	}
 
-	// 2. Retrieve episodic memories
+	// 2. Retrieve episodic memories (combining semantic top-k with recent combat/activity memories)
 	var historicalContext string
 	if memPipe != nil {
 		query := fmt.Sprintf("trade with %s: %s", req.PlayerName, req.SpokenProposal)
-		if matches, err := memPipe.Retrieve(ctx, query, 3); err == nil && len(matches) > 0 {
-			historicalContext = memPipe.FormatPromptContext(matches)
-		}
+		historicalContext = retrieveCombinedMemories(ctx, memPipe, query, 3)
 	}
 
 	// 3. Assemble trade prompt
@@ -592,10 +598,7 @@ func (s *DialogueService) buildChatPrompt(
 		surplus = SurplusStable
 	}
 
-	vitalsInfo := "Unknown"
-	if req.Vitals != nil {
-		vitalsInfo = fmt.Sprintf("Health: %.1f/20.0, Food: %d/20", req.Vitals.Health, req.Vitals.FoodLevel)
-	}
+	sensorySection := formatSensoryEnvironmentSection(req.Vitals, surplus)
 
 	thrift := 1.0 - cfg.Traits.Sociability
 	if thrift < 0.0 {
@@ -618,9 +621,7 @@ Personality Traits:
 
 %s
 
-Current Status:
-- Vitals: %s
-- Clan Granary State: %s (DEFICIT = clan is starving/protective; STABLE = normal; SURPLUS = thriving/generous)
+%s
 
 Interlocutor:
 <player_info>
@@ -637,9 +638,10 @@ Title: %s
 
 Instructions:
 1. Respond to the player in-character reflecting your individualized voice profile, traits, clan surplus state, and the player's prestige standing.
-2. If the player requests dangerous suicide missions or sacrifices, reflect your Bravery trait.
-3. If the player requests clan food during DEFICIT, be fiercely protective.
-4. Return a JSON object conforming strictly to this JSON schema:
+2. Ground your response in <sensory_environment> and <historical_memories>: you already know the current time of day, weather, whether your immediate surroundings are safe or threatened, what tools/items you carry, and whether you fought monsters recently. Never ask the player if the area is safe when <sensory_environment> already tells you.
+3. If the player requests dangerous suicide missions or sacrifices, reflect your Bravery trait.
+4. If the player requests clan food during DEFICIT, be fiercely protective.
+5. Return a JSON object conforming strictly to this JSON schema:
 {
   "spoken_reply": "Concise in-game dialogue spoken to the player",
   "trade_decision": "NONE",
@@ -651,7 +653,7 @@ Instructions:
 		cfg.Name, cfg.ClanID, cfg.Profession, cfg.SecondaryHobby,
 		cfg.Traits.Bravery, cfg.Traits.Sociability, cfg.Traits.Industriousness, thrift, cfg.Traits.Aggressiveness, cfg.Traits.Curiosity,
 		voiceSection,
-		vitalsInfo, surplus,
+		sensorySection,
 		cleanPlayerName, req.PlayerUUID, prestigeScore, prestigeTitle,
 		formatMemorySection(historicalContext),
 		brevityRule,
@@ -774,6 +776,80 @@ func formatMemorySection(historicalContext string) string {
 		return "<historical_memories>\nNo previous recorded memories with this interlocutor.\n</historical_memories>"
 	}
 	return fmt.Sprintf("<historical_memories>\n%s\n</historical_memories>", trimmed)
+}
+
+func retrieveCombinedMemories(ctx context.Context, memPipe *memory.Pipeline, query string, limit int) string {
+	if memPipe == nil {
+		return ""
+	}
+	seen := make(map[int64]bool)
+	var combined []db.EpisodicMemoryMatch
+
+	if matches, err := memPipe.Retrieve(ctx, query, limit); err == nil {
+		for _, m := range matches {
+			seen[m.Memory.ID] = true
+			combined = append(combined, m)
+		}
+	}
+
+	if agentDB := memPipe.AgentDB(); agentDB != nil {
+		if recent, err := agentDB.GetRecentMemories(ctx, limit); err == nil {
+			for _, m := range recent {
+				if !seen[m.ID] {
+					seen[m.ID] = true
+					combined = append(combined, db.EpisodicMemoryMatch{
+						Memory:     m,
+						Similarity: 1.0,
+					})
+				}
+			}
+		}
+	}
+
+	if len(combined) == 0 {
+		return ""
+	}
+	return memPipe.FormatPromptContext(combined)
+}
+
+func formatSensoryEnvironmentSection(v *DialogueVitals, surplus SurplusState) string {
+	var sb strings.Builder
+	sb.WriteString("<sensory_environment>\n")
+	if v == nil {
+		sb.WriteString("- Vitals: Unknown\n")
+		sb.WriteString(fmt.Sprintf("- Clan Granary State: %s\n", surplus))
+		sb.WriteString("</sensory_environment>")
+		return sb.String()
+	}
+
+	sb.WriteString(fmt.Sprintf("- Vitals: Health %.1f/20.0, Food %d/20\n", v.Health, v.FoodLevel))
+	if v.DayPhase != "" {
+		sb.WriteString(fmt.Sprintf("- Time of Day: %s (tick %d)\n", v.DayPhase, v.TimeOfDay))
+	}
+	if v.Weather != "" {
+		sb.WriteString(fmt.Sprintf("- Weather: %s\n", v.Weather))
+	}
+	if v.BiomeID != "" {
+		sb.WriteString(fmt.Sprintf("- Biome: %s\n", v.BiomeID))
+	}
+	if v.Position != "" {
+		sb.WriteString(fmt.Sprintf("- Position: %s\n", v.Position))
+	}
+	if v.CurrentRoutine != "" {
+		sb.WriteString(fmt.Sprintf("- Active Daily Routine: %s\n", v.CurrentRoutine))
+	}
+	if v.ThreatStatus != "" {
+		sb.WriteString(fmt.Sprintf("- Immediate Threat Assessment: %s\n", v.ThreatStatus))
+	}
+	if v.RecentCombat != "" {
+		sb.WriteString(fmt.Sprintf("- Recent Combat / Aggro Log: %s\n", v.RecentCombat))
+	}
+	if v.InventorySummary != "" {
+		sb.WriteString(fmt.Sprintf("- Equipped / Carried Items: %s\n", v.InventorySummary))
+	}
+	sb.WriteString(fmt.Sprintf("- Clan Granary State: %s (DEFICIT = clan is starving/protective; STABLE = normal; SURPLUS = thriving/generous)\n", surplus))
+	sb.WriteString("</sensory_environment>")
+	return sb.String()
 }
 
 func sanitizePlayerName(name string) string {

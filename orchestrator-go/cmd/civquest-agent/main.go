@@ -15,6 +15,7 @@ import (
 	"github.com/btposey/civquest/orchestrator-go/internal/agent"
 	"github.com/btposey/civquest/orchestrator-go/internal/bridge"
 	"github.com/btposey/civquest/orchestrator-go/internal/db"
+	"github.com/btposey/civquest/orchestrator-go/internal/memory"
 	civquestv1 "github.com/btposey/civquest/orchestrator-go/internal/proto/v1"
 	"github.com/btposey/civquest/orchestrator-go/internal/system2"
 	"github.com/btposey/civquest/orchestrator-go/internal/xdg"
@@ -91,6 +92,7 @@ func run(parentCtx context.Context, args []string, stdout, stderr io.Writer, r *
 		}
 	}
 	r = r.ForServer(serverID)
+	agentID = r.ResolveAgentName(agentID)
 
 	// Load or create agent identity YAML profile
 	var cfg *xdg.AgentIdentityConfig
@@ -198,7 +200,10 @@ func run(parentCtx context.Context, args []string, stdout, stderr io.Writer, r *
 		defer repDB.Close()
 	}
 
+	memPipe := memory.NewPipeline(agentDB, memory.NewResilientEmbedder(llmClient))
+
 	var dialogueOpts []system2.DialogueOption
+	dialogueOpts = append(dialogueOpts, system2.WithDialogueMemory(memPipe))
 	if repDB != nil {
 		dialogueOpts = append(dialogueOpts, system2.WithDialogueReputation(repDB))
 	}
@@ -261,6 +266,7 @@ func run(parentCtx context.Context, args []string, stdout, stderr io.Writer, r *
 		Resolver:          r,
 		AgentDB:           agentDB,
 		ReputationDB:      repDB,
+		MemoryPipeline:    memPipe,
 		LandmarksDB:       lmDB,
 		BridgeClient:      bridgeClient,
 		SocketPath:        sockPath,
@@ -283,6 +289,9 @@ func run(parentCtx context.Context, args []string, stdout, stderr io.Writer, r *
 		ClanId:      cfg.ClanID,
 	})
 	if err != nil {
+		if parentCtx.Err() != nil {
+			return nil
+		}
 		return fmt.Errorf("spawning agent %s into Minecraft: %w", cfg.Name, err)
 	}
 	if !spawnResp.GetSuccess() {

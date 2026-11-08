@@ -217,10 +217,14 @@ public class SensoryFrustumCollector {
             frameBuilder.setDeathEvent(deathEvent);
         }
 
-        // 8. Pending incoming chat events
+        // 8. Pending incoming chat events and trade requests
         List<com.civquest.mod.grpc.v1.ChatEvent> chats = agent.pollIncomingChats();
         if (chats != null && !chats.isEmpty()) {
             frameBuilder.addAllIncomingChats(chats);
+        }
+        com.civquest.mod.grpc.v1.TradeRequest pendingTrade = agent.pollPendingTrade();
+        if (pendingTrade != null) {
+            frameBuilder.setPendingTrade(pendingTrade);
         }
 
         frameBuilder.setStatus(statusBuilder.build());

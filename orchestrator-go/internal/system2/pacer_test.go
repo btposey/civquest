@@ -7,16 +7,28 @@ import (
 )
 
 func TestComputePacedSchedule_ConciseSingleUtterance(t *testing.T) {
-	reply := "Morning Steve! The wheat's coming in gold and heavy today."
+	reply := "Morning Steve, the wheat's coming in gold and heavy today."
 	sched := ComputePacedSchedule(reply, DefaultChatTokensPerSec, DefaultMaxChatUtteranceRunes)
 	if len(sched) != 1 {
-		t.Fatalf("expected 1 segment for concise reply, got %d: %+v", len(sched), sched)
+		t.Fatalf("expected 1 segment for single-sentence reply, got %d: %+v", len(sched), sched)
 	}
 	if sched[0].Delay != 0 {
 		t.Errorf("expected first segment delay 0, got %v", sched[0].Delay)
 	}
 	if sched[0].Text != reply {
 		t.Errorf("got %q, want %q", sched[0].Text, reply)
+	}
+
+	twoSentences := "Morning Steve! The wheat's coming in gold and heavy today."
+	sched2 := ComputePacedSchedule(twoSentences, DefaultChatTokensPerSec, DefaultMaxChatUtteranceRunes)
+	if len(sched2) != 2 {
+		t.Fatalf("expected 2 segments for two-sentence reply (one sentence per write), got %d: %+v", len(sched2), sched2)
+	}
+	if sched2[0].Delay != 0 {
+		t.Errorf("expected first sentence delay 0, got %v", sched2[0].Delay)
+	}
+	if sched2[1].Delay < 2*time.Second || sched2[1].Delay > 3*time.Second {
+		t.Errorf("expected second sentence delay in [2s, 3s], got %v", sched2[1].Delay)
 	}
 }
 
