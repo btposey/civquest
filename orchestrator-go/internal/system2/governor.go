@@ -52,9 +52,6 @@ func (g *Governor) Acquire(ctx context.Context) error {
 
 	// Fast check for pre-canceled context
 	if err := ctx.Err(); err != nil {
-		if errors.Is(err, context.DeadlineExceeded) {
-			return fmt.Errorf("%w: caller deadline exceeded before acquire: %v", ErrWorkerPoolSaturated, err)
-		}
 		return err
 	}
 
@@ -69,11 +66,8 @@ func (g *Governor) Acquire(ctx context.Context) error {
 	case g.sem <- struct{}{}:
 		return nil
 	case <-waitCtx.Done():
-		if g.queueTimeout > 0 && errors.Is(waitCtx.Err(), context.DeadlineExceeded) && (ctx.Err() == nil || errors.Is(ctx.Err(), context.DeadlineExceeded)) {
+		if g.queueTimeout > 0 && ctx.Err() == nil && errors.Is(waitCtx.Err(), context.DeadlineExceeded) {
 			return fmt.Errorf("%w: inference worker pool saturated (queue timed out after %v)", ErrWorkerPoolSaturated, g.queueTimeout)
-		}
-		if errors.Is(waitCtx.Err(), context.DeadlineExceeded) {
-			return fmt.Errorf("%w: inference worker pool saturated (deadline exceeded): %v", ErrWorkerPoolSaturated, waitCtx.Err())
 		}
 		return waitCtx.Err()
 	case <-closedCh:

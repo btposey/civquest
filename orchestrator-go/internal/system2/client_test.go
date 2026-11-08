@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -136,6 +137,16 @@ func TestClient_CleanJSONMarkdown(t *testing.T) {
 		{
 			name:     "surrounding prose without backticks",
 			input:    "Certainly! Output: {\"action\": \"BUILD\"} Enjoy playing.",
+			expected: `{"action": "BUILD"}`,
+		},
+		{
+			name:     "trailing prose without markdown",
+			input:    `{"action": "BUILD"} trailing text`,
+			expected: `{"action": "BUILD"}`,
+		},
+		{
+			name:     "preceding bracket references",
+			input:    `Step [1]: {"action": "BUILD"}`,
 			expected: `{"action": "BUILD"}`,
 		},
 		{
@@ -602,6 +613,11 @@ func TestClient_HTTPStatusErrors(t *testing.T) {
 			expectSentinel: nil,
 		},
 		{
+			statusCode:     http.StatusTooManyRequests,
+			body:           `{"error": {"message": "Rate limit exceeded", "type": "rate_limit"}}`,
+			expectSentinel: ErrWorkerPoolSaturated,
+		},
+		{
 			statusCode:     http.StatusInternalServerError,
 			body:           `{"error": {"message": "GPU out of memory", "type": "server_error"}}`,
 			expectSentinel: nil,
@@ -721,7 +737,331 @@ func TestClient_EmptyInput(t *testing.T) {
 	}
 
 	_, err = client.CreateEmbedding(ctx, "")
+	if !errors.Is(err, ErrEmptyInput) {
+		t.Fatalf("expected ErrEmptyInput on empty embedding input, got: %v", err)
+	}
+}
+
+func TestClient_CompleteStructured_InvalidDestination(t *testing.T) {
+	client, err := NewClientWithConfig(
+		xdg.LLMGatewayConfig{BaseURL: "http://127.0.0.1:11434"},
+		xdg.InferenceGovernorConfig{MaxConcurrentLLMRequests: 1},
+	)
+	if err != nil {
+		t.Fatalf("failed to create client: %v", err)
+	}
+	defer client.Close()
+
+	ctx := context.Background()
+	msgs := []ChatMessage{{Role: RoleUser, Content: "hi"}}
+
+	// 1. Nil target
+	err = client.CompleteStructured(ctx, msgs, nil)
+	if !errors.Is(err, ErrInvalidDestination) {
+		t.Fatalf("expected ErrInvalidDestination for nil dest, got: %v", err)
+	}
+
+	// 2. Non-pointer struct
+	var s sampleIntent
+	err = client.CompleteStructured(ctx, msgs, s)
+	if !errors.Is(err, ErrInvalidDestination) {
+		t.Fatalf("expected ErrInvalidDestination for non-pointer dest, got: %v", err)
+	}
+
+	// 3. Nil pointer
+	var p *sampleIntent
+	err = client.CompleteStructured(ctx, msgs, p)
+	if !errors.Is(err, ErrInvalidDestination) {
+		t.Fatalf("expected ErrInvalidDestination for nil pointer dest, got: %v", err)
+	}
+}
+
+func TestClient_CompleteStructured_FinishReasonLength(t *testing.T) {
+	var capturedReqs []ChatCompletionRequest
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var req ChatCompletionRequest
+		_ = json.NewDecoder(r.Body).Decode(&req)
+		capturedReqs = append(capturedReqs, req)
+
+		w.Header().Set("Content-Type", "application/json")
+		if len(capturedReqs) == 1 {
+			// First attempt cut off by length
+			resp := ChatCompletionResponse{
+				ID:      "test-1",
+				Object:  "chat.completion",
+				Created: time.Now().Unix(),
+				Choices: []ChatCompletionChoice{
+					{
+						Index:        0,
+						Message:      ChatMessage{Role: RoleAssistant, Content: `{"action": "BUILD", "target": "minecraft:stone", "quota":`},
+						FinishReason: "length",
+					},
+				},
+			}
+			_ = json.NewEncoder(w).Encode(resp)
+			return
+		}
+
+		// Second attempt succeeds
+		resp := ChatCompletionResponse{
+			ID:      "test-2",
+			Object:  "chat.completion",
+			Created: time.Now().Unix(),
+			Choices: []ChatCompletionChoice{
+				{
+					Index:        0,
+					Message:      ChatMessage{Role: RoleAssistant, Content: `{"action": "BUILD", "target": "minecraft:stone", "quota": 10}`},
+					FinishReason: "stop",
+				},
+			},
+		}
+		_ = json.NewEncoder(w).Encode(resp)
+	}))
+	defer server.Close()
+
+	client, err := NewClientWithConfig(
+		xdg.LLMGatewayConfig{BaseURL: server.URL},
+		xdg.InferenceGovernorConfig{MaxConcurrentLLMRequests: 1},
+	)
+	if err != nil {
+		t.Fatalf("failed to create client: %v", err)
+	}
+	defer client.Close()
+
+	var result sampleIntent
+	err = client.CompleteStructured(context.Background(), []ChatMessage{{Role: RoleUser, Content: "build"}}, &result)
+	if err != nil {
+		t.Fatalf("expected success on second attempt, got: %v", err)
+	}
+
+	if len(capturedReqs) != 2 {
+		t.Fatalf("expected 2 requests, got %d", len(capturedReqs))
+	}
+
+	// Verify retry prompt asked for brevity
+	retryMsg := capturedReqs[1].Messages[len(capturedReqs[1].Messages)-1].Content
+	if !strings.Contains(retryMsg, "exceeded the maximum token length") || !strings.Contains(retryMsg, "concise") {
+		t.Fatalf("expected brevity prompt for finish_reason=length, got: %q", retryMsg)
+	}
+}
+
+func TestClient_CompleteStructured_PromptTruncation(t *testing.T) {
+	var capturedReqs []ChatCompletionRequest
+
+	hugeInvalidResponse := strings.Repeat("x", 3000)
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var req ChatCompletionRequest
+		_ = json.NewDecoder(r.Body).Decode(&req)
+		capturedReqs = append(capturedReqs, req)
+
+		w.Header().Set("Content-Type", "application/json")
+		if len(capturedReqs) == 1 {
+			resp := ChatCompletionResponse{
+				ID:      "test-1",
+				Object:  "chat.completion",
+				Created: time.Now().Unix(),
+				Choices: []ChatCompletionChoice{
+					{
+						Index:        0,
+						Message:      ChatMessage{Role: RoleAssistant, Content: hugeInvalidResponse},
+						FinishReason: "stop",
+					},
+				},
+			}
+			_ = json.NewEncoder(w).Encode(resp)
+			return
+		}
+
+		resp := ChatCompletionResponse{
+			ID:      "test-2",
+			Object:  "chat.completion",
+			Created: time.Now().Unix(),
+			Choices: []ChatCompletionChoice{
+				{
+					Index:        0,
+					Message:      ChatMessage{Role: RoleAssistant, Content: `{"action": "BUILD", "target": "minecraft:stone", "quota": 10}`},
+					FinishReason: "stop",
+				},
+			},
+		}
+		_ = json.NewEncoder(w).Encode(resp)
+	}))
+	defer server.Close()
+
+	client, err := NewClientWithConfig(
+		xdg.LLMGatewayConfig{BaseURL: server.URL},
+		xdg.InferenceGovernorConfig{MaxConcurrentLLMRequests: 1},
+	)
+	if err != nil {
+		t.Fatalf("failed to create client: %v", err)
+	}
+	defer client.Close()
+
+	var result sampleIntent
+	err = client.CompleteStructured(context.Background(), []ChatMessage{{Role: RoleUser, Content: "start"}}, &result)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(capturedReqs) != 2 {
+		t.Fatalf("expected 2 requests, got %d", len(capturedReqs))
+	}
+
+	// In the second request, the assistant message should be truncated to MaxFeedbackRawRunes
+	assistantMsg := capturedReqs[1].Messages[1].Content
+	expectedTruncated := strings.Repeat("x", MaxFeedbackRawRunes) + "... [truncated]"
+	if assistantMsg != expectedTruncated {
+		t.Fatalf("expected truncated message of len %d, got len %d: %q", len(expectedTruncated), len(assistantMsg), assistantMsg)
+	}
+}
+
+func TestClient_StreamDecodingTimeout(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		if f, ok := w.(http.Flusher); ok {
+			f.Flush()
+		}
+		// Sleep longer than request timeout to simulate slow body streaming
+		time.Sleep(150 * time.Millisecond)
+		_, _ = w.Write([]byte(`{"choices": []}`))
+	}))
+	defer server.Close()
+
+	client, err := NewClientWithConfig(
+		xdg.LLMGatewayConfig{BaseURL: server.URL},
+		xdg.InferenceGovernorConfig{
+			MaxConcurrentLLMRequests: 1,
+			RequestTimeoutSeconds:    1,
+		},
+	)
+	if err != nil {
+		t.Fatalf("failed to create client: %v", err)
+	}
+	defer client.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+
+	var result sampleIntent
+	err = client.CompleteStructured(ctx, []ChatMessage{{Role: RoleUser, Content: "timeout"}}, &result)
 	if err == nil {
-		t.Fatal("expected error on empty embedding input, got nil")
+		t.Fatal("expected timeout error, got nil")
+	}
+	if !errors.Is(err, ErrGatewayTimeout) {
+		t.Fatalf("expected ErrGatewayTimeout, got: %v", err)
+	}
+}
+
+func TestClient_StreamBodyExceedingLimit(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		// Write 11 MB of spaces followed by JSON (exceeds MaxResponseBodyBytes 10MB)
+		chunk := make([]byte, 1024*1024)
+		for i := range chunk {
+			chunk[i] = ' '
+		}
+		for i := 0; i < 11; i++ {
+			if _, err := w.Write(chunk); err != nil {
+				return
+			}
+		}
+		_, _ = w.Write([]byte(`{"choices": []}`))
+	}))
+	defer server.Close()
+
+	client, err := NewClientWithConfig(
+		xdg.LLMGatewayConfig{BaseURL: server.URL},
+		xdg.InferenceGovernorConfig{MaxConcurrentLLMRequests: 1},
+	)
+	if err != nil {
+		t.Fatalf("failed to create client: %v", err)
+	}
+	defer client.Close()
+
+	var result sampleIntent
+	err = client.CompleteStructured(context.Background(), []ChatMessage{{Role: RoleUser, Content: "huge"}}, &result)
+	if err == nil {
+		t.Fatal("expected error when body exceeds MaxResponseBodyBytes, got nil")
+	}
+	// Decode on truncated body returns JSON syntax/unexpected EOF, wrapped in ErrInvalidJSONResponse
+	if !errors.Is(err, ErrInvalidJSONResponse) {
+		t.Fatalf("expected ErrInvalidJSONResponse, got: %v", err)
+	}
+}
+
+func TestClient_HandleHTTPError_OllamaFlatError(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+		_, _ = w.Write([]byte(`{"error": "model 'nonexistent-model' not found, try pulling it first"}`))
+	}))
+	defer server.Close()
+
+	client, err := NewClientWithConfig(
+		xdg.LLMGatewayConfig{BaseURL: server.URL},
+		xdg.InferenceGovernorConfig{MaxConcurrentLLMRequests: 1},
+	)
+	if err != nil {
+		t.Fatalf("failed to create client: %v", err)
+	}
+	defer client.Close()
+
+	_, err = client.CompleteCreative(context.Background(), []ChatMessage{{Role: RoleUser, Content: "test"}})
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	var apiErr *APIError
+	if !errors.As(err, &apiErr) {
+		t.Fatalf("expected *APIError, got %v", err)
+	}
+	if apiErr.Message != "model 'nonexistent-model' not found, try pulling it first" {
+		t.Fatalf("unexpected parsed message: %q", apiErr.Message)
+	}
+}
+
+func TestClient_WithTemperatures_Zero(t *testing.T) {
+	var capturedReq ChatCompletionRequest
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewDecoder(r.Body).Decode(&capturedReq)
+		resp := ChatCompletionResponse{
+			ID: "test",
+			Choices: []ChatCompletionChoice{
+				{
+					Message: ChatMessage{Content: `{"action": "BUILD", "target": "minecraft:dirt", "quota": 5}`},
+				},
+			},
+		}
+		_ = json.NewEncoder(w).Encode(resp)
+	}))
+	defer server.Close()
+
+	client, err := NewClientWithConfig(
+		xdg.LLMGatewayConfig{BaseURL: server.URL},
+		xdg.InferenceGovernorConfig{MaxConcurrentLLMRequests: 1},
+		WithStructuredTemperature(0.0),
+		WithCreativeTemperature(0.0),
+	)
+	if err != nil {
+		t.Fatalf("failed to create client: %v", err)
+	}
+	defer client.Close()
+
+	if client.StructuredTemperature() != 0.0 {
+		t.Fatalf("expected structured temperature 0.0, got %v", client.StructuredTemperature())
+	}
+	if client.CreativeTemperature() != 0.0 {
+		t.Fatalf("expected creative temperature 0.0, got %v", client.CreativeTemperature())
+	}
+
+	var res sampleIntent
+	if err := client.CompleteStructured(context.Background(), []ChatMessage{{Role: RoleUser, Content: "test"}}, &res); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if capturedReq.Temperature != 0.0 {
+		t.Fatalf("expected request temperature 0.0, got %v", capturedReq.Temperature)
 	}
 }

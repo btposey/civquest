@@ -173,3 +173,40 @@ func TestGovernor_Close(t *testing.T) {
 		t.Fatal("TryAcquire should return false when governor is closed")
 	}
 }
+
+func TestGovernor_PreCanceledContext(t *testing.T) {
+	gov := NewGovernor(1, 100*time.Millisecond)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // pre-canceled
+
+	err := gov.Acquire(ctx)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("expected context.Canceled, got: %v", err)
+	}
+	if errors.Is(err, ErrWorkerPoolSaturated) {
+		t.Fatalf("pre-canceled context must not return ErrWorkerPoolSaturated")
+	}
+}
+
+func TestGovernor_CallerDeadlineExceeded(t *testing.T) {
+	gov := NewGovernor(1, 0)
+	// Saturate the single slot
+	if err := gov.Acquire(context.Background()); err != nil {
+		t.Fatalf("failed initial acquire: %v", err)
+	}
+	defer gov.Release()
+
+	// Caller context with small deadline
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
+
+	err := gov.Acquire(ctx)
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("expected context.DeadlineExceeded, got: %v", err)
+	}
+	// With queueTimeout=0, caller deadline exceeded must return ctx.Err() directly, not ErrWorkerPoolSaturated
+	if errors.Is(err, ErrWorkerPoolSaturated) {
+		t.Fatalf("caller deadline exceeded should return ctx.Err(), not ErrWorkerPoolSaturated")
+	}
+}

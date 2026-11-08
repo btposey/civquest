@@ -34,6 +34,9 @@ var (
 
 	// ErrEmptyInput is returned when no input messages are provided.
 	ErrEmptyInput = errors.New("input messages cannot be empty")
+
+	// ErrInvalidDestination is returned when the target struct pointer is nil or not a valid pointer.
+	ErrInvalidDestination = errors.New("destination target must be a non-nil pointer")
 )
 
 // APIError represents an HTTP error response returned by an OpenAI-compatible gateway.

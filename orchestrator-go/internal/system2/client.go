@@ -31,6 +31,12 @@ const (
 
 	// DefaultMaxRetries is the maximum number of validation retries for malformed JSON responses.
 	DefaultMaxRetries = 2
+
+	// MaxResponseBodyBytes limits response ingestion to 10MB to prevent heap exhaustion.
+	MaxResponseBodyBytes int64 = 10 * 1024 * 1024
+
+	// MaxFeedbackRawRunes limits raw LLM response echo in retry prompts.
+	MaxFeedbackRawRunes = 1000
 )
 
 // Option defines a functional configuration option for Client.
@@ -75,6 +81,26 @@ func WithGovernor(gov *Governor) Option {
 	return func(c *Client) {
 		if gov != nil {
 			c.governor = gov
+		}
+	}
+}
+
+// WithStructuredTemperature configures the sampling temperature for structured JSON completions.
+// A temperature of 0.0 enables deterministic greedy decoding.
+func WithStructuredTemperature(t float64) Option {
+	return func(c *Client) {
+		if t >= 0 {
+			c.structuredTemp = t
+		}
+	}
+}
+
+// WithCreativeTemperature configures the sampling temperature for creative dialogue and lore completions.
+// A temperature of 0.0 enables deterministic greedy decoding.
+func WithCreativeTemperature(t float64) Option {
+	return func(c *Client) {
+		if t >= 0 {
+			c.creativeTemp = t
 		}
 	}
 }
@@ -205,6 +231,20 @@ func (c *Client) HTTPClient() *http.Client {
 	return c.httpClient
 }
 
+// StructuredTemperature returns the configured temperature for structured completions.
+func (c *Client) StructuredTemperature() float64 {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.structuredTemp
+}
+
+// CreativeTemperature returns the configured temperature for creative completions.
+func (c *Client) CreativeTemperature() float64 {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.creativeTemp
+}
+
 // Close closes any idle HTTP connections and shuts down the concurrency governor.
 func (c *Client) Close() error {
 	c.mu.Lock()
@@ -274,14 +314,25 @@ func (c *Client) executeRequest(ctx context.Context, endpoint string, reqPayload
 	if err != nil {
 		return c.classifyNetworkError(ctx, reqCtx, err)
 	}
-	defer resp.Body.Close()
+	defer func() {
+		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 1024*1024))
+		_ = resp.Body.Close()
+	}()
 
 	if resp.StatusCode != http.StatusOK {
 		return c.handleHTTPError(resp)
 	}
 
 	if respTarget != nil {
-		if err := json.NewDecoder(resp.Body).Decode(respTarget); err != nil {
+		limited := io.LimitReader(resp.Body, MaxResponseBodyBytes)
+		if err := json.NewDecoder(limited).Decode(respTarget); err != nil {
+			if reqCtx.Err() != nil || ctx.Err() != nil {
+				return c.classifyNetworkError(ctx, reqCtx, err)
+			}
+			var netErr net.Error
+			if errors.As(err, &netErr) && netErr.Timeout() {
+				return c.classifyNetworkError(ctx, reqCtx, err)
+			}
 			return fmt.Errorf("%w: failed to decode response body: %v", ErrInvalidJSONResponse, err)
 		}
 	}
@@ -339,9 +390,18 @@ func (c *Client) handleHTTPError(resp *http.Response) error {
 		apiErr.Message = openAIErr.Error.Message
 		apiErr.Type = openAIErr.Error.Type
 		apiErr.Code = openAIErr.Error.Code
+	} else {
+		var ollamaErr struct {
+			Error string `json:"error"`
+		}
+		if err := json.Unmarshal(body, &ollamaErr); err == nil && ollamaErr.Error != "" {
+			apiErr.Message = ollamaErr.Error
+		}
 	}
 
 	switch resp.StatusCode {
+	case http.StatusTooManyRequests:
+		return fmt.Errorf("%w: %v", ErrWorkerPoolSaturated, apiErr)
 	case http.StatusGatewayTimeout, http.StatusRequestTimeout:
 		return fmt.Errorf("%w: %v", ErrGatewayTimeout, apiErr)
 	case http.StatusBadGateway, http.StatusServiceUnavailable:
@@ -392,12 +452,12 @@ func (c *Client) CompleteStructured(ctx context.Context, messages []ChatMessage,
 		return ErrEmptyInput
 	}
 	if dest == nil {
-		return errors.New("destination target cannot be nil")
+		return ErrInvalidDestination
 	}
 
 	destVal := reflect.ValueOf(dest)
 	if destVal.Kind() != reflect.Pointer || destVal.IsNil() {
-		return errors.New("destination target must be a non-nil pointer")
+		return ErrInvalidDestination
 	}
 
 	c.mu.RLock()
@@ -461,18 +521,30 @@ func (c *Client) CompleteStructured(ctx context.Context, messages []ChatMessage,
 			lastErr = err
 		}
 
+		// Truncate rawContent to MaxFeedbackRawRunes to avoid prompt blowup
+		feedbackContent := rawContent
+		runes := []rune(rawContent)
+		if len(runes) > MaxFeedbackRawRunes {
+			feedbackContent = string(runes[:MaxFeedbackRawRunes]) + "... [truncated]"
+		}
+
+		feedbackPrompt := fmt.Sprintf(
+			"Your previous response was not valid JSON conforming to the required schema: %v. Please return ONLY a valid, raw JSON object matching the requested schema without markdown fences or extraneous prose.",
+			lastErr,
+		)
+		if resp.Choices[0].FinishReason == "length" {
+			feedbackPrompt = "Your previous response was cut off because it exceeded the maximum token length. Please provide a more concise and brief JSON response conforming to the required schema without unnecessary verbose fields, markdown fences, or extraneous prose."
+		}
+
 		// Validation failed: feedback error to LLM for next attempt
 		history = append(history,
 			ChatMessage{
 				Role:    RoleAssistant,
-				Content: rawContent,
+				Content: feedbackContent,
 			},
 			ChatMessage{
-				Role: RoleUser,
-				Content: fmt.Sprintf(
-					"Your previous response was not valid JSON conforming to the required schema: %v. Please return ONLY a valid, raw JSON object matching the requested schema without markdown fences or extraneous prose.",
-					lastErr,
-				),
+				Role:    RoleUser,
+				Content: feedbackPrompt,
 			},
 		)
 	}
@@ -544,7 +616,7 @@ func (c *Client) CompleteCreative(ctx context.Context, messages []ChatMessage) (
 // via the /v1/embeddings endpoint.
 func (c *Client) CreateEmbedding(ctx context.Context, input string) ([]float32, error) {
 	if input == "" {
-		return nil, errors.New("embedding input cannot be empty")
+		return nil, ErrEmptyInput
 	}
 
 	c.mu.RLock()
@@ -584,7 +656,7 @@ func CleanJSONMarkdown(content string) string {
 		return ""
 	}
 
-	// Extract content enclosed within markdown code fences
+	// 1. Strip triple-backtick markdown blocks if present
 	if startIdx := strings.Index(trimmed, "```"); startIdx != -1 {
 		rest := trimmed[startIdx+3:]
 		newlineIdx := strings.IndexByte(rest, '\n')
@@ -601,26 +673,77 @@ func CleanJSONMarkdown(content string) string {
 		trimmed = strings.TrimSpace(body)
 	}
 
-	// If content does not begin with '{' or '[', attempt to isolate the outermost JSON boundaries
-	if !strings.HasPrefix(trimmed, "{") && !strings.HasPrefix(trimmed, "[") {
-		firstBrace := strings.IndexByte(trimmed, '{')
-		firstBracket := strings.IndexByte(trimmed, '[')
+	// 2. Direct validation: if already valid JSON, return it
+	if json.Valid([]byte(trimmed)) {
+		return trimmed
+	}
 
-		start := -1
-		if firstBrace != -1 && (firstBracket == -1 || firstBrace < firstBracket) {
-			start = firstBrace
-			lastBrace := strings.LastIndexByte(trimmed, '}')
-			if lastBrace > start {
-				trimmed = trimmed[start : lastBrace+1]
-			}
-		} else if firstBracket != -1 {
-			start = firstBracket
-			lastBracket := strings.LastIndexByte(trimmed, ']')
-			if lastBracket > start {
-				trimmed = trimmed[start : lastBracket+1]
-			}
+	// 3. Scan for candidate outermost balanced {...} and [...]
+	candObj, okObj := findBalancedJSON(trimmed, '{', '}')
+	candArr, okArr := findBalancedJSON(trimmed, '[', ']')
+
+	if okObj && okArr {
+		if len(candArr) > len(candObj) {
+			return candArr
 		}
+		return candObj
+	}
+	if okObj {
+		return candObj
+	}
+	if okArr {
+		return candArr
 	}
 
 	return trimmed
+}
+
+// findBalancedJSON scans s for the candidate outermost balanced JSON delimited by open and close bytes.
+func findBalancedJSON(s string, open, close byte) (string, bool) {
+	var best string
+	for start := 0; start < len(s); start++ {
+		if s[start] != open {
+			continue
+		}
+		depth := 0
+		inString := false
+		escaped := false
+		for i := start; i < len(s); i++ {
+			c := s[i]
+			if inString {
+				if escaped {
+					escaped = false
+				} else if c == '\\' {
+					escaped = true
+				} else if c == '"' {
+					inString = false
+				}
+				continue
+			}
+
+			if c == '"' {
+				inString = true
+				continue
+			}
+
+			if c == open {
+				depth++
+			} else if c == close {
+				depth--
+				if depth == 0 {
+					candidate := s[start : i+1]
+					if json.Valid([]byte(candidate)) {
+						if len(candidate) > len(best) {
+							best = candidate
+						}
+					}
+					break
+				}
+			}
+		}
+	}
+	if len(best) > 0 {
+		return best, true
+	}
+	return "", false
 }
