@@ -488,3 +488,52 @@ func TestServerMetaStringMasking(t *testing.T) {
 		t.Errorf("nil ServerMeta.String() = %q, expected <nil>", nilMeta.String())
 	}
 }
+
+func TestReadDiscoveryFiltersStaleCandidates(t *testing.T) {
+	tempDir := t.TempDir()
+
+	// 1. Create a stale metadata file with status STOPPED and a dead PID
+	stalePath := filepath.Join(tempDir, "civquest-server-stale.json")
+	staleContent := `{
+  "status": "STOPPED",
+  "grpc_transport": "tcp",
+  "grpc_port": 37623,
+  "grpc_host": "127.0.0.1",
+  "server_pid": 999999999,
+  "shared_key": "stale-key",
+  "timestamp_ms": 1700000000000
+}`
+	if err := os.WriteFile(stalePath, []byte(staleContent), 0600); err != nil {
+		t.Fatalf("Failed writing stale discovery file: %v", err)
+	}
+
+	// 2. Reading the explicit stale file should fail process liveness check
+	_, err := bridge.ReadDiscovery(stalePath)
+	if err == nil {
+		t.Fatalf("Expected ReadDiscovery on stale file to fail, got nil")
+	}
+
+	// 3. Create a live metadata file with status READY and current PID
+	livePath := filepath.Join(tempDir, "civquest-server-live.json")
+	pid := os.Getpid()
+	liveContent := fmt.Sprintf(`{
+  "status": "READY",
+  "grpc_transport": "tcp",
+  "grpc_port": 32971,
+  "grpc_host": "127.0.0.1",
+  "server_pid": %d,
+  "shared_key": "live-key-xyz",
+  "timestamp_ms": 1700000001000
+}`, pid)
+	if err := os.WriteFile(livePath, []byte(liveContent), 0600); err != nil {
+		t.Fatalf("Failed writing live discovery file: %v", err)
+	}
+
+	meta, err := bridge.ReadDiscovery(livePath)
+	if err != nil {
+		t.Fatalf("Failed reading live discovery file: %v", err)
+	}
+	if !meta.IsReady() || meta.Port != 32971 || meta.SharedKey != "live-key-xyz" {
+		t.Errorf("Unexpected live metadata parsed: %+v", meta)
+	}
+}

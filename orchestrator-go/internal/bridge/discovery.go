@@ -110,9 +110,11 @@ func getCandidateDiscoveryPaths() []string {
 		"mod-neoforge/run/civquest-server-meta.json",
 		"../mod-neoforge/run/civquest-server-meta.json",
 		"../../mod-neoforge/run/civquest-server-meta.json",
+		"../../../mod-neoforge/run/civquest-server-meta.json",
 		"mod-neoforge/build/integration-server/civquest-server-meta.json",
 		"../mod-neoforge/build/integration-server/civquest-server-meta.json",
 		"../../mod-neoforge/build/integration-server/civquest-server-meta.json",
+		"../../../mod-neoforge/build/integration-server/civquest-server-meta.json",
 	}
 }
 
@@ -204,8 +206,7 @@ func WaitForDiscoveryContext(ctx context.Context, path string) (*ServerMeta, err
 
 	var lastErr error
 	for {
-		resolved := ResolveDiscoveryPath(path)
-		meta, err := ReadDiscovery(resolved)
+		meta, err := ReadDiscovery(path)
 		if err == nil {
 			if meta.IsReady() {
 				return meta, nil

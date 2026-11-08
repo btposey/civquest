@@ -3,14 +3,17 @@
 package integration
 
 import (
+	"bufio"
 	"context"
 	"crypto/subtle"
 	"fmt"
 	"io"
 	"net"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -183,6 +186,99 @@ func runEndToEndProbe(t *testing.T, meta *bridge.ServerMeta) {
 		t.Fatalf("DespawnAgentEntity returned success=false")
 	}
 	t.Logf("DespawnAgentEntity succeeded for agent_id=%s", agentID)
+
+	// 6. Test Production CLI Binary Execution: launch civquest-agent as a subprocess
+	t.Log("Testing Production civquest-agent CLI binary execution against live server...")
+	runProductionAgentBinaryProbe(t, meta)
+}
+
+func runProductionAgentBinaryProbe(t *testing.T, meta *bridge.ServerMeta) {
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
+	agentBin, err := filepath.Abs("../../../bin/civquest-agent")
+	if err != nil {
+		t.Fatalf("Failed to resolve binary path: %v", err)
+	}
+	if fi, err := os.Stat(agentBin); err != nil || fi.IsDir() {
+		buildCmd := exec.Command("go", "build", "-o", agentBin, "../../cmd/civquest-agent")
+		if out, err := buildCmd.CombinedOutput(); err != nil {
+			t.Fatalf("Failed to build civquest-agent binary: %v (output: %s)", err, string(out))
+		}
+	}
+
+	agentName := "ci-probe-agent"
+	cmd := exec.CommandContext(ctx, agentBin,
+		"--name", agentName,
+		"--grpc-addr", meta.Addr(),
+		"--shared-key", meta.SharedKey,
+	)
+
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		t.Fatalf("Failed creating stdout pipe for civquest-agent: %v", err)
+	}
+	cmd.Stderr = os.Stderr
+
+	if err := cmd.Start(); err != nil {
+		t.Fatalf("Failed to start civquest-agent subprocess: %v", err)
+	}
+
+	spawnDetected := make(chan struct{})
+	streamConnected := make(chan struct{})
+
+	scanner := bufio.NewScanner(stdout)
+	go func() {
+		var spawnOnce, streamOnce bool
+		for scanner.Scan() {
+			line := scanner.Text()
+			t.Logf("[civquest-agent] %s", line)
+			if !spawnOnce && strings.Contains(line, "spawned into Minecraft") {
+				spawnOnce = true
+				close(spawnDetected)
+			}
+			if !streamOnce && strings.Contains(line, "Connecting telemetry stream") {
+				streamOnce = true
+				close(streamConnected)
+			}
+		}
+	}()
+
+	select {
+	case <-spawnDetected:
+		t.Logf("✓ Production civquest-agent binary successfully spawned Settler '%s' into Minecraft", agentName)
+	case <-time.After(10 * time.Second):
+		_ = cmd.Process.Kill()
+		t.Fatalf("Timed out waiting for production civquest-agent to spawn settler into Minecraft")
+	}
+
+	select {
+	case <-streamConnected:
+		t.Logf("✓ Production civquest-agent binary successfully connected telemetry stream")
+	case <-time.After(5 * time.Second):
+		_ = cmd.Process.Kill()
+		t.Fatalf("Timed out waiting for civquest-agent to connect telemetry stream")
+	}
+
+	// Send SIGINT / SIGTERM for graceful shutdown
+	if err := cmd.Process.Signal(syscall.SIGINT); err != nil {
+		_ = cmd.Process.Kill()
+		t.Fatalf("Failed to signal civquest-agent: %v", err)
+	}
+
+	waitDone := make(chan error, 1)
+	go func() {
+		waitDone <- cmd.Wait()
+	}()
+
+	select {
+	case waitErr := <-waitDone:
+		t.Logf("civquest-agent process exited cleanly: %v", waitErr)
+	case <-time.After(3 * time.Second):
+		_ = cmd.Process.Kill()
+		t.Log("civquest-agent forced killed after wait timeout")
+	}
+	t.Log("✓ Production civquest-agent binary shutdown cleanly")
 }
 
 // TestLiveServerEndToEnd connects to the live Minecraft headless server via discovery metadata.
@@ -233,7 +329,7 @@ func TestSyntheticLiveServerProbe(t *testing.T) {
 	go func() {
 		_ = srv.Serve(lis)
 	}()
-	defer srv.GracefulStop()
+	defer srv.Stop()
 
 	tempDir := t.TempDir()
 	metaPath := filepath.Join(tempDir, "civquest-server-meta.json")
