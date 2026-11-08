@@ -93,19 +93,15 @@ func run(parentCtx context.Context, args []string, stdout, stderr io.Writer, r *
 		return fmt.Errorf("initializing directories for agent %s: %w", cfg.Name, err)
 	}
 
-	// Resolve gRPC and SharedKey from flags, global config, or discovery artifact
+	// Resolve gRPC and SharedKey from flags, discovery artifact, or global config
 	globalCfg, _ := r.LoadGlobalConfig()
 	grpcAddr := *grpcAddrFlag
-	if grpcAddr == "" && globalCfg != nil {
-		grpcAddr = globalCfg.GRPC.Address()
-	}
-
 	sharedKey := *sharedKeyFlag
 	if sharedKey == "" {
 		sharedKey = *authTokenFlag
 	}
 
-	// Attempt discovery artifact lookup if gRPC address or shared key are still unset
+	// Attempt discovery artifact lookup if gRPC address or shared key are unset
 	if grpcAddr == "" || sharedKey == "" {
 		if meta, discErr := bridge.ReadDiscovery(""); discErr == nil && meta.IsReady() {
 			if grpcAddr == "" {
@@ -115,6 +111,11 @@ func run(parentCtx context.Context, args []string, stdout, stderr io.Writer, r *
 				sharedKey = meta.SharedKey
 			}
 		}
+	}
+
+	// Fallback to global config if discovery was not found
+	if grpcAddr == "" && globalCfg != nil {
+		grpcAddr = globalCfg.GRPC.Address()
 	}
 
 	if grpcAddr == "" {
@@ -179,6 +180,21 @@ func run(parentCtx context.Context, args []string, stdout, stderr io.Writer, r *
 	if err != nil {
 		return fmt.Errorf("creating agent runtime: %w", err)
 	}
+
+	// Spawn the settler avatar in the Minecraft world
+	spawnResp, err := bridgeClient.SpawnAgentEntity(parentCtx, &civquestv1.SpawnAgentRequest{
+		AgentId:     cfg.Name,
+		DisplayName: cfg.Name,
+		ClanId:      cfg.ClanID,
+	})
+	if err != nil {
+		return fmt.Errorf("spawning agent %s into Minecraft: %w", cfg.Name, err)
+	}
+	if !spawnResp.GetSuccess() {
+		return fmt.Errorf("failed spawning agent %s: %s", cfg.Name, spawnResp.GetErrorMessage())
+	}
+	fmt.Fprintf(stdout, "[civquest-agent] Settler '%s' spawned into Minecraft (EntityID: %d, UUID: %s)\n",
+		cfg.Name, spawnResp.GetMinecraftEntityId(), spawnResp.GetOfflineUuid())
 
 	fmt.Fprintf(stdout, " IPC Socket:     %s\n", rt.SocketPath())
 	fmt.Fprintln(stdout, "======================================================================")

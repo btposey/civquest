@@ -101,6 +101,21 @@ func (m *ServerMeta) IsProcessAlive() bool {
 	return isProcessAlive(m.ServerPID)
 }
 
+func getCandidateDiscoveryPaths() []string {
+	paths := xdg.NewPaths()
+	return []string{
+		filepath.Join(paths.ServerDir(), "civquest-server-meta.json"),
+		filepath.Join(paths.RuntimeDir(), "civquest-server-meta.json"),
+		"civquest-server-meta.json",
+		"mod-neoforge/run/civquest-server-meta.json",
+		"../mod-neoforge/run/civquest-server-meta.json",
+		"../../mod-neoforge/run/civquest-server-meta.json",
+		"mod-neoforge/build/integration-server/civquest-server-meta.json",
+		"../mod-neoforge/build/integration-server/civquest-server-meta.json",
+		"../../mod-neoforge/build/integration-server/civquest-server-meta.json",
+	}
+}
+
 // ResolveDiscoveryPath returns the candidate path for the discovery artifact.
 // It prioritizes explicitPath, then CIVQUEST_DISCOVERY_PATH, followed by dynamic XDG locations,
 // and finally development fallbacks.
@@ -112,18 +127,7 @@ func ResolveDiscoveryPath(preferredPath string) string {
 		return filepath.Clean(env)
 	}
 
-	paths := xdg.NewPaths()
-	candidates := []string{
-		filepath.Join(paths.ServerDir(), "civquest-server-meta.json"),
-		filepath.Join(paths.RuntimeDir(), "civquest-server-meta.json"),
-		"civquest-server-meta.json",
-		"../../mod-neoforge/build/integration-server/civquest-server-meta.json",
-		"../../mod-neoforge/run/civquest-server-meta.json",
-		"../mod-neoforge/build/integration-server/civquest-server-meta.json",
-		"../mod-neoforge/run/civquest-server-meta.json",
-		"mod-neoforge/build/integration-server/civquest-server-meta.json",
-		"mod-neoforge/run/civquest-server-meta.json",
-	}
+	candidates := getCandidateDiscoveryPaths()
 
 	for _, cand := range candidates {
 		cleaned := filepath.Clean(cand)
@@ -132,12 +136,32 @@ func ResolveDiscoveryPath(preferredPath string) string {
 		}
 	}
 
+	paths := xdg.NewPaths()
 	return filepath.Clean(filepath.Join(paths.ServerDir(), "civquest-server-meta.json"))
 }
 
 // ReadDiscovery reads and parses the discovery artifact from disk.
+// If path is empty, it searches candidates for an active server instance with status READY and alive process.
 // If the metadata references a local server and ServerPID > 1, it verifies process liveness.
 func ReadDiscovery(path string) (*ServerMeta, error) {
+	if path == "" {
+		candidates := getCandidateDiscoveryPaths()
+		for _, cand := range candidates {
+			cleaned := filepath.Clean(cand)
+			data, err := os.ReadFile(cleaned)
+			if err != nil {
+				continue
+			}
+			var meta ServerMeta
+			if err := json.Unmarshal(data, &meta); err != nil {
+				continue
+			}
+			if meta.IsReady() && meta.IsProcessAlive() {
+				return &meta, nil
+			}
+		}
+	}
+
 	resolved := ResolveDiscoveryPath(path)
 	data, err := os.ReadFile(resolved)
 	if err != nil {
