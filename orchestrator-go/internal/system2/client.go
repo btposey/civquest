@@ -499,11 +499,15 @@ func (c *Client) CompleteStructuredWithTemp(ctx context.Context, messages []Chat
 			return err
 		}
 
+		zeroBudget := 0
 		req := ChatCompletionRequest{
-			Model:          c.model,
-			Messages:       history,
-			Temperature:    temperature,
-			ResponseFormat: &ResponseFormat{Type: "json_object"},
+			Model:              c.model,
+			Messages:           history,
+			Temperature:        temperature,
+			MaxTokens:          1024,
+			ReasoningBudget:    &zeroBudget,
+			ResponseFormat:     &ResponseFormat{Type: "json_object"},
+			ChatTemplateKwargs: map[string]any{"enable_thinking": false},
 		}
 
 		resp, err := c.executeChatCompletion(ctx, req)
@@ -657,12 +661,25 @@ func (c *Client) CreateEmbedding(ctx context.Context, input string) ([]float32, 
 	return resp.Data[0].Embedding, nil
 }
 
-// CleanJSONMarkdown strips markdown code fences (e.g. ```json ... ```) and
-// extracts the JSON payload from surrounding prose if present.
+// CleanJSONMarkdown strips markdown code fences (e.g. ```json ... ```),
+// reasoning <think>...</think> blocks, and extracts the JSON payload from surrounding prose if present.
 func CleanJSONMarkdown(content string) string {
 	trimmed := strings.TrimSpace(content)
 	if trimmed == "" {
 		return ""
+	}
+
+	// 0. Strip <think>...</think> blocks emitted inline by reasoning models
+	for {
+		startThink := strings.Index(trimmed, "<think>")
+		if startThink == -1 {
+			break
+		}
+		endThink := strings.Index(trimmed[startThink:], "</think>")
+		if endThink == -1 {
+			break
+		}
+		trimmed = strings.TrimSpace(trimmed[:startThink] + trimmed[startThink+endThink+len("</think>"):])
 	}
 
 	// 1. Strip triple-backtick markdown blocks if present

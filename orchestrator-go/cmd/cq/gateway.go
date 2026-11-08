@@ -9,6 +9,8 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/btposey/civquest/orchestrator-go/internal/eval"
+	"github.com/btposey/civquest/orchestrator-go/internal/system1"
 	"github.com/btposey/civquest/orchestrator-go/internal/system2"
 	"github.com/btposey/civquest/orchestrator-go/internal/xdg"
 )
@@ -18,10 +20,11 @@ func newGatewayCmd() *cobra.Command {
 		Use:   "gateway",
 		Short: "Inspect and test LLM inference gateway and embedding endpoints",
 		Long: `Test connectivity, round-trip inference latency, token throughput,
-and embedding dimensions against the configured OpenAI-compatible LLM gateway (Ollama/vLLM).`,
+embedding dimensions, and stochastic System 1 harness evaluation against the configured OpenAI-compatible LLM gateway.`,
 	}
 
 	gwCmd.AddCommand(newGatewayTestCmd())
+	gwCmd.AddCommand(newGatewayEvalCmd())
 
 	return gwCmd
 }
@@ -88,7 +91,7 @@ func newGatewayTestCmd() *cobra.Command {
 					},
 				},
 				Temperature: 0.2,
-				MaxTokens:   32,
+				MaxTokens:   256,
 			}
 
 			startChat := time.Now()
@@ -172,6 +175,95 @@ func newGatewayTestCmd() *cobra.Command {
 	cmd.Flags().StringVarP(&endpoint, "endpoint", "e", "", "LLM gateway endpoint URL (default: read from global.yaml)")
 	cmd.Flags().StringVarP(&model, "model", "m", "", "Model identifier (default: read from global.yaml)")
 	cmd.Flags().DurationVarP(&timeout, "timeout", "t", 15*time.Second, "Maximum test request timeout")
+
+	return cmd
+}
+
+func newGatewayEvalCmd() *cobra.Command {
+	var (
+		endpoint string
+		model    string
+		trials   int
+		timeout  time.Duration
+	)
+
+	cmd := &cobra.Command{
+		Use:   "eval",
+		Short: "Run multi-trial stochastic agent harness evaluation with System 1 probability thresholds",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			r := getResolver()
+
+			resolvedEndpoint := endpoint
+			resolvedModel := model
+
+			if globalCfg, err := r.LoadGlobalConfig(); err == nil && globalCfg != nil {
+				if resolvedEndpoint == "" && globalCfg.LLMGateway.BaseURL != "" {
+					resolvedEndpoint = globalCfg.LLMGateway.BaseURL
+				}
+				if resolvedModel == "" && globalCfg.LLMGateway.Model != "" {
+					resolvedModel = globalCfg.LLMGateway.Model
+				}
+			}
+
+			if resolvedEndpoint == "" {
+				resolvedEndpoint = "http://127.0.0.1:8080/v1"
+			}
+			if resolvedModel == "" {
+				resolvedModel = "Spark-X2.5-4B-Q4_K_M"
+			}
+
+			gwCfg := xdg.LLMGatewayConfig{
+				BaseURL:               resolvedEndpoint,
+				Model:                 resolvedModel,
+				StructuredTemperature: 0.20,
+				CreativeTemperature:   0.85,
+			}
+			govCfg := xdg.InferenceGovernorConfig{
+				MaxConcurrentLLMRequests: 2,
+				RequestTimeoutSeconds:    int(timeout.Seconds()),
+			}
+
+			client, err := system2.NewClientWithConfig(gwCfg, govCfg)
+			if err != nil {
+				return fmt.Errorf("failed creating LLM client: %w", err)
+			}
+			defer client.Close()
+
+			harness := eval.NewHarness(eval.HarnessConfig{
+				Client:            client,
+				TrialsPerScenario: trials,
+				TrialTimeout:      timeout,
+			})
+
+			reports, allPassed := harness.RunSuite(cmd.Context(), eval.DefaultScenarios())
+
+			if flagJSON {
+				data, err := json.MarshalIndent(map[string]any{
+					"endpoint":   resolvedEndpoint,
+					"model":      resolvedModel,
+					"all_passed": allPassed,
+					"reports":    reports,
+				}, "", "  ")
+				if err != nil {
+					return err
+				}
+				fmt.Fprintln(cmd.OutOrStdout(), string(data))
+			} else {
+				fmt.Fprintf(cmd.OutOrStdout(), "Endpoint: %s | Model: %s\n\n", resolvedEndpoint, resolvedModel)
+				fmt.Fprint(cmd.OutOrStdout(), system1.FormatSuiteReportMarkdown(reports))
+			}
+
+			if !allPassed {
+				return fmt.Errorf("one or more stochastic agent harness scenarios failed System 1 probability thresholds")
+			}
+			return nil
+		},
+	}
+
+	cmd.Flags().StringVarP(&endpoint, "endpoint", "e", "", "LLM gateway endpoint URL (default: read from global.yaml)")
+	cmd.Flags().StringVarP(&model, "model", "m", "", "Model identifier (default: read from global.yaml)")
+	cmd.Flags().IntVarP(&trials, "trials", "n", 3, "Number of stochastic trials per scenario")
+	cmd.Flags().DurationVarP(&timeout, "timeout", "t", 45*time.Second, "Maximum per-trial timeout")
 
 	return cmd
 }

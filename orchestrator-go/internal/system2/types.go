@@ -57,9 +57,10 @@ func (e *APIError) Error() string {
 
 // ChatMessage represents a single message turn in a chat completion prompt.
 type ChatMessage struct {
-	Role    string `json:"role"`
-	Content string `json:"content"`
-	Name    string `json:"name,omitempty"`
+	Role             string `json:"role"`
+	Content          string `json:"content"`
+	ReasoningContent string `json:"reasoning_content,omitempty"`
+	Name             string `json:"name,omitempty"`
 }
 
 // ResponseFormat specifies the schema format constraint for chat completions.
@@ -69,12 +70,14 @@ type ResponseFormat struct {
 
 // ChatCompletionRequest represents an OpenAI-compatible /v1/chat/completions payload.
 type ChatCompletionRequest struct {
-	Model          string          `json:"model"`
-	Messages       []ChatMessage   `json:"messages"`
-	Temperature    float64         `json:"temperature"`
-	MaxTokens      int             `json:"max_tokens,omitempty"`
-	ResponseFormat *ResponseFormat `json:"response_format,omitempty"`
-	Stream         bool            `json:"stream,omitempty"`
+	Model              string          `json:"model"`
+	Messages           []ChatMessage   `json:"messages"`
+	Temperature        float64         `json:"temperature"`
+	MaxTokens          int             `json:"max_tokens,omitempty"`
+	ReasoningBudget    *int            `json:"reasoning_budget,omitempty"`
+	ResponseFormat     *ResponseFormat `json:"response_format,omitempty"`
+	ChatTemplateKwargs map[string]any  `json:"chat_template_kwargs,omitempty"`
+	Stream             bool            `json:"stream,omitempty"`
 }
 
 // ChatCompletionChoice represents an individual choice in a chat completion response.
