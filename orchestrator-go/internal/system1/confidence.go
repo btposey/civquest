@@ -91,7 +91,7 @@ func IsHostile(entity *civquestv1.VisibleEntity) bool {
 	}
 }
 
-// IsAlly determines whether a visible entity is a friendly player, settler, or tamed companion.
+// IsAlly determines whether a visible entity is a friendly player, agent, or tamed companion.
 func IsAlly(entity *civquestv1.VisibleEntity) bool {
 	if entity == nil || IsHostile(entity) {
 		return false

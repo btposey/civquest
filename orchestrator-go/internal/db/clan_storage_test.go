@@ -97,7 +97,7 @@ func TestClanStorage_LifecycleAndIntegration(t *testing.T) {
 	if err := storage.Contracts.CreateContract(&SharecroppingContract{
 		ContractID:         "cnt-1",
 		PlayerUUID:         "player-alpha",
-		SettlerAgentID:     "agent-agronomist-1",
+		AgentID:            "agent-agronomist-1",
 		PlotMinX:           0,
 		PlotMaxX:           10,
 		PlotMinY:           64,

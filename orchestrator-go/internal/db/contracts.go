@@ -103,7 +103,7 @@ func (c *ContractsDB) migrate(ctx context.Context) error {
 		contract_id TEXT PRIMARY KEY,
 		player_uuid TEXT NOT NULL,
 		player_name TEXT NOT NULL,
-		settler_agent_id TEXT NOT NULL,
+		agent_id TEXT NOT NULL,
 		plot_min_x INTEGER NOT NULL,
 		plot_min_y INTEGER NOT NULL,
 		plot_min_z INTEGER NOT NULL,
@@ -125,7 +125,7 @@ func (c *ContractsDB) migrate(ctx context.Context) error {
 	);
 
 	CREATE INDEX IF NOT EXISTS idx_contracts_player ON sharecropping_contracts(player_uuid);
-	CREATE INDEX IF NOT EXISTS idx_contracts_agent ON sharecropping_contracts(settler_agent_id);
+	CREATE INDEX IF NOT EXISTS idx_contracts_agent ON sharecropping_contracts(agent_id);
 	CREATE INDEX IF NOT EXISTS idx_contracts_status ON sharecropping_contracts(status);
 	`
 	_, err := c.db.ExecContext(ctx, schema)
@@ -178,8 +178,8 @@ func (c *ContractsDB) CreateContractContext(ctx context.Context, contract *Share
 	if contract.PlayerUUID == "" {
 		return errors.New("player_uuid cannot be empty")
 	}
-	if contract.SettlerAgentID == "" {
-		return errors.New("settler_agent_id cannot be empty")
+	if contract.AgentID == "" {
+		return errors.New("agent_id cannot be empty")
 	}
 	if contract.CropType == "" {
 		return errors.New("crop_type cannot be empty")
@@ -218,7 +218,7 @@ func (c *ContractsDB) CreateContractContext(ctx context.Context, contract *Share
 
 	query := `
 		INSERT INTO sharecropping_contracts (
-			contract_id, player_uuid, player_name, settler_agent_id,
+			contract_id, player_uuid, player_name, agent_id,
 			plot_min_x, plot_min_y, plot_min_z,
 			plot_max_x, plot_max_y, plot_max_z,
 			chest_x, chest_y, chest_z,
@@ -227,7 +227,7 @@ func (c *ContractsDB) CreateContractContext(ctx context.Context, contract *Share
 		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
 	`
 	_, err := c.db.ExecContext(ctx, query,
-		contract.ContractID, contract.PlayerUUID, contract.PlayerName, contract.SettlerAgentID,
+		contract.ContractID, contract.PlayerUUID, contract.PlayerName, contract.AgentID,
 		contract.PlotMinX, contract.PlotMinY, contract.PlotMinZ,
 		contract.PlotMaxX, contract.PlotMaxY, contract.PlotMaxZ,
 		contract.ChestX, contract.ChestY, contract.ChestZ,
@@ -282,13 +282,13 @@ func (c *ContractsDB) UpdateContractStatusContext(ctx context.Context, contractI
 	return nil
 }
 
-// ReassignContractSettler reassigns an active contract to a new settler agent upon permadeath handoff.
-func (c *ContractsDB) ReassignContractSettler(contractID string, newAgentID string) error {
-	return c.ReassignContractSettlerContext(context.Background(), contractID, newAgentID)
+// ReassignContractAgent reassigns an active contract to a new agent upon permadeath handoff.
+func (c *ContractsDB) ReassignContractAgent(contractID string, newAgentID string) error {
+	return c.ReassignContractAgentContext(context.Background(), contractID, newAgentID)
 }
 
-// ReassignContractSettlerContext reassigns a contract to newAgentID with context.
-func (c *ContractsDB) ReassignContractSettlerContext(ctx context.Context, contractID string, newAgentID string) error {
+// ReassignContractAgentContext reassigns a contract to newAgentID with context.
+func (c *ContractsDB) ReassignContractAgentContext(ctx context.Context, contractID string, newAgentID string) error {
 	if contractID == "" {
 		return errors.New("contract_id cannot be empty")
 	}
@@ -306,10 +306,10 @@ func (c *ContractsDB) ReassignContractSettlerContext(ctx context.Context, contra
 	}
 	c.mu.RUnlock()
 
-	query := `UPDATE sharecropping_contracts SET settler_agent_id = ? WHERE contract_id = ?;`
+	query := `UPDATE sharecropping_contracts SET agent_id = ? WHERE contract_id = ?;`
 	res, err := c.db.ExecContext(ctx, query, newAgentID, contractID)
 	if err != nil {
-		return fmt.Errorf("reassigning contract settler: %w", err)
+		return fmt.Errorf("reassigning contract agent: %w", err)
 	}
 	rows, err := res.RowsAffected()
 	if err != nil {
@@ -339,7 +339,7 @@ func (c *ContractsDB) GetContractContext(ctx context.Context, contractID string)
 	}
 
 	query := `
-		SELECT contract_id, player_uuid, player_name, settler_agent_id,
+		SELECT contract_id, player_uuid, player_name, agent_id,
 		       plot_min_x, plot_min_y, plot_min_z,
 		       plot_max_x, plot_max_y, plot_max_z,
 		       chest_x, chest_y, chest_z,
@@ -350,7 +350,7 @@ func (c *ContractsDB) GetContractContext(ctx context.Context, contractID string)
 	`
 	var sc SharecroppingContract
 	err := c.db.QueryRowContext(ctx, query, contractID).Scan(
-		&sc.ContractID, &sc.PlayerUUID, &sc.PlayerName, &sc.SettlerAgentID,
+		&sc.ContractID, &sc.PlayerUUID, &sc.PlayerName, &sc.AgentID,
 		&sc.PlotMinX, &sc.PlotMinY, &sc.PlotMinZ,
 		&sc.PlotMaxX, &sc.PlotMaxY, &sc.PlotMaxZ,
 		&sc.ChestX, &sc.ChestY, &sc.ChestZ,
@@ -384,7 +384,7 @@ func (c *ContractsDB) ListContractsForPlayerContext(ctx context.Context, playerU
 	}
 
 	query := `
-		SELECT contract_id, player_uuid, player_name, settler_agent_id,
+		SELECT contract_id, player_uuid, player_name, agent_id,
 		       plot_min_x, plot_min_y, plot_min_z,
 		       plot_max_x, plot_max_y, plot_max_z,
 		       chest_x, chest_y, chest_z,
@@ -404,7 +404,7 @@ func (c *ContractsDB) ListContractsForPlayerContext(ctx context.Context, playerU
 	for rows.Next() {
 		var sc SharecroppingContract
 		if err := rows.Scan(
-			&sc.ContractID, &sc.PlayerUUID, &sc.PlayerName, &sc.SettlerAgentID,
+			&sc.ContractID, &sc.PlayerUUID, &sc.PlayerName, &sc.AgentID,
 			&sc.PlotMinX, &sc.PlotMinY, &sc.PlotMinZ,
 			&sc.PlotMaxX, &sc.PlotMaxY, &sc.PlotMaxZ,
 			&sc.ChestX, &sc.ChestY, &sc.ChestZ,
@@ -418,12 +418,12 @@ func (c *ContractsDB) ListContractsForPlayerContext(ctx context.Context, playerU
 	return contracts, rows.Err()
 }
 
-// ListContractsForAgent returns all contracts managed by settlerAgentID, ordered newest first.
+// ListContractsForAgent returns all contracts managed by agentID, ordered newest first.
 func (c *ContractsDB) ListContractsForAgent(agentID string) ([]*SharecroppingContract, error) {
 	return c.ListContractsForAgentContext(context.Background(), agentID)
 }
 
-// ListContractsForAgentContext returns all contracts managed by settlerAgentID with context.
+// ListContractsForAgentContext returns all contracts managed by agentID with context.
 func (c *ContractsDB) ListContractsForAgentContext(ctx context.Context, agentID string) ([]*SharecroppingContract, error) {
 	if agentID == "" {
 		return nil, errors.New("agent_id cannot be empty")
@@ -436,14 +436,14 @@ func (c *ContractsDB) ListContractsForAgentContext(ctx context.Context, agentID 
 	}
 
 	query := `
-		SELECT contract_id, player_uuid, player_name, settler_agent_id,
+		SELECT contract_id, player_uuid, player_name, agent_id,
 		       plot_min_x, plot_min_y, plot_min_z,
 		       plot_max_x, plot_max_y, plot_max_z,
 		       chest_x, chest_y, chest_z,
 		       split_player_percent, split_clan_percent,
 		       crop_type, status, created_tick, expires_tick
 		FROM sharecropping_contracts
-		WHERE settler_agent_id = ?
+		WHERE agent_id = ?
 		ORDER BY created_tick DESC, contract_id ASC;
 	`
 	rows, err := c.db.QueryContext(ctx, query, agentID)
@@ -456,7 +456,7 @@ func (c *ContractsDB) ListContractsForAgentContext(ctx context.Context, agentID 
 	for rows.Next() {
 		var sc SharecroppingContract
 		if err := rows.Scan(
-			&sc.ContractID, &sc.PlayerUUID, &sc.PlayerName, &sc.SettlerAgentID,
+			&sc.ContractID, &sc.PlayerUUID, &sc.PlayerName, &sc.AgentID,
 			&sc.PlotMinX, &sc.PlotMinY, &sc.PlotMinZ,
 			&sc.PlotMaxX, &sc.PlotMaxY, &sc.PlotMaxZ,
 			&sc.ChestX, &sc.ChestY, &sc.ChestZ,
@@ -496,7 +496,7 @@ func (c *ContractsDB) ListContractsByStatusContext(ctx context.Context, status s
 	}
 
 	query := `
-		SELECT contract_id, player_uuid, player_name, settler_agent_id,
+		SELECT contract_id, player_uuid, player_name, agent_id,
 		       plot_min_x, plot_min_y, plot_min_z,
 		       plot_max_x, plot_max_y, plot_max_z,
 		       chest_x, chest_y, chest_z,
@@ -516,7 +516,7 @@ func (c *ContractsDB) ListContractsByStatusContext(ctx context.Context, status s
 	for rows.Next() {
 		var sc SharecroppingContract
 		if err := rows.Scan(
-			&sc.ContractID, &sc.PlayerUUID, &sc.PlayerName, &sc.SettlerAgentID,
+			&sc.ContractID, &sc.PlayerUUID, &sc.PlayerName, &sc.AgentID,
 			&sc.PlotMinX, &sc.PlotMinY, &sc.PlotMinZ,
 			&sc.PlotMaxX, &sc.PlotMaxY, &sc.PlotMaxZ,
 			&sc.ChestX, &sc.ChestY, &sc.ChestZ,
@@ -548,14 +548,14 @@ func (c *ContractsDB) ListActiveContractsForAgentContext(ctx context.Context, ag
 	}
 
 	query := `
-		SELECT contract_id, player_uuid, player_name, settler_agent_id,
+		SELECT contract_id, player_uuid, player_name, agent_id,
 		       plot_min_x, plot_min_y, plot_min_z,
 		       plot_max_x, plot_max_y, plot_max_z,
 		       chest_x, chest_y, chest_z,
 		       split_player_percent, split_clan_percent,
 		       crop_type, status, created_tick, expires_tick
 		FROM sharecropping_contracts
-		WHERE settler_agent_id = ? AND status = ?
+		WHERE agent_id = ? AND status = ?
 		ORDER BY created_tick DESC, contract_id ASC;
 	`
 	rows, err := c.db.QueryContext(ctx, query, agentID, ContractStatusActive)
@@ -568,7 +568,7 @@ func (c *ContractsDB) ListActiveContractsForAgentContext(ctx context.Context, ag
 	for rows.Next() {
 		var sc SharecroppingContract
 		if err := rows.Scan(
-			&sc.ContractID, &sc.PlayerUUID, &sc.PlayerName, &sc.SettlerAgentID,
+			&sc.ContractID, &sc.PlayerUUID, &sc.PlayerName, &sc.AgentID,
 			&sc.PlotMinX, &sc.PlotMinY, &sc.PlotMinZ,
 			&sc.PlotMaxX, &sc.PlotMaxY, &sc.PlotMaxZ,
 			&sc.ChestX, &sc.ChestY, &sc.ChestZ,
@@ -591,7 +591,7 @@ func (c *ContractsDB) ListContractsContext(ctx context.Context) ([]*Sharecroppin
 	}
 
 	query := `
-		SELECT contract_id, player_uuid, player_name, settler_agent_id,
+		SELECT contract_id, player_uuid, player_name, agent_id,
 		       plot_min_x, plot_min_y, plot_min_z,
 		       plot_max_x, plot_max_y, plot_max_z,
 		       chest_x, chest_y, chest_z,
@@ -610,7 +610,7 @@ func (c *ContractsDB) ListContractsContext(ctx context.Context) ([]*Sharecroppin
 	for rows.Next() {
 		var sc SharecroppingContract
 		if err := rows.Scan(
-			&sc.ContractID, &sc.PlayerUUID, &sc.PlayerName, &sc.SettlerAgentID,
+			&sc.ContractID, &sc.PlayerUUID, &sc.PlayerName, &sc.AgentID,
 			&sc.PlotMinX, &sc.PlotMinY, &sc.PlotMinZ,
 			&sc.PlotMaxX, &sc.PlotMaxY, &sc.PlotMaxZ,
 			&sc.ChestX, &sc.ChestY, &sc.ChestZ,

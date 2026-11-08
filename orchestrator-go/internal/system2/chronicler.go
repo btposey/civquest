@@ -352,7 +352,7 @@ func (s *ChroniclerService) SynthesizeCompanionMemorial(ctx context.Context, age
 
 	if s != nil && s.client != nil {
 		systemPrompt := fmt.Sprintf(`You are the Clan Chronicler of the "%s" clan.
-A heroic settler companion, %s, has fallen in mortal battle defending player %s.
+A heroic agent companion, %s, has fallen in mortal battle defending player %s.
 Compose a solemn, epic memorial tribute documenting their loyalty, courage, and sacrifice.
 
 Return a JSON object conforming strictly to this JSON schema:

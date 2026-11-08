@@ -6,7 +6,7 @@
 # test harness with:
 # - User profile: --username <user> (default: pbots)
 # - Auto-connect: --quickPlayMultiplayer <host>:<port> (default: 127.0.0.1:25565)
-# - Automated scenario: look at settler avatar, whisper chat command, simulate
+# - Automated scenario: look at agent avatar, whisper chat command, simulate
 #   movement/jump/sneak, and capture high-resolution screenshots.
 # ==============================================================================
 
@@ -18,7 +18,7 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 SERVER_HOST="${SERVER_HOST:-127.0.0.1}"
 SERVER_PORT="${SERVER_PORT:-25565}"
 USERNAME="${USERNAME:-pbots}"
-TARGET_SETTLER="${TARGET_SETTLER:-aria}"
+TARGET_AGENT="${TARGET_AGENT:-aria}"
 SCREENSHOTS_DIR="${SCREENSHOTS_DIR:-$REPO_ROOT/build/driver-screenshots}"
 AUTO_EXIT="${AUTO_EXIT:-true}"
 ACTIONS="${ACTIONS:-}"
@@ -31,14 +31,14 @@ Options:
   --host <host>          Target server hostname (default: 127.0.0.1)
   --port <port>          Target server port (default: 25565)
   --username <user>      Client username / profile (default: pbots)
-  --target <name>        Settler avatar to target (default: aria)
+  --target <name>        Agent avatar to target (default: aria)
   --screenshots-dir <d>  Output directory for captured screenshots (default: build/driver-screenshots)
   --no-exit              Keep client open after driver scenario completes (default: auto-exit)
   --actions <spec>       Custom driver action pipeline (e.g. "wait:40,look,screenshot:view.png,exit")
   -h, --help             Show this help message
 
 Environment variables:
-  SERVER_HOST, SERVER_PORT, USERNAME, TARGET_SETTLER, SCREENSHOTS_DIR, AUTO_EXIT, ACTIONS
+  SERVER_HOST, SERVER_PORT, USERNAME, TARGET_AGENT, SCREENSHOTS_DIR, AUTO_EXIT, ACTIONS
 
 Examples:
   # Launch automated driver and capture screenshots against local server:
@@ -59,7 +59,7 @@ while [ $# -gt 0 ]; do
         --username)
             USERNAME="$2"; shift 2 ;;
         --target)
-            TARGET_SETTLER="$2"; shift 2 ;;
+            TARGET_AGENT="$2"; shift 2 ;;
         --screenshots-dir)
             SCREENSHOTS_DIR="$2"; shift 2 ;;
         --no-exit)
@@ -91,7 +91,7 @@ log "CivQuest Client Driver Harness Launcher"
 log "=================================================================="
 log "  Target Server  : ${SERVER_HOST}:${SERVER_PORT}"
 log "  Username       : ${USERNAME}"
-log "  Target Settler : ${TARGET_SETTLER}"
+log "  Target Agent : ${TARGET_AGENT}"
 log "  Screenshots Dir: ${SCREENSHOTS_DIR}"
 log "  Auto Exit      : ${AUTO_EXIT}"
 if [ -n "$ACTIONS" ]; then
@@ -125,7 +125,7 @@ fi
 # 3. Construct Gradle run arguments
 GRADLE_PROPS=(
     "-Dcivquest.driver.enabled=true"
-    "-Dcivquest.driver.target=${TARGET_SETTLER}"
+    "-Dcivquest.driver.target=${TARGET_AGENT}"
     "-Dcivquest.driver.screenshots.dir=${SCREENSHOTS_DIR}"
     "-Dcivquest.driver.exitOnComplete=${AUTO_EXIT}"
 )

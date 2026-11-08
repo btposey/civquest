@@ -28,9 +28,9 @@ import (
 func newAgentCmd() *cobra.Command {
 	agentCmd := &cobra.Command{
 		Use:   "agent",
-		Short: "Manage and inspect autonomous settler agents",
+		Short: "Manage and inspect autonomous agents",
 		Long: `Controls the creation, execution, logs, and live telemetry sockets
-of process-isolated autonomous FakePlayer settler avatars.`,
+of process-isolated autonomous FakePlayer agent avatars.`,
 	}
 
 	agentCmd.AddCommand(newAgentListCmd())
@@ -204,7 +204,7 @@ func newAgentCreateCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "create",
 		Short: "Create a new agent identity YAML configuration and skin assets",
-		Long: `Defines a new autonomous settler avatar with personality traits,
+		Long: `Defines a new autonomous agent avatar with personality traits,
 clan membership, and skin textures, saving the profile to XDG configuration directories.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if len(args) > 0 && name == "" {
@@ -284,7 +284,7 @@ clan membership, and skin textures, saving the profile to XDG configuration dire
 			}
 
 			out := cmd.OutOrStdout()
-			fmt.Fprintln(out, "✓ CivQuest settler agent profile created successfully:")
+			fmt.Fprintln(out, "✓ CivQuest agent profile created successfully:")
 			fmt.Fprintf(out, "  Name:        %s\n", cfg.Name)
 			fmt.Fprintf(out, "  Clan:        %s\n", cfg.ClanID)
 			fmt.Fprintf(out, "  Profession:  %s\n", cfg.Profession)
@@ -298,7 +298,6 @@ clan membership, and skin textures, saving the profile to XDG configuration dire
 	cmd.Flags().StringVarP(&name, "name", "n", "", "Agent name identifier (required)")
 	cmd.Flags().StringVarP(&clanID, "clan", "c", "pioneers", "Clan identifier")
 	cmd.Flags().StringVarP(&role, "role", "r", "EXPLORER", "Agent profession role (EXPLORER, BUILDER, FARMER, etc.)")
-	cmd.Flags().StringVar(&role, "profession", "EXPLORER", "Alias for --role")
 	cmd.Flags().StringVar(&skinPath, "skin", "", "Path to custom 64x64 RGBA PNG skin texture")
 	cmd.Flags().StringVar(&model, "model", "default", "Player skin model variant ('default' or 'slim')")
 	cmd.Flags().Float64Var(&bravery, "bravery", 0.50, "Bravery trait [0.0 - 1.0]")
@@ -318,9 +317,9 @@ func newAgentStartCmd() *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "start <name>",
-		Short: "Start an autonomous settler agent process",
+		Short: "Start an autonomous agent process",
 		Long: `Forks an isolated 'civquest-agent' operating system worker process,
-connects to the bridge server, and spawns the settler avatar into Minecraft.`,
+connects to the bridge server, and spawns the agent avatar into Minecraft.`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			agentName := args[0]
@@ -439,7 +438,7 @@ connects to the bridge server, and spawns the settler avatar into Minecraft.`,
 			}
 
 			out := cmd.OutOrStdout()
-			fmt.Fprintf(out, "✓ Settler agent '%s' started in background (PID: %d)\n", agentName, pid)
+			fmt.Fprintf(out, "✓ Agent '%s' started in background (PID: %d)\n", agentName, pid)
 			fmt.Fprintf(out, "  Logs:   %s\n", logPath)
 			fmt.Fprintf(out, "  Socket: %s\n", r.AgentSocketPath(agentName))
 
@@ -522,7 +521,7 @@ func newAgentStopCmd() *cobra.Command {
 				return nil
 			}
 
-			fmt.Fprintf(cmd.OutOrStdout(), "✓ Settler agent '%s' (PID %d) stopped successfully.\n", agentName, pid)
+			fmt.Fprintf(cmd.OutOrStdout(), "✓ Agent '%s' (PID %d) stopped successfully.\n", agentName, pid)
 			return nil
 		},
 	}
@@ -595,7 +594,7 @@ func newAgentLogsCmd() *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "logs <name>",
-		Short: "View or tail the log file of an autonomous settler agent",
+		Short: "View or tail the log file of an autonomous agent",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			agentName := args[0]

@@ -174,7 +174,7 @@ func TestReputationDB_DeltaAccumulationAndLedger(t *testing.T) {
 		PlayerName: "HeroPlayer",
 		AgentID:    "aria",
 		Delta:      -60.0,
-		Reason:     "Struck settler during skirmish",
+		Reason:     "Struck agent during skirmish",
 		WorldTick:  2000,
 	})
 	if err != nil {

@@ -21,7 +21,7 @@ import java.util.Locale;
 /**
  * Autonomous client-side driver harness for headless or automated testing.
  * Monitors client ticks, detects world join, simulates keyboard navigation,
- * points camera towards active Settler avatars, issues chat/whisper commands,
+ * points camera towards active Agent avatars, issues chat/whisper commands,
  * and captures in-game screenshots.
  *
  * <p>ADR-014 Invariant: This class references client-only APIs (Minecraft, KeyMapping, Screenshot)
@@ -85,7 +85,7 @@ public class ClientDriverHarness {
 
     private static void buildDefaultScenario() {
         actionQueue.add(new DriverAction.WaitAction(40));
-        actionQueue.add(new DriverAction.LookAtSettlerAction(defaultTarget));
+        actionQueue.add(new DriverAction.LookAtAgentAction(defaultTarget));
         actionQueue.add(new DriverAction.WaitAction(10));
         actionQueue.add(new DriverAction.ScreenshotAction("civquest_avatar_view_01.png"));
         actionQueue.add(new DriverAction.WaitAction(10));
@@ -95,7 +95,7 @@ public class ClientDriverHarness {
         actionQueue.add(new DriverAction.HoldKeyAction("JUMP", 5));
         actionQueue.add(new DriverAction.HoldKeyAction("SNEAK", 15));
         actionQueue.add(new DriverAction.WaitAction(15));
-        actionQueue.add(new DriverAction.LookAtSettlerAction(defaultTarget));
+        actionQueue.add(new DriverAction.LookAtAgentAction(defaultTarget));
         actionQueue.add(new DriverAction.WaitAction(10));
         actionQueue.add(new DriverAction.ScreenshotAction("civquest_avatar_view_02.png"));
         actionQueue.add(new DriverAction.WaitAction(30));
@@ -119,9 +119,9 @@ public class ClientDriverHarness {
                     int ticks = parts.length > 1 ? Integer.parseInt(parts[1].trim()) : 20;
                     actionQueue.add(new DriverAction.WaitAction(ticks));
                 }
-                case "look", "look_at", "look_at_settler" -> {
+                case "look", "look_at", "look_at_agent" -> {
                     String target = parts.length > 1 ? parts[1].trim() : defaultTarget;
-                    actionQueue.add(new DriverAction.LookAtSettlerAction(target));
+                    actionQueue.add(new DriverAction.LookAtAgentAction(target));
                 }
                 case "forward", "backward", "left", "right", "jump", "sneak", "sprint" -> {
                     int ticks = parts.length > 1 ? Integer.parseInt(parts[1].trim()) : 20;
@@ -234,14 +234,14 @@ public class ClientDriverHarness {
                 actionTickCounter = 0;
                 currentActionIndex++;
             }
-        } else if (action instanceof DriverAction.LookAtSettlerAction lookAction) {
+        } else if (action instanceof DriverAction.LookAtAgentAction lookAction) {
             String target = (lookAction.target() != null && !lookAction.target().isBlank()) ? lookAction.target() : defaultTarget;
-            Entity settlerEntity = findSettlerEntity(mc, target);
-            if (settlerEntity != null) {
-                lookAtEntity(mc.player, settlerEntity);
-                LOGGER.info("[ClientDriver] Oriented camera towards settler '{}' (pos={})", target, settlerEntity.position());
+            Entity agentEntity = findAgentEntity(mc, target);
+            if (agentEntity != null) {
+                lookAtEntity(mc.player, agentEntity);
+                LOGGER.info("[ClientDriver] Oriented camera towards agent '{}' (pos={})", target, agentEntity.position());
             } else {
-                LOGGER.warn("[ClientDriver] Could not find settler entity '{}' in render range", target);
+                LOGGER.warn("[ClientDriver] Could not find agent entity '{}' in render range", target);
             }
             currentActionIndex++;
         } else if (action instanceof DriverAction.HoldKeyAction holdKeyAction) {
@@ -279,7 +279,7 @@ public class ClientDriverHarness {
         }
     }
 
-    public static Entity findSettlerEntity(Minecraft mc, String targetName) {
+    public static Entity findAgentEntity(Minecraft mc, String targetName) {
         if (mc.level == null || mc.player == null) return null;
 
         // 1. Search player list
@@ -405,11 +405,11 @@ public class ClientDriverHarness {
         LOGGER.info("[ClientDriver] Dispatched player message: '{}'", message);
     }
 
-    public static void sendWhisper(Minecraft mc, String settlerTarget, String message) {
+    public static void sendWhisper(Minecraft mc, String agentTarget, String message) {
         if (mc == null || mc.player == null || mc.player.connection == null) return;
-        String cmd = "civquest tell " + settlerTarget + " " + message;
+        String cmd = "civquest tell " + agentTarget + " " + message;
         mc.player.connection.sendCommand(cmd);
-        LOGGER.info("[ClientDriver] Dispatched settler whisper: /{}", cmd);
+        LOGGER.info("[ClientDriver] Dispatched agent whisper: /{}", cmd);
     }
 
     public static List<DriverAction> getActionQueue() {

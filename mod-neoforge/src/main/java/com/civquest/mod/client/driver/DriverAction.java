@@ -5,7 +5,7 @@ package com.civquest.mod.client.driver;
  */
 public sealed interface DriverAction permits
         DriverAction.WaitAction,
-        DriverAction.LookAtSettlerAction,
+        DriverAction.LookAtAgentAction,
         DriverAction.HoldKeyAction,
         DriverAction.ReleaseKeysAction,
         DriverAction.ChatAction,
@@ -14,7 +14,7 @@ public sealed interface DriverAction permits
         DriverAction.ExitAction {
 
     record WaitAction(int ticks) implements DriverAction {}
-    record LookAtSettlerAction(String target) implements DriverAction {}
+    record LookAtAgentAction(String target) implements DriverAction {}
     record HoldKeyAction(String key, int ticks) implements DriverAction {}
     record ReleaseKeysAction() implements DriverAction {}
     record ChatAction(String message) implements DriverAction {}

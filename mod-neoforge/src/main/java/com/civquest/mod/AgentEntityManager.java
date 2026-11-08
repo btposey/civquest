@@ -32,50 +32,50 @@ import java.util.concurrent.RejectedExecutionException;
 import java.util.function.Supplier;
 
 /**
- * Manages active {@link SettlerEntity} instances, server-thread lifecycle scheduling,
+ * Manages active {@link AgentEntity} instances, server-thread lifecycle scheduling,
  * and skin packet broadcasting.
  */
-public class SettlerEntityManager {
+public class AgentEntityManager {
     private static final Logger LOGGER = LogUtils.getLogger();
 
-    private final ConcurrentHashMap<String, SettlerEntity> settlers = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<String, AgentEntity> agents = new ConcurrentHashMap<>();
     private volatile StreamRegistry streamRegistry;
     private final SensoryFrustumCollector sensoryCollector;
     private final IntentActuator intentActuator;
     private volatile SpawnListener spawnListener;
-    private SettlerEntityFactory entityFactory = SettlerEntity::new;
+    private AgentEntityFactory entityFactory = AgentEntity::new;
 
     @FunctionalInterface
-    public interface SettlerEntityFactory {
-        SettlerEntity create(ServerLevel level, GameProfile profile, String agentId, String clanId);
+    public interface AgentEntityFactory {
+        AgentEntity create(ServerLevel level, GameProfile profile, String agentId, String clanId);
     }
 
-    public void setSettlerEntityFactory(SettlerEntityFactory entityFactory) {
-        this.entityFactory = entityFactory != null ? entityFactory : SettlerEntity::new;
+    public void setAgentEntityFactory(AgentEntityFactory entityFactory) {
+        this.entityFactory = entityFactory != null ? entityFactory : AgentEntity::new;
     }
 
     public interface SpawnListener {
         void onPlayerInfoBroadcast(ClientboundPlayerInfoUpdatePacket packet);
-        void onEntityAdded(SettlerEntity entity);
+        void onEntityAdded(AgentEntity entity);
     }
 
     public void setSpawnListener(SpawnListener spawnListener) {
         this.spawnListener = spawnListener;
     }
 
-    public SettlerEntityManager() {
+    public AgentEntityManager() {
         this(null, new SensoryFrustumCollector(), new IntentActuator());
     }
 
-    public SettlerEntityManager(StreamRegistry streamRegistry) {
+    public AgentEntityManager(StreamRegistry streamRegistry) {
         this(streamRegistry, new SensoryFrustumCollector(), new IntentActuator());
     }
 
-    public SettlerEntityManager(StreamRegistry streamRegistry, SensoryFrustumCollector sensoryCollector) {
+    public AgentEntityManager(StreamRegistry streamRegistry, SensoryFrustumCollector sensoryCollector) {
         this(streamRegistry, sensoryCollector, new IntentActuator());
     }
 
-    public SettlerEntityManager(StreamRegistry streamRegistry, SensoryFrustumCollector sensoryCollector, IntentActuator intentActuator) {
+    public AgentEntityManager(StreamRegistry streamRegistry, SensoryFrustumCollector sensoryCollector, IntentActuator intentActuator) {
         this.streamRegistry = streamRegistry;
         this.sensoryCollector = sensoryCollector != null ? sensoryCollector : new SensoryFrustumCollector();
         this.intentActuator = intentActuator != null ? intentActuator : new IntentActuator();
@@ -95,17 +95,17 @@ public class SettlerEntityManager {
 
     public void setStreamRegistry(StreamRegistry streamRegistry) {
         this.streamRegistry = streamRegistry;
-        for (SettlerEntity settler : settlers.values()) {
-            settler.setStreamRegistry(streamRegistry);
+        for (AgentEntity agent : agents.values()) {
+            agent.setStreamRegistry(streamRegistry);
         }
     }
 
-    public CompletableFuture<SettlerEntity> spawnSettler(MinecraftServer server, SpawnAgentRequest request) {
-        return spawnSettler(server, null, request);
+    public CompletableFuture<AgentEntity> spawnAgent(MinecraftServer server, SpawnAgentRequest request) {
+        return spawnAgent(server, null, request);
     }
 
-    public CompletableFuture<SettlerEntity> spawnSettler(MinecraftServer server, ServerLevel level, SpawnAgentRequest request) {
-        Supplier<SettlerEntity> spawnSupplier = () -> {
+    public CompletableFuture<AgentEntity> spawnAgent(MinecraftServer server, ServerLevel level, SpawnAgentRequest request) {
+        Supplier<AgentEntity> spawnSupplier = () -> {
             ServerLevel targetLevel = level;
             if (targetLevel == null && server != null) {
                 targetLevel = server.overworld();
@@ -113,7 +113,7 @@ public class SettlerEntityManager {
                     targetLevel = server.getAllLevels().iterator().next();
                 }
             }
-            return doSpawnSettler(server, targetLevel, request);
+            return doSpawnAgent(server, targetLevel, request);
         };
         if (server != null) {
             return server.submit(spawnSupplier);
@@ -121,14 +121,14 @@ public class SettlerEntityManager {
             try {
                 return CompletableFuture.completedFuture(spawnSupplier.get());
             } catch (Throwable t) {
-                CompletableFuture<SettlerEntity> future = new CompletableFuture<>();
+                CompletableFuture<AgentEntity> future = new CompletableFuture<>();
                 future.completeExceptionally(t);
                 return future;
             }
         }
     }
 
-    private SettlerEntity doSpawnSettler(MinecraftServer server, ServerLevel level, SpawnAgentRequest request) {
+    private AgentEntity doSpawnAgent(MinecraftServer server, ServerLevel level, SpawnAgentRequest request) {
         String agentId = request.getAgentId();
         String displayName = request.getDisplayName();
         if (displayName == null || displayName.isBlank()) {
@@ -136,7 +136,7 @@ public class SettlerEntityManager {
         }
 
         // Check if agentId already exists: cleanly discard and despawn old entity before spawning
-        SettlerEntity existing = settlers.remove(agentId);
+        AgentEntity existing = agents.remove(agentId);
         if (existing != null) {
             LOGGER.warn("Duplicate agent spawn detected for agentId='{}'. Despawning old entity (uuid='{}')",
                     agentId, existing.getUUID());
@@ -149,7 +149,7 @@ public class SettlerEntityManager {
             }
         }
 
-        UUID offlineUuid = SettlerEntity.createOfflineUUID(displayName);
+        UUID offlineUuid = AgentEntity.createOfflineUUID(displayName);
         GameProfile profile = new GameProfile(offlineUuid, displayName);
 
         if (request.getSkinTextureValue() != null && !request.getSkinTextureValue().isBlank()) {
@@ -168,16 +168,16 @@ public class SettlerEntityManager {
             profile.getProperties().put("textures", new Property("textures", textureValue, sig));
         }
 
-        SettlerEntity settler = entityFactory.create(level, profile, agentId, request.getClanId());
-        settler.setStreamRegistry(this.streamRegistry);
-        settler.setSensoryCollector(this.sensoryCollector);
+        AgentEntity agent = entityFactory.create(level, profile, agentId, request.getClanId());
+        agent.setStreamRegistry(this.streamRegistry);
+        agent.setSensoryCollector(this.sensoryCollector);
 
         if (request.getSkinPngBytes() != null && !request.getSkinPngBytes().isEmpty()) {
             if (request.getSkinPngBytes().size() > 65536) {
                 throw new IllegalArgumentException("skin_png_bytes exceeds maximum allowed size of 65536 bytes (was "
                         + request.getSkinPngBytes().size() + ")");
             }
-            settler.setSkinPngBytes(request.getSkinPngBytes().toByteArray());
+            agent.setSkinPngBytes(request.getSkinPngBytes().toByteArray());
         }
 
         double x = 0.0;
@@ -201,10 +201,10 @@ public class SettlerEntityManager {
             }
         }
 
-        settler.moveTo(x, y, z, 0.0f, 0.0f);
-        settler.setYRot(0.0f);
-        settler.setXRot(0.0f);
-        settler.setYHeadRot(0.0f);
+        agent.moveTo(x, y, z, 0.0f, 0.0f);
+        agent.setYRot(0.0f);
+        agent.setXRot(0.0f);
+        agent.setYHeadRot(0.0f);
 
         // Broadcast player info packet to connected tracking clients BEFORE adding entity to level.
         // Minecraft client requires PlayerInfo to exist in playerInfoMap before processing ClientboundAddEntityPacket.
@@ -219,7 +219,7 @@ public class SettlerEntityManager {
                             ClientboundPlayerInfoUpdatePacket.Action.UPDATE_LATENCY,
                             ClientboundPlayerInfoUpdatePacket.Action.UPDATE_GAME_MODE
                     ),
-                    List.of(settler)
+                    List.of(agent)
             );
         } catch (Throwable t) {
             LOGGER.debug("Could not construct ClientboundPlayerInfoUpdatePacket (headless/mock environment): {}", t.getMessage());
@@ -237,11 +237,11 @@ public class SettlerEntityManager {
         }
 
         // Broadcast custom skin payload packet if custom PNG bytes are supplied
-        if (settler.getSkinPngBytes() != null && settler.getSkinPngBytes().length > 0) {
-            ClientboundSettlerSkinPacket skinPacket = new ClientboundSettlerSkinPacket(
-                    settler.getUUID(),
-                    settler.getAgentId(),
-                    settler.getSkinPngBytes()
+        if (agent.getSkinPngBytes() != null && agent.getSkinPngBytes().length > 0) {
+            ClientboundAgentSkinPacket skinPacket = new ClientboundAgentSkinPacket(
+                    agent.getUUID(),
+                    agent.getAgentId(),
+                    agent.getSkinPngBytes()
             );
             if (server != null && server.getPlayerList() != null) {
                 server.getPlayerList().broadcastAll(skinPacket.toVanillaClientbound());
@@ -253,65 +253,65 @@ public class SettlerEntityManager {
             level.setChunkForced(chunkPos.x, chunkPos.z, true);
             boolean added = false;
             try {
-                added = level.addFreshEntity(settler);
+                added = level.addFreshEntity(agent);
             } catch (Throwable t) {
-                LOGGER.error("Unexpected error adding SettlerEntity to level for agent '{}': {}", agentId, t.getMessage(), t);
+                LOGGER.error("Unexpected error adding AgentEntity to level for agent '{}': {}", agentId, t.getMessage(), t);
                 added = false;
             }
             if (!added) {
                 level.setChunkForced(chunkPos.x, chunkPos.z, false);
                 if (server != null && server.getPlayerList() != null) {
                     ClientboundPlayerInfoRemovePacket removePacket =
-                            new ClientboundPlayerInfoRemovePacket(List.of(settler.getUUID()));
+                            new ClientboundPlayerInfoRemovePacket(List.of(agent.getUUID()));
                     server.getPlayerList().broadcastAll(removePacket);
                 }
-                throw new IllegalStateException("Failed to add SettlerEntity to level");
+                throw new IllegalStateException("Failed to add AgentEntity to level");
             }
-            settler.setForcedChunkPos(chunkPos);
+            agent.setForcedChunkPos(chunkPos);
         }
         if (spawnListener != null) {
-            spawnListener.onEntityAdded(settler);
+            spawnListener.onEntityAdded(agent);
         }
 
-        settler.setDeathListener(deadSettler -> {
-            deadSettler.releaseForcedChunk();
-            settlers.remove(deadSettler.getAgentId(), deadSettler);
+        agent.setDeathListener(deadAgent -> {
+            deadAgent.releaseForcedChunk();
+            agents.remove(deadAgent.getAgentId(), deadAgent);
             if (streamRegistry != null) {
-                streamRegistry.close(deadSettler.getAgentId());
+                streamRegistry.close(deadAgent.getAgentId());
             }
             if (server != null && server.getPlayerList() != null) {
                 ClientboundPlayerInfoRemovePacket removePacket =
-                        new ClientboundPlayerInfoRemovePacket(List.of(deadSettler.getUUID()));
+                        new ClientboundPlayerInfoRemovePacket(List.of(deadAgent.getUUID()));
                 server.getPlayerList().broadcastAll(removePacket);
             }
         });
 
-        settler.setRemovalListener(removedSettler -> {
-            removedSettler.releaseForcedChunk();
-            settlers.remove(removedSettler.getAgentId(), removedSettler);
+        agent.setRemovalListener(removedAgent -> {
+            removedAgent.releaseForcedChunk();
+            agents.remove(removedAgent.getAgentId(), removedAgent);
             if (streamRegistry != null) {
-                streamRegistry.close(removedSettler.getAgentId());
+                streamRegistry.close(removedAgent.getAgentId());
             }
             if (server != null && server.getPlayerList() != null) {
                 ClientboundPlayerInfoRemovePacket removePacket =
-                        new ClientboundPlayerInfoRemovePacket(List.of(removedSettler.getUUID()));
+                        new ClientboundPlayerInfoRemovePacket(List.of(removedAgent.getUUID()));
                 server.getPlayerList().broadcastAll(removePacket);
             }
         });
 
-        settlers.put(agentId, settler);
-        LOGGER.info("SettlerEntity registered and spawned: agentId='{}', uuid='{}', entityId={}",
-                agentId, settler.getUUID(), settler.getId());
-        return settler;
+        agents.put(agentId, agent);
+        LOGGER.info("AgentEntity registered and spawned: agentId='{}', uuid='{}', entityId={}",
+                agentId, agent.getUUID(), agent.getId());
+        return agent;
     }
 
-    public CompletableFuture<Boolean> despawnSettler(MinecraftServer server, String agentId) {
+    public CompletableFuture<Boolean> despawnAgent(MinecraftServer server, String agentId) {
         if (agentId == null || agentId.isBlank()) {
             return CompletableFuture.completedFuture(false);
         }
 
         Supplier<Boolean> despawnSupplier = () -> {
-            SettlerEntity removed = settlers.remove(agentId);
+            AgentEntity removed = agents.remove(agentId);
             if (removed != null) {
                 removed.releaseForcedChunk();
                 removed.discard();
@@ -320,7 +320,7 @@ public class SettlerEntityManager {
                             new ClientboundPlayerInfoRemovePacket(List.of(removed.getUUID()));
                     server.getPlayerList().broadcastAll(removePacket);
                 }
-                LOGGER.info("SettlerEntity despawned and discarded: agentId='{}'", agentId);
+                LOGGER.info("AgentEntity despawned and discarded: agentId='{}'", agentId);
                 return true;
             }
             return false;
@@ -333,19 +333,19 @@ public class SettlerEntityManager {
         }
     }
 
-    public SettlerEntity getSettler(String agentId) {
+    public AgentEntity getAgent(String agentId) {
         if (agentId == null) {
             return null;
         }
-        return settlers.get(agentId);
+        return agents.get(agentId);
     }
 
-    public Map<String, SettlerEntity> getAllSettlers() {
-        return Collections.unmodifiableMap(settlers);
+    public Map<String, AgentEntity> getAllAgents() {
+        return Collections.unmodifiableMap(agents);
     }
 
     public int count() {
-        return settlers.size();
+        return agents.size();
     }
 
     public void onServerTick(ServerTickEvent.Post event) {
@@ -360,12 +360,12 @@ public class SettlerEntityManager {
     }
 
     public void tickTelemetry(int tickCount) {
-        if (streamRegistry == null || settlers.isEmpty()) {
+        if (streamRegistry == null || agents.isEmpty()) {
             return;
         }
-        for (SettlerEntity settler : settlers.values()) {
+        for (AgentEntity agent : agents.values()) {
             if (tickCount >= 0) {
-                int hash = Math.abs(settler.getUUID().hashCode());
+                int hash = Math.abs(agent.getUUID().hashCode());
                 if (hash < 0) {
                     hash = 0;
                 }
@@ -373,14 +373,14 @@ public class SettlerEntityManager {
                     continue;
                 }
             }
-            if (settler.isAlive() && !settler.isRemoved()) {
-                if (streamRegistry.isRegistered(settler.getAgentId())) {
+            if (agent.isAlive() && !agent.isRemoved()) {
+                if (streamRegistry.isRegistered(agent.getAgentId())) {
                     try {
-                        TelemetryFrame frame = sensoryCollector.collectFrame(settler, null, null);
-                        streamRegistry.sendFrame(settler.getAgentId(), frame);
+                        TelemetryFrame frame = sensoryCollector.collectFrame(agent, null, null);
+                        streamRegistry.sendFrame(agent.getAgentId(), frame);
                     } catch (Exception e) {
-                        LOGGER.error("Error streaming 5 Hz telemetry frame for settler '{}': {}",
-                                settler.getAgentId(), e.getMessage(), e);
+                        LOGGER.error("Error streaming 5 Hz telemetry frame for agent '{}': {}",
+                                agent.getAgentId(), e.getMessage(), e);
                     }
                 }
             }
@@ -388,18 +388,18 @@ public class SettlerEntityManager {
     }
 
     public void onLivingDamage(LivingDamageEvent.Post event) {
-        if (event.getEntity() instanceof SettlerEntity settler) {
-            if (settler.isDeadOrDying() || settler.getHealth() <= 0.0f) {
+        if (event.getEntity() instanceof AgentEntity agent) {
+            if (agent.isDeadOrDying() || agent.getHealth() <= 0.0f) {
                 return;
             }
-            if (streamRegistry != null && streamRegistry.isRegistered(settler.getAgentId())) {
+            if (streamRegistry != null && streamRegistry.isRegistered(agent.getAgentId())) {
                 try {
                     DamageEvent damageEvent = SensoryFrustumCollector.buildDamageEvent(event.getSource(), event.getNewDamage());
-                    TelemetryFrame frame = sensoryCollector.collectFrame(settler, damageEvent, null);
-                    streamRegistry.sendFrame(settler.getAgentId(), frame);
+                    TelemetryFrame frame = sensoryCollector.collectFrame(agent, damageEvent, null);
+                    streamRegistry.sendFrame(agent.getAgentId(), frame);
                 } catch (Exception e) {
-                    LOGGER.error("Error streaming immediate damage telemetry frame for settler '{}': {}",
-                            settler.getAgentId(), e.getMessage(), e);
+                    LOGGER.error("Error streaming immediate damage telemetry frame for agent '{}': {}",
+                            agent.getAgentId(), e.getMessage(), e);
                 }
             }
         }
@@ -418,16 +418,16 @@ public class SettlerEntityManager {
                     return;
                 }
 
-                SettlerEntity settler = settlers.get(agentId);
-                if (settler == null || settler.isRemoved() || !settler.isAlive()) {
-                    LOGGER.warn("Received intent {} for unknown or inactive settler '{}'",
+                AgentEntity agent = agents.get(agentId);
+                if (agent == null || agent.isRemoved() || !agent.isAlive()) {
+                    LOGGER.warn("Received intent {} for unknown or inactive agent '{}'",
                             intent.getActionCase(), agentId);
                     return;
                 }
 
-                intentActuator.actuate(settler, intent);
+                intentActuator.actuate(agent, intent);
             } catch (Throwable t) {
-                LOGGER.error("Error executing intent {} for settler '{}': {}",
+                LOGGER.error("Error executing intent {} for agent '{}': {}",
                         intent.getActionCase(), intent.getAgentId(), t.getMessage(), t);
             }
         };
@@ -446,11 +446,11 @@ public class SettlerEntityManager {
         } else {
             // Headless test environment without MinecraftServer
             String agentId = intent.getAgentId();
-            SettlerEntity settler = (agentId != null) ? settlers.get(agentId) : null;
-            if (settler != null && settler.level() != null) {
+            AgentEntity agent = (agentId != null) ? agents.get(agentId) : null;
+            if (agent != null && agent.level() != null) {
                 LOGGER.warn("Dropping intent {}: no MinecraftServer running to execute world-modifying task safely",
                         intent.getActionCase());
-                return CompletableFuture.failedFuture(new IllegalStateException("No MinecraftServer present for world-bound settler"));
+                return CompletableFuture.failedFuture(new IllegalStateException("No MinecraftServer present for world-bound agent"));
             }
             task.run();
             return CompletableFuture.completedFuture(null);
@@ -458,15 +458,15 @@ public class SettlerEntityManager {
     }
 
     public void clearAll() {
-        for (SettlerEntity settler : settlers.values()) {
+        for (AgentEntity agent : agents.values()) {
             try {
-                settler.releaseForcedChunk();
-                settler.discard();
+                agent.releaseForcedChunk();
+                agent.discard();
             } catch (Exception e) {
-                LOGGER.debug("Error discarding settler during clearAll: {}", e.getMessage());
+                LOGGER.debug("Error discarding agent during clearAll: {}", e.getMessage());
             }
         }
-        settlers.clear();
-        LOGGER.info("SettlerEntityManager cleared all active settlers");
+        agents.clear();
+        LOGGER.info("AgentEntityManager cleared all active agents");
     }
 }

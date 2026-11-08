@@ -12,25 +12,25 @@ import java.util.UUID;
 
 /**
  * Custom NeoForge network payload carrying agent skin textures (raw PNG bytes or metadata)
- * broadcast to connected client players for dynamic settler avatar rendering.
+ * broadcast to connected client players for dynamic agent avatar rendering.
  */
-public record ClientboundSettlerSkinPacket(UUID settlerUuid, String agentId, byte[] skinPng) implements CustomPacketPayload {
-    public static final CustomPacketPayload.Type<ClientboundSettlerSkinPacket> TYPE =
-            new CustomPacketPayload.Type<>(ResourceLocation.fromNamespaceAndPath(CivQuestMod.MOD_ID, "settler_skin"));
+public record ClientboundAgentSkinPacket(UUID agentUuid, String agentId, byte[] skinPng) implements CustomPacketPayload {
+    public static final CustomPacketPayload.Type<ClientboundAgentSkinPacket> TYPE =
+            new CustomPacketPayload.Type<>(ResourceLocation.fromNamespaceAndPath(CivQuestMod.MOD_ID, "agent_skin"));
 
-    public static final StreamCodec<ByteBuf, ClientboundSettlerSkinPacket> STREAM_CODEC =
+    public static final StreamCodec<ByteBuf, ClientboundAgentSkinPacket> STREAM_CODEC =
             StreamCodec.composite(
                     UUIDUtil.STREAM_CODEC,
-                    ClientboundSettlerSkinPacket::settlerUuid,
+                    ClientboundAgentSkinPacket::agentUuid,
                     ByteBufCodecs.STRING_UTF8,
-                    ClientboundSettlerSkinPacket::agentId,
+                    ClientboundAgentSkinPacket::agentId,
                     ByteBufCodecs.byteArray(65536),
-                    ClientboundSettlerSkinPacket::skinPng,
-                    ClientboundSettlerSkinPacket::new
+                    ClientboundAgentSkinPacket::skinPng,
+                    ClientboundAgentSkinPacket::new
             );
 
-    public ClientboundSettlerSkinPacket {
-        Objects.requireNonNull(settlerUuid, "settlerUuid cannot be null");
+    public ClientboundAgentSkinPacket {
+        Objects.requireNonNull(agentUuid, "agentUuid cannot be null");
         agentId = agentId != null ? agentId : "";
         skinPng = skinPng != null ? skinPng : new byte[0];
     }

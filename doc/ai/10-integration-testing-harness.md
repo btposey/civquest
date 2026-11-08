@@ -46,10 +46,10 @@ import net.minecraft.gametest.framework.GameTest;
 import net.minecraft.gametest.framework.GameTestHelper;
 import net.neoforged.testframework.gametest.EmptyTemplate;
 
-public class SettlerSpawnGameTest {
+public class AgentSpawnGameTest {
 
     @GameTest(template = "neoforge:empty3x3x3")
-    public static void testSettlerLifecycle(GameTestHelper helper) {
+    public static void testAgentLifecycle(GameTestHelper helper) {
         // Assert server level is active and valid
         helper.assertBlockPresent(net.minecraft.world.level.block.Blocks.AIR, new BlockPos(1, 1, 1));
         helper.succeed();
@@ -117,11 +117,11 @@ func TestLiveServerEndToEnd(t *testing.T) {
 		t.Fatalf("gRPC health check failed: %v", err)
 	}
 
-	// 2. Spawn settler entity
+	// 2. Spawn agent entity
 	client := civquestv1.NewCivQuestBridgeServiceClient(conn)
 	spawnResp, err := client.SpawnAgentEntity(context.Background(), &civquestv1.SpawnAgentRequest{
-		AgentId:     "probe-settler-1",
-		DisplayName: "ProbeSettler",
+		AgentId:     "probe-agent-1",
+		DisplayName: "ProbeAgent",
 		ClanId:      "clan-test",
 		SpawnCoords: &civquestv1.Vec3{X: 0, Y: 4, Z: 0},
 	})
@@ -144,7 +144,7 @@ func TestLiveServerEndToEnd(t *testing.T) {
 
 	// 4. Clean despawn
 	despawnResp, err := client.DespawnAgentEntity(context.Background(), &civquestv1.DespawnAgentRequest{
-		AgentId: "probe-settler-1",
+		AgentId: "probe-agent-1",
 	})
 	if err != nil || !despawnResp.GetSuccess() {
 		t.Fatalf("DespawnAgentEntity failed: %v", err)

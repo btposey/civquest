@@ -226,7 +226,7 @@ func TestClientUnauthenticated(t *testing.T) {
 	}
 
 	// 2. SpawnAgentEntity should fail with Unauthenticated
-	_, err = client.SpawnAgentEntity(ctx, &civquestv1.SpawnAgentRequest{AgentId: "settler-1"})
+	_, err = client.SpawnAgentEntity(ctx, &civquestv1.SpawnAgentRequest{AgentId: "agent-1"})
 	if err == nil {
 		t.Fatalf("Expected unauthenticated SpawnAgentEntity to fail")
 	}
@@ -327,7 +327,7 @@ func TestClientAuthenticatedFullLifecycle(t *testing.T) {
 
 	// 2. SpawnAgentEntity
 	spawnResp, err := client.SpawnAgentEntity(ctx, &civquestv1.SpawnAgentRequest{
-		AgentId:     "settler-alpha",
+		AgentId:     "agent-alpha",
 		DisplayName: "Alpha",
 		ClanId:      "clan-1",
 	})
@@ -360,7 +360,7 @@ func TestClientAuthenticatedFullLifecycle(t *testing.T) {
 
 	// Send AgentIntent
 	intent := &civquestv1.AgentIntent{
-		AgentId:    "settler-alpha",
+		AgentId:    "agent-alpha",
 		SequenceId: 1,
 		Action: &civquestv1.AgentIntent_Navigate{
 			Navigate: &civquestv1.NavigateIntent{
@@ -378,7 +378,7 @@ func TestClientAuthenticatedFullLifecycle(t *testing.T) {
 
 	// 4. DespawnAgentEntity
 	despawnResp, err := client.DespawnAgentEntity(ctx, &civquestv1.DespawnAgentRequest{
-		AgentId: "settler-alpha",
+		AgentId: "agent-alpha",
 	})
 	if err != nil {
 		t.Fatalf("DespawnAgentEntity failed: %v", err)

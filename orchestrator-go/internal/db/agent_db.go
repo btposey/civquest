@@ -152,7 +152,7 @@ func (a *AgentDB) migrateMemoryDB(ctx context.Context) error {
 		`CREATE TABLE IF NOT EXISTS relationships (
 			entity_uuid TEXT PRIMARY KEY,
 			entity_name TEXT NOT NULL,
-			entity_type TEXT CHECK(entity_type IN ('PLAYER', 'SETTLER')),
+			entity_type TEXT CHECK(entity_type IN ('PLAYER', 'AGENT')),
 			disposition_score REAL DEFAULT 0.0 CHECK(disposition_score >= -100.0 AND disposition_score <= 100.0),
 			familiarity REAL DEFAULT 0.0 CHECK(familiarity >= 0.0 AND familiarity <= 1.0),
 			kinship_role TEXT DEFAULT 'NONE' CHECK(kinship_role IN ('NONE', 'SPOUSE', 'PARENT', 'CHILD', 'WIDOWED')),
@@ -637,7 +637,7 @@ func (a *AgentDB) SearchEpisodicMemories(ctx context.Context, queryEmbedding []f
 
 // ==================== RELATIONSHIPS ====================
 
-// UpsertRelationship creates or updates an agent's relationship entry with a player or settler.
+// UpsertRelationship creates or updates an agent's relationship entry with a player or agent.
 func (a *AgentDB) UpsertRelationship(ctx context.Context, rel Relationship) error {
 	a.memWriteMu.Lock()
 	defer a.memWriteMu.Unlock()
@@ -651,8 +651,8 @@ func (a *AgentDB) UpsertRelationship(ctx context.Context, rel Relationship) erro
 	if rel.EntityUUID == "" {
 		return errors.New("entity_uuid cannot be empty")
 	}
-	if rel.EntityType != "PLAYER" && rel.EntityType != "SETTLER" {
-		return fmt.Errorf("invalid entity_type %q: must be 'PLAYER' or 'SETTLER'", rel.EntityType)
+	if rel.EntityType != "PLAYER" && rel.EntityType != "AGENT" {
+		return fmt.Errorf("invalid entity_type %q: must be 'PLAYER' or 'AGENT'", rel.EntityType)
 	}
 	if rel.KinshipRole == "" {
 		rel.KinshipRole = "NONE"

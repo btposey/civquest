@@ -28,7 +28,7 @@ const (
 type CompanionState string
 
 const (
-	// CompanionStateNone indicates default village settler routines.
+	// CompanionStateNone indicates default village agent routines.
 	CompanionStateNone CompanionState = "NONE"
 	// CompanionStateFollow indicates the agent actively follows the bonded player.
 	CompanionStateFollow CompanionState = "FOLLOW"
@@ -323,7 +323,7 @@ func (s *CompanionService) ProcessCommand(ctx context.Context, playerUUID, playe
 	defer s.mu.Unlock()
 	res.OldState = s.state
 
-	// Strangers cannot command settlers to follow or wait.
+	// Strangers cannot command agents to follow or wait.
 	if stage == BondStranger {
 		res.Obeyed = false
 		res.NewState = s.state
@@ -443,7 +443,7 @@ func (s *CompanionService) RecordSharedTravel(ctx context.Context, playerUUID, p
 	return delta, stageChanged, nil
 }
 
-// RecordCombatAid awards intimacy when the settler assists in combat or takes damage near the player.
+// RecordCombatAid awards intimacy when the agent assists in combat or takes damage near the player.
 // Increases disposition (+5.0) and familiarity (+0.08).
 func (s *CompanionService) RecordCombatAid(ctx context.Context, playerUUID, playerName string, worldTick int64) (bool, error) {
 	if playerUUID == "" {

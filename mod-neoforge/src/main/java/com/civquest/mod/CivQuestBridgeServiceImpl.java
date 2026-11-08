@@ -36,7 +36,7 @@ public class CivQuestBridgeServiceImpl extends CivQuestBridgeServiceGrpc.CivQues
     private static final Logger LOGGER = LoggerFactory.getLogger(CivQuestBridgeServiceImpl.class);
 
     private final StreamRegistry streamRegistry;
-    private final SettlerEntityManager settlerEntityManager;
+    private final AgentEntityManager agentEntityManager;
     private final Supplier<MinecraftServer> serverSupplier;
 
     public CivQuestBridgeServiceImpl() {
@@ -44,21 +44,21 @@ public class CivQuestBridgeServiceImpl extends CivQuestBridgeServiceGrpc.CivQues
     }
 
     public CivQuestBridgeServiceImpl(StreamRegistry streamRegistry) {
-        this(streamRegistry, new SettlerEntityManager(streamRegistry), () -> null);
+        this(streamRegistry, new AgentEntityManager(streamRegistry), () -> null);
     }
 
-    public CivQuestBridgeServiceImpl(StreamRegistry streamRegistry, SettlerEntityManager settlerEntityManager) {
-        this(streamRegistry, settlerEntityManager, () -> null);
+    public CivQuestBridgeServiceImpl(StreamRegistry streamRegistry, AgentEntityManager agentEntityManager) {
+        this(streamRegistry, agentEntityManager, () -> null);
     }
 
     public CivQuestBridgeServiceImpl(StreamRegistry streamRegistry,
-                                     SettlerEntityManager settlerEntityManager,
+                                     AgentEntityManager agentEntityManager,
                                      Supplier<MinecraftServer> serverSupplier) {
         this.streamRegistry = Objects.requireNonNull(streamRegistry, "streamRegistry cannot be null");
-        this.settlerEntityManager = Objects.requireNonNull(settlerEntityManager, "settlerEntityManager cannot be null");
+        this.agentEntityManager = Objects.requireNonNull(agentEntityManager, "agentEntityManager cannot be null");
         this.serverSupplier = Objects.requireNonNull(serverSupplier, "serverSupplier cannot be null");
-        if (this.settlerEntityManager.getStreamRegistry() == null) {
-            this.settlerEntityManager.setStreamRegistry(this.streamRegistry);
+        if (this.agentEntityManager.getStreamRegistry() == null) {
+            this.agentEntityManager.setStreamRegistry(this.streamRegistry);
         }
     }
 
@@ -66,8 +66,8 @@ public class CivQuestBridgeServiceImpl extends CivQuestBridgeServiceGrpc.CivQues
         return streamRegistry;
     }
 
-    public SettlerEntityManager getSettlerEntityManager() {
-        return settlerEntityManager;
+    public AgentEntityManager getAgentEntityManager() {
+        return agentEntityManager;
     }
 
     public MinecraftServer getServer() {
@@ -146,7 +146,7 @@ public class CivQuestBridgeServiceImpl extends CivQuestBridgeServiceGrpc.CivQues
                         value.getAgentId(), value.getActionCase());
 
                 MinecraftServer server = getServer();
-                settlerEntityManager.handleIntent(server, value)
+                agentEntityManager.handleIntent(server, value)
                         .whenComplete((res, err) -> {
                             if (err != null) {
                                 LOGGER.warn("Intent actuation failed: {}", err.getMessage());
@@ -249,16 +249,16 @@ public class CivQuestBridgeServiceImpl extends CivQuestBridgeServiceGrpc.CivQues
 
         MinecraftServer server = getServer();
         if (server != null && server.isRunning()) {
-            CompletableFuture<SettlerEntity> future = null;
+            CompletableFuture<AgentEntity> future = null;
             try {
-                // Dimension lookup and entity spawn occur inside server.submit() via SettlerEntityManager
-                future = settlerEntityManager.spawnSettler(server, request);
-                SettlerEntity settler = future.get(5, TimeUnit.SECONDS);
+                // Dimension lookup and entity spawn occur inside server.submit() via AgentEntityManager
+                future = agentEntityManager.spawnAgent(server, request);
+                AgentEntity agent = future.get(5, TimeUnit.SECONDS);
 
                 SpawnAgentResponse response = SpawnAgentResponse.newBuilder()
                         .setSuccess(true)
-                        .setMinecraftEntityId(settler.getId())
-                        .setOfflineUuid(settler.getUUID().toString())
+                        .setMinecraftEntityId(agent.getId())
+                        .setOfflineUuid(agent.getUUID().toString())
                         .build();
 
                 synchronized (responseObserver) {
@@ -267,14 +267,14 @@ public class CivQuestBridgeServiceImpl extends CivQuestBridgeServiceGrpc.CivQues
                 }
                 return;
             } catch (TimeoutException e) {
-                LOGGER.error("Timeout waiting to spawn settler entity for agent '{}'", agentId);
+                LOGGER.error("Timeout waiting to spawn agent entity for agent '{}'", agentId);
                 if (future != null) {
                     future.cancel(false);
                 }
-                settlerEntityManager.despawnSettler(server, agentId);
+                agentEntityManager.despawnAgent(server, agentId);
                 SpawnAgentResponse response = SpawnAgentResponse.newBuilder()
                         .setSuccess(false)
-                        .setErrorMessage("Timed out spawning settler on server: " + e.getMessage())
+                        .setErrorMessage("Timed out spawning agent on server: " + e.getMessage())
                         .build();
                 synchronized (responseObserver) {
                     responseObserver.onNext(response);
@@ -282,15 +282,15 @@ public class CivQuestBridgeServiceImpl extends CivQuestBridgeServiceGrpc.CivQues
                 }
                 return;
             } catch (Exception e) {
-                LOGGER.error("Failed to spawn settler for agent '{}': {}", agentId, e.getMessage(), e);
+                LOGGER.error("Failed to spawn agent for agent '{}': {}", agentId, e.getMessage(), e);
                 if (future != null) {
                     future.cancel(false);
                 }
-                settlerEntityManager.despawnSettler(server, agentId);
+                agentEntityManager.despawnAgent(server, agentId);
                 Throwable cause = e.getCause() != null ? e.getCause() : e;
                 SpawnAgentResponse response = SpawnAgentResponse.newBuilder()
                         .setSuccess(false)
-                        .setErrorMessage("Failed to spawn settler on server: " + cause.getMessage())
+                        .setErrorMessage("Failed to spawn agent on server: " + cause.getMessage())
                         .build();
                 synchronized (responseObserver) {
                     responseObserver.onNext(response);
@@ -333,7 +333,7 @@ public class CivQuestBridgeServiceImpl extends CivQuestBridgeServiceGrpc.CivQues
         if (server != null && server.isRunning()) {
             CompletableFuture<Boolean> future = null;
             try {
-                future = settlerEntityManager.despawnSettler(server, agentId);
+                future = agentEntityManager.despawnAgent(server, agentId);
                 boolean despawned = future.get(5, TimeUnit.SECONDS);
                 DespawnAgentResponse response = DespawnAgentResponse.newBuilder()
                         .setSuccess(despawned)
@@ -344,7 +344,7 @@ public class CivQuestBridgeServiceImpl extends CivQuestBridgeServiceGrpc.CivQues
                 }
                 return;
             } catch (TimeoutException e) {
-                LOGGER.error("Timeout while despawning settler entity for agent '{}': {}", agentId, e.getMessage());
+                LOGGER.error("Timeout while despawning agent entity for agent '{}': {}", agentId, e.getMessage());
                 if (future != null) {
                     future.cancel(false);
                 }
@@ -357,7 +357,7 @@ public class CivQuestBridgeServiceImpl extends CivQuestBridgeServiceGrpc.CivQues
                 }
                 return;
             } catch (Exception e) {
-                LOGGER.error("Failed to despawn settler entity for agent '{}': {}", agentId, e.getMessage(), e);
+                LOGGER.error("Failed to despawn agent entity for agent '{}': {}", agentId, e.getMessage(), e);
                 if (future != null) {
                     future.cancel(false);
                 }
@@ -373,7 +373,7 @@ public class CivQuestBridgeServiceImpl extends CivQuestBridgeServiceGrpc.CivQues
         }
 
         // Standalone/mock fallback without active MinecraftServer
-        settlerEntityManager.despawnSettler(null, agentId);
+        agentEntityManager.despawnAgent(null, agentId);
         DespawnAgentResponse response = DespawnAgentResponse.newBuilder()
                 .setSuccess(true)
                 .build();

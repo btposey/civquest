@@ -19,7 +19,7 @@ public class ProtoContractTest {
                 .setBiomeId("minecraft:forest")
                 .setLastProcessedSequenceId(100L)
                 .setStatus(AgentStatus.newBuilder()
-                        .setAgentId("settler-42")
+                        .setAgentId("agent-42")
                         .setEntityId(100)
                         .setPosition(Vec3.newBuilder().setX(10.0).setY(70.0).setZ(-50.0).build())
                         .setHealth(18.5f)
@@ -58,7 +58,7 @@ public class ProtoContractTest {
         assertEquals(2400, parsed.getWorldTick());
         assertEquals(Weather.WEATHER_RAIN, parsed.getWeather());
         assertEquals(100L, parsed.getLastProcessedSequenceId());
-        assertEquals("settler-42", parsed.getStatus().getAgentId());
+        assertEquals("agent-42", parsed.getStatus().getAgentId());
         assertEquals(NavigationState.NAVIGATION_STATE_PATHING, parsed.getStatus().getNavigationState());
         assertEquals(1, parsed.getVisibleEntitiesCount());
         assertTrue(parsed.getVisibleEntities(0).getIsHostile());
@@ -71,7 +71,7 @@ public class ProtoContractTest {
     @DisplayName("AgentIntent action oneof and nested parameters roundtrip")
     void testAgentIntentRoundtrip() throws InvalidProtocolBufferException {
         AgentIntent intent = AgentIntent.newBuilder()
-                .setAgentId("settler-42")
+                .setAgentId("agent-42")
                 .setSequenceId(101)
                 .setNavigate(NavigateIntent.newBuilder()
                         .setTarget(Vec3.newBuilder().setX(25.0).setY(65.0).setZ(-10.0).build())
@@ -86,7 +86,7 @@ public class ProtoContractTest {
         byte[] serialized = intent.toByteArray();
         AgentIntent parsed = AgentIntent.parseFrom(serialized);
 
-        assertEquals("settler-42", parsed.getAgentId());
+        assertEquals("agent-42", parsed.getAgentId());
         assertEquals(101, parsed.getSequenceId());
         assertEquals(AgentIntent.ActionCase.NAVIGATE, parsed.getActionCase());
         assertTrue(parsed.getNavigate().getSprint());
@@ -139,7 +139,7 @@ public class ProtoContractTest {
     void testAdministrativeRpcRoundtrip() throws InvalidProtocolBufferException {
         byte[] mockSkin = new byte[]{(byte) 0x89, 0x50, 0x4E, 0x47};
         SpawnAgentRequest request = SpawnAgentRequest.newBuilder()
-                .setAgentId("settler-spawn-test")
+                .setAgentId("agent-spawn-test")
                 .setDisplayName("Brynn")
                 .setClanId("ironpeak")
                 .setSpawnCoords(Vec3.newBuilder().setX(0.0).setY(64.0).setZ(0.0).build())
@@ -152,7 +152,7 @@ public class ProtoContractTest {
         byte[] bytes = request.toByteArray();
         SpawnAgentRequest parsedReq = SpawnAgentRequest.parseFrom(bytes);
 
-        assertEquals("settler-spawn-test", parsedReq.getAgentId());
+        assertEquals("agent-spawn-test", parsedReq.getAgentId());
         assertEquals("Brynn", parsedReq.getDisplayName());
         assertEquals(4, parsedReq.getSkinPngBytes().size());
         assertFalse(parsedReq.getIsChild());

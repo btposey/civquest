@@ -24,10 +24,10 @@ CivQuest is an autonomous, dynastic settlement engine introducing intelligent, h
 ### The Dual-Layer Architecture:
 1. **Server Platform Mod (`mod-neoforge`)**:
    - Engine: Built on **NeoForge 21.1+** (compatible with Java 21 game servers).
-   - Functions: Spawns headless `SettlerEntity` (`FakePlayer`) avatars; delivers dynamic settler skin packets; streams sensory frustum frames (5 Hz) over embedded Netty gRPC; delegates physical voxel pathfinding to an integrated Baritone API wrapper; preserves vanilla villages and villagers for dynamic co-existence.
+   - Functions: Spawns headless `AgentEntity` (`FakePlayer`) avatars; delivers dynamic agent skin packets; streams sensory frustum frames (5 Hz) over embedded Netty gRPC; delegates physical voxel pathfinding to an integrated Baritone API wrapper; preserves vanilla villages and villagers for dynamic co-existence.
 2. **External Multi-Process Orchestrator (`orchestrator-go`)**:
    - Engine: **Go 1.23+**.
-   - Functions: Multi-process supervisor (`civctl`) spawning dedicated OS worker processes (`civquest-agent`) per settler.
+   - Functions: Multi-process supervisor (`civctl`) spawning dedicated OS worker processes (`civquest-agent`) per agent.
    - **System 1 (Reactive Utility AI Engine)**: Sub-$5\text{ ms}$, zero-token deterministic loop handling combat reflexes, fight-or-flight confidence scoring, hunger, road paving, and daily career state transitions.
    - **System 2 (Deliberative LLM Engine)**: Asynchronous JSON-validated inference pipelines connected to local gateways (Ollama/vLLM) for dialogue, barter trade, Chronicler book writing, landmark toponymy, and Architect quadrant construction.
    - **Persistence Tier**: Embedded SQLite databases per agent and clan with `sqlite-vec` vector RAG.

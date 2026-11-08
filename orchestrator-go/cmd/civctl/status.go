@@ -12,9 +12,8 @@ import (
 
 func newStatusCmd() *cobra.Command {
 	return &cobra.Command{
-		Use:     "status",
-		Aliases: []string{"info"},
-		Short:   "Display CivQuest host installation topology and runtime status",
+		Use:   "status",
+		Short: "Display CivQuest host installation topology and runtime status",
 		Long: `Inspects local XDG directories, detects installed domains (server, agents, clans),
 and reports live process and configuration states.`,
 		RunE: func(cmd *cobra.Command, args []string) error {

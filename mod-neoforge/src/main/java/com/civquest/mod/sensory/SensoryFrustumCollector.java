@@ -1,7 +1,7 @@
 package com.civquest.mod.sensory;
 
 import com.civquest.mod.CivQuestMod;
-import com.civquest.mod.SettlerEntity;
+import com.civquest.mod.AgentEntity;
 import com.civquest.mod.grpc.v1.AgentStatus;
 import com.civquest.mod.grpc.v1.BlockPosProto;
 import com.civquest.mod.grpc.v1.BoundingBoxProto;
@@ -65,7 +65,7 @@ import java.util.stream.Collectors;
 
 /**
  * Collects sensory frustum frames (5 Hz / 4 ticks) and zero-latency event telemetry
- * for {@link SettlerEntity} instances.
+ * for {@link AgentEntity} instances.
  */
 public class SensoryFrustumCollector {
     private static final Logger LOGGER = LoggerFactory.getLogger(SensoryFrustumCollector.class);
@@ -78,33 +78,33 @@ public class SensoryFrustumCollector {
     public static final TagKey<Block> INTERESTING_BLOCKS =
             TagKey.create(Registries.BLOCK, ResourceLocation.fromNamespaceAndPath(CivQuestMod.MOD_ID, "interesting_blocks"));
 
-    public TelemetryFrame collectFrame(SettlerEntity settler) {
-        return collectFrame(settler, null, null);
+    public TelemetryFrame collectFrame(AgentEntity agent) {
+        return collectFrame(agent, null, null);
     }
 
-    public TelemetryFrame collectFrame(SettlerEntity settler, DamageEvent damageEvent) {
-        return collectFrame(settler, damageEvent, null);
+    public TelemetryFrame collectFrame(AgentEntity agent, DamageEvent damageEvent) {
+        return collectFrame(agent, damageEvent, null);
     }
 
-    public TelemetryFrame collectFrame(SettlerEntity settler, DeathEvent deathEvent) {
-        return collectFrame(settler, null, deathEvent);
+    public TelemetryFrame collectFrame(AgentEntity agent, DeathEvent deathEvent) {
+        return collectFrame(agent, null, deathEvent);
     }
 
     /**
-     * Constructs a comprehensive {@link TelemetryFrame} for the given settler.
+     * Constructs a comprehensive {@link TelemetryFrame} for the given agent.
      *
-     * @param settler     the settler entity to scan and snapshot
+     * @param agent     the agent entity to scan and snapshot
      * @param damageEvent non-null if triggered by an immediate damage event
      * @param deathEvent  non-null if triggered by a terminal death event
      * @return constructed telemetry frame ready for streaming
      */
-    public TelemetryFrame collectFrame(SettlerEntity settler, DamageEvent damageEvent, DeathEvent deathEvent) {
-        if (settler == null) {
+    public TelemetryFrame collectFrame(AgentEntity agent, DamageEvent damageEvent, DeathEvent deathEvent) {
+        if (agent == null) {
             return TelemetryFrame.getDefaultInstance();
         }
 
         TelemetryFrame.Builder frameBuilder = TelemetryFrame.newBuilder();
-        Level level = settler.level();
+        Level level = agent.level();
 
         // 1. World ticks and time
         long worldTick = level != null ? level.getGameTime() : 0L;
@@ -116,33 +116,33 @@ public class SensoryFrustumCollector {
         frameBuilder.setWeather(determineWeather(level));
 
         // 3. Biome ID
-        frameBuilder.setBiomeId(resolveBiomeId(level, settler.blockPosition()));
+        frameBuilder.setBiomeId(resolveBiomeId(level, agent.blockPosition()));
 
         // 4. Agent Status
         AgentStatus.Builder statusBuilder = AgentStatus.newBuilder()
-                .setAgentId(settler.getAgentId() != null ? settler.getAgentId() : "")
-                .setEntityId(settler.getId())
-                .setPosition(toVec3Proto(settler.getX(), settler.getY(), settler.getZ()))
-                .setYaw(settler.getYRot())
-                .setPitch(settler.getXRot())
-                .setHealth(settler.getHealth())
-                .setMaxHealth(settler.getMaxHealth())
-                .setIsSleeping(settler.isSleeping())
-                .setIsInWater(settler.isInWater())
-                .setIsOnFire(settler.isOnFire())
-                .setNavigationState(settler.getNavigator() != null
-                        ? settler.getNavigator().getNavigationState()
+                .setAgentId(agent.getAgentId() != null ? agent.getAgentId() : "")
+                .setEntityId(agent.getId())
+                .setPosition(toVec3Proto(agent.getX(), agent.getY(), agent.getZ()))
+                .setYaw(agent.getYRot())
+                .setPitch(agent.getXRot())
+                .setHealth(agent.getHealth())
+                .setMaxHealth(agent.getMaxHealth())
+                .setIsSleeping(agent.isSleeping())
+                .setIsInWater(agent.isInWater())
+                .setIsOnFire(agent.isOnFire())
+                .setNavigationState(agent.getNavigator() != null
+                        ? agent.getNavigator().getNavigationState()
                         : NavigationState.NAVIGATION_STATE_IDLE);
 
-        if (settler.getFoodData() != null) {
-            statusBuilder.setFoodLevel(settler.getFoodData().getFoodLevel());
-            statusBuilder.setSaturation(settler.getFoodData().getSaturationLevel());
+        if (agent.getFoodData() != null) {
+            statusBuilder.setFoodLevel(agent.getFoodData().getFoodLevel());
+            statusBuilder.setSaturation(agent.getFoodData().getSaturationLevel());
         } else {
             statusBuilder.setFoodLevel(20);
             statusBuilder.setSaturation(5.0f);
         }
 
-        Inventory inventory = settler.getInventory();
+        Inventory inventory = agent.getInventory();
         if (inventory != null) {
             for (int slot = 0; slot < inventory.getContainerSize(); slot++) {
                 ItemStack stack = inventory.getItem(slot);
@@ -154,18 +154,18 @@ public class SensoryFrustumCollector {
 
         // 5. Visible Entities within R = 24.0 blocks
         if (deathEvent == null && level != null) {
-            AABB searchBox = settler.getBoundingBox().inflate(ENTITY_SCAN_RADIUS);
-            List<Entity> nearbyEntities = level.getEntities(settler, searchBox,
-                    e -> e != null && e.isAlive() && !e.isRemoved() && !e.isSpectator() && e != settler);
-            net.minecraft.world.phys.Vec3 settlerEye = settler.getEyePosition();
+            AABB searchBox = agent.getBoundingBox().inflate(ENTITY_SCAN_RADIUS);
+            List<Entity> nearbyEntities = level.getEntities(agent, searchBox,
+                    e -> e != null && e.isAlive() && !e.isRemoved() && !e.isSpectator() && e != agent);
+            net.minecraft.world.phys.Vec3 agentEye = agent.getEyePosition();
 
             for (Entity entity : nearbyEntities) {
-                double dist = settler.distanceTo(entity);
+                double dist = agent.distanceTo(entity);
                 if (dist > ENTITY_SCAN_RADIUS) {
                     continue;
                 }
 
-                if (entity instanceof Mob mob && mob.getLeashHolder() == settler) {
+                if (entity instanceof Mob mob && mob.getLeashHolder() == agent) {
                     statusBuilder.addLeashedEntityIds(mob.getId());
                 }
 
@@ -173,11 +173,11 @@ public class SensoryFrustumCollector {
                 if (dist > ENTITY_LOS_BYPASS_DISTANCE) {
                     net.minecraft.world.phys.Vec3 entityEye = entity.getEyePosition();
                     ClipContext clipContext = new ClipContext(
-                            settlerEye,
+                            agentEye,
                             entityEye,
                             ClipContext.Block.VISUAL,
                             ClipContext.Fluid.NONE,
-                            settler
+                            agent
                     );
                     BlockHitResult hitResult = level.clip(clipContext);
                     if (hitResult.getType() == HitResult.Type.BLOCK) {
@@ -206,7 +206,7 @@ public class SensoryFrustumCollector {
 
         // 6. Interesting Blocks & Farmland Survey within R = 16 blocks
         if (deathEvent == null && level != null) {
-            collectInterestingBlocks(settler, level, frameBuilder);
+            collectInterestingBlocks(agent, level, frameBuilder);
         }
 
         // 7. Events
@@ -218,7 +218,7 @@ public class SensoryFrustumCollector {
         }
 
         // 8. Pending incoming chat events
-        List<com.civquest.mod.grpc.v1.ChatEvent> chats = settler.pollIncomingChats();
+        List<com.civquest.mod.grpc.v1.ChatEvent> chats = agent.pollIncomingChats();
         if (chats != null && !chats.isEmpty()) {
             frameBuilder.addAllIncomingChats(chats);
         }
@@ -294,21 +294,21 @@ public class SensoryFrustumCollector {
 
     /**
      * Collects visible interesting blocks within R = 16 and performs farmland survey.
-     * Explicitly samples blocks at and directly below settler's feet (feetPos = settler.blockPosition(),
+     * Explicitly samples blocks at and directly below agent's feet (feetPos = agent.blockPosition(),
      * belowFeet = feetPos.below()) to ensure underfoot terrain (grass_block, dirt, dirt_path) is always
      * delivered in interesting_blocks for paving and locomotion reflexes.
      */
-    public void collectInterestingBlocks(SettlerEntity settler, Level level, TelemetryFrame.Builder frameBuilder) {
-        if (settler == null || level == null) {
+    public void collectInterestingBlocks(AgentEntity agent, Level level, TelemetryFrame.Builder frameBuilder) {
+        if (agent == null || level == null) {
             return;
         }
 
         Set<BlockPos> addedPositions = new HashSet<>();
-        BlockPos center = settler.blockPosition();
+        BlockPos center = agent.blockPosition();
         BlockPos feetPos = center;
         BlockPos belowFeet = feetPos.below();
 
-        // Explicitly sample blocks at and directly below settler's feet
+        // Explicitly sample blocks at and directly below agent's feet
         for (BlockPos footPos : new BlockPos[]{feetPos, belowFeet}) {
             if (level.hasChunkAt(footPos)) {
                 BlockState state = level.getBlockState(footPos);
@@ -585,14 +585,14 @@ public class SensoryFrustumCollector {
         return builder.build();
     }
 
-    public static DeathEvent buildDeathEvent(SettlerEntity settler, DamageSource cause) {
-        if (settler == null) {
+    public static DeathEvent buildDeathEvent(AgentEntity agent, DamageSource cause) {
+        if (agent == null) {
             return DeathEvent.getDefaultInstance();
         }
         DeathEvent.Builder deathBuilder = DeathEvent.newBuilder()
-                .setAgentId(settler.getAgentId() != null ? settler.getAgentId() : "")
-                .setWorldTick(settler.level() != null ? settler.level().getGameTime() : 0L)
-                .setDeathLocation(toVec3Proto(settler.getX(), settler.getY(), settler.getZ()))
+                .setAgentId(agent.getAgentId() != null ? agent.getAgentId() : "")
+                .setWorldTick(agent.level() != null ? agent.level().getGameTime() : 0L)
+                .setDeathLocation(toVec3Proto(agent.getX(), agent.getY(), agent.getZ()))
                 .setDamageSource(cause != null && cause.getMsgId() != null ? cause.getMsgId() : "generic");
 
         if (cause != null) {
@@ -610,7 +610,7 @@ public class SensoryFrustumCollector {
             }
         }
 
-        Inventory inventory = settler.getInventory();
+        Inventory inventory = agent.getInventory();
         if (inventory != null) {
             for (int i = 0; i < inventory.getContainerSize(); i++) {
                 ItemStack stack = inventory.getItem(i);

@@ -2313,7 +2313,7 @@ func TestRuntime_System2_ClanChroniclerBookSynthesis(t *testing.T) {
 		WorldTick:      5000,
 		EventCategory:  "DISCOVERY",
 		SaliencyScore:  0.95,
-		SummaryText:    "Discovered the Ancient Ruins of the First Settlers.",
+		SummaryText:    "Discovered the Ancient Ruins of the First Agents.",
 		ActorsJSON:     `["chronicler_agent"]`,
 		LocationCoords: "50.0,64.0,50.0",
 		Chronicled:     false,

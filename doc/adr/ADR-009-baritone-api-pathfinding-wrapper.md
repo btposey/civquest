@@ -8,7 +8,7 @@ Minecraft navigation across uneven terrain, caves, mountains, rivers, and man-ma
 
 ## Decision
 We integrate the **Baritone API** within `mod-neoforge`:
-- Wrap Baritone's `ICustomGoalProcess` to drive `SettlerEntity` instances using `GoalNear` and `GoalBlock`.
+- Wrap Baritone's `ICustomGoalProcess` to drive `AgentEntity` instances using `GoalNear` and `GoalBlock`.
 - Expose movement parameters over `NavigateIntent` (e.g., `speed_multiplier`, `sprint`, `allow_break_blocks`, `allow_place_scaffolding`, `arrival_tolerance`).
 - Configure Baritone settings dynamically per intent (disabling breaking/placing during peaceful transit, enabling them during survival panic or construction).
 

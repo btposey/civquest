@@ -1,6 +1,6 @@
 package com.civquest.mod;
 
-import com.civquest.mod.actuator.SettlerNavigator;
+import com.civquest.mod.actuator.AgentNavigator;
 import com.civquest.mod.grpc.v1.DeathEvent;
 import com.civquest.mod.grpc.v1.TelemetryFrame;
 import com.civquest.mod.sensory.SensoryFrustumCollector;
@@ -30,11 +30,11 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Consumer;
 
 /**
- * Autonomous humanoid settler avatar extending {@link FakePlayer}.
+ * Autonomous humanoid agent avatar extending {@link FakePlayer}.
  * Supports player capabilities, food hunger decay, item usage, physical navigation,
  * and permadeath lifecycle hooks.
  */
-public class SettlerEntity extends FakePlayer {
+public class AgentEntity extends FakePlayer {
     private static final Logger LOGGER = LogUtils.getLogger();
 
     private final String agentId;
@@ -44,9 +44,9 @@ public class SettlerEntity extends FakePlayer {
     private ChunkPos forcedChunkPos;
     private StreamRegistry streamRegistry;
     private SensoryFrustumCollector sensoryCollector;
-    private final SettlerNavigator navigator;
-    private Consumer<SettlerEntity> deathListener;
-    private Consumer<SettlerEntity> removalListener;
+    private final AgentNavigator navigator;
+    private Consumer<AgentEntity> deathListener;
+    private Consumer<AgentEntity> removalListener;
     private final AtomicBoolean cleanedUp = new AtomicBoolean(false);
     private final ConcurrentLinkedQueue<com.civquest.mod.grpc.v1.ChatEvent> pendingChats = new ConcurrentLinkedQueue<>();
 
@@ -65,11 +65,11 @@ public class SettlerEntity extends FakePlayer {
         return result;
     }
 
-    public SettlerEntity(ServerLevel level, GameProfile profile, String agentId, String clanId) {
+    public AgentEntity(ServerLevel level, GameProfile profile, String agentId, String clanId) {
         super(level, profile);
         this.agentId = agentId;
         this.clanId = clanId;
-        this.navigator = new SettlerNavigator(this);
+        this.navigator = new AgentNavigator(this);
     }
 
     /**
@@ -93,19 +93,19 @@ public class SettlerEntity extends FakePlayer {
                 // Execute player tick logic (which FakePlayer stubbed out, including FoodData tick at 20 Hz)
                 this.doTick();
             } catch (Exception e) {
-                LOGGER.error("Exception during settler doTick for agent '{}': {}", agentId, e.getMessage(), e);
+                LOGGER.error("Exception during agent doTick for agent '{}': {}", agentId, e.getMessage(), e);
             }
         }
     }
 
     @Override
     public void checkDespawn() {
-        // Prevent natural despawn for autonomous settler agents
+        // Prevent natural despawn for autonomous agents
     }
 
     @Override
     public boolean canUsePortal(boolean allowVehicles) {
-        // Autonomous settler agents are tethered to their assigned dimension
+        // Autonomous agents are tethered to their assigned dimension
         return false;
     }
 
@@ -150,7 +150,7 @@ public class SettlerEntity extends FakePlayer {
 
     @Override
     public void die(DamageSource cause) {
-        LOGGER.info("SettlerEntity died: agentId='{}', clanId='{}', cause='{}'",
+        LOGGER.info("AgentEntity died: agentId='{}', clanId='{}', cause='{}'",
                 agentId, clanId, cause.getLocalizedDeathMessage(this).getString());
 
         if (CommonHooks.onLivingDeath(this, cause)) {
@@ -175,7 +175,7 @@ public class SettlerEntity extends FakePlayer {
                 TelemetryFrame deathFrame = collector.collectFrame(this, null, deathEvent);
                 this.streamRegistry.sendCriticalFrame(this.agentId, deathFrame);
             } catch (Exception e) {
-                LOGGER.error("Error sending terminal death telemetry frame for settler '{}': {}",
+                LOGGER.error("Error sending terminal death telemetry frame for agent '{}': {}",
                         this.agentId, e.getMessage(), e);
             }
         }
@@ -194,7 +194,7 @@ public class SettlerEntity extends FakePlayer {
                 try {
                     this.deathListener.accept(this);
                 } catch (Exception e) {
-                    LOGGER.error("Error executing deathListener for settler '{}': {}", agentId, e.getMessage(), e);
+                    LOGGER.error("Error executing deathListener for agent '{}': {}", agentId, e.getMessage(), e);
                 }
             }
         }
@@ -211,7 +211,7 @@ public class SettlerEntity extends FakePlayer {
                 try {
                     this.removalListener.accept(this);
                 } catch (Exception e) {
-                    LOGGER.error("Error executing removalListener for settler '{}': {}", agentId, e.getMessage(), e);
+                    LOGGER.error("Error executing removalListener for agent '{}': {}", agentId, e.getMessage(), e);
                 }
             }
         }
@@ -221,10 +221,10 @@ public class SettlerEntity extends FakePlayer {
         if (this.forcedChunkPos != null && this.level() instanceof ServerLevel serverLevel) {
             try {
                 serverLevel.setChunkForced(this.forcedChunkPos.x, this.forcedChunkPos.z, false);
-                LOGGER.debug("Released forced chunk [{}, {}] for settler '{}'",
+                LOGGER.debug("Released forced chunk [{}, {}] for agent '{}'",
                         this.forcedChunkPos.x, this.forcedChunkPos.z, agentId);
             } catch (Exception e) {
-                LOGGER.warn("Failed to release forced chunk for settler '{}': {}", agentId, e.getMessage());
+                LOGGER.warn("Failed to release forced chunk for agent '{}': {}", agentId, e.getMessage());
             }
             this.forcedChunkPos = null;
         }
@@ -283,15 +283,15 @@ public class SettlerEntity extends FakePlayer {
         this.sensoryCollector = sensoryCollector;
     }
 
-    public void setDeathListener(Consumer<SettlerEntity> deathListener) {
+    public void setDeathListener(Consumer<AgentEntity> deathListener) {
         this.deathListener = deathListener;
     }
 
-    public void setRemovalListener(Consumer<SettlerEntity> removalListener) {
+    public void setRemovalListener(Consumer<AgentEntity> removalListener) {
         this.removalListener = removalListener;
     }
 
-    public SettlerNavigator getNavigator() {
+    public AgentNavigator getNavigator() {
         return navigator;
     }
 }

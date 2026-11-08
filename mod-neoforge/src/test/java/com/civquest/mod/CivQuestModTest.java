@@ -35,12 +35,12 @@ public class CivQuestModTest {
 
         // Invariant: On physical client launch or before server startup, bridgeServer MUST remain uninstantiated
         assertNull(mod.getBridgeServer(), "CivQuestBridgeServer must not be eagerly instantiated during mod construction");
-        assertNull(mod.getSettlerEntityManager(), "SettlerEntityManager must be null when bridgeServer is uninstantiated");
+        assertNull(mod.getAgentEntityManager(), "AgentEntityManager must be null when bridgeServer is uninstantiated");
     }
 
     @Test
-    @DisplayName("executeTell fails with error message when no settlers exist")
-    void testExecuteTellNoSettlers() {
+    @DisplayName("executeTell fails with error message when no agents exist")
+    void testExecuteTellNoAgents() {
         IEventBus mockModBus = Mockito.mock(IEventBus.class);
         CivQuestMod mod = new CivQuestMod(mockModBus);
 
@@ -48,7 +48,7 @@ public class CivQuestModTest {
         int result = mod.executeTell(mockSource, "aria", "hello");
 
         assertEquals(0, result);
-        Mockito.verify(mockSource).sendFailure(Mockito.argThat(comp -> comp.getString().contains("No active settlers found")));
+        Mockito.verify(mockSource).sendFailure(Mockito.argThat(comp -> comp.getString().contains("No active agents found")));
     }
 
     @Test
@@ -57,17 +57,17 @@ public class CivQuestModTest {
         IEventBus mockModBus = Mockito.mock(IEventBus.class);
         CivQuestMod mod = new CivQuestMod(mockModBus);
 
-        SettlerEntityManager mockManager = Mockito.mock(SettlerEntityManager.class);
-        SettlerEntity mockSettler = Mockito.mock(SettlerEntity.class);
+        AgentEntityManager mockManager = Mockito.mock(AgentEntityManager.class);
+        AgentEntity mockAgent = Mockito.mock(AgentEntity.class);
         com.mojang.authlib.GameProfile profile = new com.mojang.authlib.GameProfile(UUID.randomUUID(), "aria");
-        Mockito.when(mockSettler.getGameProfile()).thenReturn(profile);
-        Mockito.when(mockSettler.getAgentId()).thenReturn("aria");
+        Mockito.when(mockAgent.getGameProfile()).thenReturn(profile);
+        Mockito.when(mockAgent.getAgentId()).thenReturn("aria");
 
-        java.util.Map<String, SettlerEntity> settlersMap = java.util.Map.of("aria", mockSettler);
-        Mockito.when(mockManager.getAllSettlers()).thenReturn(settlersMap);
+        java.util.Map<String, AgentEntity> agentsMap = java.util.Map.of("aria", mockAgent);
+        Mockito.when(mockManager.getAllAgents()).thenReturn(agentsMap);
 
         CivQuestBridgeServer bridgeServer = Mockito.mock(CivQuestBridgeServer.class);
-        Mockito.when(bridgeServer.getSettlerEntityManager()).thenReturn(mockManager);
+        Mockito.when(bridgeServer.getAgentEntityManager()).thenReturn(mockManager);
 
         java.lang.reflect.Field bridgeField = CivQuestMod.class.getDeclaredField("bridgeServer");
         bridgeField.setAccessible(true);
@@ -82,9 +82,9 @@ public class CivQuestModTest {
         int result = mod.executeTell(mockSource, "aria", "Hello from test!");
         assertEquals(1, result);
 
-        // Verify settler received ChatEvent
+        // Verify agent received ChatEvent
         ArgumentCaptor<ChatEvent> chatCaptor = ArgumentCaptor.forClass(ChatEvent.class);
-        Mockito.verify(mockSettler).queueIncomingChat(chatCaptor.capture());
+        Mockito.verify(mockAgent).queueIncomingChat(chatCaptor.capture());
         ChatEvent event = chatCaptor.getValue();
         assertEquals("pbots", event.getSenderName());
         assertEquals("Hello from test!", event.getMessage());
@@ -100,17 +100,17 @@ public class CivQuestModTest {
     @DisplayName("executeTell succeeds when executed from console source (player is null)")
     void testExecuteTellConsoleSource() throws Exception {
         CivQuestMod mod = new CivQuestMod(Mockito.mock(IEventBus.class));
-        SettlerEntityManager mockManager = Mockito.mock(SettlerEntityManager.class);
-        SettlerEntity mockSettler = Mockito.mock(SettlerEntity.class);
+        AgentEntityManager mockManager = Mockito.mock(AgentEntityManager.class);
+        AgentEntity mockAgent = Mockito.mock(AgentEntity.class);
         com.mojang.authlib.GameProfile profile = new com.mojang.authlib.GameProfile(UUID.randomUUID(), "aria");
-        Mockito.when(mockSettler.getGameProfile()).thenReturn(profile);
-        Mockito.when(mockSettler.getAgentId()).thenReturn("aria");
+        Mockito.when(mockAgent.getGameProfile()).thenReturn(profile);
+        Mockito.when(mockAgent.getAgentId()).thenReturn("aria");
 
-        java.util.Map<String, SettlerEntity> settlersMap = java.util.Map.of("aria", mockSettler);
-        Mockito.when(mockManager.getAllSettlers()).thenReturn(settlersMap);
+        java.util.Map<String, AgentEntity> agentsMap = java.util.Map.of("aria", mockAgent);
+        Mockito.when(mockManager.getAllAgents()).thenReturn(agentsMap);
 
         CivQuestBridgeServer bridgeServer = Mockito.mock(CivQuestBridgeServer.class);
-        Mockito.when(bridgeServer.getSettlerEntityManager()).thenReturn(mockManager);
+        Mockito.when(bridgeServer.getAgentEntityManager()).thenReturn(mockManager);
 
         java.lang.reflect.Field bridgeField = CivQuestMod.class.getDeclaredField("bridgeServer");
         bridgeField.setAccessible(true);
@@ -123,7 +123,7 @@ public class CivQuestModTest {
         assertEquals(1, result);
 
         ArgumentCaptor<ChatEvent> chatCaptor = ArgumentCaptor.forClass(ChatEvent.class);
-        Mockito.verify(mockSettler).queueIncomingChat(chatCaptor.capture());
+        Mockito.verify(mockAgent).queueIncomingChat(chatCaptor.capture());
         ChatEvent event = chatCaptor.getValue();
         assertEquals("Console", event.getSenderName());
         assertEquals("CONSOLE", event.getSenderUuid());

@@ -83,7 +83,7 @@ type SocketStatusResponse struct {
 	UptimeSeconds   float64         `json:"uptime_seconds"`
 }
 
-// AgentRuntime manages the isolated OS-process lifecycle for an individual settler.
+// AgentRuntime manages the isolated OS-process lifecycle for an individual agent.
 // It maintains the 5 Hz gRPC telemetry stream, processes incoming sensory frames,
 // synchronizes local state and inventory caches, and serves live diagnostics over a UNIX socket.
 type AgentRuntime struct {
@@ -242,7 +242,7 @@ func NewRuntime(cfg Config) (*AgentRuntime, error) {
 	return runtime, nil
 }
 
-// AgentID returns the unique identifier for this settler avatar.
+// AgentID returns the unique identifier for this agent avatar.
 func (r *AgentRuntime) AgentID() string {
 	return r.agentID
 }
@@ -284,7 +284,7 @@ func (r *AgentRuntime) PermadeathResult() *PermadeathResult {
 	return r.permadeathResult
 }
 
-// ClanID returns the clan identifier for this settler.
+// ClanID returns the clan identifier for this agent.
 func (r *AgentRuntime) ClanID() string {
 	return r.clanID
 }

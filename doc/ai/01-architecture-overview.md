@@ -14,7 +14,7 @@ flowchart TB
     subgraph Minecraft_JVM ["Minecraft Java Edition Server (NeoForge 21.1.265)"]
         World["Minecraft World & Physics Engine"]
         Camp["Pioneer Camp Spawner"]
-        Entity["SettlerEntity (FakePlayer Avatar)"]
+        Entity["AgentEntity (FakePlayer Avatar)"]
         Frustum["Sensory Frustum (5 Hz Telemetry Scanner)"]
         Baritone["Baritone API Navigation Wrapper"]
         Netty["Embedded Netty gRPC Server (:50051)"]
@@ -57,7 +57,7 @@ flowchart TB
 ### Component 1: `mod-neoforge`
 The server-side Minecraft mod acts as the sensory input organ and physical actuator. It does not perform high-level cognitive deliberation. Its responsibilities are:
 1. **Starter Camp World Generation**: Generates custom pioneer campfire structures (`civquest:pioneer_campfire`) while preserving vanilla villages and villagers for rich inter-entity co-existence and trade.
-2. **`SettlerEntity`**: Subclassing `FakePlayer` to provide full player simulation (hunger ticking, item usage, combat knockback, equipment slots) for server-side autonomous agents.
+2. **`AgentEntity`**: Subclassing `FakePlayer` to provide full player simulation (hunger ticking, item usage, combat knockback, equipment slots) for server-side autonomous agents.
 3. **Sensory Frustum**: Gathering visible entities ($R = 24$), interesting blocks ($R = 16$), chat events, and damage frames at 5 Hz.
 4. **Physical Actuation**: Executing navigation intents via Baritone, block interactions (harvesting, paving, sleeping), container transfers, signpost placement, and lectern book insertion.
 

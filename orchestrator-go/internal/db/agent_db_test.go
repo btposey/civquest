@@ -489,12 +489,12 @@ func TestRelationshipCRUD(t *testing.T) {
 		t.Fatalf("failed to insert Steve relationship: %v", err)
 	}
 
-	// Insert relationship with Alex (SETTLER)
+	// Insert relationship with Alex (AGENT)
 	alexUUID := "c0a80001-0000-0000-0000-000000000002"
 	alexRel := Relationship{
 		EntityUUID:          alexUUID,
 		EntityName:          "Alex",
-		EntityType:          "SETTLER",
+		EntityType:          "AGENT",
 		DispositionScore:    40.0,
 		Familiarity:         0.60,
 		KinshipRole:         "SPOUSE",
@@ -842,8 +842,8 @@ func TestConcurrentReadWrite(t *testing.T) {
 				// Upsert relationship
 				rel := Relationship{
 					EntityUUID:          fmt.Sprintf("uuid-worker-%d", workerID),
-					EntityName:          fmt.Sprintf("Settler_%d", workerID),
-					EntityType:          "SETTLER",
+					EntityName:          fmt.Sprintf("Agent_%d", workerID),
+					EntityType:          "AGENT",
 					DispositionScore:    float64(i * 2),
 					Familiarity:         float64(i) * 0.05,
 					KinshipRole:         "NONE",

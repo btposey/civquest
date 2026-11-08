@@ -64,7 +64,7 @@ public class CivQuestBridgeServer {
     private final Path discoveryPath;
     private final boolean enabled;
     private final StreamRegistry streamRegistry;
-    private final SettlerEntityManager settlerEntityManager;
+    private final AgentEntityManager agentEntityManager;
     private volatile MinecraftServer minecraftServer;
     private volatile String serverId;
     private volatile String worldName;
@@ -111,7 +111,7 @@ public class CivQuestBridgeServer {
         String discPath = System.getProperty(PROP_DISCOVERY_PATH, DEFAULT_DISCOVERY_PATH).trim();
         this.discoveryPath = Path.of(discPath);
         this.streamRegistry = new StreamRegistry();
-        this.settlerEntityManager = new SettlerEntityManager(this.streamRegistry);
+        this.agentEntityManager = new AgentEntityManager(this.streamRegistry);
     }
 
     public CivQuestBridgeServer(String host, int port, String sharedKey, Path discoveryPath) {
@@ -123,16 +123,16 @@ public class CivQuestBridgeServer {
     }
 
     public CivQuestBridgeServer(String host, int port, String sharedKey, Path discoveryPath,
-                                StreamRegistry streamRegistry, SettlerEntityManager settlerEntityManager) {
+                                StreamRegistry streamRegistry, AgentEntityManager agentEntityManager) {
         this.enabled = true;
         this.configuredHost = (host == null || host.isBlank()) ? "127.0.0.1" : host.trim();
         this.configuredPort = port;
         this.sharedKey = resolveSharedKey(sharedKey);
         this.discoveryPath = discoveryPath != null ? discoveryPath : Path.of(DEFAULT_DISCOVERY_PATH);
         this.streamRegistry = streamRegistry != null ? streamRegistry : new StreamRegistry();
-        this.settlerEntityManager = settlerEntityManager != null ? settlerEntityManager : new SettlerEntityManager(this.streamRegistry);
-        if (this.settlerEntityManager.getStreamRegistry() == null) {
-            this.settlerEntityManager.setStreamRegistry(this.streamRegistry);
+        this.agentEntityManager = agentEntityManager != null ? agentEntityManager : new AgentEntityManager(this.streamRegistry);
+        if (this.agentEntityManager.getStreamRegistry() == null) {
+            this.agentEntityManager.setStreamRegistry(this.streamRegistry);
         }
     }
 
@@ -199,7 +199,7 @@ public class CivQuestBridgeServer {
 
         this.healthStatusManager = new HealthStatusManager();
         this.authInterceptor = new SharedKeyAuthInterceptor(sharedKey);
-        this.bridgeService = new CivQuestBridgeServiceImpl(streamRegistry, settlerEntityManager, this::getMinecraftServer);
+        this.bridgeService = new CivQuestBridgeServiceImpl(streamRegistry, agentEntityManager, this::getMinecraftServer);
 
         InetSocketAddress socketAddress = new InetSocketAddress(configuredHost, configuredPort);
         this.server = NettyServerBuilder.forAddress(socketAddress)
@@ -386,8 +386,8 @@ public class CivQuestBridgeServer {
 
     public void onServerStopping(ServerStoppingEvent event) {
         LOGGER.info("CivQuest server stopping: shutting down gRPC bridge");
-        if (settlerEntityManager != null) {
-            settlerEntityManager.clearAll();
+        if (agentEntityManager != null) {
+            agentEntityManager.clearAll();
         }
         stop();
         setMinecraftServer(null);
@@ -401,8 +401,8 @@ public class CivQuestBridgeServer {
         this.minecraftServer = minecraftServer;
     }
 
-    public SettlerEntityManager getSettlerEntityManager() {
-        return settlerEntityManager;
+    public AgentEntityManager getAgentEntityManager() {
+        return agentEntityManager;
     }
 
     public static String sanitizeServerId(String input) {

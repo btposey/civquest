@@ -15,7 +15,7 @@ func TestTelemetryFrameSerialization(t *testing.T) {
 		BiomeId:                 "minecraft:plains",
 		LastProcessedSequenceId: 42,
 		Status: &civquestv1.AgentStatus{
-			AgentId:         "settler-001",
+			AgentId:         "agent-001",
 			EntityId:        42,
 			Position:        &civquestv1.Vec3{X: 100.5, Y: 64.0, Z: -200.5},
 			Yaw:             90.0,
@@ -80,8 +80,8 @@ func TestTelemetryFrameSerialization(t *testing.T) {
 	if unmarshaled.GetLastProcessedSequenceId() != 42 {
 		t.Errorf("expected LastProcessedSequenceId 42, got %d", unmarshaled.GetLastProcessedSequenceId())
 	}
-	if unmarshaled.GetStatus().GetAgentId() != "settler-001" {
-		t.Errorf("expected AgentId 'settler-001', got %s", unmarshaled.GetStatus().GetAgentId())
+	if unmarshaled.GetStatus().GetAgentId() != "agent-001" {
+		t.Errorf("expected AgentId 'agent-001', got %s", unmarshaled.GetStatus().GetAgentId())
 	}
 	if unmarshaled.GetStatus().GetNavigationState() != civquestv1.NavigationState_NAVIGATION_STATE_IDLE {
 		t.Errorf("expected NavigationState NAVIGATION_STATE_IDLE, got %v", unmarshaled.GetStatus().GetNavigationState())
@@ -105,7 +105,7 @@ func TestTelemetryFrameSerialization(t *testing.T) {
 
 func TestAgentIntentSerialization(t *testing.T) {
 	intent := &civquestv1.AgentIntent{
-		AgentId:    "settler-001",
+		AgentId:    "agent-001",
 		SequenceId: 1,
 		Action: &civquestv1.AgentIntent_Navigate{
 			Navigate: &civquestv1.NavigateIntent{
@@ -129,8 +129,8 @@ func TestAgentIntentSerialization(t *testing.T) {
 		t.Fatalf("failed to unmarshal AgentIntent: %v", err)
 	}
 
-	if unmarshaled.GetAgentId() != "settler-001" {
-		t.Errorf("expected AgentId 'settler-001', got %s", unmarshaled.GetAgentId())
+	if unmarshaled.GetAgentId() != "agent-001" {
+		t.Errorf("expected AgentId 'agent-001', got %s", unmarshaled.GetAgentId())
 	}
 	nav := unmarshaled.GetNavigate()
 	if nav == nil {
@@ -147,7 +147,7 @@ func TestAgentIntentSerialization(t *testing.T) {
 func TestTypedEnumIntentsSerialization(t *testing.T) {
 	// Test SendChatIntent with ChatChannel
 	chatIntent := &civquestv1.AgentIntent{
-		AgentId:    "settler-001",
+		AgentId:    "agent-001",
 		SequenceId: 2,
 		Action: &civquestv1.AgentIntent_Chat{
 			Chat: &civquestv1.SendChatIntent{
@@ -170,7 +170,7 @@ func TestTypedEnumIntentsSerialization(t *testing.T) {
 
 	// Test InteractBlockIntent with InteractionType (UNSPECIFIED = 0, HARVEST_BREAK = 1)
 	interactIntent := &civquestv1.AgentIntent{
-		AgentId:    "settler-001",
+		AgentId:    "agent-001",
 		SequenceId: 3,
 		Action: &civquestv1.AgentIntent_InteractBlock{
 			InteractBlock: &civquestv1.InteractBlockIntent{
@@ -197,7 +197,7 @@ func TestTypedEnumIntentsSerialization(t *testing.T) {
 
 	// Test CaravanIntent with CaravanAction (UNSPECIFIED = 0, LEASH_BEAST = 1)
 	caravanIntent := &civquestv1.AgentIntent{
-		AgentId:    "settler-001",
+		AgentId:    "agent-001",
 		SequenceId: 4,
 		Action: &civquestv1.AgentIntent_Caravan{
 			Caravan: &civquestv1.CaravanIntent{
@@ -224,7 +224,7 @@ func TestTypedEnumIntentsSerialization(t *testing.T) {
 
 func TestAdministrativeRPCStructures(t *testing.T) {
 	spawnReq := &civquestv1.SpawnAgentRequest{
-		AgentId:          "settler-002",
+		AgentId:          "agent-002",
 		DisplayName:      "Alden",
 		ClanId:           "clan-ironpeak",
 		SpawnCoords:      &civquestv1.Vec3{X: 0, Y: 64, Z: 0},

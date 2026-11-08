@@ -64,7 +64,7 @@ func NewRootCmd() *cobra.Command {
 		Use:   "civctl",
 		Short: "CivQuest Settlement Engine CLI & Supervisor",
 		Long: `civctl is the management interface and process supervisor for CivQuest.
-It provides control over the NeoForge server, autonomous settler agents,
+It provides control over the NeoForge server, autonomous agents,
 clans, blueprints, and system health.`,
 		SilenceUsage:  true,
 		SilenceErrors: true,

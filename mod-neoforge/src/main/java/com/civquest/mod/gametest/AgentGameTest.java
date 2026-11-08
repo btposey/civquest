@@ -1,7 +1,7 @@
 package com.civquest.mod.gametest;
 
-import com.civquest.mod.SettlerEntity;
-import com.civquest.mod.SettlerEntityManager;
+import com.civquest.mod.AgentEntity;
+import com.civquest.mod.AgentEntityManager;
 import com.civquest.mod.StreamRegistry;
 import com.civquest.mod.sensory.SensoryFrustumCollector;
 import com.civquest.mod.grpc.v1.AgentIntent;
@@ -54,10 +54,10 @@ import java.util.concurrent.atomic.AtomicReference;
 
 @GameTestHolder("civquest")
 @PrefixGameTestTemplate(false)
-public class SettlerGameTest {
+public class AgentGameTest {
 
     @GameTest(template = "empty3x3x3")
-    public static void testSettlerEnvironment(GameTestHelper helper) {
+    public static void testAgentEnvironment(GameTestHelper helper) {
         BlockPos pos = new BlockPos(1, 1, 1);
         helper.setBlock(pos, Blocks.STONE);
         helper.assertBlockPresent(Blocks.STONE, pos);
@@ -65,15 +65,15 @@ public class SettlerGameTest {
     }
 
     @GameTest(template = "empty3x3x3")
-    public static void testSettlerSpawnAndTick(GameTestHelper helper) {
+    public static void testAgentSpawnAndTick(GameTestHelper helper) {
         ServerLevel level = helper.getLevel();
         MinecraftServer server = level.getServer();
-        SettlerEntityManager manager = new SettlerEntityManager();
+        AgentEntityManager manager = new AgentEntityManager();
 
         BlockPos spawnPos = helper.absolutePos(new BlockPos(1, 1, 1));
         SpawnAgentRequest request = SpawnAgentRequest.newBuilder()
                 .setAgentId("agent-gt-spawn")
-                .setDisplayName("SettlerGameTest")
+                .setDisplayName("AgentGameTest")
                 .setClanId("clan-ironwood")
                 .setSpawnCoords(Vec3.newBuilder()
                         .setX(spawnPos.getX() + 0.5)
@@ -83,38 +83,38 @@ public class SettlerGameTest {
                 .setSkinPngBytes(ByteString.copyFrom("test-skin-bytes", StandardCharsets.UTF_8))
                 .build();
 
-        SettlerEntity settler = manager.spawnSettler(server, level, request).join();
-        helper.assertTrue(settler != null, "SettlerEntity must not be null");
-        helper.assertTrue(settler == manager.getSettler("agent-gt-spawn"), "Manager must track active settler");
-        helper.assertTrue("agent-gt-spawn".equals(settler.getAgentId()), "Agent ID must match request");
-        helper.assertTrue("clan-ironwood".equals(settler.getClanId()), "Clan ID must match request");
-        helper.assertTrue(settler.getFoodData().getFoodLevel() == 20, "Food level must initialize to 20");
-        helper.assertTrue(settler.getHealth() == settler.getMaxHealth(), "Health must initialize to maximum");
-        helper.assertFalse(settler.canUsePortal(false), "Settler cannot use portals");
+        AgentEntity agent = manager.spawnAgent(server, level, request).join();
+        helper.assertTrue(agent != null, "AgentEntity must not be null");
+        helper.assertTrue(agent == manager.getAgent("agent-gt-spawn"), "Manager must track active agent");
+        helper.assertTrue("agent-gt-spawn".equals(agent.getAgentId()), "Agent ID must match request");
+        helper.assertTrue("clan-ironwood".equals(agent.getClanId()), "Clan ID must match request");
+        helper.assertTrue(agent.getFoodData().getFoodLevel() == 20, "Food level must initialize to 20");
+        helper.assertTrue(agent.getHealth() == agent.getMaxHealth(), "Health must initialize to maximum");
+        helper.assertFalse(agent.canUsePortal(false), "Agent cannot use portals");
 
-        ChunkPos forcedChunk = settler.getForcedChunkPos();
+        ChunkPos forcedChunk = agent.getForcedChunkPos();
         helper.assertTrue(forcedChunk != null, "Spawn chunk must be forced");
         helper.assertTrue(level.getForcedChunks().contains(forcedChunk.toLong()), "Level must force spawn chunk");
 
-        // Tick settler entity in server level
-        settler.tick();
-        helper.assertTrue(settler.isAlive(), "Settler must remain alive after tick");
+        // Tick agent entity in server level
+        agent.tick();
+        helper.assertTrue(agent.isAlive(), "Agent must remain alive after tick");
 
         // Clean despawn
-        boolean despawned = manager.despawnSettler(server, "agent-gt-spawn").join();
-        helper.assertTrue(despawned, "Settler must despawn cleanly");
-        helper.assertTrue(manager.getSettler("agent-gt-spawn") == null, "Manager must clear despawned settler");
-        helper.assertTrue(settler.getForcedChunkPos() == null, "Forced chunk must be released after despawn");
+        boolean despawned = manager.despawnAgent(server, "agent-gt-spawn").join();
+        helper.assertTrue(despawned, "Agent must despawn cleanly");
+        helper.assertTrue(manager.getAgent("agent-gt-spawn") == null, "Manager must clear despawned agent");
+        helper.assertTrue(agent.getForcedChunkPos() == null, "Forced chunk must be released after despawn");
         helper.assertFalse(level.getForcedChunks().contains(forcedChunk.toLong()), "Level must release forced chunk");
         helper.succeed();
     }
 
     @GameTest(template = "empty3x3x3")
-    public static void testSettlerPermadeathLifecycle(GameTestHelper helper) {
+    public static void testAgentPermadeathLifecycle(GameTestHelper helper) {
         ServerLevel level = helper.getLevel();
         MinecraftServer server = level.getServer();
         StreamRegistry streamRegistry = new StreamRegistry();
-        SettlerEntityManager manager = new SettlerEntityManager(streamRegistry);
+        AgentEntityManager manager = new AgentEntityManager(streamRegistry);
 
         AtomicReference<TelemetryFrame> deathFrameRef = new AtomicReference<>();
         AtomicBoolean streamOpenWhenDeathReceived = new AtomicBoolean(false);
@@ -138,7 +138,7 @@ public class SettlerGameTest {
         BlockPos spawnPos = helper.absolutePos(new BlockPos(1, 1, 1));
         SpawnAgentRequest request = SpawnAgentRequest.newBuilder()
                 .setAgentId("agent-gt-death")
-                .setDisplayName("MortalSettler")
+                .setDisplayName("MortalAgent")
                 .setClanId("clan-ironwood")
                 .setSpawnCoords(Vec3.newBuilder()
                         .setX(spawnPos.getX() + 0.5)
@@ -147,18 +147,18 @@ public class SettlerGameTest {
                         .build())
                 .build();
 
-        SettlerEntity settler = manager.spawnSettler(server, level, request).join();
-        helper.assertTrue(settler != null, "Settler must spawn");
-        helper.assertTrue(manager.getSettler("agent-gt-death") != null, "Settler must be registered");
-        ChunkPos forcedChunk = settler.getForcedChunkPos();
+        AgentEntity agent = manager.spawnAgent(server, level, request).join();
+        helper.assertTrue(agent != null, "Agent must spawn");
+        helper.assertTrue(manager.getAgent("agent-gt-death") != null, "Agent must be registered");
+        ChunkPos forcedChunk = agent.getForcedChunkPos();
         helper.assertTrue(forcedChunk != null, "Forced chunk must be set");
 
-        // Kill settler with generic damage
-        settler.die(level.damageSources().generic());
+        // Kill agent with generic damage
+        agent.die(level.damageSources().generic());
 
-        // Settler should be discarded and automatically unregistered via deathListener
-        helper.assertTrue(settler.isRemoved(), "Settler entity must be removed from level upon death");
-        helper.assertTrue(manager.getSettler("agent-gt-death") == null, "Settler must be unregistered upon death");
+        // Agent should be discarded and automatically unregistered via deathListener
+        helper.assertTrue(agent.isRemoved(), "Agent entity must be removed from level upon death");
+        helper.assertTrue(manager.getAgent("agent-gt-death") == null, "Agent must be unregistered upon death");
         helper.assertFalse(streamRegistry.isRegistered("agent-gt-death"), "Stream must be cleanly closed on death (ADR-008)");
         helper.assertTrue(deathFrameRef.get() != null, "Terminal death telemetry frame must be sent prior to stream closure");
         helper.assertTrue(deathFrameRef.get().hasDeathEvent(), "Terminal frame must contain death_event");
@@ -168,7 +168,7 @@ public class SettlerGameTest {
                 "Terminal death frame must skip block scanning");
         helper.assertTrue(deathFrameRef.get().getVisibleEntitiesCount() == 0,
                 "Terminal death frame must skip entity scanning");
-        helper.assertTrue(settler.getForcedChunkPos() == null, "Forced chunk must be cleared on settler");
+        helper.assertTrue(agent.getForcedChunkPos() == null, "Forced chunk must be cleared on agent");
         helper.assertFalse(level.getForcedChunks().contains(forcedChunk.toLong()), "Level forced chunk must be released");
         helper.succeed();
     }
@@ -177,12 +177,12 @@ public class SettlerGameTest {
     public static void testDuplicateAgentSpawn(GameTestHelper helper) {
         ServerLevel level = helper.getLevel();
         MinecraftServer server = level.getServer();
-        SettlerEntityManager manager = new SettlerEntityManager();
+        AgentEntityManager manager = new AgentEntityManager();
 
         BlockPos spawnPos = helper.absolutePos(new BlockPos(1, 1, 1));
         SpawnAgentRequest request1 = SpawnAgentRequest.newBuilder()
                 .setAgentId("agent-gt-dup")
-                .setDisplayName("FirstSettler")
+                .setDisplayName("FirstAgent")
                 .setClanId("clan-ironwood")
                 .setSpawnCoords(Vec3.newBuilder()
                         .setX(spawnPos.getX() + 0.5)
@@ -191,15 +191,15 @@ public class SettlerGameTest {
                         .build())
                 .build();
 
-        SettlerEntity settler1 = manager.spawnSettler(server, level, request1).join();
-        helper.assertTrue(settler1 != null, "First settler must spawn");
-        helper.assertTrue(manager.count() == 1, "Manager must have 1 settler");
-        helper.assertTrue("FirstSettler".equals(settler1.getGameProfile().getName()), "Name must match first");
+        AgentEntity agent1 = manager.spawnAgent(server, level, request1).join();
+        helper.assertTrue(agent1 != null, "First agent must spawn");
+        helper.assertTrue(manager.count() == 1, "Manager must have 1 agent");
+        helper.assertTrue("FirstAgent".equals(agent1.getGameProfile().getName()), "Name must match first");
 
-        // Spawn second settler with same agentId
+        // Spawn second agent with same agentId
         SpawnAgentRequest request2 = SpawnAgentRequest.newBuilder()
                 .setAgentId("agent-gt-dup")
-                .setDisplayName("SecondSettler")
+                .setDisplayName("SecondAgent")
                 .setClanId("clan-ironwood")
                 .setSpawnCoords(Vec3.newBuilder()
                         .setX(spawnPos.getX() + 0.5)
@@ -208,15 +208,15 @@ public class SettlerGameTest {
                         .build())
                 .build();
 
-        SettlerEntity settler2 = manager.spawnSettler(server, level, request2).join();
-        helper.assertTrue(settler2 != null, "Second settler must spawn");
-        helper.assertTrue(manager.count() == 1, "Manager must still have 1 settler");
-        helper.assertTrue(settler1.isRemoved(), "First settler must be discarded/removed");
-        helper.assertTrue(settler2 == manager.getSettler("agent-gt-dup"), "Manager must track second settler");
-        helper.assertTrue("SecondSettler".equals(settler2.getGameProfile().getName()), "Name must match second");
+        AgentEntity agent2 = manager.spawnAgent(server, level, request2).join();
+        helper.assertTrue(agent2 != null, "Second agent must spawn");
+        helper.assertTrue(manager.count() == 1, "Manager must still have 1 agent");
+        helper.assertTrue(agent1.isRemoved(), "First agent must be discarded/removed");
+        helper.assertTrue(agent2 == manager.getAgent("agent-gt-dup"), "Manager must track second agent");
+        helper.assertTrue("SecondAgent".equals(agent2.getGameProfile().getName()), "Name must match second");
 
         // Clean up
-        manager.despawnSettler(server, "agent-gt-dup").join();
+        manager.despawnAgent(server, "agent-gt-dup").join();
         helper.succeed();
     }
 
@@ -224,7 +224,7 @@ public class SettlerGameTest {
     public static void testSensoryFrustumBlockScanning(GameTestHelper helper) {
         ServerLevel level = helper.getLevel();
         MinecraftServer server = level.getServer();
-        SettlerEntityManager manager = new SettlerEntityManager();
+        AgentEntityManager manager = new AgentEntityManager();
 
         // Place interesting blocks in test boundary
         BlockPos chestPos = new BlockPos(1, 1, 2);
@@ -239,7 +239,7 @@ public class SettlerGameTest {
         BlockPos spawnPos = helper.absolutePos(new BlockPos(1, 1, 1));
         SpawnAgentRequest request = SpawnAgentRequest.newBuilder()
                 .setAgentId("agent-gt-blocks")
-                .setDisplayName("BlockScannerSettler")
+                .setDisplayName("BlockScannerAgent")
                 .setClanId("clan-ironwood")
                 .setSpawnCoords(Vec3.newBuilder()
                         .setX(spawnPos.getX() + 0.5)
@@ -248,10 +248,10 @@ public class SettlerGameTest {
                         .build())
                 .build();
 
-        SettlerEntity settler = manager.spawnSettler(server, level, request).join();
-        helper.assertTrue(settler != null, "Settler must spawn");
+        AgentEntity agent = manager.spawnAgent(server, level, request).join();
+        helper.assertTrue(agent != null, "Agent must spawn");
 
-        TelemetryFrame frame = manager.getSensoryCollector().collectFrame(settler);
+        TelemetryFrame frame = manager.getSensoryCollector().collectFrame(agent);
         helper.assertTrue(frame != null, "Frame must not be null");
         helper.assertTrue(frame.getInterestingBlocksCount() >= 2,
                 "Must find at least 2 interesting blocks, found: " + frame.getInterestingBlocksCount());
@@ -280,7 +280,7 @@ public class SettlerGameTest {
 
         // Verify farmland survey when matureCropCount == 0 (only farmland)
         helper.setBlock(wheatPos, Blocks.AIR);
-        TelemetryFrame frameFarmlandOnly = manager.getSensoryCollector().collectFrame(settler);
+        TelemetryFrame frameFarmlandOnly = manager.getSensoryCollector().collectFrame(agent);
         helper.assertTrue(frameFarmlandOnly.hasFarmlandSurvey(),
                 "Must populate FarmlandSurveyEvent for farmland even without mature crops");
         helper.assertTrue("".equals(frameFarmlandOnly.getFarmlandSurvey().getPrimaryCropId()),
@@ -290,7 +290,7 @@ public class SettlerGameTest {
         helper.assertTrue(frameFarmlandOnly.getFarmlandSurvey().getTotalFarmlandBlocks() >= 1,
                 "Total farmland blocks must be at least 1");
 
-        manager.despawnSettler(server, "agent-gt-blocks").join();
+        manager.despawnAgent(server, "agent-gt-blocks").join();
         helper.succeed();
     }
 
@@ -298,12 +298,12 @@ public class SettlerGameTest {
     public static void testSensoryFrustumEntityScanningAndFuseTicks(GameTestHelper helper) {
         ServerLevel level = helper.getLevel();
         MinecraftServer server = level.getServer();
-        SettlerEntityManager manager = new SettlerEntityManager();
+        AgentEntityManager manager = new AgentEntityManager();
 
         BlockPos spawnPos = helper.absolutePos(new BlockPos(1, 1, 1));
         SpawnAgentRequest request = SpawnAgentRequest.newBuilder()
                 .setAgentId("agent-gt-entity")
-                .setDisplayName("EntityScannerSettler")
+                .setDisplayName("EntityScannerAgent")
                 .setClanId("clan-ironwood")
                 .setSpawnCoords(Vec3.newBuilder()
                         .setX(spawnPos.getX() + 0.5)
@@ -312,15 +312,15 @@ public class SettlerGameTest {
                         .build())
                 .build();
 
-        SettlerEntity settler = manager.spawnSettler(server, level, request).join();
-        helper.assertTrue(settler != null, "Settler must spawn");
+        AgentEntity agent = manager.spawnAgent(server, level, request).join();
+        helper.assertTrue(agent != null, "Agent must spawn");
 
-        // Spawn Creeper adjacent to settler within line of sight
+        // Spawn Creeper adjacent to agent within line of sight
         Creeper creeper = helper.spawn(EntityType.CREEPER, new BlockPos(1, 1, 2));
         helper.assertTrue(creeper != null, "Creeper must spawn");
         creeper.ignite();
 
-        TelemetryFrame frame = manager.getSensoryCollector().collectFrame(settler);
+        TelemetryFrame frame = manager.getSensoryCollector().collectFrame(agent);
         helper.assertTrue(frame != null, "Frame must not be null");
 
         VisibleEntity creeperEntity = null;
@@ -349,7 +349,7 @@ public class SettlerGameTest {
         swellCreeper.discard();
 
         creeper.discard();
-        manager.despawnSettler(server, "agent-gt-entity").join();
+        manager.despawnAgent(server, "agent-gt-entity").join();
         helper.succeed();
     }
 
@@ -358,7 +358,7 @@ public class SettlerGameTest {
         ServerLevel level = helper.getLevel();
         MinecraftServer server = level.getServer();
         StreamRegistry streamRegistry = new StreamRegistry();
-        SettlerEntityManager manager = new SettlerEntityManager(streamRegistry);
+        AgentEntityManager manager = new AgentEntityManager(streamRegistry);
 
         List<TelemetryFrame> receivedFrames = new CopyOnWriteArrayList<>();
         streamRegistry.register("agent-gt-stream", new StreamObserver<>() {
@@ -375,7 +375,7 @@ public class SettlerGameTest {
         BlockPos spawnPos = helper.absolutePos(new BlockPos(1, 1, 1));
         SpawnAgentRequest request = SpawnAgentRequest.newBuilder()
                 .setAgentId("agent-gt-stream")
-                .setDisplayName("StreamSettler")
+                .setDisplayName("StreamAgent")
                 .setClanId("clan-ironwood")
                 .setSpawnCoords(Vec3.newBuilder()
                         .setX(spawnPos.getX() + 0.5)
@@ -384,8 +384,8 @@ public class SettlerGameTest {
                         .build())
                 .build();
 
-        SettlerEntity settler = manager.spawnSettler(server, level, request).join();
-        helper.assertTrue(settler != null, "Settler must spawn");
+        AgentEntity agent = manager.spawnAgent(server, level, request).join();
+        helper.assertTrue(agent != null, "Agent must spawn");
 
         // Manually trigger telemetry tick
         manager.tickTelemetry();
@@ -395,10 +395,10 @@ public class SettlerGameTest {
         TelemetryFrame frame = receivedFrames.get(0);
         helper.assertTrue(frame.hasStatus(), "Frame must have status");
         helper.assertTrue("agent-gt-stream".equals(frame.getStatus().getAgentId()), "Agent ID must match");
-        helper.assertTrue(frame.getStatus().getHealth() == settler.getMaxHealth(), "Health must match max health");
+        helper.assertTrue(frame.getStatus().getHealth() == agent.getMaxHealth(), "Health must match max health");
 
         helper.assertTrue(streamRegistry.isRegistered("agent-gt-stream"), "Agent stream must be registered prior to despawn");
-        manager.despawnSettler(server, "agent-gt-stream").join();
+        manager.despawnAgent(server, "agent-gt-stream").join();
         helper.assertFalse(streamRegistry.isRegistered("agent-gt-stream"),
                 "Agent stream must be cleanly closed via removalListener upon non-death despawn");
         helper.succeed();
@@ -409,7 +409,7 @@ public class SettlerGameTest {
         ServerLevel level = helper.getLevel();
         MinecraftServer server = level.getServer();
         StreamRegistry streamRegistry = new StreamRegistry();
-        SettlerEntityManager manager = new SettlerEntityManager(streamRegistry);
+        AgentEntityManager manager = new AgentEntityManager(streamRegistry);
 
         List<TelemetryFrame> receivedFrames = new CopyOnWriteArrayList<>();
         streamRegistry.register("agent-gt-damage-event", new StreamObserver<>() {
@@ -426,7 +426,7 @@ public class SettlerGameTest {
         BlockPos spawnPos = helper.absolutePos(new BlockPos(1, 1, 1));
         SpawnAgentRequest request = SpawnAgentRequest.newBuilder()
                 .setAgentId("agent-gt-damage-event")
-                .setDisplayName("DamageSettler")
+                .setDisplayName("DamageAgent")
                 .setClanId("clan-ironwood")
                 .setSpawnCoords(Vec3.newBuilder()
                         .setX(spawnPos.getX() + 0.5)
@@ -435,13 +435,13 @@ public class SettlerGameTest {
                         .build())
                 .build();
 
-        SettlerEntity settler = manager.spawnSettler(server, level, request).join();
-        helper.assertTrue(settler != null, "Settler must spawn");
+        AgentEntity agent = manager.spawnAgent(server, level, request).join();
+        helper.assertTrue(agent != null, "Agent must spawn");
 
         // Emit LivingDamageEvent.Post
         DamageSource damageSource = level.damageSources().magic();
         DamageContainer container = new DamageContainer(damageSource, 4.5f);
-        LivingDamageEvent.Post postEvent = new LivingDamageEvent.Post(settler, container);
+        LivingDamageEvent.Post postEvent = new LivingDamageEvent.Post(agent, container);
         manager.onLivingDamage(postEvent);
 
         helper.assertTrue(receivedFrames.size() == 1,
@@ -452,13 +452,13 @@ public class SettlerGameTest {
         helper.assertTrue(frame.getLastDamageTaken().getDamageAmount() == 4.5f,
                 "Damage amount must match 4.5f, was: " + frame.getLastDamageTaken().getDamageAmount());
 
-        // Emit damage event when settler is dying / dead (health <= 0) - should be skipped
-        settler.setHealth(0.0f);
+        // Emit damage event when agent is dying / dead (health <= 0) - should be skipped
+        agent.setHealth(0.0f);
         manager.onLivingDamage(postEvent);
         helper.assertTrue(receivedFrames.size() == 1,
-                "Must not emit damage frame when settler is dead/dying, received count: " + receivedFrames.size());
+                "Must not emit damage frame when agent is dead/dying, received count: " + receivedFrames.size());
 
-        manager.despawnSettler(server, "agent-gt-damage-event").join();
+        manager.despawnAgent(server, "agent-gt-damage-event").join();
         helper.succeed();
     }
 
@@ -466,7 +466,7 @@ public class SettlerGameTest {
     public static void testNavigateIntent(GameTestHelper helper) {
         ServerLevel level = helper.getLevel();
         MinecraftServer server = level.getServer();
-        SettlerEntityManager manager = new SettlerEntityManager();
+        AgentEntityManager manager = new AgentEntityManager();
 
         // Prepare flat walking floor at Y=0
         helper.setBlock(new BlockPos(1, 0, 1), Blocks.STONE);
@@ -477,7 +477,7 @@ public class SettlerGameTest {
         BlockPos spawnPos = helper.absolutePos(new BlockPos(1, 1, 1));
         SpawnAgentRequest request = SpawnAgentRequest.newBuilder()
                 .setAgentId("agent-gt-nav")
-                .setDisplayName("NavSettler")
+                .setDisplayName("NavAgent")
                 .setClanId("clan-ironwood")
                 .setSpawnCoords(Vec3.newBuilder()
                         .setX(spawnPos.getX() + 0.5)
@@ -486,8 +486,8 @@ public class SettlerGameTest {
                         .build())
                 .build();
 
-        SettlerEntity settler = manager.spawnSettler(server, level, request).join();
-        helper.assertTrue(settler != null, "Settler must spawn");
+        AgentEntity agent = manager.spawnAgent(server, level, request).join();
+        helper.assertTrue(agent != null, "Agent must spawn");
 
         BlockPos targetPos = helper.absolutePos(new BlockPos(1, 1, 2));
         NavigateIntent navIntent = NavigateIntent.newBuilder()
@@ -507,16 +507,16 @@ public class SettlerGameTest {
                 .build();
 
         manager.handleIntent(server, intent).join();
-        helper.assertTrue(settler.getNavigator().isPathing(), "Settler navigator must be PATHING");
+        helper.assertTrue(agent.getNavigator().isPathing(), "Agent navigator must be PATHING");
 
-        double startDistSq = settler.distanceToSqr(targetPos.getX() + 0.5, targetPos.getY(), targetPos.getZ() + 0.5);
+        double startDistSq = agent.distanceToSqr(targetPos.getX() + 0.5, targetPos.getY(), targetPos.getZ() + 0.5);
         for (int i = 0; i < 5; i++) {
-            settler.tick();
+            agent.tick();
         }
-        double endDistSq = settler.distanceToSqr(targetPos.getX() + 0.5, targetPos.getY(), targetPos.getZ() + 0.5);
-        helper.assertTrue(endDistSq <= startDistSq, "Settler must move closer towards target destination");
+        double endDistSq = agent.distanceToSqr(targetPos.getX() + 0.5, targetPos.getY(), targetPos.getZ() + 0.5);
+        helper.assertTrue(endDistSq <= startDistSq, "Agent must move closer towards target destination");
 
-        manager.despawnSettler(server, "agent-gt-nav").join();
+        manager.despawnAgent(server, "agent-gt-nav").join();
         helper.succeed();
     }
 
@@ -524,12 +524,12 @@ public class SettlerGameTest {
     public static void testAttackIntent(GameTestHelper helper) {
         ServerLevel level = helper.getLevel();
         MinecraftServer server = level.getServer();
-        SettlerEntityManager manager = new SettlerEntityManager();
+        AgentEntityManager manager = new AgentEntityManager();
 
         BlockPos spawnPos = helper.absolutePos(new BlockPos(1, 1, 1));
         SpawnAgentRequest request = SpawnAgentRequest.newBuilder()
                 .setAgentId("agent-gt-attack")
-                .setDisplayName("AttackSettler")
+                .setDisplayName("AttackAgent")
                 .setClanId("clan-ironwood")
                 .setSpawnCoords(Vec3.newBuilder()
                         .setX(spawnPos.getX() + 0.5)
@@ -538,14 +538,14 @@ public class SettlerGameTest {
                         .build())
                 .build();
 
-        SettlerEntity settler = manager.spawnSettler(server, level, request).join();
-        helper.assertTrue(settler != null, "Settler must spawn");
-        settler.setItemInHand(InteractionHand.MAIN_HAND, new ItemStack(Items.IRON_SWORD));
-        settler.getInventory().add(new ItemStack(Items.SHIELD));
+        AgentEntity agent = manager.spawnAgent(server, level, request).join();
+        helper.assertTrue(agent != null, "Agent must spawn");
+        agent.setItemInHand(InteractionHand.MAIN_HAND, new ItemStack(Items.IRON_SWORD));
+        agent.getInventory().add(new ItemStack(Items.SHIELD));
 
         // Advance ticks so attack strength cooldown scale is >= 0.9f
         for (int i = 0; i < 20; i++) {
-            settler.tick();
+            agent.tick();
         }
 
         // Spawn a zombie in adjacent block
@@ -567,11 +567,11 @@ public class SettlerGameTest {
         manager.handleIntent(server, intent).join();
 
         // Verify shield raised in offhand (cleanly swapped from inventory without free item generation)
-        helper.assertTrue(settler.getItemInHand(InteractionHand.OFF_HAND).is(Items.SHIELD),
-                "Settler must hold shield in offhand");
-        helper.assertTrue(settler.isUsingItem(), "Settler must be using offhand shield item");
-        helper.assertTrue(settler.getUsedItemHand() == InteractionHand.OFF_HAND,
-                "Settler used hand must be OFF_HAND");
+        helper.assertTrue(agent.getItemInHand(InteractionHand.OFF_HAND).is(Items.SHIELD),
+                "Agent must hold shield in offhand");
+        helper.assertTrue(agent.isUsingItem(), "Agent must be using offhand shield item");
+        helper.assertTrue(agent.getUsedItemHand() == InteractionHand.OFF_HAND,
+                "Agent used hand must be OFF_HAND");
 
         // Verify target entity took damage
         helper.assertTrue(zombie.getHealth() < initialHealth,
@@ -581,7 +581,7 @@ public class SettlerGameTest {
         BlockPos allyPos = helper.absolutePos(new BlockPos(1, 1, 0));
         SpawnAgentRequest allyRequest = SpawnAgentRequest.newBuilder()
                 .setAgentId("agent-gt-ally")
-                .setDisplayName("AllySettler")
+                .setDisplayName("AllyAgent")
                 .setClanId("clan-ironwood")
                 .setSpawnCoords(Vec3.newBuilder()
                         .setX(allyPos.getX() + 0.5)
@@ -589,7 +589,7 @@ public class SettlerGameTest {
                         .setZ(allyPos.getZ() + 0.5)
                         .build())
                 .build();
-        SettlerEntity ally = manager.spawnSettler(server, level, allyRequest).join();
+        AgentEntity ally = manager.spawnAgent(server, level, allyRequest).join();
         float allyInitialHealth = ally.getHealth();
 
         AgentIntent allyAttackIntent = AgentIntent.newBuilder()
@@ -600,7 +600,7 @@ public class SettlerGameTest {
                 .build();
         manager.handleIntent(server, allyAttackIntent).join();
         helper.assertTrue(ally.getHealth() == allyInitialHealth,
-                "Ally settler in same clan must not take friendly fire damage");
+                "Ally agent in same clan must not take friendly fire damage");
 
         // Verify Flee reflex movement (normalized vector * 10 blocks, tolerance 1)
         AttackIntent fleeIntent = AttackIntent.newBuilder()
@@ -613,30 +613,30 @@ public class SettlerGameTest {
                 .build();
         manager.handleIntent(server, fleeAgentIntent).join();
 
-        helper.assertTrue(settler.getNavigator().isPathing(), "Settler must be pathing away when fleeing");
-        net.minecraft.world.phys.Vec3 fleeTarget = settler.getNavigator().getTargetCoords();
+        helper.assertTrue(agent.getNavigator().isPathing(), "Agent must be pathing away when fleeing");
+        net.minecraft.world.phys.Vec3 fleeTarget = agent.getNavigator().getTargetCoords();
         helper.assertTrue(fleeTarget != null, "Flee target coordinates must be set");
-        helper.assertTrue(settler.getNavigator().getArrivalTolerance() == 1,
+        helper.assertTrue(agent.getNavigator().getArrivalTolerance() == 1,
                 "Flee navigation arrival tolerance must be 1");
-        helper.assertTrue(Math.abs(fleeTarget.z - (settler.getZ() - 10.0)) < 0.01,
+        helper.assertTrue(Math.abs(fleeTarget.z - (agent.getZ() - 10.0)) < 0.01,
                 "Flee target Z must be 10 blocks away from zombie opposite to target");
 
         // Verify Flee reflex when distance < 0.001 (opposite to yaw)
-        zombie.setPos(settler.getX(), settler.getY(), settler.getZ());
-        settler.setYRot(0.0F); // Facing +Z
+        zombie.setPos(agent.getX(), agent.getY(), agent.getZ());
+        agent.setYRot(0.0F); // Facing +Z
         manager.handleIntent(server, fleeAgentIntent).join();
-        net.minecraft.world.phys.Vec3 zeroDistFleeTarget = settler.getNavigator().getTargetCoords();
-        helper.assertTrue(zeroDistFleeTarget != null && zeroDistFleeTarget.z < settler.getZ(),
-                "When distance < 0.001, flee direction must be opposite to settler yaw");
+        net.minecraft.world.phys.Vec3 zeroDistFleeTarget = agent.getNavigator().getTargetCoords();
+        helper.assertTrue(zeroDistFleeTarget != null && zeroDistFleeTarget.z < agent.getZ(),
+                "When distance < 0.001, flee direction must be opposite to agent yaw");
 
         // Verify thread safety: world-modifying intent with null server must return failed future
         CompletableFuture<Void> nullServerFuture = manager.handleIntent(null, intent);
         helper.assertTrue(nullServerFuture.isCompletedExceptionally(),
                 "World-modifying intent without running MinecraftServer must return failed future");
 
-        manager.despawnSettler(server, "agent-gt-ally").join();
+        manager.despawnAgent(server, "agent-gt-ally").join();
         zombie.discard();
-        manager.despawnSettler(server, "agent-gt-attack").join();
+        manager.despawnAgent(server, "agent-gt-attack").join();
         helper.succeed();
     }
 
@@ -644,12 +644,12 @@ public class SettlerGameTest {
     public static void testInteractBlockIntent(GameTestHelper helper) {
         ServerLevel level = helper.getLevel();
         MinecraftServer server = level.getServer();
-        SettlerEntityManager manager = new SettlerEntityManager();
+        AgentEntityManager manager = new AgentEntityManager();
 
         BlockPos spawnPos = helper.absolutePos(new BlockPos(1, 1, 1));
         SpawnAgentRequest request = SpawnAgentRequest.newBuilder()
                 .setAgentId("agent-gt-interact")
-                .setDisplayName("InteractSettler")
+                .setDisplayName("InteractAgent")
                 .setClanId("clan-ironwood")
                 .setSpawnCoords(Vec3.newBuilder()
                         .setX(spawnPos.getX() + 0.5)
@@ -658,8 +658,8 @@ public class SettlerGameTest {
                         .build())
                 .build();
 
-        SettlerEntity settler = manager.spawnSettler(server, level, request).join();
-        helper.assertTrue(settler != null, "Settler must spawn");
+        AgentEntity agent = manager.spawnAgent(server, level, request).join();
+        helper.assertTrue(agent != null, "Agent must spawn");
 
         // 1. HARVEST_BREAK on wheat crop
         BlockPos localWheat = new BlockPos(1, 1, 2);
@@ -712,7 +712,7 @@ public class SettlerGameTest {
         BlockPos localCobble = new BlockPos(2, 1, 2);
         BlockPos absCobble = helper.absolutePos(localCobble);
         helper.setBlock(localCobble, Blocks.AIR);
-        settler.getInventory().add(new ItemStack(Items.COBBLESTONE, 2));
+        agent.getInventory().add(new ItemStack(Items.COBBLESTONE, 2));
 
         AgentIntent placeIntent = AgentIntent.newBuilder()
                 .setAgentId("agent-gt-interact")
@@ -726,8 +726,8 @@ public class SettlerGameTest {
         helper.assertBlockPresent(Blocks.COBBLESTONE, localCobble);
 
         int cobbleCount = 0;
-        for (int i = 0; i < settler.getInventory().getContainerSize(); i++) {
-            ItemStack stack = settler.getInventory().getItem(i);
+        for (int i = 0; i < agent.getInventory().getContainerSize(); i++) {
+            ItemStack stack = agent.getInventory().getItem(i);
             if (stack.is(Items.COBBLESTONE)) {
                 cobbleCount += stack.getCount();
             }
@@ -750,7 +750,7 @@ public class SettlerGameTest {
                         .build())
                 .build();
         manager.handleIntent(server, sleepIntent).join();
-        helper.assertTrue(settler.isSleeping(), "Settler must be sleeping in bed");
+        helper.assertTrue(agent.isSleeping(), "Agent must be sleeping in bed");
 
         AgentIntent wakeIntent = AgentIntent.newBuilder()
                 .setAgentId("agent-gt-interact")
@@ -759,9 +759,9 @@ public class SettlerGameTest {
                         .build())
                 .build();
         manager.handleIntent(server, wakeIntent).join();
-        helper.assertFalse(settler.isSleeping(), "Settler must wake up from bed");
+        helper.assertFalse(agent.isSleeping(), "Agent must wake up from bed");
 
-        manager.despawnSettler(server, "agent-gt-interact").join();
+        manager.despawnAgent(server, "agent-gt-interact").join();
         helper.succeed();
     }
 
@@ -769,12 +769,12 @@ public class SettlerGameTest {
     public static void testCreateWrittenBookIntent(GameTestHelper helper) {
         ServerLevel level = helper.getLevel();
         MinecraftServer server = level.getServer();
-        SettlerEntityManager manager = new SettlerEntityManager();
+        AgentEntityManager manager = new AgentEntityManager();
 
         BlockPos spawnPos = helper.absolutePos(new BlockPos(1, 1, 1));
         SpawnAgentRequest request = SpawnAgentRequest.newBuilder()
                 .setAgentId("agent-gt-book")
-                .setDisplayName("ChroniclerSettler")
+                .setDisplayName("ChroniclerAgent")
                 .setClanId("clan-ironwood")
                 .setSpawnCoords(Vec3.newBuilder()
                         .setX(spawnPos.getX() + 0.5)
@@ -783,8 +783,8 @@ public class SettlerGameTest {
                         .build())
                 .build();
 
-        SettlerEntity settler = manager.spawnSettler(server, level, request).join();
-        helper.assertTrue(settler != null, "Settler must spawn");
+        AgentEntity agent = manager.spawnAgent(server, level, request).join();
+        helper.assertTrue(agent != null, "Agent must spawn");
 
         BlockPos localLectern = new BlockPos(1, 1, 2);
         BlockPos absLectern = helper.absolutePos(localLectern);
@@ -792,7 +792,7 @@ public class SettlerGameTest {
         helper.assertBlockPresent(Blocks.LECTERN, localLectern);
 
         CreateWrittenBookIntent bookIntent = CreateWrittenBookIntent.newBuilder()
-                .setTitle("Settler Annals")
+                .setTitle("Agent Annals")
                 .setAuthor("Chronicler")
                 .addPages("The founding of the Ironwood settlement.")
                 .addPages("Trade routes established with neighboring lands.")
@@ -822,12 +822,12 @@ public class SettlerGameTest {
 
         WrittenBookContent content = bookStack.get(DataComponents.WRITTEN_BOOK_CONTENT);
         helper.assertTrue(content != null, "WrittenBookContent component must not be null");
-        helper.assertTrue("Settler Annals".equals(content.title().raw()), "Book title must match intent");
+        helper.assertTrue("Agent Annals".equals(content.title().raw()), "Book title must match intent");
         helper.assertTrue("Chronicler".equals(content.author()), "Book author must match intent");
         helper.assertTrue(content.pages().size() == 2, "Page count must match intent (2)");
 
         // 2. Placing book on lectern that already has a book must be rejected
-        boolean duplicateLectern = manager.getIntentActuator().actuateCreateWrittenBook(settler, bookIntent);
+        boolean duplicateLectern = manager.getIntentActuator().actuateCreateWrittenBook(agent, bookIntent);
         helper.assertFalse(duplicateLectern, "Placing book on lectern that already holds a book must be rejected");
 
         // 3. Title length > 32 chars must be rejected
@@ -835,7 +835,7 @@ public class SettlerGameTest {
                 .setTitle("A".repeat(33))
                 .addPages("Valid content")
                 .build();
-        helper.assertFalse(manager.getIntentActuator().actuateCreateWrittenBook(settler, longTitleIntent),
+        helper.assertFalse(manager.getIntentActuator().actuateCreateWrittenBook(agent, longTitleIntent),
                 "Title length > 32 chars must be rejected");
 
         // 4. Pages count > 100 must be rejected
@@ -844,7 +844,7 @@ public class SettlerGameTest {
         for (int i = 0; i < 101; i++) {
             manyPagesBuilder.addPages("Page " + i);
         }
-        helper.assertFalse(manager.getIntentActuator().actuateCreateWrittenBook(settler, manyPagesBuilder.build()),
+        helper.assertFalse(manager.getIntentActuator().actuateCreateWrittenBook(agent, manyPagesBuilder.build()),
                 "Page count > 100 must be rejected");
 
         // 5. Page text length > 1024 chars must be rejected
@@ -852,7 +852,7 @@ public class SettlerGameTest {
                 .setTitle("Valid Title")
                 .addPages("B".repeat(1025))
                 .build();
-        helper.assertFalse(manager.getIntentActuator().actuateCreateWrittenBook(settler, longPageIntent),
+        helper.assertFalse(manager.getIntentActuator().actuateCreateWrittenBook(agent, longPageIntent),
                 "Page length > 1024 chars must be rejected");
 
         // 6. Target lectern out of reach (> 6.0 blocks) must be rejected
@@ -861,10 +861,10 @@ public class SettlerGameTest {
                 .addPages("Content")
                 .setTargetLecternOrShelf(BlockPosProto.newBuilder().setX(absLectern.getX() + 20).setY(absLectern.getY()).setZ(absLectern.getZ()).build())
                 .build();
-        helper.assertFalse(manager.getIntentActuator().actuateCreateWrittenBook(settler, outOfReachLectern),
+        helper.assertFalse(manager.getIntentActuator().actuateCreateWrittenBook(agent, outOfReachLectern),
                 "Target lectern out of reach (> 6.0 blocks) must be rejected");
 
-        manager.despawnSettler(server, "agent-gt-book").join();
+        manager.despawnAgent(server, "agent-gt-book").join();
         helper.succeed();
     }
 
@@ -872,12 +872,12 @@ public class SettlerGameTest {
     public static void testUseItemAndSignpost(GameTestHelper helper) {
         ServerLevel level = helper.getLevel();
         MinecraftServer server = level.getServer();
-        SettlerEntityManager manager = new SettlerEntityManager();
+        AgentEntityManager manager = new AgentEntityManager();
 
         BlockPos spawnPos = helper.absolutePos(new BlockPos(1, 1, 1));
         SpawnAgentRequest request = SpawnAgentRequest.newBuilder()
                 .setAgentId("agent-gt-useitem")
-                .setDisplayName("UseItemSettler")
+                .setDisplayName("UseItemAgent")
                 .setClanId("clan-ironwood")
                 .setSpawnCoords(Vec3.newBuilder()
                         .setX(spawnPos.getX() + 0.5)
@@ -886,12 +886,12 @@ public class SettlerGameTest {
                         .build())
                 .build();
 
-        SettlerEntity settler = manager.spawnSettler(server, level, request).join();
-        helper.assertTrue(settler != null, "Settler must spawn");
+        AgentEntity agent = manager.spawnAgent(server, level, request).join();
+        helper.assertTrue(agent != null, "Agent must spawn");
 
         // 1. Eating non-food item (e.g. Iron Ingot) must be rejected
-        settler.getInventory().setItem(0, new ItemStack(Items.IRON_INGOT, 2));
-        settler.getFoodData().setFoodLevel(16);
+        agent.getInventory().setItem(0, new ItemStack(Items.IRON_INGOT, 2));
+        agent.getFoodData().setFoodLevel(16);
 
         AgentIntent eatIngotIntent = AgentIntent.newBuilder()
                 .setAgentId("agent-gt-useitem")
@@ -901,11 +901,11 @@ public class SettlerGameTest {
                         .build())
                 .build();
         manager.handleIntent(server, eatIngotIntent).join();
-        helper.assertTrue(settler.getFoodData().getFoodLevel() == 16, "Eating non-food must be rejected");
-        helper.assertTrue(settler.getInventory().getItem(0).getCount() == 2, "Non-food item count must not decrease");
+        helper.assertTrue(agent.getFoodData().getFoodLevel() == 16, "Eating non-food must be rejected");
+        helper.assertTrue(agent.getInventory().getItem(0).getCount() == 2, "Non-food item count must not decrease");
 
         // 2. Eating valid food (Apple) increases food level and shrinks item
-        settler.getInventory().setItem(1, new ItemStack(Items.APPLE, 2));
+        agent.getInventory().setItem(1, new ItemStack(Items.APPLE, 2));
         AgentIntent eatAppleIntent = AgentIntent.newBuilder()
                 .setAgentId("agent-gt-useitem")
                 .setUseItem(UseItemIntent.newBuilder()
@@ -914,19 +914,19 @@ public class SettlerGameTest {
                         .build())
                 .build();
         manager.handleIntent(server, eatAppleIntent).join();
-        helper.assertTrue(settler.getFoodData().getFoodLevel() > 16, "Eating valid food must increase food level");
-        helper.assertTrue(settler.getInventory().getItem(1).getCount() == 1, "Food item count must shrink by 1");
+        helper.assertTrue(agent.getFoodData().getFoodLevel() > 16, "Eating valid food must increase food level");
+        helper.assertTrue(agent.getInventory().getItem(1).getCount() == 1, "Food item count must shrink by 1");
 
         // 3. Eating when full (foodLevel=20) for standard food must be rejected
-        settler.getFoodData().setFoodLevel(20);
+        agent.getFoodData().setFoodLevel(20);
         manager.handleIntent(server, eatAppleIntent).join();
-        helper.assertTrue(settler.getInventory().getItem(1).getCount() == 1, "Eating when full must be rejected");
+        helper.assertTrue(agent.getInventory().getItem(1).getCount() == 1, "Eating when full must be rejected");
 
         // 4. Place Signpost with oak sign item consumed and lines clamped to 80 chars
         helper.setBlock(new BlockPos(1, 0, 2), Blocks.STONE);
         helper.setBlock(new BlockPos(1, 1, 2), Blocks.AIR);
         BlockPos absSign = helper.absolutePos(new BlockPos(1, 1, 2));
-        settler.getInventory().setItem(2, new ItemStack(Items.OAK_SIGN, 2));
+        agent.getInventory().setItem(2, new ItemStack(Items.OAK_SIGN, 2));
 
         String longLine = "A".repeat(100);
         AgentIntent signIntent = AgentIntent.newBuilder()
@@ -941,7 +941,7 @@ public class SettlerGameTest {
         manager.handleIntent(server, signIntent).join();
 
         helper.assertBlockPresent(Blocks.OAK_SIGN, new BlockPos(1, 1, 2));
-        helper.assertTrue(settler.getInventory().getItem(2).getCount() == 1, "Sign item count must shrink by 1");
+        helper.assertTrue(agent.getInventory().getItem(2).getCount() == 1, "Sign item count must shrink by 1");
 
         net.minecraft.world.level.block.entity.BlockEntity signEntity = helper.getBlockEntity(new BlockPos(1, 1, 2));
         helper.assertTrue(signEntity instanceof SignBlockEntity, "Must be SignBlockEntity");
@@ -949,7 +949,7 @@ public class SettlerGameTest {
         helper.assertTrue("Ironwood Gate".equals(signBe.getFrontText().getMessage(0, false).getString()), "Sign line 1 must match");
         helper.assertTrue(signBe.getFrontText().getMessage(1, false).getString().length() == 80, "Sign line 2 must be clamped to 80 chars");
 
-        manager.despawnSettler(server, "agent-gt-useitem").join();
+        manager.despawnAgent(server, "agent-gt-useitem").join();
         helper.succeed();
     }
 
@@ -957,7 +957,7 @@ public class SettlerGameTest {
     public static void testCreateWrittenBookActuation(GameTestHelper helper) {
         MinecraftServer server = helper.getLevel().getServer();
         ServerLevel level = helper.getLevel();
-        SettlerEntityManager manager = new SettlerEntityManager();
+        AgentEntityManager manager = new AgentEntityManager();
 
         BlockPos relPos = new BlockPos(1, 1, 1);
         BlockPos absPos = helper.absolutePos(relPos);
@@ -969,8 +969,8 @@ public class SettlerGameTest {
                 .setSpawnCoords(Vec3.newBuilder().setX(absPos.getX() + 0.5).setY(absPos.getY()).setZ(absPos.getZ() + 0.5).build())
                 .build();
 
-        SettlerEntity settler = manager.spawnSettler(server, level, spawnReq).join();
-        helper.assertTrue(settler != null, "Settler must spawn");
+        AgentEntity agent = manager.spawnAgent(server, level, spawnReq).join();
+        helper.assertTrue(agent != null, "Agent must spawn");
 
         // 1. Materialize Written Book into a Lectern
         BlockPos relLectern = new BlockPos(1, 1, 2);
@@ -1044,8 +1044,8 @@ public class SettlerGameTest {
                 .build();
 
         int initialInvCount = 0;
-        for (int i = 0; i < settler.getInventory().getContainerSize(); i++) {
-            if (settler.getInventory().getItem(i).is(Items.WRITTEN_BOOK)) {
+        for (int i = 0; i < agent.getInventory().getContainerSize(); i++) {
+            if (agent.getInventory().getItem(i).is(Items.WRITTEN_BOOK)) {
                 initialInvCount++;
             }
         }
@@ -1053,14 +1053,14 @@ public class SettlerGameTest {
         manager.handleIntent(server, invBookIntent).join();
 
         int afterInvCount = 0;
-        for (int i = 0; i < settler.getInventory().getContainerSize(); i++) {
-            if (settler.getInventory().getItem(i).is(Items.WRITTEN_BOOK)) {
+        for (int i = 0; i < agent.getInventory().getContainerSize(); i++) {
+            if (agent.getInventory().getItem(i).is(Items.WRITTEN_BOOK)) {
                 afterInvCount++;
             }
         }
-        helper.assertTrue(afterInvCount == initialInvCount + 1, "Settler inventory must receive written book");
+        helper.assertTrue(afterInvCount == initialInvCount + 1, "Agent inventory must receive written book");
 
-        manager.despawnSettler(server, "agent-gt-chronicler").join();
+        manager.despawnAgent(server, "agent-gt-chronicler").join();
         helper.succeed();
     }
 }

@@ -60,8 +60,8 @@ public class ClientDriverHarnessTest {
         assertInstanceOf(DriverAction.WaitAction.class, queue.get(0));
 
         // Contains look action
-        boolean hasLook = queue.stream().anyMatch(a -> a instanceof DriverAction.LookAtSettlerAction);
-        assertTrue(hasLook, "Default scenario must contain LookAtSettlerAction");
+        boolean hasLook = queue.stream().anyMatch(a -> a instanceof DriverAction.LookAtAgentAction);
+        assertTrue(hasLook, "Default scenario must contain LookAtAgentAction");
 
         // Contains screenshot action
         boolean hasScreenshot = queue.stream().anyMatch(a -> a instanceof DriverAction.ScreenshotAction);
@@ -81,7 +81,7 @@ public class ClientDriverHarnessTest {
     void testCustomActionPipelineParsing() {
         System.setProperty(ClientDriverHarness.PROP_ENABLED, "true");
         System.setProperty(ClientDriverHarness.PROP_ACTIONS,
-                "wait:50,look_at_settler:boris,forward:15,jump:5,whisper:boris:come here,screenshot:test.png,exit");
+                "wait:50,look_at_agent:boris,forward:15,jump:5,whisper:boris:come here,screenshot:test.png,exit");
 
         try {
             java.lang.reflect.Field initField = ClientDriverHarness.class.getDeclaredField("initialized");
@@ -98,8 +98,8 @@ public class ClientDriverHarnessTest {
         assertInstanceOf(DriverAction.WaitAction.class, queue.get(0));
         assertEquals(50, ((DriverAction.WaitAction) queue.get(0)).ticks());
 
-        assertInstanceOf(DriverAction.LookAtSettlerAction.class, queue.get(1));
-        assertEquals("boris", ((DriverAction.LookAtSettlerAction) queue.get(1)).target());
+        assertInstanceOf(DriverAction.LookAtAgentAction.class, queue.get(1));
+        assertEquals("boris", ((DriverAction.LookAtAgentAction) queue.get(1)).target());
 
         assertInstanceOf(DriverAction.HoldKeyAction.class, queue.get(2));
         assertEquals("FORWARD", ((DriverAction.HoldKeyAction) queue.get(2)).key());

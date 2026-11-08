@@ -447,7 +447,7 @@ func TestAgentIdentityValidation(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			cfg := xdg.DefaultAgentIdentityConfig("settler_1")
+			cfg := xdg.DefaultAgentIdentityConfig("agent_1")
 			tc.modify(cfg)
 			err := cfg.Validate()
 			if (err != nil) != tc.wantErr {
@@ -608,7 +608,7 @@ func TestConfigFilePermissions(t *testing.T) {
 		t.Errorf("global config file permissions = %04o, want 0600", perm)
 	}
 
-	agentCfg := xdg.DefaultAgentIdentityConfig("settler_sec")
+	agentCfg := xdg.DefaultAgentIdentityConfig("agent_sec")
 	if err := xdg.SaveAgentConfig(agentCfg, agentPath); err != nil {
 		t.Fatalf("SaveAgentConfig failed: %v", err)
 	}
@@ -779,7 +779,7 @@ func TestLoadAgentConfigByNameValidation(t *testing.T) {
 
 func TestAgentUUIDValidation(t *testing.T) {
 	t.Run("valid_canonical_uuid", func(t *testing.T) {
-		cfg := xdg.DefaultAgentIdentityConfig("settler_uuid")
+		cfg := xdg.DefaultAgentIdentityConfig("agent_uuid")
 		cfg.UUID = "d9d06b5a-19fb-4395-9ff7-320c2423aef5"
 		if err := cfg.Validate(); err != nil {
 			t.Errorf("valid UUID failed validation: %v", err)
@@ -787,7 +787,7 @@ func TestAgentUUIDValidation(t *testing.T) {
 	})
 
 	t.Run("empty_uuid_allowed", func(t *testing.T) {
-		cfg := xdg.DefaultAgentIdentityConfig("settler_uuid")
+		cfg := xdg.DefaultAgentIdentityConfig("agent_uuid")
 		cfg.UUID = ""
 		if err := cfg.Validate(); err != nil {
 			t.Errorf("empty UUID should be allowed: %v", err)
@@ -805,7 +805,7 @@ func TestAgentUUIDValidation(t *testing.T) {
 
 	for _, badUUID := range invalidUUIDs {
 		t.Run(badUUID, func(t *testing.T) {
-			cfg := xdg.DefaultAgentIdentityConfig("settler_uuid")
+			cfg := xdg.DefaultAgentIdentityConfig("agent_uuid")
 			cfg.UUID = badUUID
 			err := cfg.Validate()
 			if err == nil {
@@ -828,7 +828,7 @@ func TestAgentSkinTextureValidation(t *testing.T) {
 
 	for _, tex := range validTextures {
 		t.Run("valid_"+tex, func(t *testing.T) {
-			cfg := xdg.DefaultAgentIdentityConfig("settler_tex")
+			cfg := xdg.DefaultAgentIdentityConfig("agent_tex")
 			cfg.Skin.TexturePath = tex
 			if err := cfg.Validate(); err != nil {
 				t.Errorf("valid texture path %q failed: %v", tex, err)
@@ -848,7 +848,7 @@ func TestAgentSkinTextureValidation(t *testing.T) {
 
 	for _, tex := range invalidTextures {
 		t.Run("invalid_"+tex, func(t *testing.T) {
-			cfg := xdg.DefaultAgentIdentityConfig("settler_tex")
+			cfg := xdg.DefaultAgentIdentityConfig("agent_tex")
 			cfg.Skin.TexturePath = tex
 			err := cfg.Validate()
 			if err == nil {

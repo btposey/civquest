@@ -143,7 +143,7 @@ func NewDialogueService(client *Client, agentConfig *xdg.AgentIdentityConfig, op
 	}
 	if agentConfig == nil {
 		agentConfig = &xdg.AgentIdentityConfig{
-			Name:       "settler",
+			Name:       "agent",
 			ClanID:     "clan_default",
 			Profession: "VILLAGER",
 			Traits: xdg.AgentTraits{
@@ -334,7 +334,7 @@ func (s *DialogueService) ProcessChat(ctx context.Context, req ChatDialogueReque
 }
 
 // ProcessTrade handles an incoming barter trade request, negotiating offers based on
-// settler traits, clan food surplus, player prestige, and past memories.
+// agent traits, clan food surplus, player prestige, and past memories.
 func (s *DialogueService) ProcessTrade(ctx context.Context, req TradeDialogueRequest) (*DialogueResult, error) {
 	s.mu.RLock()
 	client := s.client
@@ -517,7 +517,7 @@ func (s *DialogueService) buildChatPrompt(
 
 	cleanPlayerName := sanitizePlayerName(req.PlayerName)
 
-	systemPrompt := fmt.Sprintf(`You are %s, an autonomous settler in the settlement simulation CivQuest.
+	systemPrompt := fmt.Sprintf(`You are %s, an autonomous agent in the settlement simulation CivQuest.
 Clan: %s | Profession: %s | Secondary Hobby: %s
 Personality Traits:
 - Bravery: %.2f (willingness to face danger or fight)
@@ -561,7 +561,7 @@ Instructions:
 	)
 
 	if cfg.SystemPrompt != "" {
-		systemPrompt += "\n\nAdditional Settler Background:\n" + cfg.SystemPrompt
+		systemPrompt += "\n\nAdditional Agent Background:\n" + cfg.SystemPrompt
 	}
 
 	userMsg := fmt.Sprintf("<player_chat player=%q distance=%.1f>\n%s\n</player_chat>", cleanPlayerName, req.Distance, req.Message)
@@ -608,7 +608,7 @@ func (s *DialogueService) buildTradePrompt(
 
 	cleanPlayerName := sanitizePlayerName(req.PlayerName)
 
-	systemPrompt := fmt.Sprintf(`You are %s, an autonomous settler negotiating barter trade in CivQuest.
+	systemPrompt := fmt.Sprintf(`You are %s, an autonomous agent negotiating barter trade in CivQuest.
 Clan: %s | Profession: %s | Secondary Hobby: %s
 Personality Traits:
 - Bravery: %.2f
@@ -651,7 +651,7 @@ Instructions:
 	)
 
 	if cfg.SystemPrompt != "" {
-		systemPrompt += "\n\nAdditional Settler Background:\n" + cfg.SystemPrompt
+		systemPrompt += "\n\nAdditional Agent Background:\n" + cfg.SystemPrompt
 	}
 
 	userMsg := fmt.Sprintf("<player_trade player=%q>\nOffered items: [%s]\nProposal: %s\n</player_trade>", cleanPlayerName, itemsSummary.String(), req.SpokenProposal)

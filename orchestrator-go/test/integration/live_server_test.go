@@ -115,11 +115,11 @@ func runEndToEndProbe(t *testing.T, meta *bridge.ServerMeta) {
 	t.Logf("Verified health checks: SERVING")
 
 	// 3. Call SpawnAgentEntity -> assert returns success and deterministic UUID
-	agentID := "probe-settler-live"
+	agentID := "probe-agent-live"
 	t.Logf("Calling SpawnAgentEntity for agent_id=%s...", agentID)
 	spawnResp, err := client.SpawnAgentEntity(ctx, &civquestv1.SpawnAgentRequest{
 		AgentId:     agentID,
-		DisplayName: "ProbeSettlerLive",
+		DisplayName: "ProbeAgentLive",
 		ClanId:      "clan-test",
 		SpawnCoords: &civquestv1.Vec3{X: 0, Y: 4, Z: 0},
 	})
@@ -246,10 +246,10 @@ func runProductionAgentBinaryProbe(t *testing.T, meta *bridge.ServerMeta) {
 
 	select {
 	case <-spawnDetected:
-		t.Logf("✓ Production civquest-agent binary successfully spawned Settler '%s' into Minecraft", agentName)
+		t.Logf("✓ Production civquest-agent binary successfully spawned Agent '%s' into Minecraft", agentName)
 	case <-time.After(10 * time.Second):
 		_ = cmd.Process.Kill()
-		t.Fatalf("Timed out waiting for production civquest-agent to spawn settler into Minecraft")
+		t.Fatalf("Timed out waiting for production civquest-agent to spawn agent into Minecraft")
 	}
 
 	select {

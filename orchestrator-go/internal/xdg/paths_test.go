@@ -328,13 +328,13 @@ func TestInitDirectories(t *testing.T) {
 	}
 
 	// Test agent and clan directory initialization
-	if err := r.InitAgentDirectories("settler_alpha"); err != nil {
+	if err := r.InitAgentDirectories("agent_alpha"); err != nil {
 		t.Fatalf("InitAgentDirectories() failed: %v", err)
 	}
 	for _, dir := range []string{
-		r.AgentDataDir("settler_alpha"),
-		r.AgentTexturesDir("settler_alpha"),
-		r.AgentStateDir("settler_alpha"),
+		r.AgentDataDir("agent_alpha"),
+		r.AgentTexturesDir("agent_alpha"),
+		r.AgentStateDir("agent_alpha"),
 	} {
 		info, err := os.Stat(dir)
 		if err != nil || !info.IsDir() {
@@ -601,8 +601,8 @@ func TestIdentifierValidation(t *testing.T) {
 	validIdentifiers := []string{
 		"a",
 		"aria",
-		"settler_1",
-		"settler-alpha",
+		"agent_1",
+		"agent-alpha",
 		"Clan_42-Iron",
 		"a1234567890123456789012345678901", // exactly 32 chars
 	}

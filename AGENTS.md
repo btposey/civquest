@@ -19,10 +19,10 @@ CivQuest is an autonomous, dynastic settlement engine introducing intelligent, h
 ### The Dual-Layer Architecture:
 1. **Minecraft Java Server Mod (`mod-neoforge`)**:
    - Engine: **Minecraft 1.21.1** powered by **NeoForge 21.1.265** (Java 21).
-   - Functions: Spawns headless `SettlerEntity` (`FakePlayer`) avatars; delivers dynamic settler skin packets; streams sensory frustum frames (5 Hz) over embedded Netty gRPC; delegates physical voxel pathfinding to an integrated Baritone API wrapper; preserves vanilla villages and villagers for rich inter-entity co-existence.
+   - Functions: Spawns headless `AgentEntity` (`FakePlayer`) avatars; delivers dynamic agent skin packets; streams sensory frustum frames (5 Hz) over embedded Netty gRPC; delegates physical voxel pathfinding to an integrated Baritone API wrapper; preserves vanilla villages and villagers for rich inter-entity co-existence.
 2. **External Multi-Process Go Orchestrator (`orchestrator-go`)**:
    - Engine: **Go 1.23+**.
-   - Functions: Multi-process supervisor (`civctl`) spawning dedicated OS worker processes (`civquest-agent`) per settler.
+   - Functions: Multi-process supervisor (`civctl`) spawning dedicated OS worker processes (`civquest-agent`) per agent.
    - **System 1 (Reactive Utility AI Engine)**: Sub-$5\text{ ms}$, zero-token deterministic loop handling combat reflexes, fight-or-flight confidence scoring, hunger, road paving, and daily career state transitions.
    - **System 2 (Deliberative LLM Engine)**: Asynchronous JSON-validated inference pipelines connected to local gateways (Ollama/vLLM) for dialogue, barter trade, Chronicler book writing, landmark toponymy, and Architect quadrant construction.
    - **Persistence Tier**: Embedded SQLite databases per agent and clan with `sqlite-vec` vector RAG.
@@ -33,11 +33,11 @@ CivQuest is an autonomous, dynastic settlement engine introducing intelligent, h
 
 All agents contributing to CivQuest must uphold these non-negotiable architectural invariants:
 
-1. **Process-Per-Agent Isolation**: Never loop through multiple agents in a single Go process thread. Each active settler is an independent OS process with dedicated state, logs, UNIX domain sockets, and SQLite databases.
+1. **Process-Per-Agent Isolation**: Never loop through multiple agents in a single Go process thread. Each active agent is an independent OS process with dedicated state, logs, UNIX domain sockets, and SQLite databases.
 2. **XDG Base Directory Compliance**: Hardcoded paths are strictly prohibited. All paths must be dynamically resolved via `$XDG_CONFIG_HOME`, `$XDG_DATA_HOME`, and `$XDG_STATE_HOME`.
 3. **Zero Token Survival Reflexes**: System 1 reflexes (shield raising, running from creepers, eating, pathing) must **never** invoke LLM inference. System 1 must execute synchronously in $<5\text{ ms}$.
 4. **Strict Permadeath Lifecycle**: When an agent dies in Minecraft (`DeathEvent`), they never respawn. The agent process must record memorial chronicles, move its state directory to `$XDG_DATA_HOME/civquest/graveyard/`, and exit cleanly with code 0.
-5. **Server-Side FakePlayer Avatars**: Autonomous settler entities are simulated server-side using standard FakePlayer implementations with deterministic offline UUIDs and custom skin packet distribution.
+5. **Server-Side FakePlayer Avatars**: Autonomous agent entities are simulated server-side using standard FakePlayer implementations with deterministic offline UUIDs and custom skin packet distribution.
 6. **Version & Branching Discipline**: Feature development targets the stable LTS baseline (**Minecraft 1.21.1 / NeoForge 21.1.265**) on `main`. Upstream updates track dedicated version branches (`version/mc-*`) with backporting to active branches.
 7. **Spatial Construction Order**: All collaborative multi-agent building projects must follow Spatial Quadrant Partitioning ($NW, NE, SW, SE$) and build bottom-up ($Y_{\text{min}} \to Y_{\text{max}}$) to prevent collisions and builder entrapment.
 8. **Operator Interaction & Subagent Delegation Directive**: The agent holding the conversational thread with the human operator must aggressively make use of right-sized subagents (`flash_lite` for trivial tasks, `flash` for standard tasks, `pro` for high-reasoning decomposition) and keep the chat thread open, responsive, and available to the operator. Never block or monopolize the operator turn with monolithic background execution—delegate heavy tasks to subagents and remain conversational.

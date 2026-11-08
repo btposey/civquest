@@ -86,7 +86,7 @@ CREATE TABLE IF NOT EXISTS episodic_memories (
 CREATE TABLE IF NOT EXISTS relationships (
     entity_uuid TEXT PRIMARY KEY,
     entity_name TEXT NOT NULL,
-    entity_type TEXT CHECK(entity_type IN ('PLAYER', 'SETTLER')),
+    entity_type TEXT CHECK(entity_type IN ('PLAYER', 'AGENT')),
     disposition_score REAL DEFAULT 0.0, -- [-100.0 to +100.0]
     familiarity REAL DEFAULT 0.0,       -- [0.0 to 1.0]
     kinship_role TEXT DEFAULT 'NONE',   -- 'NONE', 'SPOUSE', 'PARENT', 'CHILD', 'WIDOWED'

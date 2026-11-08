@@ -4,7 +4,7 @@
 Accepted
 
 ## Context
-CivQuest operates as a distributed polyglot system: a Minecraft 1.21.1 / NeoForge 21.1.265 Java mod (hosting headless `SettlerEntity` FakePlayers, Netty gRPC, and Baritone navigation) connected via IPC to external Go orchestrator processes.
+CivQuest operates as a distributed polyglot system: a Minecraft 1.21.1 / NeoForge 21.1.265 Java mod (hosting headless `AgentEntity` FakePlayers, Netty gRPC, and Baritone navigation) connected via IPC to external Go orchestrator processes.
 
 Relying solely on unit tests (JUnit 5 / Go mock tests) fails to catch runtime issues such as:
 1. Broken serialization or frame dropping across live Netty gRPC streams.
@@ -27,7 +27,7 @@ We adopt a **Three-Tier Testing Pyramid** grounded in native NeoForge tooling an
    - Launches a headless dedicated Minecraft server with optimized settings (`level-type=minecraft:flat`, `online-mode=false`, `sync-chunk-writes=false`, `max-tick-time=-1`, `pause-when-empty-seconds=-1`).
    - Mod binds Netty gRPC to an ephemeral port (`127.0.0.1:0`) or temporary Unix Domain Socket and exports discovery metadata (`civquest-server-meta.json`).
    - A dual-stage readiness probe waits for stdout `Done (X.XXs)!` and verifies `grpc.health.v1.Health/Check` returning `SERVING`.
-   - A synthetic Go test probe (`//go:build integration`) connects, spawns a settler entity, verifies 5 Hz `TelemetryFrame` streaming, issues a `NavigateIntent`, asserts movement state transitions, and despawns the agent.
+   - A synthetic Go test probe (`//go:build integration`) connects, spawns a agent entity, verifies 5 Hz `TelemetryFrame` streaming, issues a `NavigateIntent`, asserts movement state transitions, and despawns the agent.
    - Deterministic teardown sends `/stop` to stdin, ensuring clean chunk flush, `session.lock` release, and 0 exit code.
 
 ## Consequences

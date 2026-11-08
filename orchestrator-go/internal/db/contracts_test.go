@@ -84,7 +84,7 @@ func TestContractsDB_CRUDAndFiltering(t *testing.T) {
 		ContractID:         "cnt-wheat-1",
 		PlayerUUID:         "player-uuid-1",
 		PlayerName:         "FarmerBob",
-		SettlerAgentID:     "agent-agronomist-1",
+		AgentID:            "agent-agronomist-1",
 		PlotMinX:           10,
 		PlotMinY:           64,
 		PlotMinZ:           10,
@@ -106,7 +106,7 @@ func TestContractsDB_CRUDAndFiltering(t *testing.T) {
 		ContractID:         "cnt-carrot-2",
 		PlayerUUID:         "player-uuid-1",
 		PlayerName:         "FarmerBob",
-		SettlerAgentID:     "agent-agronomist-2",
+		AgentID:            "agent-agronomist-2",
 		PlotMinX:           40,
 		PlotMinY:           64,
 		PlotMinZ:           10,
@@ -128,7 +128,7 @@ func TestContractsDB_CRUDAndFiltering(t *testing.T) {
 		ContractID:         "cnt-potato-3",
 		PlayerUUID:         "player-uuid-2",
 		PlayerName:         "Alice",
-		SettlerAgentID:     "agent-agronomist-1",
+		AgentID:            "agent-agronomist-1",
 		PlotMinX:           70,
 		PlotMinY:           64,
 		PlotMinZ:           10,
@@ -229,7 +229,7 @@ func TestContractsDB_ValidationsAndClosed(t *testing.T) {
 	badSplit := &SharecroppingContract{
 		ContractID:         "bad-split",
 		PlayerUUID:         "p1",
-		SettlerAgentID:     "a1",
+		AgentID:            "a1",
 		CropType:           "wheat",
 		SplitPlayerPercent: 60.0,
 		SplitClanPercent:   50.0, // 110%
@@ -242,7 +242,7 @@ func TestContractsDB_ValidationsAndClosed(t *testing.T) {
 	badCoords := &SharecroppingContract{
 		ContractID:         "bad-coords",
 		PlayerUUID:         "p1",
-		SettlerAgentID:     "a1",
+		AgentID:            "a1",
 		CropType:           "wheat",
 		PlotMinX:           100,
 		PlotMaxX:           50, // min > max
@@ -269,7 +269,7 @@ func TestContractsDB_ValidationsAndClosed(t *testing.T) {
 	validContract := &SharecroppingContract{
 		ContractID:         "c-valid",
 		PlayerUUID:         "p1",
-		SettlerAgentID:     "a1",
+		AgentID:            "a1",
 		CropType:           "wheat",
 		SplitPlayerPercent: 50.0,
 		SplitClanPercent:   50.0,
@@ -292,8 +292,8 @@ func TestContractsDB_ValidationsAndClosed(t *testing.T) {
 	if _, err := contractsDB.ListContracts(); !errors.Is(err, ErrClosed) {
 		t.Errorf("expected ErrClosed on ListContracts, got %v", err)
 	}
-	if err := contractsDB.ReassignContractSettler("c-valid", "agent-bob"); !errors.Is(err, ErrClosed) {
-		t.Errorf("expected ErrClosed on ReassignContractSettler, got %v", err)
+	if err := contractsDB.ReassignContractAgent("c-valid", "agent-bob"); !errors.Is(err, ErrClosed) {
+		t.Errorf("expected ErrClosed on ReassignContractAgent, got %v", err)
 	}
 	if _, err := contractsDB.ListContractsByStatus(ContractStatusActive); !errors.Is(err, ErrClosed) {
 		t.Errorf("expected ErrClosed on ListContractsByStatus, got %v", err)
@@ -317,7 +317,7 @@ func TestContractsDB_Remediations(t *testing.T) {
 	nanSplit1 := &SharecroppingContract{
 		ContractID:         "c-nan-1",
 		PlayerUUID:         "p1",
-		SettlerAgentID:     "agent-agronomist-1",
+		AgentID:            "agent-agronomist-1",
 		CropType:           "wheat",
 		SplitPlayerPercent: math.NaN(),
 		SplitClanPercent:   50.0,
@@ -329,7 +329,7 @@ func TestContractsDB_Remediations(t *testing.T) {
 	nanSplit2 := &SharecroppingContract{
 		ContractID:         "c-nan-2",
 		PlayerUUID:         "p1",
-		SettlerAgentID:     "agent-agronomist-1",
+		AgentID:            "agent-agronomist-1",
 		CropType:           "wheat",
 		SplitPlayerPercent: 50.0,
 		SplitClanPercent:   math.NaN(),
@@ -341,7 +341,7 @@ func TestContractsDB_Remediations(t *testing.T) {
 	infSplit := &SharecroppingContract{
 		ContractID:         "c-inf",
 		PlayerUUID:         "p1",
-		SettlerAgentID:     "agent-agronomist-1",
+		AgentID:            "agent-agronomist-1",
 		CropType:           "wheat",
 		SplitPlayerPercent: math.Inf(1),
 		SplitClanPercent:   50.0,
@@ -354,7 +354,7 @@ func TestContractsDB_Remediations(t *testing.T) {
 	badStatusContract := &SharecroppingContract{
 		ContractID:         "c-bad-status",
 		PlayerUUID:         "p1",
-		SettlerAgentID:     "agent-agronomist-1",
+		AgentID:            "agent-agronomist-1",
 		CropType:           "wheat",
 		SplitPlayerPercent: 50.0,
 		SplitClanPercent:   50.0,
@@ -368,7 +368,7 @@ func TestContractsDB_Remediations(t *testing.T) {
 	proposedContract := &SharecroppingContract{
 		ContractID:         "c-proposed",
 		PlayerUUID:         "p1",
-		SettlerAgentID:     "agent-agronomist-1",
+		AgentID:            "agent-agronomist-1",
 		CropType:           "wheat",
 		SplitPlayerPercent: 60.0,
 		SplitClanPercent:   40.0,
@@ -384,34 +384,34 @@ func TestContractsDB_Remediations(t *testing.T) {
 		t.Error("expected error for invalid status in UpdateContractStatus")
 	}
 
-	// 3. Issue 7: Contract Permadeath Handoff - ReassignContractSettler
+	// 3. Issue 7: Contract Permadeath Handoff - ReassignContractAgent
 	// Invalid agent name (contains invalid path chars)
-	if err := contractsDB.ReassignContractSettler("c-proposed", "../malicious"); err == nil {
+	if err := contractsDB.ReassignContractAgent("c-proposed", "../malicious"); err == nil {
 		t.Error("expected error for invalid agent name")
 	}
-	if err := contractsDB.ReassignContractSettler("c-proposed", ""); err == nil {
+	if err := contractsDB.ReassignContractAgent("c-proposed", ""); err == nil {
 		t.Error("expected error for empty agent name")
 	}
 
 	// Nonexistent contract
-	if err := contractsDB.ReassignContractSettler("c-nonexistent", "agent-successor-1"); !errors.Is(err, ErrNotFound) {
+	if err := contractsDB.ReassignContractAgent("c-nonexistent", "agent-successor-1"); !errors.Is(err, ErrNotFound) {
 		t.Errorf("expected ErrNotFound for nonexistent contract reassignment, got: %v", err)
 	}
 
 	// Valid reassignment
-	if err := contractsDB.ReassignContractSettler("c-proposed", "agent-successor-1"); err != nil {
-		t.Fatalf("ReassignContractSettler failed: %v", err)
+	if err := contractsDB.ReassignContractAgent("c-proposed", "agent-successor-1"); err != nil {
+		t.Fatalf("ReassignContractAgent failed: %v", err)
 	}
 	updated, err := contractsDB.GetContract("c-proposed")
-	if err != nil || updated.SettlerAgentID != "agent-successor-1" {
-		t.Fatalf("expected settler agent 'agent-successor-1', got: %+v", updated)
+	if err != nil || updated.AgentID != "agent-successor-1" {
+		t.Fatalf("expected agent 'agent-successor-1', got: %+v", updated)
 	}
 
 	// 4. Issue 8: Contract Filtering (ListContractsByStatus & ListActiveContractsForAgent)
 	cActive1 := &SharecroppingContract{
 		ContractID:         "c-act-1",
 		PlayerUUID:         "p1",
-		SettlerAgentID:     "agent-successor-1",
+		AgentID:            "agent-successor-1",
 		CropType:           "carrots",
 		SplitPlayerPercent: 50.0,
 		SplitClanPercent:   50.0,
@@ -421,7 +421,7 @@ func TestContractsDB_Remediations(t *testing.T) {
 	cActive2 := &SharecroppingContract{
 		ContractID:         "c-act-2",
 		PlayerUUID:         "p2",
-		SettlerAgentID:     "agent-successor-1",
+		AgentID:            "agent-successor-1",
 		CropType:           "potatoes",
 		SplitPlayerPercent: 50.0,
 		SplitClanPercent:   50.0,
@@ -431,7 +431,7 @@ func TestContractsDB_Remediations(t *testing.T) {
 	cOtherAgentActive := &SharecroppingContract{
 		ContractID:         "c-other-act",
 		PlayerUUID:         "p1",
-		SettlerAgentID:     "agent-other-2",
+		AgentID:            "agent-other-2",
 		CropType:           "wheat",
 		SplitPlayerPercent: 50.0,
 		SplitClanPercent:   50.0,
@@ -441,7 +441,7 @@ func TestContractsDB_Remediations(t *testing.T) {
 	cBreached := &SharecroppingContract{
 		ContractID:         "c-breached",
 		PlayerUUID:         "p1",
-		SettlerAgentID:     "agent-successor-1",
+		AgentID:            "agent-successor-1",
 		CropType:           "wheat",
 		SplitPlayerPercent: 50.0,
 		SplitClanPercent:   50.0,
@@ -511,7 +511,7 @@ func TestContractsDB_ConcurrentOperations(t *testing.T) {
 			c := &SharecroppingContract{
 				ContractID:         "cnt-test-" + string(rune('a'+idx)),
 				PlayerUUID:         "p-concurrent",
-				SettlerAgentID:     "a-concurrent",
+				AgentID:            "a-concurrent",
 				CropType:           "wheat",
 				SplitPlayerPercent: 50.0,
 				SplitClanPercent:   50.0,

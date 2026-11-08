@@ -59,7 +59,7 @@ func TestCivctl_Status_JSON(t *testing.T) {
 		"--data-dir", dataDir,
 		"--state-dir", stateDir,
 		"--json",
-		"info",
+		"status",
 	)
 	if err != nil {
 		t.Fatalf("civctl info --json failed: %v\nOutput: %s", err, out)

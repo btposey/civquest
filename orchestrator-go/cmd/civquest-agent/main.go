@@ -179,7 +179,7 @@ func run(parentCtx context.Context, args []string, stdout, stderr io.Writer, r *
 		displayServerID = "default"
 	}
 	fmt.Fprintln(stdout, "======================================================================")
-	fmt.Fprintf(stdout, " [civquest-agent] Starting Settler Avatar: %s (PID: %d)\n", cfg.Name, os.Getpid())
+	fmt.Fprintf(stdout, " [civquest-agent] Starting Agent Avatar: %s (PID: %d)\n", cfg.Name, os.Getpid())
 	fmt.Fprintln(stdout, "======================================================================")
 	fmt.Fprintf(stdout, " Server ID:      %s\n", displayServerID)
 	fmt.Fprintf(stdout, " Clan:           %s\n", cfg.ClanID)
@@ -252,7 +252,7 @@ func run(parentCtx context.Context, args []string, stdout, stderr io.Writer, r *
 		return fmt.Errorf("creating agent runtime: %w", err)
 	}
 
-	// Spawn the settler avatar in the Minecraft world
+	// Spawn the agent avatar in the Minecraft world
 	spawnResp, err := bridgeClient.SpawnAgentEntity(parentCtx, &civquestv1.SpawnAgentRequest{
 		AgentId:     cfg.Name,
 		DisplayName: cfg.Name,
@@ -267,12 +267,12 @@ func run(parentCtx context.Context, args []string, stdout, stderr io.Writer, r *
 	if spawnResp.GetOfflineUuid() != "" {
 		rt.SetAgentUUID(spawnResp.GetOfflineUuid())
 	}
-	fmt.Fprintf(stdout, "[civquest-agent] Settler '%s' spawned into Minecraft (EntityID: %d, UUID: %s)\n",
+	fmt.Fprintf(stdout, "[civquest-agent] Agent '%s' spawned into Minecraft (EntityID: %d, UUID: %s)\n",
 		cfg.Name, spawnResp.GetMinecraftEntityId(), spawnResp.GetOfflineUuid())
 
 	fmt.Fprintf(stdout, " IPC Socket:     %s\n", rt.SocketPath())
 	fmt.Fprintln(stdout, "======================================================================")
-	fmt.Fprintln(stdout, "[civquest-agent] Settler runtime active. Connecting telemetry stream...")
+	fmt.Fprintln(stdout, "[civquest-agent] Agent runtime active. Connecting telemetry stream...")
 
 	// Listen for termination signals (SIGINT, SIGTERM)
 	ctx, cancel := context.WithCancel(parentCtx)

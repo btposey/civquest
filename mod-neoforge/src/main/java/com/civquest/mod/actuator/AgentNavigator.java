@@ -1,6 +1,6 @@
 package com.civquest.mod.actuator;
 
-import com.civquest.mod.SettlerEntity;
+import com.civquest.mod.AgentEntity;
 import com.civquest.mod.grpc.v1.NavigateIntent;
 import com.civquest.mod.grpc.v1.NavigationState;
 import com.mojang.logging.LogUtils;
@@ -14,11 +14,11 @@ import java.lang.reflect.Constructor;
 import java.lang.reflect.Method;
 
 /**
- * Manages navigation for a {@link SettlerEntity}.
+ * Manages navigation for an {@link AgentEntity}.
  * Supports Baritone via dynamic reflection if available on the classpath,
  * with a high-performance native voxel navigation fallback.
  */
-public class SettlerNavigator {
+public class AgentNavigator {
     private static final Logger LOGGER = LogUtils.getLogger();
     private static final boolean BARITONE_PRESENT;
     private static final Method GET_PROVIDER_METHOD;
@@ -82,7 +82,7 @@ public class SettlerNavigator {
         GOAL_BLOCK_CTOR = goalBlockCtor;
     }
 
-    private final SettlerEntity settler;
+    private final AgentEntity agent;
     private NavigationState navigationState = NavigationState.NAVIGATION_STATE_IDLE;
     private Vec3 targetCoords;
     private double speedMultiplier = 1.0;
@@ -97,27 +97,27 @@ public class SettlerNavigator {
     private boolean usingBaritone = false;
     private Object baritoneInstance = null;
 
-    public SettlerNavigator() {
+    public AgentNavigator() {
         this(null);
     }
 
-    public SettlerNavigator(SettlerEntity settler) {
-        this.settler = settler;
-        if (settler != null) {
-            this.simulatedPos = settler.position();
+    public AgentNavigator(AgentEntity agent) {
+        this.agent = agent;
+        if (agent != null) {
+            this.simulatedPos = agent.position();
         }
     }
 
     public Vec3 getPosition() {
-        return settler != null ? settler.position() : simulatedPos;
+        return agent != null ? agent.position() : simulatedPos;
     }
 
     public void setPosition(Vec3 pos) {
         if (pos == null || !Double.isFinite(pos.x) || !Double.isFinite(pos.y) || !Double.isFinite(pos.z)) {
             return;
         }
-        if (settler != null) {
-            settler.setPos(pos.x, pos.y, pos.z);
+        if (agent != null) {
+            agent.setPos(pos.x, pos.y, pos.z);
         }
         this.simulatedPos = pos;
     }
@@ -185,7 +185,7 @@ public class SettlerNavigator {
                 return false;
             }
 
-            Object baritone = GET_BARITONE_FOR_PLAYER_METHOD.invoke(provider, this.settler);
+            Object baritone = GET_BARITONE_FOR_PLAYER_METHOD.invoke(provider, this.agent);
             if (baritone == null) {
                 return false;
             }
@@ -210,7 +210,7 @@ public class SettlerNavigator {
 
             SET_GOAL_AND_PATH_METHOD.invoke(customGoalProcess, goal);
             LOGGER.debug("Baritone navigation initiated for agent '{}' to ({}, {}, {})",
-                    settler != null ? settler.getAgentId() : "unknown", x, y, z);
+                    agent != null ? agent.getAgentId() : "unknown", x, y, z);
             return true;
         } catch (Throwable t) {
             LOGGER.debug("Baritone navigation not available or failed; using native navigation: {}", t.getMessage());
@@ -224,14 +224,14 @@ public class SettlerNavigator {
             return;
         }
 
-        if (this.usingBaritone && this.baritoneInstance != null && this.settler != null
+        if (this.usingBaritone && this.baritoneInstance != null && this.agent != null
                 && GET_CUSTOM_GOAL_PROCESS_METHOD != null && IS_ACTIVE_METHOD != null) {
             try {
                 Object customGoalProcess = GET_CUSTOM_GOAL_PROCESS_METHOD.invoke(this.baritoneInstance);
                 if (customGoalProcess != null) {
                     boolean active = (boolean) IS_ACTIVE_METHOD.invoke(customGoalProcess);
                     if (!active) {
-                        double distSq = this.settler.distanceToSqr(this.targetCoords.x, this.targetCoords.y, this.targetCoords.z);
+                        double distSq = this.agent.distanceToSqr(this.targetCoords.x, this.targetCoords.y, this.targetCoords.z);
                         if (distSq <= (double) (this.arrivalTolerance * this.arrivalTolerance)) {
                             this.navigationState = NavigationState.NAVIGATION_STATE_ARRIVED;
                         } else {
@@ -283,9 +283,9 @@ public class SettlerNavigator {
         // Check arrival within arrival_tolerance
         if (horizontalDist <= (double) this.arrivalTolerance && Math.abs(dy) <= Math.max(2.0, (double) this.arrivalTolerance)) {
             this.navigationState = NavigationState.NAVIGATION_STATE_ARRIVED;
-            if (this.settler != null) {
-                this.settler.setDeltaMovement(0.0, this.settler.getDeltaMovement().y, 0.0);
-                this.settler.setSprinting(false);
+            if (this.agent != null) {
+                this.agent.setDeltaMovement(0.0, this.agent.getDeltaMovement().y, 0.0);
+                this.agent.setSprinting(false);
             }
             return;
         }
@@ -293,11 +293,11 @@ public class SettlerNavigator {
         // Direction angles and rotation update
         float targetYaw = (float) (Mth.atan2(dz, dx) * (180.0 / Math.PI)) - 90.0F;
         float targetPitch = (float) (-(Mth.atan2(dy, Math.max(0.001, horizontalDist)) * (180.0 / Math.PI)));
-        if (this.settler != null) {
-            this.settler.setYRot(targetYaw);
-            this.settler.setYHeadRot(targetYaw);
-            this.settler.setXRot(targetPitch);
-            this.settler.setSprinting(this.sprint);
+        if (this.agent != null) {
+            this.agent.setYRot(targetYaw);
+            this.agent.setYHeadRot(targetYaw);
+            this.agent.setXRot(targetPitch);
+            this.agent.setSprinting(this.sprint);
         }
 
         // Movement velocity
@@ -307,10 +307,10 @@ public class SettlerNavigator {
         double moveSpeed = baseSpeed * this.speedMultiplier;
 
         double vy = 0.0;
-        if (this.settler != null) {
-            vy = this.settler.getDeltaMovement().y;
-            if (this.settler.onGround()) {
-                if (this.settler.horizontalCollision || dy > 0.5) {
+        if (this.agent != null) {
+            vy = this.agent.getDeltaMovement().y;
+            if (this.agent.onGround()) {
+                if (this.agent.horizontalCollision || dy > 0.5) {
                     vy = 0.42; // Jump impulse
                 } else {
                     vy = Math.max(-0.0784, vy);
@@ -322,14 +322,14 @@ public class SettlerNavigator {
         }
 
         Vec3 movement = new Vec3(dirX * moveSpeed, vy, dirZ * moveSpeed);
-        if (this.settler != null) {
-            this.settler.setDeltaMovement(movement);
-            this.settler.hasImpulse = true;
+        if (this.agent != null) {
+            this.agent.setDeltaMovement(movement);
+            this.agent.hasImpulse = true;
             try {
-                this.settler.move(MoverType.SELF, movement);
+                this.agent.move(MoverType.SELF, movement);
             } catch (Throwable t) {
                 LOGGER.debug("Movement exception: {}", t.getMessage());
-                this.settler.setDeltaMovement(0.0, 0.0, 0.0);
+                this.agent.setDeltaMovement(0.0, 0.0, 0.0);
             }
         } else {
             this.simulatedPos = this.simulatedPos.add(movement);
@@ -343,9 +343,9 @@ public class SettlerNavigator {
         double postH = Math.sqrt(postDx * postDx + postDz * postDz);
         if (postH <= (double) this.arrivalTolerance && Math.abs(postDy) <= Math.max(2.0, (double) this.arrivalTolerance)) {
             this.navigationState = NavigationState.NAVIGATION_STATE_ARRIVED;
-            if (this.settler != null) {
-                this.settler.setDeltaMovement(0.0, this.settler.getDeltaMovement().y, 0.0);
-                this.settler.setSprinting(false);
+            if (this.agent != null) {
+                this.agent.setDeltaMovement(0.0, this.agent.getDeltaMovement().y, 0.0);
+                this.agent.setSprinting(false);
             }
             return;
         }
@@ -359,9 +359,9 @@ public class SettlerNavigator {
                 this.stuckTicks++;
                 if (this.stuckTicks >= 40) {
                     this.navigationState = NavigationState.NAVIGATION_STATE_STUCK;
-                    if (this.settler != null) {
-                        this.settler.setDeltaMovement(0.0, 0.0, 0.0);
-                        this.settler.setSprinting(false);
+                    if (this.agent != null) {
+                        this.agent.setDeltaMovement(0.0, 0.0, 0.0);
+                        this.agent.setSprinting(false);
                     }
                 }
             } else {
@@ -376,9 +376,9 @@ public class SettlerNavigator {
         this.targetCoords = null;
         this.stuckTicks = 0;
         this.baritoneInactivityTicks = 0;
-        if (this.settler != null) {
-            this.settler.setDeltaMovement(0.0, 0.0, 0.0);
-            this.settler.setSprinting(false);
+        if (this.agent != null) {
+            this.agent.setDeltaMovement(0.0, 0.0, 0.0);
+            this.agent.setSprinting(false);
         }
         if (this.usingBaritone && this.baritoneInstance != null && GET_CUSTOM_GOAL_PROCESS_METHOD != null && SET_GOAL_METHOD != null) {
             try {

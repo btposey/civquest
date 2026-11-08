@@ -5,8 +5,8 @@ Accepted
 
 ## Context
 CivQuest operates a dual-layer architecture where the Java NeoForge modification (`mod-neoforge`) serves two distinct runtime environments:
-1. **Dedicated Game Server**: Hosts the Minecraft world, runs headless `SettlerEntity` (`FakePlayer`) avatars, and runs an embedded Netty gRPC server (`CivQuestBridgeServer`) communicating with external Go orchestrators.
-2. **Player Client**: Connects to the dedicated server, renders avatars, and receives dynamic agent skin updates via custom network payloads (`ClientboundSettlerSkinPacket`).
+1. **Dedicated Game Server**: Hosts the Minecraft world, runs headless `AgentEntity` (`FakePlayer`) avatars, and runs an embedded Netty gRPC server (`CivQuestBridgeServer`) communicating with external Go orchestrators.
+2. **Player Client**: Connects to the dedicated server, renders avatars, and receives dynamic agent skin updates via custom network payloads (`ClientboundAgentSkinPacket`).
 
 During playtesting, two critical failure modes were discovered when launching the game through the standard Minecraft client launcher with `mod-neoforge` installed in `~/.minecraft/mods/`:
 1. **Eager Bridge Class Loading**: The mod main entrypoint (`CivQuestMod.<init>`) eagerly constructed `CivQuestBridgeServer`. On a physical game client launching into the title screen, the server IPC bridge was initialized unnecessarily, attempting to link server socket and gRPC dependencies before any world or multiplayer session was selected.
@@ -25,7 +25,7 @@ We establish three mandatory architectural standards for NeoForge mod distributi
    - Bundled dependencies are placed under `META-INF/jarjar/` with an auto-generated `metadata.json` manifest, allowing NeoForge's runtime `JarJarSelector` to isolate and load these nested jars without classpath collision or class relocation issues.
 
 3. **Optional Network Channel Negotiation**:
-   - All client-bound custom payloads (`ClientboundSettlerSkinPacket`) registered via `RegisterPayloadHandlersEvent` must mark their channel registrar as optional (`event.registrar("1").optional()`).
+   - All client-bound custom payloads (`ClientboundAgentSkinPacket`) registered via `RegisterPayloadHandlersEvent` must mark their channel registrar as optional (`event.registrar("1").optional()`).
    - This ensures full forward and backward compatibility: vanilla or unmodded NeoForge clients can connect to a CivQuest server without being rejected with "Incompatible mod list", while modded clients negotiate the channel and receive dynamic skin packets.
 
 4. **Automated Verification in the Test Harness**:

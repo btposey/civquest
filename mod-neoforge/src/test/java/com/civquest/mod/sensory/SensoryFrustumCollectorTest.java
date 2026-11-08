@@ -31,8 +31,8 @@ public class SensoryFrustumCollectorTest {
     }
 
     @Test
-    @DisplayName("collectFrame handles null settler safely returning default instance")
-    void testCollectFrameNullSettler() {
+    @DisplayName("collectFrame handles null agent safely returning default instance")
+    void testCollectFrameNullAgent() {
         TelemetryFrame frame = collector.collectFrame(null);
         assertNotNull(frame);
         assertEquals(TelemetryFrame.getDefaultInstance(), frame);
@@ -121,8 +121,8 @@ public class SensoryFrustumCollectorTest {
     }
 
     @Test
-    @DisplayName("buildDeathEvent handles null settler safely returning default instance")
-    void testBuildDeathEventNullSettler() {
+    @DisplayName("buildDeathEvent handles null agent safely returning default instance")
+    void testBuildDeathEventNullAgent() {
         DeathEvent deathEvent = SensoryFrustumCollector.buildDeathEvent(null, null);
         assertNotNull(deathEvent);
         assertEquals(DeathEvent.getDefaultInstance(), deathEvent);

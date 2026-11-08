@@ -12,11 +12,11 @@ Furthermore, custom agent skin textures must be delivered to human clients conne
 
 ## Decision
 1. **FakePlayer Subclassing**:
-   - In `mod-neoforge`, implement `SettlerEntity` extending `net.neoforged.neoforge.common.util.FakePlayer` (or `ServerPlayer` attached to a headless virtual `ServerGamePacketListenerImpl`).
+   - In `mod-neoforge`, implement `AgentEntity` extending `net.neoforged.neoforge.common.util.FakePlayer` (or `ServerPlayer` attached to a headless virtual `ServerGamePacketListenerImpl`).
    - Entities tick fully inside `ServerLevel` at 20 Hz, processing hunger (`FoodData`), item usage (eating, blocking, bows), and physics identically to real players.
 2. **Deterministic Offline UUIDs & Skin Packet Broadcasting**:
    - Assign deterministic offline UUIDs via `UUIDUtil.createOfflinePlayerUUID(displayName)` for consistent agent identity across world reloads.
-   - Deliver custom settler skins to connected clients by broadcasting custom NeoForge network payloads (`ClientboundSettlerSkinPacket`) carrying raw PNG bytes or GameProfile property injections (`textures`) into `ClientboundPlayerInfoUpdatePacket`.
+   - Deliver custom agent skins to connected clients by broadcasting custom NeoForge network payloads (`ClientboundAgentSkinPacket`) carrying raw PNG bytes or GameProfile property injections (`textures`) into `ClientboundPlayerInfoUpdatePacket`.
 
 ## Consequences
 ### Positive

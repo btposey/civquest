@@ -844,7 +844,7 @@ func TestDialogueService_CloseOwnedReputation(t *testing.T) {
 
 	svc, err := NewDialogueService(
 		client,
-		&xdg.AgentIdentityConfig{Name: "settler"},
+		&xdg.AgentIdentityConfig{Name: "agent"},
 		WithOwnedReputation(repDB),
 	)
 	if err != nil {

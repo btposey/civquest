@@ -174,7 +174,7 @@ func TestEvaluateReflexes_PanicActionSequence(t *testing.T) {
 	}
 
 	ctx := ReflexContext{
-		AgentID: "settler_1",
+		AgentID: "agent_1",
 		Bravery: 0.5,
 		Frame:   frame,
 		CanEat:  true,
@@ -259,7 +259,7 @@ func TestEvaluateReflexes_ConfidentStand(t *testing.T) {
 	}
 
 	ctx := ReflexContext{
-		AgentID: "settler_warrior",
+		AgentID: "agent_warrior",
 		Bravery: 0.8,
 		Frame:   frame,
 		CanEat:  false,
@@ -325,7 +325,7 @@ func TestEvaluateReflexes_RangedShieldRaising(t *testing.T) {
 	}
 
 	ctx := ReflexContext{
-		AgentID: "settler_knight",
+		AgentID: "agent_knight",
 		Bravery: 1.0,
 		Frame:   frame,
 		CanEat:  false,
@@ -617,7 +617,7 @@ func BenchmarkEvaluateReflexes(b *testing.B) {
 	}
 
 	ctx := ReflexContext{
-		AgentID:   "settler_bench",
+		AgentID:   "agent_bench",
 		Bravery:   0.6,
 		SafeNodes: safeNodes,
 		Frame:     frame,

@@ -194,8 +194,8 @@ func ExecutePermadeath(ctx context.Context, req PermadeathRequest) (*PermadeathR
 						result.SpouseUpdated = true
 					}
 
-					// Update living spouse's memory.db if they are an active settler
-					if strings.EqualFold(rel.EntityType, "SETTLER") && rel.EntityName != "" {
+					// Update living spouse's memory.db if they are an active agent
+					if strings.EqualFold(rel.EntityType, "AGENT") && rel.EntityName != "" {
 						spouseDBPath := r.AgentMemoryDBPath(rel.EntityName)
 						if _, statErr := os.Stat(spouseDBPath); statErr == nil {
 							if sdb, openErr := sql.Open("sqlite", spouseDBPath); openErr == nil {
@@ -266,7 +266,7 @@ func ExecutePermadeath(ctx context.Context, req PermadeathRequest) (*PermadeathR
 				if displayName == "" {
 					displayName = targetUUID
 				}
-				reason := fmt.Sprintf("Outlaw: Murdered settler %s", req.AgentID)
+				reason := fmt.Sprintf("Outlaw: Murdered agent %s", req.AgentID)
 				if _, err := req.ReputationDB.AddPrestige(targetUUID, displayName, -100.0, reason, worldTick); err != nil {
 					log.Printf("[WARN] agent %s failed to record murder prestige deduction: %v", req.AgentID, err)
 				} else {

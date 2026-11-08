@@ -447,7 +447,7 @@ func TestClient_CreateEmbedding(t *testing.T) {
 	}
 	defer client.Close()
 
-	vec, err := client.CreateEmbedding(context.Background(), "settler gathered 32 wheat")
+	vec, err := client.CreateEmbedding(context.Background(), "agent gathered 32 wheat")
 	if err != nil {
 		t.Fatalf("unexpected CreateEmbedding error: %v", err)
 	}
@@ -458,7 +458,7 @@ func TestClient_CreateEmbedding(t *testing.T) {
 	if vec[1] != 0.001 {
 		t.Fatalf("expected vec[1] = 0.001, got %v", vec[1])
 	}
-	if capturedReq.Input != "settler gathered 32 wheat" {
+	if capturedReq.Input != "agent gathered 32 wheat" {
 		t.Fatalf("unexpected input sent: %v", capturedReq.Input)
 	}
 }

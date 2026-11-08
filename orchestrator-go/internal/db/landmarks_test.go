@@ -96,7 +96,7 @@ func TestLandmarksDB_CRUDAndNearestQuery(t *testing.T) {
 		Z:                   100.0,
 		SignpostLine1:       "Echo Canyon",
 		SignpostLine2:       "Be wary of depths",
-		LoreText:            "Carved by ancient rivers long before the settlers arrived.",
+		LoreText:            "Carved by ancient rivers long before the agents arrived.",
 		DiscoveredByAgentID: "agent-explorer-1",
 		DiscoveredTick:      500,
 	}

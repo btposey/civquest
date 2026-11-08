@@ -1,7 +1,7 @@
 package com.civquest.mod.actuator;
 
 import com.civquest.mod.CivQuestBridgeServiceImpl;
-import com.civquest.mod.SettlerEntityManager;
+import com.civquest.mod.AgentEntityManager;
 import com.civquest.mod.StreamRegistry;
 import com.civquest.mod.grpc.v1.AgentIntent;
 import com.civquest.mod.grpc.v1.AttackIntent;
@@ -28,16 +28,16 @@ import static org.junit.jupiter.api.Assertions.*;
 public class IntentActuatorTest {
 
     private IntentActuator actuator;
-    private SettlerNavigator navigator;
+    private AgentNavigator navigator;
 
     @BeforeEach
     void setUp() {
         actuator = new IntentActuator();
-        navigator = new SettlerNavigator();
+        navigator = new AgentNavigator();
     }
 
     @Test
-    @DisplayName("SettlerNavigator initializes in IDLE state with default settings")
+    @DisplayName("AgentNavigator initializes in IDLE state with default settings")
     void testNavigatorInitialState() {
         assertNotNull(navigator);
         assertEquals(NavigationState.NAVIGATION_STATE_IDLE, navigator.getNavigationState());
@@ -46,11 +46,11 @@ public class IntentActuatorTest {
         assertFalse(navigator.isArrived());
         assertFalse(navigator.isStuck());
         assertNull(navigator.getTargetCoords());
-        assertFalse(SettlerNavigator.isBaritonePresent());
+        assertFalse(AgentNavigator.isBaritonePresent());
     }
 
     @Test
-    @DisplayName("SettlerNavigator navigateDirect sets pathing state, targets, and parameters")
+    @DisplayName("AgentNavigator navigateDirect sets pathing state, targets, and parameters")
     void testNavigatorNavigateDirect() {
         navigator.navigate(10.0, 64.0, 20.0, 1.5f, true, true, true, 2);
 
@@ -68,7 +68,7 @@ public class IntentActuatorTest {
     }
 
     @Test
-    @DisplayName("SettlerNavigator navigate from NavigateIntent correctly configures navigation parameters")
+    @DisplayName("AgentNavigator navigate from NavigateIntent correctly configures navigation parameters")
     void testNavigatorNavigateIntent() {
         NavigateIntent intent = NavigateIntent.newBuilder()
                 .setTarget(Vec3.newBuilder().setX(5.0).setY(60.0).setZ(-15.0).build())
@@ -90,7 +90,7 @@ public class IntentActuatorTest {
     }
 
     @Test
-    @DisplayName("SettlerNavigator native arrival check transitions to ARRIVED when within tolerance")
+    @DisplayName("AgentNavigator native arrival check transitions to ARRIVED when within tolerance")
     void testNavigatorArrival() {
         navigator.setPosition(10.0, 64.0, 10.0);
         navigator.navigate(10.2, 64.0, 10.1, 1.0f, false, false, false, 1);
@@ -103,7 +103,7 @@ public class IntentActuatorTest {
     }
 
     @Test
-    @DisplayName("SettlerNavigator native tick advances position towards destination coordinates")
+    @DisplayName("AgentNavigator native tick advances position towards destination coordinates")
     void testNavigatorMovementTick() {
         navigator.setPosition(0.0, 64.0, 0.0);
         navigator.navigate(10.0, 64.0, 0.0, 1.0f, false, false, false, 1);
@@ -117,7 +117,7 @@ public class IntentActuatorTest {
     }
 
     @Test
-    @DisplayName("SettlerNavigator stuck detection triggers after repeated ticks without movement")
+    @DisplayName("AgentNavigator stuck detection triggers after repeated ticks without movement")
     void testNavigatorStuckDetection() {
         navigator.setPosition(0.0, 64.0, 0.0);
         navigator.navigate(100.0, 64.0, 100.0, 1.0f, false, false, false, 1);
@@ -133,7 +133,7 @@ public class IntentActuatorTest {
     }
 
     @Test
-    @DisplayName("SettlerNavigator stuck detection evaluates horizontal displacement squared ignoring vertical bobbing")
+    @DisplayName("AgentNavigator stuck detection evaluates horizontal displacement squared ignoring vertical bobbing")
     void testNavigatorHorizontalStuckDetectionWithVerticalBobbing() {
         navigator.setPosition(0.0, 64.0, 0.0);
         navigator.navigate(100.0, 64.0, 100.0, 1.0f, false, false, false, 1);
@@ -149,7 +149,7 @@ public class IntentActuatorTest {
     }
 
     @Test
-    @DisplayName("SettlerNavigator rejects non-finite coordinates and coordinates exceeding world bounds")
+    @DisplayName("AgentNavigator rejects non-finite coordinates and coordinates exceeding world bounds")
     void testNavigatorCoordinateValidation() {
         navigator.setPosition(0.0, 64.0, 0.0);
 
@@ -179,7 +179,7 @@ public class IntentActuatorTest {
     }
 
     @Test
-    @DisplayName("SettlerNavigator stop resets to IDLE and clears targets and velocity")
+    @DisplayName("AgentNavigator stop resets to IDLE and clears targets and velocity")
     void testNavigatorStop() {
         navigator.navigate(50.0, 64.0, 50.0, 1.0f, true, false, false, 1);
         assertTrue(navigator.isPathing());
@@ -190,8 +190,8 @@ public class IntentActuatorTest {
     }
 
     @Test
-    @DisplayName("IntentActuator handles null settler and null intent safely without throwing")
-    void testActuateWithNullSettlerOrIntent() {
+    @DisplayName("IntentActuator handles null agent and null intent safely without throwing")
+    void testActuateWithNullAgentOrIntent() {
         assertDoesNotThrow(() -> actuator.actuate(null, null));
         assertDoesNotThrow(() -> actuator.actuate(null, AgentIntent.getDefaultInstance()));
         assertFalse(actuator.actuateNavigate(null, null));
@@ -203,9 +203,9 @@ public class IntentActuatorTest {
     }
 
     @Test
-    @DisplayName("SettlerEntityManager handleIntent handles null intent and non-existent settlers safely")
-    void testSettlerEntityManagerHandleIntent() {
-        SettlerEntityManager manager = new SettlerEntityManager();
+    @DisplayName("AgentEntityManager handleIntent handles null intent and non-existent agents safely")
+    void testAgentEntityManagerHandleIntent() {
+        AgentEntityManager manager = new AgentEntityManager();
         assertNotNull(manager.getIntentActuator());
 
         // Null intent returns completed future
@@ -213,7 +213,7 @@ public class IntentActuatorTest {
         assertNotNull(nullFuture);
         nullFuture.join();
 
-        // Non-existent settler does not throw
+        // Non-existent agent does not throw
         AgentIntent intent = AgentIntent.newBuilder()
                 .setAgentId("agent-non-existent")
                 .setNavigate(NavigateIntent.newBuilder()
@@ -230,7 +230,7 @@ public class IntentActuatorTest {
     @DisplayName("CivQuestBridgeServiceImpl connectAgent stream dispatches AgentIntent to manager")
     void testBridgeServiceConnectAgentIntentStream() {
         StreamRegistry streamRegistry = new StreamRegistry();
-        SettlerEntityManager manager = new SettlerEntityManager(streamRegistry);
+        AgentEntityManager manager = new AgentEntityManager(streamRegistry);
         CivQuestBridgeServiceImpl service = new CivQuestBridgeServiceImpl(streamRegistry, manager, () -> null);
 
         AtomicReference<TelemetryFrame> initialFrame = new AtomicReference<>();
@@ -266,7 +266,7 @@ public class IntentActuatorTest {
     @DisplayName("CivQuestBridgeServiceImpl stream rejects mutation of bound agent_id with PERMISSION_DENIED")
     void testBridgeServiceStreamAgentIdMismatch() {
         StreamRegistry streamRegistry = new StreamRegistry();
-        SettlerEntityManager manager = new SettlerEntityManager(streamRegistry);
+        AgentEntityManager manager = new AgentEntityManager(streamRegistry);
         CivQuestBridgeServiceImpl service = new CivQuestBridgeServiceImpl(streamRegistry, manager, () -> null);
 
         AtomicReference<Throwable> errorRef = new AtomicReference<>();

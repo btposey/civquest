@@ -25,15 +25,15 @@ import java.util.concurrent.atomic.AtomicReference;
 
 import static org.junit.jupiter.api.Assertions.*;
 
-public class SettlerEntityTest {
+public class AgentEntityTest {
 
-    private SettlerEntityManager entityManager;
+    private AgentEntityManager entityManager;
     private StreamRegistry streamRegistry;
     private CivQuestBridgeServiceImpl bridgeService;
 
     @BeforeEach
     void setUp() {
-        entityManager = new SettlerEntityManager();
+        entityManager = new AgentEntityManager();
         streamRegistry = new StreamRegistry();
         bridgeService = new CivQuestBridgeServiceImpl(streamRegistry, entityManager, () -> null);
     }
@@ -41,14 +41,14 @@ public class SettlerEntityTest {
     @Test
     @DisplayName("Deterministic offline player UUID generation adheres to Minecraft standard")
     void testOfflineUUIDGeneration() {
-        String displayName = "Settler-Brian";
+        String displayName = "Agent-Brian";
         UUID uuid1 = UUIDUtil.createOfflinePlayerUUID(displayName);
         UUID uuid2 = UUIDUtil.createOfflinePlayerUUID(displayName);
 
         assertNotNull(uuid1);
         assertEquals(uuid1, uuid2, "Same display name must yield identical offline UUID");
 
-        UUID uuidDifferent = UUIDUtil.createOfflinePlayerUUID("Settler-Other");
+        UUID uuidDifferent = UUIDUtil.createOfflinePlayerUUID("Agent-Other");
         assertNotEquals(uuid1, uuidDifferent, "Different display names must produce different UUIDs");
 
         // Verify version 3 UUID (name-based MD5)
@@ -56,51 +56,51 @@ public class SettlerEntityTest {
     }
 
     @Test
-    @DisplayName("ClientboundSettlerSkinPacket encodes and decodes raw 64x64 PNG payloads correctly")
-    void testSettlerSkinPacketCodec() {
-        UUID settlerUuid = UUIDUtil.createOfflinePlayerUUID("Settler-Artisan");
+    @DisplayName("ClientboundAgentSkinPacket encodes and decodes raw 64x64 PNG payloads correctly")
+    void testAgentSkinPacketCodec() {
+        UUID agentUuid = UUIDUtil.createOfflinePlayerUUID("Agent-Artisan");
         String agentId = "agent-artisan-01";
         byte[] dummySkinPng = "dummy-64x64-png-texture-bytes-content".getBytes(StandardCharsets.UTF_8);
 
-        ClientboundSettlerSkinPacket packet = new ClientboundSettlerSkinPacket(settlerUuid, agentId, dummySkinPng);
-        assertEquals(settlerUuid, packet.settlerUuid());
+        ClientboundAgentSkinPacket packet = new ClientboundAgentSkinPacket(agentUuid, agentId, dummySkinPng);
+        assertEquals(agentUuid, packet.agentUuid());
         assertEquals(agentId, packet.agentId());
         assertArrayEquals(dummySkinPng, packet.skinPng());
-        assertEquals("civquest:settler_skin", packet.type().id().toString());
+        assertEquals("civquest:agent_skin", packet.type().id().toString());
 
         // Test stream codec round-trip serialization
         FriendlyByteBuf buffer = new FriendlyByteBuf(Unpooled.buffer());
-        ClientboundSettlerSkinPacket.STREAM_CODEC.encode(buffer, packet);
+        ClientboundAgentSkinPacket.STREAM_CODEC.encode(buffer, packet);
 
-        ClientboundSettlerSkinPacket decoded = ClientboundSettlerSkinPacket.STREAM_CODEC.decode(buffer);
+        ClientboundAgentSkinPacket decoded = ClientboundAgentSkinPacket.STREAM_CODEC.decode(buffer);
         assertNotNull(decoded);
-        assertEquals(packet.settlerUuid(), decoded.settlerUuid());
+        assertEquals(packet.agentUuid(), decoded.agentUuid());
         assertEquals(packet.agentId(), decoded.agentId());
         assertArrayEquals(packet.skinPng(), decoded.skinPng());
     }
 
     @Test
-    @DisplayName("ClientboundSettlerSkinPacket handles empty or null skin bytes safely")
-    void testSettlerSkinPacketEmptyPayload() {
-        UUID settlerUuid = UUID.randomUUID();
-        ClientboundSettlerSkinPacket emptyPacket = new ClientboundSettlerSkinPacket(settlerUuid, "agent-bare", null);
+    @DisplayName("ClientboundAgentSkinPacket handles empty or null skin bytes safely")
+    void testAgentSkinPacketEmptyPayload() {
+        UUID agentUuid = UUID.randomUUID();
+        ClientboundAgentSkinPacket emptyPacket = new ClientboundAgentSkinPacket(agentUuid, "agent-bare", null);
         assertNotNull(emptyPacket.skinPng());
         assertEquals(0, emptyPacket.skinPng().length);
 
         FriendlyByteBuf buffer = new FriendlyByteBuf(Unpooled.buffer());
-        ClientboundSettlerSkinPacket.STREAM_CODEC.encode(buffer, emptyPacket);
-        ClientboundSettlerSkinPacket decoded = ClientboundSettlerSkinPacket.STREAM_CODEC.decode(buffer);
+        ClientboundAgentSkinPacket.STREAM_CODEC.encode(buffer, emptyPacket);
+        ClientboundAgentSkinPacket decoded = ClientboundAgentSkinPacket.STREAM_CODEC.decode(buffer);
         assertEquals(0, decoded.skinPng().length);
     }
 
     @Test
-    @DisplayName("SettlerEntityManager tracks, queries, and clears settlers cleanly")
-    void testSettlerEntityManagerLifecycle() throws ExecutionException, InterruptedException {
+    @DisplayName("AgentEntityManager tracks, queries, and clears agents cleanly")
+    void testAgentEntityManagerLifecycle() throws ExecutionException, InterruptedException {
         assertEquals(0, entityManager.count());
-        assertNull(entityManager.getSettler("non-existent"));
+        assertNull(entityManager.getAgent("non-existent"));
 
         // Despawn on non-existent returns false
-        CompletableFuture<Boolean> despawnFuture = entityManager.despawnSettler(null, "non-existent");
+        CompletableFuture<Boolean> despawnFuture = entityManager.despawnAgent(null, "non-existent");
         assertFalse(despawnFuture.get());
 
         // Clear all on empty manager does not throw
@@ -109,7 +109,7 @@ public class SettlerEntityTest {
     }
 
     @Test
-    @DisplayName("CivQuestBridgeServiceImpl spawns settler in standalone/test mode with deterministic offline UUID")
+    @DisplayName("CivQuestBridgeServiceImpl spawns agent in standalone/test mode with deterministic offline UUID")
     void testBridgeServiceSpawnStandalone() {
         String agentId = "agent-unit-01";
         String displayName = "AgentUnit";
@@ -152,7 +152,7 @@ public class SettlerEntityTest {
     }
 
     @Test
-    @DisplayName("CivQuestBridgeServiceImpl despawns settler and closes agent stream registry")
+    @DisplayName("CivQuestBridgeServiceImpl despawns agent and closes agent stream registry")
     void testBridgeServiceDespawn() {
         String agentId = "agent-despawn-test";
 
@@ -303,14 +303,14 @@ public class SettlerEntityTest {
     }
 
     @Test
-    @DisplayName("ClientboundSettlerSkinPacket rejects payloads larger than 64KB on decode")
-    void testSettlerSkinPacketCodecRejectsOversizedPayload() {
+    @DisplayName("ClientboundAgentSkinPacket rejects payloads larger than 64KB on decode")
+    void testAgentSkinPacketCodecRejectsOversizedPayload() {
         FriendlyByteBuf buffer = new FriendlyByteBuf(Unpooled.buffer());
         buffer.writeUUID(UUID.randomUUID());
         buffer.writeUtf("agent-oversized-test");
         buffer.writeByteArray(new byte[65537]);
 
-        assertThrows(Exception.class, () -> ClientboundSettlerSkinPacket.STREAM_CODEC.decode(buffer));
+        assertThrows(Exception.class, () -> ClientboundAgentSkinPacket.STREAM_CODEC.decode(buffer));
     }
 
     @Test

@@ -51,7 +51,7 @@ func TestPermadeath_FullLifecycle_Murder(t *testing.T) {
 	spouseRel := db.Relationship{
 		EntityUUID:          "spouse-boran-uuid",
 		EntityName:          "Boran",
-		EntityType:          "SETTLER",
+		EntityType:          "AGENT",
 		KinshipRole:         "SPOUSE",
 		DispositionScore:    85.0,
 		Familiarity:         0.9,
@@ -161,7 +161,7 @@ func TestPermadeath_FullLifecycle_Murder(t *testing.T) {
 	if latestLedger.Delta != -100.0 {
 		t.Errorf("expected latest ledger delta -100.0, got %.1f", latestLedger.Delta)
 	}
-	expectedReason := fmt.Sprintf("Outlaw: Murdered settler %s", agentID)
+	expectedReason := fmt.Sprintf("Outlaw: Murdered agent %s", agentID)
 	if latestLedger.Reason != expectedReason {
 		t.Errorf("expected ledger reason %q, got %q", expectedReason, latestLedger.Reason)
 	}
@@ -749,7 +749,7 @@ func TestPermadeath_MobKill_WithUUID_NotPlayerMurder(t *testing.T) {
 	}
 }
 
-func TestPermadeath_SurvivingSpouseSettlerUpdated(t *testing.T) {
+func TestPermadeath_SurvivingSpouseAgentUpdated(t *testing.T) {
 	tmpDir := t.TempDir()
 	resolver := xdg.NewResolver(xdg.WithCustomRoot(tmpDir))
 	ctx := context.Background()
@@ -759,7 +759,7 @@ func TestPermadeath_SurvivingSpouseSettlerUpdated(t *testing.T) {
 	survivingSpouse := "boran"
 	spouseUUID := "00000000-0000-0000-0000-000000000022"
 
-	// 1. Initialize directories for both settlers
+	// 1. Initialize directories for both agents
 	_ = resolver.InitAgentDirectories(deceasedAgent)
 	_ = resolver.InitAgentDirectories(survivingSpouse)
 
@@ -771,7 +771,7 @@ func TestPermadeath_SurvivingSpouseSettlerUpdated(t *testing.T) {
 	if err := deceasedDB.UpsertRelationship(ctx, db.Relationship{
 		EntityUUID:       spouseUUID,
 		EntityName:       survivingSpouse,
-		EntityType:       "SETTLER",
+		EntityType:       "AGENT",
 		KinshipRole:      "SPOUSE",
 		DispositionScore: 80.0,
 		Familiarity:      0.9,
@@ -787,7 +787,7 @@ func TestPermadeath_SurvivingSpouseSettlerUpdated(t *testing.T) {
 	if err := survivingDB.UpsertRelationship(ctx, db.Relationship{
 		EntityUUID:       deceasedUUID,
 		EntityName:       deceasedAgent,
-		EntityType:       "SETTLER",
+		EntityType:       "AGENT",
 		KinshipRole:      "SPOUSE",
 		DispositionScore: 85.0,
 		Familiarity:      0.9,

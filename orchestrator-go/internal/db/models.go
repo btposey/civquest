@@ -21,12 +21,12 @@ type EpisodicMemoryMatch struct {
 	Similarity float32        `json:"similarity"`
 }
 
-// Relationship models an agent's interpersonal standing and affinity with a player or fellow settler.
+// Relationship models an agent's interpersonal standing and affinity with a player or fellow agent.
 // Stored in memory.db in the relationships table.
 type Relationship struct {
 	EntityUUID          string  `json:"entity_uuid"`
 	EntityName          string  `json:"entity_name"`
-	EntityType          string  `json:"entity_type"`       // 'PLAYER' or 'SETTLER'
+	EntityType          string  `json:"entity_type"`       // 'PLAYER' or 'AGENT'
 	DispositionScore    float64 `json:"disposition_score"` // [-100.0 to +100.0]
 	Familiarity         float64 `json:"familiarity"`       // [0.0 to 1.0]
 	KinshipRole         string  `json:"kinship_role"`      // 'NONE', 'SPOUSE', 'PARENT', 'CHILD', 'WIDOWED'
@@ -191,13 +191,13 @@ type Landmark struct {
 	DiscoveredTick      int64   `json:"discovered_tick"`
 }
 
-// SharecroppingContract defines an agricultural tenancy agreement between a human player and clan settlers.
+// SharecroppingContract defines an agricultural tenancy agreement between a human player and clan agents.
 // Stored in contracts.db in the sharecropping_contracts table.
 type SharecroppingContract struct {
 	ContractID         string  `json:"contract_id"`
 	PlayerUUID         string  `json:"player_uuid"`
 	PlayerName         string  `json:"player_name"`
-	SettlerAgentID     string  `json:"settler_agent_id"`
+	AgentID            string  `json:"agent_id"`
 	PlotMinX           int     `json:"plot_min_x"`
 	PlotMinY           int     `json:"plot_min_y"`
 	PlotMinZ           int     `json:"plot_min_z"`

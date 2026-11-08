@@ -146,7 +146,7 @@ func TestCivquestAgent_BasicInvocationAndShutdown(t *testing.T) {
 	}
 
 	outStr := stdout.String()
-	if !strings.Contains(outStr, "Starting Settler Avatar: aria_test") {
+	if !strings.Contains(outStr, "Starting Agent Avatar: aria_test") {
 		t.Errorf("expected avatar name in stdout, got:\n%s", outStr)
 	}
 	if !strings.Contains(outStr, "Shared-Key Bearer Token") {
@@ -247,7 +247,7 @@ func TestCivquestAgent_LegacyNameFlag(t *testing.T) {
 	}
 
 	outStr := stdout.String()
-	if !strings.Contains(outStr, "Starting Settler Avatar: legacy_avatar") {
+	if !strings.Contains(outStr, "Starting Agent Avatar: legacy_avatar") {
 		t.Errorf("expected legacy avatar name in stdout, got:\n%s", outStr)
 	}
 }
