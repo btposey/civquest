@@ -120,3 +120,118 @@ func TestEvaluateTradeQuidProQuo(t *testing.T) {
 		t.Fatalf("expected counter-offer from surplus oak_log, got empty counter offer")
 	}
 }
+
+func TestEvaluateBootstrapTimberAndCrafting(t *testing.T) {
+	state := NewAgentState()
+	cfg := xdg.DefaultAgentIdentityConfig("Able")
+	cfg.Profession = "EXPLORER"
+
+	// Frame 1: warm up telemetryFramesSeen
+	frame1 := &civquestv1.TelemetryFrame{
+		WorldTick: 100,
+		TimeOfDay: 2000,
+		Status: &civquestv1.AgentStatus{
+			Position:        &civquestv1.Vec3{X: 0, Y: 64, Z: 0},
+			Health:          20,
+			FoodLevel:       20,
+			NavigationState: civquestv1.NavigationState_NAVIGATION_STATE_IDLE,
+		},
+	}
+	_ = EvaluateExploration("Able", frame1, cfg, state)
+
+	// Frame 2: Unarmed agent sees an oak_log within 3 blocks -> should harvest it!
+	frame2 := &civquestv1.TelemetryFrame{
+		WorldTick: 140,
+		TimeOfDay: 2040,
+		Status: &civquestv1.AgentStatus{
+			Position:        &civquestv1.Vec3{X: 0, Y: 64, Z: 0},
+			Health:          20,
+			FoodLevel:       20,
+			NavigationState: civquestv1.NavigationState_NAVIGATION_STATE_IDLE,
+		},
+		InterestingBlocks: []*civquestv1.VisibleBlock{
+			{
+				Pos:     &civquestv1.BlockPosProto{X: 2, Y: 64, Z: 0},
+				BlockId: "minecraft:oak_log",
+			},
+		},
+	}
+	harvestIntent := EvaluateExploration("Able", frame2, cfg, state)
+	if harvestIntent == nil || harvestIntent.GetInteractBlock() == nil ||
+		harvestIntent.GetInteractBlock().InteractionType != civquestv1.InteractBlockIntent_HARVEST_BREAK {
+		t.Fatalf("expected HARVEST_BREAK intent for nearby oak_log, got %+v", harvestIntent)
+	}
+
+	// Frame 3: Agent now has 2 oak_logs in inventory -> should craft wooden_axe!
+	frame3 := &civquestv1.TelemetryFrame{
+		WorldTick: 180,
+		TimeOfDay: 2080,
+		Status: &civquestv1.AgentStatus{
+			Position:        &civquestv1.Vec3{X: 0, Y: 64, Z: 0},
+			Health:          20,
+			FoodLevel:       20,
+			NavigationState: civquestv1.NavigationState_NAVIGATION_STATE_IDLE,
+			Inventory: []*civquestv1.ItemStackProto{
+				{Slot: 0, ItemId: "minecraft:oak_log", Count: 2},
+			},
+		},
+	}
+	craftIntent := EvaluateExploration("Able", frame3, cfg, state)
+	if craftIntent == nil || craftIntent.GetCraftItem() == nil || craftIntent.GetCraftItem().RecipeId != "minecraft:wooden_axe" {
+		t.Fatalf("expected CraftItemIntent for minecraft:wooden_axe, got %+v", craftIntent)
+	}
+}
+
+func TestExplorerForwardOutpostAtDuskAndGoals(t *testing.T) {
+	state := NewAgentState()
+	cfg := xdg.DefaultAgentIdentityConfig("Able")
+	cfg.Profession = "EXPLORER"
+
+	// Day 1 Morning at (0, 64, 0)
+	frameMorning := &civquestv1.TelemetryFrame{
+		WorldTick: 1000,
+		TimeOfDay: 2000,
+		Status: &civquestv1.AgentStatus{
+			Position:        &civquestv1.Vec3{X: 0, Y: 64, Z: 0},
+			Health:          20,
+			FoodLevel:       20,
+			NavigationState: civquestv1.NavigationState_NAVIGATION_STATE_IDLE,
+		},
+	}
+	_, _ = EvaluateTopologicalMapping(frameMorning, state)
+	_ = EvaluateExploration("Able", frameMorning, cfg, state)
+
+	goalsMorning := EvaluateGoals(frameMorning, cfg, state)
+	if goalsMorning.ImmediateGoal == "" || goalsMorning.ShortTermGoal == "" || goalsMorning.LongTermGoal == "" {
+		t.Fatalf("expected all 3 goal horizons to be populated, got %+v", goalsMorning)
+	}
+
+	// Dusk arrives (tod = 12000) after Explorer has traveled 48 blocks along frontier to (48, 64, 0) with a campfire in inventory
+	frameDusk := &civquestv1.TelemetryFrame{
+		WorldTick: 2000,
+		TimeOfDay: 12000,
+		Status: &civquestv1.AgentStatus{
+			Position:        &civquestv1.Vec3{X: 48, Y: 64, Z: 0},
+			Health:          20,
+			FoodLevel:       20,
+			NavigationState: civquestv1.NavigationState_NAVIGATION_STATE_IDLE,
+			Inventory: []*civquestv1.ItemStackProto{
+				{Slot: 0, ItemId: "minecraft:wooden_axe", Count: 1},
+				{Slot: 1, ItemId: "minecraft:campfire", Count: 1},
+			},
+		},
+	}
+	shelterIntent := EvaluateExploration("Able", frameDusk, cfg, state)
+	if shelterIntent == nil || shelterIntent.GetInteractBlock() == nil ||
+		shelterIntent.GetInteractBlock().InteractionType != civquestv1.InteractBlockIntent_PLACE_BLOCK {
+		t.Fatalf("expected Explorer >32 blocks away at dusk to establish forward outpost and place campfire, got %+v", shelterIntent)
+	}
+	if len(state.GetOutposts()) < 2 {
+		t.Fatalf("expected new forward outpost to be recorded in state.outposts, got %d", len(state.GetOutposts()))
+	}
+
+	outpostNode, _ := EvaluateTopologicalMapping(frameDusk, state)
+	if outpostNode == nil || outpostNode.Category != "OUTPOST" {
+		t.Fatalf("expected topological node at forward outpost to have Category=OUTPOST, got %+v", outpostNode)
+	}
+}

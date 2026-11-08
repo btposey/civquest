@@ -128,16 +128,33 @@ func run(parentCtx context.Context, args []string, stdout, stderr io.Writer, r *
 
 	// Configure multi-writer logging to well-known $XDG_STATE_HOME/civquest/logs/ directory
 	var logWriters []io.Writer
+	var openedStats []os.FileInfo
 	if stderr != nil {
 		logWriters = append(logWriters, stderr)
+		if stderrFile, ok := stderr.(*os.File); ok {
+			if st, statErr := stderrFile.Stat(); statErr == nil {
+				openedStats = append(openedStats, st)
+			}
+		}
+	}
+	addUniqueLogFile := func(f *os.File) {
+		if st, statErr := f.Stat(); statErr == nil {
+			for _, existing := range openedStats {
+				if os.SameFile(existing, st) {
+					return
+				}
+			}
+			openedStats = append(openedStats, st)
+		}
+		logWriters = append(logWriters, f)
 	}
 	if centralLogFile, err := os.OpenFile(r.AgentHumanLogPath(cfg.Name), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o640); err == nil {
 		defer centralLogFile.Close()
-		logWriters = append(logWriters, centralLogFile)
+		addUniqueLogFile(centralLogFile)
 	}
 	if stateLogFile, err := os.OpenFile(r.AgentLogPath(cfg.Name), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o640); err == nil {
 		defer stateLogFile.Close()
-		logWriters = append(logWriters, stateLogFile)
+		addUniqueLogFile(stateLogFile)
 	}
 	if len(logWriters) > 0 {
 		log.SetOutput(io.MultiWriter(logWriters...))

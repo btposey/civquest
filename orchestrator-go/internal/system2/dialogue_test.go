@@ -867,3 +867,28 @@ func TestDialogueService_CloseOwnedReputation(t *testing.T) {
 		t.Errorf("expected ErrClosed after svc.Close(), got %v", err)
 	}
 }
+
+func TestFormatSensoryEnvironmentSection_RelativeLocationAndGoals(t *testing.T) {
+	v := &DialogueVitals{
+		Health:                 20.0,
+		FoodLevel:              20,
+		TimeOfDay:              12500,
+		DayPhase:               "DUSK (Sunset)",
+		Weather:                "CLEAR",
+		BiomeID:                "minecraft:forest",
+		Position:               "(-68, 73, -25)",
+		PlayerRelativeLocation: "Agent is at (-68, 73, -25), 68.4 blocks away from Brian at (-12, 88, 14) (15 blocks lower in elevation)",
+		CurrentRoutine:         "TAVERN_SOCIAL",
+		ImmediateGoal:          "ESTABLISH_OUTPOST: Secure and light forward outpost shelter for the night",
+		ShortTermGoal:          "ESTABLISH_OUTPOST_CHAIN: Advance frontier and establish safe day-night outposts with tools & light",
+		LongTermGoal:           "CHART_REGIONAL_ATLAS: Map biome sectors, consecrate landmarks, and link forward outposts for Clan Cartographer",
+	}
+
+	section := formatSensoryEnvironmentSection(v, SurplusStable)
+	if !strings.Contains(section, "68.4 blocks away from Brian") {
+		t.Errorf("expected relative distance in sensory section, got:\n%s", section)
+	}
+	if !strings.Contains(section, "<current_goals>") || !strings.Contains(section, "ESTABLISH_OUTPOST:") || !strings.Contains(section, "CHART_REGIONAL_ATLAS:") {
+		t.Errorf("expected <current_goals> block in sensory section, got:\n%s", section)
+	}
+}

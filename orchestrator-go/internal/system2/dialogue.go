@@ -27,18 +27,22 @@ const (
 
 // DialogueVitals encapsulates an agent's physical and environmental sensory status for prompt context.
 type DialogueVitals struct {
-	Health           float32 `json:"health"`
-	FoodLevel        int32   `json:"food_level"`
-	TimeOfDay        int64   `json:"time_of_day,omitempty"`
-	DayPhase         string  `json:"day_phase,omitempty"`         // DAWN, MORNING, MIDDAY, AFTERNOON, DUSK, NIGHT
-	Weather          string  `json:"weather,omitempty"`           // CLEAR, RAIN, THUNDER
-	BiomeID          string  `json:"biome_id,omitempty"`          // e.g. minecraft:plains
-	Position         string  `json:"position,omitempty"`          // e.g. "(12, 64, -8)"
-	CurrentRoutine   string  `json:"current_routine,omitempty"`   // e.g. PRIMARY_DUTY, SLEEP
-	ThreatStatus     string  `json:"threat_status,omitempty"`     // e.g. "SAFE (0 hostiles within 24m)" or "THREAT PRESENT (2 hostiles: zombie, skeleton)"
-	CombatConfidence float64 `json:"combat_confidence,omitempty"` // System 1 confidence score
-	RecentCombat     string  `json:"recent_combat,omitempty"`     // e.g. "Fought minecraft:zombie during NIGHT (tick 14200)"
-	InventorySummary string  `json:"inventory_summary,omitempty"` // e.g. "1x iron_sword, 4x bread"
+	Health                 float32 `json:"health"`
+	FoodLevel              int32   `json:"food_level"`
+	TimeOfDay              int64   `json:"time_of_day,omitempty"`
+	DayPhase               string  `json:"day_phase,omitempty"`                // DAWN, MORNING, MIDDAY, AFTERNOON, DUSK, NIGHT
+	Weather                string  `json:"weather,omitempty"`                  // CLEAR, RAIN, THUNDER
+	BiomeID                string  `json:"biome_id,omitempty"`                 // e.g. minecraft:plains
+	Position               string  `json:"position,omitempty"`                 // e.g. "(12, 64, -8)"
+	PlayerRelativeLocation string  `json:"player_relative_location,omitempty"` // e.g. "Agent is at (-68, 73, -25), 68.4 blocks away from player"
+	CurrentRoutine         string  `json:"current_routine,omitempty"`          // e.g. PRIMARY_DUTY, SLEEP
+	ThreatStatus           string  `json:"threat_status,omitempty"`            // e.g. "SAFE (0 hostiles within 24m)" or "THREAT PRESENT (2 hostiles: zombie, skeleton)"
+	CombatConfidence       float64 `json:"combat_confidence,omitempty"`        // System 1 confidence score
+	RecentCombat           string  `json:"recent_combat,omitempty"`            // e.g. "Fought minecraft:zombie during NIGHT (tick 14200)"
+	InventorySummary       string  `json:"inventory_summary,omitempty"`        // e.g. "1x iron_sword, 4x bread"
+	ImmediateGoal          string  `json:"immediate_goal,omitempty"`
+	ShortTermGoal          string  `json:"short_term_goal,omitempty"`
+	LongTermGoal           string  `json:"long_term_goal,omitempty"`
 }
 
 // ChatDialogueRequest represents an incoming verbal chat event from a player.
@@ -638,7 +642,7 @@ Title: %s
 
 Instructions:
 1. Respond to the player in-character reflecting your individualized voice profile, traits, clan surplus state, and the player's prestige standing.
-2. Ground your response in <sensory_environment> and <historical_memories>: you already know the current time of day, weather, whether your immediate surroundings are safe or threatened, what tools/items you carry, and whether you fought monsters recently. Never ask the player if the area is safe when <sensory_environment> already tells you.
+2. Ground your response in <sensory_environment>, <current_goals>, and <historical_memories>: you already know the current time of day, weather, whether your immediate surroundings are safe or threatened, what tools/items you carry, and whether you fought monsters recently. Never ask the player if the area is safe when <sensory_environment> already tells you. Never claim to be at camp or standing right next to the player if distance > 10 blocks; state your actual coordinates and distance. When asked about your plans or goals, cite your <current_goals>.
 3. If the player requests dangerous suicide missions or sacrifices, reflect your Bravery trait.
 4. If the player requests clan food during DEFICIT, be fiercely protective.
 5. Return a JSON object conforming strictly to this JSON schema:
@@ -835,6 +839,9 @@ func formatSensoryEnvironmentSection(v *DialogueVitals, surplus SurplusState) st
 	if v.Position != "" {
 		sb.WriteString(fmt.Sprintf("- Position: %s\n", v.Position))
 	}
+	if v.PlayerRelativeLocation != "" {
+		sb.WriteString(fmt.Sprintf("- Relative Distance to Speaking Player: %s\n", v.PlayerRelativeLocation))
+	}
 	if v.CurrentRoutine != "" {
 		sb.WriteString(fmt.Sprintf("- Active Daily Routine: %s\n", v.CurrentRoutine))
 	}
@@ -849,6 +856,20 @@ func formatSensoryEnvironmentSection(v *DialogueVitals, surplus SurplusState) st
 	}
 	sb.WriteString(fmt.Sprintf("- Clan Granary State: %s (DEFICIT = clan is starving/protective; STABLE = normal; SURPLUS = thriving/generous)\n", surplus))
 	sb.WriteString("</sensory_environment>")
+
+	if v.ImmediateGoal != "" || v.ShortTermGoal != "" || v.LongTermGoal != "" {
+		sb.WriteString("\n\n<current_goals>\n")
+		if v.ImmediateGoal != "" {
+			sb.WriteString(fmt.Sprintf("- Immediate Goal (Right Now): %s\n", v.ImmediateGoal))
+		}
+		if v.ShortTermGoal != "" {
+			sb.WriteString(fmt.Sprintf("- Short-Term Goal (Today / Tonight): %s\n", v.ShortTermGoal))
+		}
+		if v.LongTermGoal != "" {
+			sb.WriteString(fmt.Sprintf("- Long-Term Career Goal: %s\n", v.LongTermGoal))
+		}
+		sb.WriteString("</current_goals>")
+	}
 	return sb.String()
 }
 

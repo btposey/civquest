@@ -73,6 +73,8 @@ public class IntentActuator {
             case ATTACK -> actuateAttack(agent, intent.getAttack());
             case INTERACT_BLOCK -> actuateInteractBlock(agent, intent.getInteractBlock());
             case USE_ITEM -> actuateUseItem(agent, intent.getUseItem());
+            case CRAFT_ITEM -> actuateCraftItem(agent, intent.getCraftItem());
+            case BUILD_BLOCK -> actuateBuildBlock(agent, intent.getBuildBlock());
             case CREATE_BOOK -> actuateCreateWrittenBook(agent, intent.getCreateBook());
             case PLACE_SIGNPOST -> actuatePlaceSignpost(agent, intent.getPlaceSignpost());
             case CHAT -> actuateSendChat(agent, intent.getChat());
@@ -304,6 +306,10 @@ public class IntentActuator {
                 }
                 if (!broken) {
                     broken = level.destroyBlock(pos, true, agent);
+                }
+                if (broken) {
+                    agent.swing(InteractionHand.MAIN_HAND, true);
+                    agent.tryPickupNearbyItems();
                 }
                 return broken;
             }
@@ -625,6 +631,140 @@ public class IntentActuator {
             return true;
         }
         return placed;
+    }
+
+    public boolean actuateBuildBlock(AgentEntity agent, com.civquest.mod.grpc.v1.BuildBlockIntent intent) {
+        if (agent == null || intent == null || !intent.hasTargetVoxel()) {
+            return false;
+        }
+        return actuateInteractBlock(agent, InteractBlockIntent.newBuilder()
+                .setPos(intent.getTargetVoxel())
+                .setInteractionType(InteractBlockIntent.InteractionType.PLACE_BLOCK)
+                .setBlockOrItemId(intent.getBlockStateString())
+                .build());
+    }
+
+    public boolean actuateCraftItem(AgentEntity agent, com.civquest.mod.grpc.v1.CraftItemIntent intent) {
+        if (agent == null || intent == null || intent.getRecipeId() == null || intent.getRecipeId().isBlank()) {
+            return false;
+        }
+        net.minecraft.world.entity.player.Inventory inv = agent.getInventory();
+        if (inv == null) {
+            return false;
+        }
+
+        String recipe = intent.getRecipeId().trim().toLowerCase();
+        if (recipe.contains(":")) {
+            recipe = recipe.substring(recipe.indexOf(':') + 1);
+        }
+
+        switch (recipe) {
+            case "oak_planks", "spruce_planks", "birch_planks", "jungle_planks", "acacia_planks", "dark_oak_planks", "planks" -> {
+                if (consumeInventoryMatch(inv, id -> id.endsWith("_log") || id.endsWith("_wood") || id.endsWith("_stem"), 1)) {
+                    inv.add(new ItemStack(Items.OAK_PLANKS, 4));
+                    return true;
+                }
+                return false;
+            }
+            case "stick", "sticks" -> {
+                if (consumeInventoryMatch(inv, id -> id.endsWith("_planks"), 2)
+                        || consumeInventoryMatch(inv, id -> id.endsWith("_log") || id.endsWith("_wood"), 1)) {
+                    inv.add(new ItemStack(Items.STICK, 4));
+                    return true;
+                }
+                return false;
+            }
+            case "wooden_pickaxe", "wooden_axe", "wooden_sword" -> {
+                boolean paid = consumeInventoryMatch(inv, id -> id.endsWith("_log") || id.endsWith("_wood"), 1);
+                if (!paid && countInventoryMatch(inv, id -> id.endsWith("_planks")) >= 3
+                        && countInventoryMatch(inv, id -> id.equals("minecraft:stick") || id.endsWith(":stick")) >= 2) {
+                    consumeInventoryMatch(inv, id -> id.endsWith("_planks"), 3);
+                    consumeInventoryMatch(inv, id -> id.equals("minecraft:stick") || id.endsWith(":stick"), 2);
+                    paid = true;
+                } else if (!paid && countInventoryMatch(inv, id -> id.endsWith("_planks")) >= 4) {
+                    consumeInventoryMatch(inv, id -> id.endsWith("_planks"), 4);
+                    paid = true;
+                }
+                if (!paid) {
+                    return false;
+                }
+                Item resultItem = switch (recipe) {
+                    case "wooden_pickaxe" -> Items.WOODEN_PICKAXE;
+                    case "wooden_axe" -> Items.WOODEN_AXE;
+                    default -> Items.WOODEN_SWORD;
+                };
+                inv.add(new ItemStack(resultItem, 1));
+                agent.autoEquipBestGear();
+                return true;
+            }
+            case "stone_pickaxe", "stone_axe", "stone_sword" -> {
+                int cobbleCount = countInventoryMatch(inv, id -> id.contains("cobblestone") || id.contains("cobbled_deepslate") || id.contains("blackstone"));
+                int woodCount = countInventoryMatch(inv, id -> id.endsWith("_log") || id.endsWith("_planks") || id.endsWith("stick"));
+                if (cobbleCount < 3 || woodCount < 1) {
+                    return false;
+                }
+                consumeInventoryMatch(inv, id -> id.contains("cobblestone") || id.contains("cobbled_deepslate") || id.contains("blackstone"), 3);
+                consumeInventoryMatch(inv, id -> id.endsWith("stick") || id.endsWith("_planks") || id.endsWith("_log"), 1);
+                Item resultItem = switch (recipe) {
+                    case "stone_pickaxe" -> Items.STONE_PICKAXE;
+                    case "stone_axe" -> Items.STONE_AXE;
+                    default -> Items.STONE_SWORD;
+                };
+                inv.add(new ItemStack(resultItem, 1));
+                agent.autoEquipBestGear();
+                return true;
+            }
+            case "torch", "torches" -> {
+                if (consumeInventoryMatch(inv, id -> id.contains("coal") || id.endsWith("_log") || id.endsWith("_planks") || id.endsWith("stick"), 1)) {
+                    inv.add(new ItemStack(Items.TORCH, 4));
+                    return true;
+                }
+                return false;
+            }
+            case "campfire" -> {
+                if (consumeInventoryMatch(inv, id -> id.endsWith("_log") || id.endsWith("_planks") || id.contains("coal") || id.endsWith("stick"), 1)) {
+                    inv.add(new ItemStack(Items.CAMPFIRE, 1));
+                    return true;
+                }
+                return false;
+            }
+            default -> {
+                return false;
+            }
+        }
+    }
+
+    private static int countInventoryMatch(net.minecraft.world.entity.player.Inventory inv, java.util.function.Predicate<String> matcher) {
+        int total = 0;
+        for (int i = 0; i < inv.getContainerSize(); i++) {
+            ItemStack s = inv.getItem(i);
+            if (s != null && !s.isEmpty()) {
+                String id = BuiltInRegistries.ITEM.getKey(s.getItem()).toString().toLowerCase();
+                if (matcher.test(id)) {
+                    total += s.getCount();
+                }
+            }
+        }
+        return total;
+    }
+
+    private static boolean consumeInventoryMatch(net.minecraft.world.entity.player.Inventory inv, java.util.function.Predicate<String> matcher, int required) {
+        if (countInventoryMatch(inv, matcher) < required) {
+            return false;
+        }
+        int remaining = required;
+        for (int i = 0; i < inv.getContainerSize() && remaining > 0; i++) {
+            ItemStack s = inv.getItem(i);
+            if (s != null && !s.isEmpty()) {
+                String id = BuiltInRegistries.ITEM.getKey(s.getItem()).toString().toLowerCase();
+                if (matcher.test(id)) {
+                    int take = Math.min(remaining, s.getCount());
+                    s.shrink(take);
+                    remaining -= take;
+                }
+            }
+        }
+        return true;
     }
 
     private static String sanitizeSignLine(String line) {

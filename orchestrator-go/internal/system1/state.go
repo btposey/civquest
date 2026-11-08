@@ -37,25 +37,39 @@ type UtilityDecision struct {
 	TimeOfDay  int64
 }
 
+// GoalHierarchy tracks the agent's explicit 3-horizon goals across immediate, short-term, and long-term timescales.
+type GoalHierarchy struct {
+	ImmediateGoal string `json:"immediate_goal"`
+	ShortTermGoal string `json:"short_term_goal"`
+	LongTermGoal  string `json:"long_term_goal"`
+}
+
 // AgentState tracks volatile in-memory System 1 agent routine, needs, and paving state.
 type AgentState struct {
 	mu                   sync.RWMutex
 	AssignedBed          *civquestv1.BlockPosProto
+	ShelterPos           *civquestv1.BlockPosProto
 	CurrentRoutine       RoutineState
 	PrimaryDutyBlocked   bool
 	companionActive      bool
 	lastEatingTick       int64
 	lastSleepAttemptTick int64
+	lastShelterPlaceTick int64
+	lastHarvestTick      int64
+	lastCraftTick        int64
 	PavingTracker        *RoadPavingTracker
 
-	// Autonomous exploration & topological mapping state
+	// Autonomous exploration, forward outposts & topological mapping state
 	homeOrigin          *civquestv1.Vec3
+	currentOutpost      *civquestv1.Vec3
+	outposts            []*civquestv1.Vec3
 	lastExploreTick     int64
 	exploreStepIndex    int
 	lastHeadingRad      float64
 	lastMapNodeID       string
 	lastMapPos          *civquestv1.Vec3
 	telemetryFramesSeen int64
+	goals               GoalHierarchy
 }
 
 // NewAgentState creates an initialized AgentState.
@@ -63,6 +77,11 @@ func NewAgentState() *AgentState {
 	return &AgentState{
 		CurrentRoutine: RoutineDawnAwakening,
 		PavingTracker:  NewRoadPavingTracker(1000, 3),
+		goals: GoalHierarchy{
+			ImmediateGoal: "GATHER_TIMBER: Gather 4 logs and craft basic wooden tools",
+			ShortTermGoal: "ESTABLISH_OUTPOST_CHAIN: Advance frontier and establish safe day-night outposts with tools & light",
+			LongTermGoal:  "CHART_REGIONAL_ATLAS: Map biome sectors, consecrate landmarks, and link outposts for Clan Cartographer",
+		},
 	}
 }
 
@@ -199,4 +218,164 @@ func (s *AgentState) SetCompanionActive(active bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.companionActive = active
+}
+
+// GetShelterPos returns a defensive copy of the agent's known shelter position.
+func (s *AgentState) GetShelterPos() *civquestv1.BlockPosProto {
+	if s == nil {
+		return nil
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if s.ShelterPos == nil {
+		return nil
+	}
+	return &civquestv1.BlockPosProto{
+		X: s.ShelterPos.X,
+		Y: s.ShelterPos.Y,
+		Z: s.ShelterPos.Z,
+	}
+}
+
+// SetShelterPos sets the agent's shelter position.
+func (s *AgentState) SetShelterPos(pos *civquestv1.BlockPosProto) {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if pos == nil {
+		s.ShelterPos = nil
+		return
+	}
+	s.ShelterPos = &civquestv1.BlockPosProto{
+		X: pos.X,
+		Y: pos.Y,
+		Z: pos.Z,
+	}
+}
+
+// GetHomeOrigin returns a defensive copy of the agent's home/outpost origin.
+func (s *AgentState) GetHomeOrigin() *civquestv1.Vec3 {
+	if s == nil {
+		return nil
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if s.homeOrigin == nil {
+		return nil
+	}
+	return &civquestv1.Vec3{
+		X: s.homeOrigin.X,
+		Y: s.homeOrigin.Y,
+		Z: s.homeOrigin.Z,
+	}
+}
+
+// SetHomeOrigin updates the agent's home/outpost origin.
+func (s *AgentState) SetHomeOrigin(pos *civquestv1.Vec3) {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if pos == nil {
+		s.homeOrigin = nil
+		return
+	}
+	s.homeOrigin = &civquestv1.Vec3{
+		X: pos.X,
+		Y: pos.Y,
+		Z: pos.Z,
+	}
+}
+
+// GetCurrentOutpost returns a defensive copy of the agent's active forward outpost.
+func (s *AgentState) GetCurrentOutpost() *civquestv1.Vec3 {
+	if s == nil {
+		return nil
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if s.currentOutpost != nil {
+		return &civquestv1.Vec3{
+			X: s.currentOutpost.X,
+			Y: s.currentOutpost.Y,
+			Z: s.currentOutpost.Z,
+		}
+	}
+	if s.homeOrigin != nil {
+		return &civquestv1.Vec3{
+			X: s.homeOrigin.X,
+			Y: s.homeOrigin.Y,
+			Z: s.homeOrigin.Z,
+		}
+	}
+	return nil
+}
+
+// GetOutposts returns a defensive copy of all established forward outposts.
+func (s *AgentState) GetOutposts() []*civquestv1.Vec3 {
+	if s == nil {
+		return nil
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	out := make([]*civquestv1.Vec3, len(s.outposts))
+	for i, p := range s.outposts {
+		if p != nil {
+			out[i] = &civquestv1.Vec3{X: p.X, Y: p.Y, Z: p.Z}
+		}
+	}
+	return out
+}
+
+// GetGoals returns the current 3-horizon GoalHierarchy.
+func (s *AgentState) GetGoals() GoalHierarchy {
+	if s == nil {
+		return GoalHierarchy{}
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.goals
+}
+
+// SetGoals updates the 3-horizon GoalHierarchy.
+func (s *AgentState) SetGoals(g GoalHierarchy) {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.goals = g
+}
+
+// GetTelemetryFramesSeen returns the number of telemetry frames observed by this state.
+func (s *AgentState) GetTelemetryFramesSeen() int64 {
+	if s == nil {
+		return 0
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.telemetryFramesSeen
+}
+
+// GetLastShelterPlaceTick returns the world tick when a shelter block/torch/campfire was last placed.
+func (s *AgentState) GetLastShelterPlaceTick() int64 {
+	if s == nil {
+		return 0
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.lastShelterPlaceTick
+}
+
+// SetLastShelterPlaceTick records the world tick when a shelter block/torch/campfire was placed.
+func (s *AgentState) SetLastShelterPlaceTick(tick int64) {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.lastShelterPlaceTick = tick
 }

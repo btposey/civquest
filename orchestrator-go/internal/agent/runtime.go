@@ -158,6 +158,7 @@ type AgentRuntime struct {
 	lastTradeAttemptAt   time.Time
 	debugLogger          *DebugLogger
 	lastLoggedRoutine    system1.RoutineState
+	lastLoggedGoal       string
 
 	// Callbacks
 	onDeath func(*civquestv1.DeathEvent)
@@ -700,6 +701,10 @@ func intentActionName(intent *civquestv1.AgentIntent) string {
 		return "NavigateIntent"
 	case *civquestv1.AgentIntent_UseItem:
 		return fmt.Sprintf("UseItemIntent(slot=%d,eating=%v)", a.UseItem.InventorySlot, a.UseItem.IsEatingOrDrinking)
+	case *civquestv1.AgentIntent_InteractBlock:
+		return fmt.Sprintf("InteractBlockIntent(type=%s,id=%s)", a.InteractBlock.InteractionType.String(), a.InteractBlock.BlockOrItemId)
+	case *civquestv1.AgentIntent_CraftItem:
+		return fmt.Sprintf("CraftItemIntent(recipe=%s)", a.CraftItem.RecipeId)
 	default:
 		return fmt.Sprintf("%T", intent.Action)
 	}
@@ -1148,13 +1153,20 @@ func (r *AgentRuntime) dispatchDialogue(frame *civquestv1.TelemetryFrame) {
 				return
 			}
 
+			var chatVitals *system2.DialogueVitals
+			if vitals != nil {
+				vCopy := *vitals
+				vCopy.PlayerRelativeLocation = formatPlayerRelativeLocation(frame, c)
+				chatVitals = &vCopy
+			}
+
 			req := system2.ChatDialogueRequest{
 				PlayerUUID:   c.SenderUuid,
 				PlayerName:   c.SenderName,
 				Message:      c.Message,
 				Distance:     c.Distance,
 				WorldTick:    worldTick,
-				Vitals:       vitals,
+				Vitals:       chatVitals,
 				SurplusState: system2.SurplusStable,
 			}
 			startChat := time.Now()
@@ -1717,6 +1729,7 @@ func (r *AgentRuntime) buildDialogueVitals(frame *civquestv1.TelemetryFrame) *sy
 	if r.system1State != nil {
 		routineStr = string(r.system1State.GetCurrentRoutine())
 	}
+	goals := system1.EvaluateGoals(frame, r.identityConfig, r.system1State)
 	r.mu.RLock()
 	recentCombat := r.lastCombatSummary
 	r.mu.RUnlock()
@@ -1734,7 +1747,48 @@ func (r *AgentRuntime) buildDialogueVitals(frame *civquestv1.TelemetryFrame) *sy
 		CombatConfidence: conf,
 		RecentCombat:     recentCombat,
 		InventorySummary: formatInventorySummary(frame.Status.Inventory),
+		ImmediateGoal:    goals.ImmediateGoal,
+		ShortTermGoal:    goals.ShortTermGoal,
+		LongTermGoal:     goals.LongTermGoal,
 	}
+}
+
+func formatPlayerRelativeLocation(frame *civquestv1.TelemetryFrame, chat *civquestv1.ChatEvent) string {
+	if frame == nil || frame.Status == nil || frame.Status.Position == nil || chat == nil {
+		return ""
+	}
+	p := frame.Status.Position
+	dist := float64(chat.Distance)
+	var playerEntity *civquestv1.VisibleEntity
+	for _, e := range frame.VisibleEntities {
+		if e == nil {
+			continue
+		}
+		if (chat.SenderUuid != "" && e.Uuid == chat.SenderUuid) ||
+			(chat.SenderName != "" && strings.EqualFold(e.DisplayName, chat.SenderName)) {
+			playerEntity = e
+			break
+		}
+	}
+
+	if playerEntity != nil && playerEntity.Position != nil {
+		pp := playerEntity.Position
+		if dist <= 0 {
+			dist = math.Sqrt(math.Pow(p.X-pp.X, 2) + math.Pow(p.Y-pp.Y, 2) + math.Pow(p.Z-pp.Z, 2))
+		}
+		dy := p.Y - pp.Y
+		var elevStr string
+		if dy <= -2.0 {
+			elevStr = fmt.Sprintf(" (%.0f blocks lower in elevation)", math.Abs(dy))
+		} else if dy >= 2.0 {
+			elevStr = fmt.Sprintf(" (%.0f blocks higher in elevation)", dy)
+		}
+		return fmt.Sprintf("Agent is at (%.0f, %.0f, %.0f), %.1f blocks away from %s at (%.0f, %.0f, %.0f)%s",
+			p.X, p.Y, p.Z, dist, chat.SenderName, pp.X, pp.Y, pp.Z, elevStr)
+	}
+
+	return fmt.Sprintf("Agent is at (%.0f, %.0f, %.0f), %.1f blocks away from %s",
+		p.X, p.Y, p.Z, dist, chat.SenderName)
 }
 
 func formatInventorySummary(inv []*civquestv1.ItemStackProto) string {
@@ -2209,7 +2263,7 @@ func (r *AgentRuntime) evaluateSystem1Reflexes(frame *civquestv1.TelemetryFrame)
 		}()
 	}
 
-	// 2. Evaluate Daily Utility Schedule
+	// 2. Evaluate Daily Utility Schedule & 3-Horizon Goal Hierarchy
 	utilRes := system1.EvaluateUtility(frame, r.identityConfig, r.system1State)
 	if utilRes != nil && utilRes.State != "" && utilRes.State != r.lastLoggedRoutine {
 		oldRoutine := r.lastLoggedRoutine
@@ -2221,6 +2275,21 @@ func (r *AgentRuntime) evaluateSystem1Reflexes(frame *civquestv1.TelemetryFrame)
 				"utility_score":    utilRes.Utility,
 				"reason":           utilRes.Reason,
 				"time_of_day":      frame.TimeOfDay,
+			})
+		}
+	}
+
+	goals := system1.EvaluateGoals(frame, r.identityConfig, r.system1State)
+	if goals.ImmediateGoal != "" && goals.ImmediateGoal != r.lastLoggedGoal {
+		oldGoal := r.lastLoggedGoal
+		r.lastLoggedGoal = goals.ImmediateGoal
+		if r.debugLogger != nil {
+			r.debugLogger.Emit(frame.WorldTick, "GOAL_TRANSITION", fmt.Sprintf("Goal: %s", goals.ImmediateGoal), map[string]any{
+				"previous_immediate_goal": oldGoal,
+				"immediate_goal":          goals.ImmediateGoal,
+				"short_term_goal":         goals.ShortTermGoal,
+				"long_term_goal":          goals.LongTermGoal,
+				"time_of_day":             frame.TimeOfDay,
 			})
 		}
 	}

@@ -74,6 +74,7 @@ public class SensoryFrustumCollector {
     public static final double ENTITY_LOS_BYPASS_DISTANCE = 2.0;
     public static final int BLOCK_SCAN_RADIUS = 16;
     public static final int MAX_INTERESTING_BLOCKS = 128;
+    public static final int MAX_LOG_BLOCKS = 24;
 
     public static final TagKey<Block> INTERESTING_BLOCKS =
             TagKey.create(Registries.BLOCK, ResourceLocation.fromNamespaceAndPath(CivQuestMod.MOD_ID, "interesting_blocks"));
@@ -346,6 +347,8 @@ public class SensoryFrustumCollector {
         int lastChunkZ = Integer.MIN_VALUE;
         boolean lastChunkLoaded = false;
 
+        List<BlockPos> logCandidates = new ArrayList<>();
+
         for (int dy = -radius; dy <= radius; dy++) {
             int y = center.getY() + dy;
             if (y < minBuildHeight || y >= maxBuildHeight) {
@@ -377,7 +380,11 @@ public class SensoryFrustumCollector {
                     }
 
                     if (isInterestingBlock(state)) {
-                        if (frameBuilder.getInterestingBlocksCount() < MAX_INTERESTING_BLOCKS && !addedPositions.contains(mpos)) {
+                        if (isLogBlock(state)) {
+                            if (!addedPositions.contains(mpos)) {
+                                logCandidates.add(mpos.immutable());
+                            }
+                        } else if (frameBuilder.getInterestingBlocksCount() < MAX_INTERESTING_BLOCKS && !addedPositions.contains(mpos)) {
                             String blockId = BuiltInRegistries.BLOCK.getKey(state.getBlock()).toString();
                             String stateString = formatBlockProperties(state);
                             frameBuilder.addInterestingBlocks(VisibleBlock.newBuilder()
@@ -416,6 +423,31 @@ public class SensoryFrustumCollector {
             }
         }
 
+        if (!logCandidates.isEmpty() && frameBuilder.getInterestingBlocksCount() < MAX_INTERESTING_BLOCKS) {
+            logCandidates.sort((a, b) -> Double.compare(a.distSqr(center), b.distSqr(center)));
+            int logsAdded = 0;
+            for (BlockPos logPos : logCandidates) {
+                if (logsAdded >= MAX_LOG_BLOCKS || frameBuilder.getInterestingBlocksCount() >= MAX_INTERESTING_BLOCKS) {
+                    break;
+                }
+                if (addedPositions.contains(logPos)) {
+                    continue;
+                }
+                BlockState state = level.getBlockState(logPos);
+                if (!state.isAir()) {
+                    String blockId = BuiltInRegistries.BLOCK.getKey(state.getBlock()).toString();
+                    String stateString = formatBlockProperties(state);
+                    frameBuilder.addInterestingBlocks(VisibleBlock.newBuilder()
+                            .setPos(toBlockPosProto(logPos))
+                            .setBlockId(blockId)
+                            .setBlockStateString(stateString)
+                            .build());
+                    addedPositions.add(logPos);
+                    logsAdded++;
+                }
+            }
+        }
+
         if ((totalFarmlandBlocks > 0 || matureCropCount > 0) && farmMinX <= farmMaxX) {
             String primaryCropId = matureCropCount > 0 ? matureCropFrequency.entrySet().stream()
                     .max(Map.Entry.comparingByValue())
@@ -436,6 +468,39 @@ public class SensoryFrustumCollector {
         }
     }
 
+    public static boolean isLogBlock(BlockState state) {
+        if (state == null || state.isAir()) {
+            return false;
+        }
+        try {
+            if (state.is(net.minecraft.tags.BlockTags.LOGS)) {
+                return true;
+            }
+        } catch (Throwable ignored) {
+        }
+        if (state.is(Blocks.OAK_LOG)
+                || state.is(Blocks.SPRUCE_LOG)
+                || state.is(Blocks.BIRCH_LOG)
+                || state.is(Blocks.JUNGLE_LOG)
+                || state.is(Blocks.ACACIA_LOG)
+                || state.is(Blocks.DARK_OAK_LOG)
+                || state.is(Blocks.CHERRY_LOG)
+                || state.is(Blocks.MANGROVE_LOG)) {
+            return true;
+        }
+        Block block = state.getBlock();
+        if (block instanceof net.minecraft.world.level.block.RotatedPillarBlock) {
+            try {
+                String key = BuiltInRegistries.BLOCK.getKey(block).toString().toLowerCase();
+                if (key.endsWith("_log") || key.endsWith("_wood") || key.endsWith("_stem")) {
+                    return true;
+                }
+            } catch (Throwable ignored) {
+            }
+        }
+        return false;
+    }
+
     public static boolean isInterestingBlock(BlockState state) {
         if (state == null || state.isAir()) {
             return false;
@@ -446,6 +511,10 @@ public class SensoryFrustumCollector {
             }
         } catch (Throwable ignored) {
             // In unit test environments where registry tags are uninitialized
+        }
+
+        if (isLogBlock(state)) {
+            return true;
         }
 
         Block block = state.getBlock();
@@ -463,6 +532,10 @@ public class SensoryFrustumCollector {
                 || state.is(Blocks.SMOKER)
                 || state.is(Blocks.CAMPFIRE)
                 || state.is(Blocks.SOUL_CAMPFIRE)
+                || state.is(Blocks.TORCH)
+                || state.is(Blocks.WALL_TORCH)
+                || state.is(Blocks.LANTERN)
+                || state.is(Blocks.SOUL_LANTERN)
                 || state.is(Blocks.CHEST)
                 || state.is(Blocks.TRAPPED_CHEST)
                 || state.is(Blocks.BARREL)

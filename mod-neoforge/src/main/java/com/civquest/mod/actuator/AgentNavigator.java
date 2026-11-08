@@ -291,28 +291,88 @@ public class AgentNavigator {
         }
 
         // Direction angles and rotation update
+        double dirX = dx / Math.max(horizontalDist, 0.001);
+        double dirZ = dz / Math.max(horizontalDist, 0.001);
         float targetYaw = (float) (Mth.atan2(dz, dx) * (180.0 / Math.PI)) - 90.0F;
         float targetPitch = (float) (-(Mth.atan2(dy, Math.max(0.001, horizontalDist)) * (180.0 / Math.PI)));
         if (this.agent != null) {
             this.agent.setYRot(targetYaw);
             this.agent.setYHeadRot(targetYaw);
+            this.agent.yBodyRot = targetYaw;
             this.agent.setXRot(targetPitch);
             this.agent.setSprinting(this.sprint);
         }
 
-        // Movement velocity
-        double dirX = dx / Math.max(horizontalDist, 0.001);
-        double dirZ = dz / Math.max(horizontalDist, 0.001);
-        if (this.agent != null && this.agent.horizontalCollision && this.stuckTicks >= 8) {
-            // Lateral hill-contouring deflection when blocked by a 2+ block cliff face
-            double angleOffset = ((this.stuckTicks / 16) % 2 == 0) ? (Math.PI * 0.42) : -(Math.PI * 0.42);
-            double cos = Math.cos(angleOffset);
-            double sin = Math.sin(angleOffset);
-            double rotX = dirX * cos - dirZ * sin;
-            double rotZ = dirX * sin + dirZ * cos;
-            dirX = rotX;
-            dirZ = rotZ;
+        boolean stepUpOneBlock = false;
+        if (this.agent != null && this.agent.level() != null) {
+            net.minecraft.world.level.Level level = this.agent.level();
+            BlockPos aheadFeet = BlockPos.containing(currentPos.x + dirX * 0.75, currentPos.y + 0.1, currentPos.z + dirZ * 0.75);
+            BlockPos aheadHead = aheadFeet.above();
+            BlockPos aheadAboveHead = aheadFeet.above(2);
+
+            boolean feetBlocked = isBlockSolid(level, aheadFeet);
+            boolean headBlocked = isBlockSolid(level, aheadHead);
+            boolean aboveHeadBlocked = isBlockSolid(level, aheadAboveHead);
+
+            stepUpOneBlock = feetBlocked && !headBlocked && !aboveHeadBlocked;
+            boolean barrierAhead = headBlocked || (feetBlocked && aboveHeadBlocked)
+                    || (this.agent.horizontalCollision && (!stepUpOneBlock || this.stuckTicks >= 4));
+
+            if (barrierAhead) {
+                double[] candidateAngles = ((this.stuckTicks / 6) % 2 == 0)
+                        ? new double[]{90.0, -90.0, 135.0, -135.0, 180.0}
+                        : new double[]{-90.0, 90.0, -135.0, 135.0, 180.0};
+                double chosenDirX = dirX;
+                double chosenDirZ = dirZ;
+                boolean foundOpen = false;
+
+                for (double deg : candidateAngles) {
+                    double rad = Math.toRadians(deg);
+                    double cos = Math.cos(rad);
+                    double sin = Math.sin(rad);
+                    double candX = dirX * cos - dirZ * sin;
+                    double candZ = dirX * sin + dirZ * cos;
+
+                    BlockPos candFeet = BlockPos.containing(currentPos.x + candX * 0.9, currentPos.y + 0.1, currentPos.z + candZ * 0.9);
+                    BlockPos candHead = candFeet.above();
+                    boolean candFeetSolid = isBlockSolid(level, candFeet);
+                    boolean candHeadSolid = isBlockSolid(level, candHead);
+                    boolean candAboveHeadSolid = isBlockSolid(level, candFeet.above(2));
+
+                    if (!candHeadSolid && (!candFeetSolid || !candAboveHeadSolid)) {
+                        chosenDirX = candX;
+                        chosenDirZ = candZ;
+                        foundOpen = true;
+                        if (candFeetSolid && !candAboveHeadSolid) {
+                            stepUpOneBlock = true;
+                        }
+                        break;
+                    }
+                }
+
+                if (!foundOpen) {
+                    // Default 180-degree turn-around when boxed in on sides
+                    chosenDirX = -dirX;
+                    chosenDirZ = -dirZ;
+                }
+
+                dirX = chosenDirX;
+                dirZ = chosenDirZ;
+                targetYaw = (float) (Mth.atan2(dirZ, dirX) * (180.0 / Math.PI)) - 90.0F;
+                this.agent.setYRot(targetYaw);
+                this.agent.setYHeadRot(targetYaw);
+                this.agent.yBodyRot = targetYaw;
+
+                if (this.stuckTicks >= 6) {
+                    this.targetCoords = new Vec3(
+                            currentPos.x + dirX * 6.0,
+                            currentPos.y,
+                            currentPos.z + dirZ * 6.0
+                    );
+                }
+            }
         }
+
         double baseSpeed = this.sprint ? 0.28 : 0.21;
         double moveSpeed = baseSpeed * this.speedMultiplier;
 
@@ -320,7 +380,7 @@ public class AgentNavigator {
         if (this.agent != null) {
             vy = this.agent.getDeltaMovement().y;
             if (this.agent.onGround()) {
-                if (this.agent.horizontalCollision || dy > 0.5) {
+                if (stepUpOneBlock || this.agent.horizontalCollision || dy > 0.5) {
                     vy = 0.42; // Jump impulse
                 } else {
                     vy = Math.max(-0.0784, vy);
@@ -367,7 +427,7 @@ public class AgentNavigator {
             double horizontalMovedSq = hdx * hdx + hdz * hdz;
             if (horizontalMovedSq < 0.0004) {
                 this.stuckTicks++;
-                if (this.stuckTicks >= 40) {
+                if (this.stuckTicks >= 16) {
                     this.navigationState = NavigationState.NAVIGATION_STATE_STUCK;
                     if (this.agent != null) {
                         this.agent.setDeltaMovement(0.0, 0.0, 0.0);
@@ -379,6 +439,25 @@ public class AgentNavigator {
             }
         }
         this.lastPosition = postPos;
+    }
+
+    private static boolean isBlockSolid(net.minecraft.world.level.Level level, BlockPos pos) {
+        if (level == null || pos == null) {
+            return false;
+        }
+        try {
+            if (!level.hasChunkAt(pos)) {
+                return false;
+            }
+            net.minecraft.world.level.block.state.BlockState state = level.getBlockState(pos);
+            if (state == null || state.isAir()) {
+                return false;
+            }
+            var shape = state.getCollisionShape(level, pos);
+            return shape != null && !shape.isEmpty();
+        } catch (Throwable ignored) {
+            return false;
+        }
     }
 
     public void stop() {

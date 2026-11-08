@@ -248,12 +248,25 @@ func EvaluateSleep(agentID string, frame *civquestv1.TelemetryFrame, state *Agen
 		return nil
 	}
 
-	// Auto-detect and record bed pos from interesting_blocks if not yet assigned
-	if state != nil && state.GetAssignedBed() == nil {
-		for _, b := range frame.InterestingBlocks {
-			if b != nil && b.Pos != nil && strings.Contains(strings.ToLower(b.BlockId), "bed") {
-				state.SetAssignedBed(b.Pos)
-				break
+	// Auto-detect and record bed pos and shelter blocks from interesting_blocks
+	if state != nil {
+		hasBed := state.GetAssignedBed() != nil
+		hasShelter := state.GetShelterPos() != nil
+		if !hasBed || !hasShelter {
+			for _, b := range frame.InterestingBlocks {
+				if b == nil || b.Pos == nil {
+					continue
+				}
+				id := strings.ToLower(b.BlockId)
+				if !hasBed && strings.Contains(id, "bed") {
+					state.SetAssignedBed(b.Pos)
+					hasBed = true
+				}
+				if !hasShelter && (strings.Contains(id, "campfire") || strings.Contains(id, "lantern") ||
+					strings.Contains(id, "torch") || strings.Contains(id, "door")) {
+					state.SetShelterPos(b.Pos)
+					hasShelter = true
+				}
 			}
 		}
 	}

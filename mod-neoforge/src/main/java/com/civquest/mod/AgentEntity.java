@@ -50,6 +50,7 @@ public class AgentEntity extends FakePlayer {
     private final AtomicBoolean cleanedUp = new AtomicBoolean(false);
     private final ConcurrentLinkedQueue<com.civquest.mod.grpc.v1.ChatEvent> pendingChats = new ConcurrentLinkedQueue<>();
     private final ConcurrentLinkedQueue<com.civquest.mod.grpc.v1.TradeRequest> pendingTrades = new ConcurrentLinkedQueue<>();
+    private long lastInventoryFullNoticeTick = -1000L;
 
     public void queueIncomingChat(com.civquest.mod.grpc.v1.ChatEvent chatEvent) {
         if (chatEvent != null) {
@@ -81,6 +82,18 @@ public class AgentEntity extends FakePlayer {
         this.agentId = agentId;
         this.clanId = clanId;
         this.navigator = new AgentNavigator(this);
+        try {
+            var stepAttr = this.getAttribute(net.minecraft.world.entity.ai.attributes.Attributes.STEP_HEIGHT);
+            if (stepAttr != null) {
+                stepAttr.setBaseValue(1.1D);
+            }
+        } catch (Throwable ignored) {
+        }
+    }
+
+    @Override
+    public float maxUpStep() {
+        return 1.1F;
     }
 
     /**
@@ -101,6 +114,10 @@ public class AgentEntity extends FakePlayer {
                 if (this.navigator != null) {
                     this.navigator.tick();
                 }
+                if (this.isAlive() && !this.isSleeping()
+                        && (this.navigator == null || this.navigator.getNavigationState() != com.civquest.mod.grpc.v1.NavigationState.NAVIGATION_STATE_PATHING)) {
+                    updateIdleSocialGaze();
+                }
                 if (this.tickCount % 10 == 0 && this.isAlive()) {
                     tryPickupNearbyItems();
                 }
@@ -113,8 +130,47 @@ public class AgentEntity extends FakePlayer {
     }
 
     /**
+     * Smoothly turns the agent's head, body, and pitch toward the nearest human player within 8 blocks
+     * who has line of sight when the agent is not actively pathfinding or sleeping.
+     */
+    public void updateIdleSocialGaze() {
+        if (this.level() == null || this.isRemoved() || !this.isAlive() || this.isSleeping()) {
+            return;
+        }
+        Player nearestHuman = null;
+        double bestDistSq = 64.0; // 8.0 blocks squared
+        for (Player player : this.level().players()) {
+            if (player == null || player == this || player instanceof AgentEntity || !player.isAlive() || player.isSpectator()) {
+                continue;
+            }
+            double dSq = this.distanceToSqr(player);
+            if (dSq <= bestDistSq && this.hasLineOfSight(player)) {
+                bestDistSq = dSq;
+                nearestHuman = player;
+            }
+        }
+        if (nearestHuman != null) {
+            net.minecraft.world.phys.Vec3 eye = this.getEyePosition();
+            net.minecraft.world.phys.Vec3 targetEye = nearestHuman.getEyePosition();
+            double dx = targetEye.x - eye.x;
+            double dy = targetEye.y - eye.y;
+            double dz = targetEye.z - eye.z;
+            double horizontalDist = Math.sqrt(dx * dx + dz * dz);
+            float targetYaw = (float) (net.minecraft.util.Mth.atan2(dz, dx) * (180.0 / Math.PI)) - 90.0F;
+            float targetPitch = (float) (-(net.minecraft.util.Mth.atan2(dy, Math.max(0.001, horizontalDist)) * (180.0 / Math.PI)));
+            float smoothYaw = net.minecraft.util.Mth.rotLerp(0.35F, this.getYRot(), targetYaw);
+            float smoothPitch = net.minecraft.util.Mth.rotLerp(0.35F, this.getXRot(), targetPitch);
+            this.setYRot(smoothYaw);
+            this.setYHeadRot(smoothYaw);
+            this.yBodyRot = smoothYaw;
+            this.setXRot(smoothPitch);
+        }
+    }
+
+    /**
      * Scans for nearby dropped ItemEntities within 2.5 blocks and picks them up into the agent's inventory,
      * auto-equipping weapons/shields/tools and attributing nearby player gifts deterministically.
+     * Notifies the nearest player when the agent's inventory is full.
      */
     public void tryPickupNearbyItems() {
         if (this.level() == null || this.isRemoved()) {
@@ -142,20 +198,22 @@ public class AgentEntity extends FakePlayer {
             }
         }
 
+        String agentName = this.getGameProfile().getName();
         for (net.minecraft.world.entity.item.ItemEntity ie : items) {
             net.minecraft.world.item.ItemStack copy = ie.getItem().copy();
             int origCount = copy.getCount();
             String itemName = copy.getHoverName().getString();
-            if (this.getInventory().add(copy)) {
-                int pickedCount = origCount - copy.getCount();
+            this.getInventory().add(copy);
+            int pickedCount = origCount - copy.getCount();
+            if (pickedCount > 0) {
                 if (copy.isEmpty()) {
                     ie.discard();
                 } else {
                     ie.setItem(copy);
+                    ie.setNoPickUpDelay();
                 }
                 autoEquipBestGear();
-                if (nearestPlayer != null && pickedCount > 0) {
-                    String agentName = this.getGameProfile().getName();
+                if (nearestPlayer != null) {
                     nearestPlayer.sendSystemMessage(Component.literal(
                             "<" + agentName + "> Thank you for the " + pickedCount + "x " + itemName + ", " + nearestPlayer.getName().getString() + "!"));
                     queueIncomingChat(com.civquest.mod.grpc.v1.ChatEvent.newBuilder()
@@ -164,6 +222,18 @@ public class AgentEntity extends FakePlayer {
                             .setMessage("[DETERMINISTIC_GIFT] Gifted " + pickedCount + "x " + itemName + " to " + agentName + ".")
                             .setDistance((float) Math.sqrt(this.distanceToSqr(nearestPlayer)))
                             .build());
+                    if (!copy.isEmpty()) {
+                        nearestPlayer.sendSystemMessage(Component.literal(
+                                "<" + agentName + "> My pack is full, " + nearestPlayer.getName().getString() + "! I couldn't fit the remaining " + copy.getCount() + "x " + itemName + " — please pick them back up."));
+                        this.lastInventoryFullNoticeTick = this.tickCount;
+                    }
+                }
+            } else {
+                ie.setNoPickUpDelay();
+                if (nearestPlayer != null && (this.tickCount - this.lastInventoryFullNoticeTick >= 100)) {
+                    nearestPlayer.sendSystemMessage(Component.literal(
+                            "<" + agentName + "> My pack is completely full, " + nearestPlayer.getName().getString() + "! I can't carry the " + origCount + "x " + itemName + " — please pick it back up."));
+                    this.lastInventoryFullNoticeTick = this.tickCount;
                 }
             }
         }

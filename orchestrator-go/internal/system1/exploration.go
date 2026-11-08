@@ -151,7 +151,12 @@ func EvaluateTopologicalMapping(frame *civquestv1.TelemetryFrame, state *AgentSt
 	defer state.mu.Unlock()
 
 	if state.homeOrigin == nil {
-		state.homeOrigin = &civquestv1.Vec3{X: pos.X, Y: pos.Y, Z: pos.Z}
+		originCopy := &civquestv1.Vec3{X: pos.X, Y: pos.Y, Z: pos.Z}
+		state.homeOrigin = originCopy
+		state.currentOutpost = originCopy
+		if len(state.outposts) == 0 {
+			state.outposts = append(state.outposts, originCopy)
+		}
 	}
 
 	if state.lastMapNodeID == nodeID {
@@ -174,9 +179,23 @@ func EvaluateTopologicalMapping(frame *civquestv1.TelemetryFrame, state *AgentSt
 	}
 	safetyScore := math.Max(0.0, math.Min(1.0, 1.0-(hostileThreat/60.0)))
 
+	isForwardOutpost := false
+	outpostIdx := 0
+	for idx, op := range state.outposts {
+		if idx > 0 && op != nil && math.Hypot(pos.X-op.X, pos.Z-op.Z) <= 8.0 {
+			isForwardOutpost = true
+			outpostIdx = idx + 1
+			break
+		}
+	}
+
 	category := "WAYPOINT"
 	label := fmt.Sprintf("Frontier Sector (%d, %d)", gx, gz)
-	if state.lastMapNodeID == "" {
+	if isForwardOutpost {
+		category = "OUTPOST"
+		label = fmt.Sprintf("Forward Outpost #%d (%d, %d)", outpostIdx, gx, gz)
+		safetyScore = math.Max(safetyScore, 0.90)
+	} else if state.lastMapNodeID == "" {
 		category = "SETTLEMENT"
 		label = fmt.Sprintf("Home Origin (%d, %d)", gx, gz)
 	} else if safetyScore < 0.5 {
@@ -220,8 +239,154 @@ func EvaluateTopologicalMapping(frame *civquestv1.TelemetryFrame, state *AgentSt
 	return node, edge
 }
 
-// EvaluateExploration computes autonomous frontier scouting waypoints and terrain-unsticking
-// detour maneuvers in <1ms without token costs.
+// EvaluateGoals computes the 3-horizon GoalHierarchy (IMMEDIATE, SHORT_TERM, LONG_TERM)
+// deterministically from the agent's current sensory frame, inventory, and profession.
+func EvaluateGoals(frame *civquestv1.TelemetryFrame, cfg *xdg.AgentIdentityConfig, state *AgentState) GoalHierarchy {
+	prof := "EXPLORER"
+	if cfg != nil && strings.TrimSpace(cfg.Profession) != "" {
+		prof = strings.ToUpper(strings.TrimSpace(cfg.Profession))
+	}
+
+	var longTerm string
+	switch prof {
+	case "EXPLORER", "TRAILBLAZER", "SCOUT":
+		longTerm = "CHART_REGIONAL_ATLAS: Map biome sectors, consecrate landmarks, and link forward outposts for Clan Cartographer"
+	case "BUILDER", "ARCHITECT":
+		longTerm = "CONSTRUCT_SETTLEMENT_QUADRANTS: Build bottom-up clan halls, workshops, and fortifications"
+	case "FARMER":
+		longTerm = "CULTIVATE_CLAN_GRANARY: Expand irrigated farmland and maintain clan food surplus"
+	case "CHRONICLER", "HISTORIAN":
+		longTerm = "ARCHIVE_CLAN_HISTORIES: Author written chronicles and preserve dynastic lore"
+	default:
+		longTerm = "BUILD_PROSPEROUS_CLAN: Gather resources, fortify shelter, and support settlement growth"
+	}
+
+	if frame == nil || frame.Status == nil {
+		g := GoalHierarchy{
+			ImmediateGoal: "GATHER_TIMBER: Harvest nearby tree logs to craft basic survival tools",
+			ShortTermGoal: "BOOTSTRAP_SURVIVAL_KIT: Gather timber, craft wooden axe & sword, and secure initial night shelter",
+			LongTermGoal:  longTerm,
+		}
+		if state != nil {
+			state.SetGoals(g)
+		}
+		return g
+	}
+
+	inv := inspectBootstrapInventory(frame.Status.Inventory)
+	tod := ((frame.TimeOfDay % 24000) + 24000) % 24000
+	isDuskOrNight := tod >= 11500 && tod < 23500
+	isThunder := frame.Weather == civquestv1.Weather_WEATHER_THUNDER
+
+	var shortTerm string
+	if !inv.hasWeapon && !inv.hasAxe {
+		shortTerm = "BOOTSTRAP_SURVIVAL_KIT: Gather timber, craft wooden axe & sword, and secure initial night shelter"
+	} else if !inv.hasStoneGear {
+		shortTerm = "UPGRADE_TO_STONE_GEAR: Acquire cobblestone, upgrade to stone tools, and stockpile torches/campfire"
+	} else {
+		shortTerm = "ESTABLISH_OUTPOST_CHAIN: Advance frontier and establish safe day-night outposts with tools & light"
+	}
+
+	hostilesNearby := false
+	for _, e := range frame.VisibleEntities {
+		if IsHostile(e) {
+			hostilesNearby = true
+			break
+		}
+	}
+
+	var immediate string
+	switch {
+	case hostilesNearby || frame.LastDamageTaken != nil:
+		immediate = "COMBAT_SURVIVAL: Defend against or evade nearby hostile threats"
+	case frame.Status.FoodLevel <= 6:
+		immediate = "CRITICAL_HUNGER: Consume food or forage immediately"
+	case state != nil && state.IsCompanionActive():
+		immediate = "ESCORT_COMPANION: Accompany and protect bonded player"
+	case isDuskOrNight || isThunder:
+		if frame.Status.IsSleeping {
+			immediate = "SLEEPING: Resting safely until dawn"
+		} else if state != nil && state.GetAssignedBed() != nil {
+			immediate = "SEEK_BED_SHELTER: Return to assigned bed and sleep through the night"
+		} else {
+			immediate = "ESTABLISH_OUTPOST: Secure and light forward outpost shelter for the night"
+		}
+	case !inv.hasWeapon && !inv.hasAxe:
+		if inv.logCount < 2 && inv.planksCount < 4 {
+			immediate = "GATHER_TIMBER: Harvest nearby tree logs to craft basic survival tools"
+		} else {
+			immediate = "CRAFT_BASIC_TOOLS: Craft wooden axe, wooden sword, and campfire from gathered timber"
+		}
+	default:
+		immediate = "SCOUT_FRONTIER: Chart unexplored terrain sectors and advance toward next forward outpost"
+	}
+
+	g := GoalHierarchy{
+		ImmediateGoal: immediate,
+		ShortTermGoal: shortTerm,
+		LongTermGoal:  longTerm,
+	}
+	if state != nil {
+		state.SetGoals(g)
+	}
+	return g
+}
+
+type bootstrapInventorySummary struct {
+	logCount     int32
+	planksCount  int32
+	stickCount   int32
+	cobbleCount  int32
+	hasAxe       bool
+	hasSword     bool
+	hasWeapon    bool
+	hasStoneGear bool
+	hasLight     bool
+	lightItemID  string
+}
+
+func inspectBootstrapInventory(inventory []*civquestv1.ItemStackProto) bootstrapInventorySummary {
+	var s bootstrapInventorySummary
+	for _, it := range inventory {
+		if it == nil || it.Count <= 0 || it.ItemId == "" {
+			continue
+		}
+		id := strings.ToLower(strings.TrimSpace(it.ItemId))
+		switch {
+		case strings.HasSuffix(id, "_log") || strings.HasSuffix(id, "_wood") || strings.HasSuffix(id, "_stem"):
+			s.logCount += it.Count
+		case strings.HasSuffix(id, "_planks"):
+			s.planksCount += it.Count
+		case id == "minecraft:stick" || strings.HasSuffix(id, ":stick") || id == "stick":
+			s.stickCount += it.Count
+		case strings.Contains(id, "cobblestone") || strings.Contains(id, "cobbled_deepslate") || strings.Contains(id, "blackstone"):
+			s.cobbleCount += it.Count
+		}
+		if strings.Contains(id, "_axe") {
+			s.hasAxe = true
+			s.hasWeapon = true
+		}
+		if strings.Contains(id, "_sword") {
+			s.hasSword = true
+			s.hasWeapon = true
+		}
+		if strings.Contains(id, "stone_sword") || strings.Contains(id, "stone_axe") ||
+			strings.Contains(id, "iron_sword") || strings.Contains(id, "iron_axe") ||
+			strings.Contains(id, "diamond_sword") || strings.Contains(id, "netherite_sword") {
+			s.hasStoneGear = true
+		}
+		if strings.Contains(id, "campfire") || strings.Contains(id, "torch") || strings.Contains(id, "lantern") {
+			s.hasLight = true
+			if s.lightItemID == "" {
+				s.lightItemID = it.ItemId
+			}
+		}
+	}
+	return s
+}
+
+// EvaluateExploration computes autonomous frontier scouting waypoints, bootstrap timber/tool gathering,
+// dusk/night forward outpost shelter reflexes, and terrain-unsticking detour maneuvers in <1ms without token costs.
 func EvaluateExploration(agentID string, frame *civquestv1.TelemetryFrame, cfg *xdg.AgentIdentityConfig, state *AgentState) *civquestv1.AgentIntent {
 	if frame == nil || frame.Status == nil || frame.Status.Position == nil || state == nil {
 		return nil
@@ -237,7 +402,15 @@ func EvaluateExploration(agentID string, frame *civquestv1.TelemetryFrame, cfg *
 
 	state.telemetryFramesSeen++
 	if state.homeOrigin == nil {
-		state.homeOrigin = &civquestv1.Vec3{X: pos.X, Y: pos.Y, Z: pos.Z}
+		originCopy := &civquestv1.Vec3{X: pos.X, Y: pos.Y, Z: pos.Z}
+		state.homeOrigin = originCopy
+		state.currentOutpost = originCopy
+		if len(state.outposts) == 0 {
+			state.outposts = append(state.outposts, originCopy)
+		}
+	}
+	if state.currentOutpost == nil {
+		state.currentOutpost = &civquestv1.Vec3{X: state.homeOrigin.X, Y: state.homeOrigin.Y, Z: state.homeOrigin.Z}
 	}
 	if state.lastExploreTick == 0 {
 		state.lastExploreTick = frame.WorldTick
@@ -278,15 +451,32 @@ func EvaluateExploration(agentID string, frame *civquestv1.TelemetryFrame, cfg *
 		}
 	}
 
-	// 2. Autonomous daytime scouting & patrol
 	// Require at least 2 observed frames so single-frame unit tests are never polluted
 	if state.telemetryFramesSeen < 2 {
 		return nil
 	}
 
+	tod := ((frame.TimeOfDay % 24000) + 24000) % 24000
+	isDuskOrNight := tod >= 11500 && tod < 23500
+	isThunder := frame.Weather == civquestv1.Weather_WEATHER_THUNDER
+
+	// 2. Dusk & Night Shelter / Forward Outpost Reflex (do NOT wander outward at dusk or night!)
+	if isDuskOrNight || isThunder {
+		if state.AssignedBed != nil {
+			// EvaluateSleep handles navigating to bed and sleeping when a bed is assigned
+			return nil
+		}
+		return evaluateDuskNightOutpostShelterLocked(agentID, frame, pos, navState, state)
+	}
+
 	routine := state.CurrentRoutine
 	if routine != RoutinePrimaryDuty && routine != RoutineSecondaryHobby && routine != RoutineDawnAwakening && routine != RoutineTavernSocial {
 		return nil
+	}
+
+	// 3. Daytime Bootstrap Survival Goals (Gather Timber & Craft Basic Tools)
+	if bootstrapIntent := evaluateBootstrapGoalsLocked(agentID, frame, pos, navState, state); bootstrapIntent != nil {
+		return bootstrapIntent
 	}
 
 	isIdleOrArrived := navState == civquestv1.NavigationState_NAVIGATION_STATE_IDLE ||
@@ -313,18 +503,21 @@ func EvaluateExploration(agentID string, frame *civquestv1.TelemetryFrame, cfg *
 	}
 
 	state.exploreStepIndex++
-	// Golden-angle spiral around home origin so the agent systematically charts all surrounding sectors
+	// Golden-angle spiral around current outpost/home origin; Explorers progressively expand rings to advance outward
 	const goldenAngle = 2.399963229728653
 	angle := float64(state.exploreStepIndex) * goldenAngle
 	state.lastHeadingRad = angle
 
 	baseRadius := 8.0 + curiosity*8.0
 	if isExplorer {
-		ring := float64(state.exploreStepIndex % 4)
-		baseRadius = 10.0 + ring*6.0
+		ring := float64(state.exploreStepIndex % 5)
+		baseRadius = 12.0 + ring*8.0
 	}
 
-	origin := state.homeOrigin
+	origin := state.currentOutpost
+	if origin == nil {
+		origin = state.homeOrigin
+	}
 	targetX := origin.X + math.Cos(angle)*baseRadius
 	targetZ := origin.Z + math.Sin(angle)*baseRadius
 	state.lastExploreTick = frame.WorldTick
@@ -343,4 +536,236 @@ func EvaluateExploration(agentID string, frame *civquestv1.TelemetryFrame, cfg *
 			},
 		},
 	}
+}
+
+func evaluateDuskNightOutpostShelterLocked(
+	agentID string,
+	frame *civquestv1.TelemetryFrame,
+	pos *civquestv1.Vec3,
+	navState civquestv1.NavigationState,
+	state *AgentState,
+) *civquestv1.AgentIntent {
+	outpost := state.currentOutpost
+	if outpost == nil {
+		outpost = state.homeOrigin
+	}
+
+	// If the Explorer has traveled > 32 blocks from the current outpost along their path of travel,
+	// establish a new Forward Outpost at their current frontier coordinates for the night!
+	if outpost != nil && math.Hypot(pos.X-outpost.X, pos.Z-outpost.Z) > 32.0 {
+		newOutpost := &civquestv1.Vec3{X: pos.X, Y: pos.Y, Z: pos.Z}
+		state.currentOutpost = newOutpost
+		state.homeOrigin = newOutpost
+		state.outposts = append(state.outposts, newOutpost)
+		state.ShelterPos = &civquestv1.BlockPosProto{
+			X: int32(math.Floor(pos.X)),
+			Y: int32(math.Floor(pos.Y)),
+			Z: int32(math.Floor(pos.Z)),
+		}
+		// Reset lastMapNodeID so EvaluateTopologicalMapping records this sector as OUTPOST
+		state.lastMapNodeID = ""
+		outpost = newOutpost
+	}
+
+	targetX := pos.X
+	targetY := pos.Y
+	targetZ := pos.Z
+	if state.ShelterPos != nil && math.Hypot(pos.X-float64(state.ShelterPos.X), pos.Z-float64(state.ShelterPos.Z)) <= 32.0 {
+		targetX = float64(state.ShelterPos.X) + 0.5
+		targetY = float64(state.ShelterPos.Y)
+		targetZ = float64(state.ShelterPos.Z) + 0.5
+	} else if outpost != nil {
+		targetX = outpost.X
+		targetY = outpost.Y
+		targetZ = outpost.Z
+	}
+
+	distToShelter := math.Hypot(pos.X-targetX, pos.Z-targetZ)
+	if distToShelter > 4.0 {
+		if navState == civquestv1.NavigationState_NAVIGATION_STATE_PATHING {
+			return nil
+		}
+		if frame.WorldTick >= state.lastExploreTick && frame.WorldTick-state.lastExploreTick < 40 {
+			return nil
+		}
+		state.lastExploreTick = frame.WorldTick
+		return &civquestv1.AgentIntent{
+			AgentId: agentID,
+			Action: &civquestv1.AgentIntent_Navigate{
+				Navigate: &civquestv1.NavigateIntent{
+					Target: &civquestv1.Vec3{
+						X: math.Round(targetX*10) / 10,
+						Y: targetY,
+						Z: math.Round(targetZ*10) / 10,
+					},
+					SpeedMultiplier:  1.0,
+					ArrivalTolerance: 2,
+				},
+			},
+		}
+	}
+
+	// Within 4.0 blocks of shelter/outpost at dusk/night: check if a campfire or torch is nearby
+	hasNearbyLight := false
+	for _, b := range frame.InterestingBlocks {
+		if b != nil && b.Pos != nil {
+			id := strings.ToLower(b.BlockId)
+			if strings.Contains(id, "campfire") || strings.Contains(id, "torch") || strings.Contains(id, "lantern") {
+				if math.Hypot(pos.X-float64(b.Pos.X), pos.Z-float64(b.Pos.Z)) <= 8.0 {
+					hasNearbyLight = true
+					break
+				}
+			}
+		}
+	}
+
+	if !hasNearbyLight && (state.lastShelterPlaceTick == 0 || frame.WorldTick < state.lastShelterPlaceTick || frame.WorldTick-state.lastShelterPlaceTick >= 600) {
+		inv := inspectBootstrapInventory(frame.Status.Inventory)
+		if inv.hasLight {
+			state.lastShelterPlaceTick = frame.WorldTick
+			placePos := &civquestv1.BlockPosProto{
+				X: int32(math.Floor(pos.X)) + 1,
+				Y: int32(math.Floor(pos.Y)),
+				Z: int32(math.Floor(pos.Z)),
+			}
+			state.ShelterPos = placePos
+			return &civquestv1.AgentIntent{
+				AgentId: agentID,
+				Action: &civquestv1.AgentIntent_InteractBlock{
+					InteractBlock: &civquestv1.InteractBlockIntent{
+						Pos:             placePos,
+						InteractionType: civquestv1.InteractBlockIntent_PLACE_BLOCK,
+						BlockOrItemId:   inv.lightItemID,
+					},
+				},
+			}
+		}
+		if (inv.logCount >= 1 || inv.planksCount >= 1 || inv.stickCount >= 1) &&
+			(state.lastCraftTick == 0 || frame.WorldTick < state.lastCraftTick || frame.WorldTick-state.lastCraftTick >= 20) {
+			state.lastCraftTick = frame.WorldTick
+			return &civquestv1.AgentIntent{
+				AgentId: agentID,
+				Action: &civquestv1.AgentIntent_CraftItem{
+					CraftItem: &civquestv1.CraftItemIntent{
+						RecipeId:   "minecraft:campfire",
+						BatchCount: 1,
+					},
+				},
+			}
+		}
+	}
+
+	return nil
+}
+
+func evaluateBootstrapGoalsLocked(
+	agentID string,
+	frame *civquestv1.TelemetryFrame,
+	pos *civquestv1.Vec3,
+	navState civquestv1.NavigationState,
+	state *AgentState,
+) *civquestv1.AgentIntent {
+	inv := inspectBootstrapInventory(frame.Status.Inventory)
+
+	canCraft := state.lastCraftTick == 0 || frame.WorldTick < state.lastCraftTick || frame.WorldTick-state.lastCraftTick >= 20
+
+	// 1. Upgrade to stone sword if cobblestone and wood are available
+	if !inv.hasStoneGear && inv.cobbleCount >= 3 && (inv.logCount >= 1 || inv.planksCount >= 1 || inv.stickCount >= 1) && canCraft {
+		state.lastCraftTick = frame.WorldTick
+		return &civquestv1.AgentIntent{
+			AgentId: agentID,
+			Action: &civquestv1.AgentIntent_CraftItem{
+				CraftItem: &civquestv1.CraftItemIntent{
+					RecipeId:   "minecraft:stone_sword",
+					BatchCount: 1,
+				},
+			},
+		}
+	}
+
+	// 2. Craft wooden axe, wooden sword, or campfire when timber is in inventory
+	if (!inv.hasAxe || !inv.hasSword || !inv.hasLight) && (inv.logCount >= 1 || inv.planksCount >= 4) && canCraft {
+		recipe := "minecraft:wooden_axe"
+		if inv.hasAxe && !inv.hasSword {
+			recipe = "minecraft:wooden_sword"
+		} else if inv.hasAxe && inv.hasSword && !inv.hasLight {
+			recipe = "minecraft:campfire"
+		}
+		state.lastCraftTick = frame.WorldTick
+		return &civquestv1.AgentIntent{
+			AgentId: agentID,
+			Action: &civquestv1.AgentIntent_CraftItem{
+				CraftItem: &civquestv1.CraftItemIntent{
+					RecipeId:   recipe,
+					BatchCount: 1,
+				},
+			},
+		}
+	}
+
+	// 3. Gather timber if the agent lacks basic tools and has < 2 logs
+	if !inv.hasAxe && !inv.hasSword && inv.logCount < 2 {
+		var nearestLog *civquestv1.VisibleBlock
+		bestDistSq := math.MaxFloat64
+		for _, b := range frame.InterestingBlocks {
+			if b == nil || b.Pos == nil {
+				continue
+			}
+			id := strings.ToLower(b.BlockId)
+			if strings.HasSuffix(id, "_log") || strings.HasSuffix(id, "_wood") || strings.HasSuffix(id, "_stem") {
+				dx := float64(b.Pos.X) + 0.5 - pos.X
+				dy := float64(b.Pos.Y) + 0.5 - pos.Y
+				dz := float64(b.Pos.Z) + 0.5 - pos.Z
+				dSq := dx*dx + dy*dy + dz*dz
+				if dSq < bestDistSq {
+					bestDistSq = dSq
+					nearestLog = b
+				}
+			}
+		}
+
+		if nearestLog != nil {
+			if bestDistSq <= 20.25 { // Within 4.5 blocks melee/harvest reach
+				if state.lastHarvestTick == 0 || frame.WorldTick < state.lastHarvestTick || frame.WorldTick-state.lastHarvestTick >= 20 {
+					state.lastHarvestTick = frame.WorldTick
+					return &civquestv1.AgentIntent{
+						AgentId: agentID,
+						Action: &civquestv1.AgentIntent_InteractBlock{
+							InteractBlock: &civquestv1.InteractBlockIntent{
+								Pos:             nearestLog.Pos,
+								InteractionType: civquestv1.InteractBlockIntent_HARVEST_BREAK,
+								BlockOrItemId:   nearestLog.BlockId,
+							},
+						},
+					}
+				}
+				return nil
+			}
+
+			// Navigate to the nearest tree log
+			if navState == civquestv1.NavigationState_NAVIGATION_STATE_PATHING {
+				return nil
+			}
+			if frame.WorldTick >= state.lastExploreTick && frame.WorldTick-state.lastExploreTick < 40 {
+				return nil
+			}
+			state.lastExploreTick = frame.WorldTick
+			return &civquestv1.AgentIntent{
+				AgentId: agentID,
+				Action: &civquestv1.AgentIntent_Navigate{
+					Navigate: &civquestv1.NavigateIntent{
+						Target: &civquestv1.Vec3{
+							X: float64(nearestLog.Pos.X) + 0.5,
+							Y: float64(nearestLog.Pos.Y),
+							Z: float64(nearestLog.Pos.Z) + 0.5,
+						},
+						SpeedMultiplier:  1.0,
+						ArrivalTolerance: 2,
+					},
+				},
+			}
+		}
+	}
+
+	return nil
 }
