@@ -1191,24 +1191,26 @@ func (x *TelemetryFrame) GetLastProcessedSequenceId() int64 {
 }
 
 type AgentStatus struct {
-	state            protoimpl.MessageState `protogen:"open.v1"`
-	AgentId          string                 `protobuf:"bytes,1,opt,name=agent_id,json=agentId,proto3" json:"agent_id,omitempty"`
-	EntityId         int32                  `protobuf:"varint,2,opt,name=entity_id,json=entityId,proto3" json:"entity_id,omitempty"`
-	Position         *Vec3                  `protobuf:"bytes,3,opt,name=position,proto3" json:"position,omitempty"`
-	Yaw              float32                `protobuf:"fixed32,4,opt,name=yaw,proto3" json:"yaw,omitempty"`
-	Pitch            float32                `protobuf:"fixed32,5,opt,name=pitch,proto3" json:"pitch,omitempty"`
-	Health           float32                `protobuf:"fixed32,6,opt,name=health,proto3" json:"health,omitempty"`
-	MaxHealth        float32                `protobuf:"fixed32,7,opt,name=max_health,json=maxHealth,proto3" json:"max_health,omitempty"`
-	FoodLevel        int32                  `protobuf:"varint,8,opt,name=food_level,json=foodLevel,proto3" json:"food_level,omitempty"` // 0 - 20
-	Saturation       float32                `protobuf:"fixed32,9,opt,name=saturation,proto3" json:"saturation,omitempty"`
-	IsSleeping       bool                   `protobuf:"varint,10,opt,name=is_sleeping,json=isSleeping,proto3" json:"is_sleeping,omitempty"`
-	IsInWater        bool                   `protobuf:"varint,11,opt,name=is_in_water,json=isInWater,proto3" json:"is_in_water,omitempty"`
-	IsOnFire         bool                   `protobuf:"varint,12,opt,name=is_on_fire,json=isOnFire,proto3" json:"is_on_fire,omitempty"`
-	NavigationState  NavigationState        `protobuf:"varint,13,opt,name=navigation_state,json=navigationState,proto3,enum=civquest.v1.NavigationState" json:"navigation_state,omitempty"`
-	Inventory        []*ItemStackProto      `protobuf:"bytes,14,rep,name=inventory,proto3" json:"inventory,omitempty"`
-	LeashedEntityIds []int32                `protobuf:"varint,15,rep,packed,name=leashed_entity_ids,json=leashedEntityIds,proto3" json:"leashed_entity_ids,omitempty"`
-	unknownFields    protoimpl.UnknownFields
-	sizeCache        protoimpl.SizeCache
+	state              protoimpl.MessageState `protogen:"open.v1"`
+	AgentId            string                 `protobuf:"bytes,1,opt,name=agent_id,json=agentId,proto3" json:"agent_id,omitempty"`
+	EntityId           int32                  `protobuf:"varint,2,opt,name=entity_id,json=entityId,proto3" json:"entity_id,omitempty"`
+	Position           *Vec3                  `protobuf:"bytes,3,opt,name=position,proto3" json:"position,omitempty"`
+	Yaw                float32                `protobuf:"fixed32,4,opt,name=yaw,proto3" json:"yaw,omitempty"`
+	Pitch              float32                `protobuf:"fixed32,5,opt,name=pitch,proto3" json:"pitch,omitempty"`
+	Health             float32                `protobuf:"fixed32,6,opt,name=health,proto3" json:"health,omitempty"`
+	MaxHealth          float32                `protobuf:"fixed32,7,opt,name=max_health,json=maxHealth,proto3" json:"max_health,omitempty"`
+	FoodLevel          int32                  `protobuf:"varint,8,opt,name=food_level,json=foodLevel,proto3" json:"food_level,omitempty"` // 0 - 20
+	Saturation         float32                `protobuf:"fixed32,9,opt,name=saturation,proto3" json:"saturation,omitempty"`
+	IsSleeping         bool                   `protobuf:"varint,10,opt,name=is_sleeping,json=isSleeping,proto3" json:"is_sleeping,omitempty"`
+	IsInWater          bool                   `protobuf:"varint,11,opt,name=is_in_water,json=isInWater,proto3" json:"is_in_water,omitempty"`
+	IsOnFire           bool                   `protobuf:"varint,12,opt,name=is_on_fire,json=isOnFire,proto3" json:"is_on_fire,omitempty"`
+	NavigationState    NavigationState        `protobuf:"varint,13,opt,name=navigation_state,json=navigationState,proto3,enum=civquest.v1.NavigationState" json:"navigation_state,omitempty"`
+	Inventory          []*ItemStackProto      `protobuf:"bytes,14,rep,name=inventory,proto3" json:"inventory,omitempty"`
+	LeashedEntityIds   []int32                `protobuf:"varint,15,rep,packed,name=leashed_entity_ids,json=leashedEntityIds,proto3" json:"leashed_entity_ids,omitempty"`
+	Stamina            float32                `protobuf:"fixed32,16,opt,name=stamina,proto3" json:"stamina,omitempty"`                                                // 0 - 100 sprint stamina
+	NavigationEnclosed bool                   `protobuf:"varint,17,opt,name=navigation_enclosed,json=navigationEnclosed,proto3" json:"navigation_enclosed,omitempty"` // true when local BFS finds no exit (pit / sealed pocket)
+	unknownFields      protoimpl.UnknownFields
+	sizeCache          protoimpl.SizeCache
 }
 
 func (x *AgentStatus) Reset() {
@@ -1344,6 +1346,20 @@ func (x *AgentStatus) GetLeashedEntityIds() []int32 {
 		return x.LeashedEntityIds
 	}
 	return nil
+}
+
+func (x *AgentStatus) GetStamina() float32 {
+	if x != nil {
+		return x.Stamina
+	}
+	return 0
+}
+
+func (x *AgentStatus) GetNavigationEnclosed() bool {
+	if x != nil {
+		return x.NavigationEnclosed
+	}
+	return false
 }
 
 type VisibleEntity struct {
@@ -3125,7 +3141,7 @@ const file_civquest_v1_civquest_proto_rawDesc = "" +
 	"\x10current_landmark\x18\f \x01(\v2\x1c.civquest.v1.LandmarkContextR\x0fcurrentLandmark\x128\n" +
 	"\vdeath_event\x18\r \x01(\v2\x17.civquest.v1.DeathEventR\n" +
 	"deathEvent\x12;\n" +
-	"\x1alast_processed_sequence_id\x18\x0e \x01(\x03R\x17lastProcessedSequenceId\"\xa3\x04\n" +
+	"\x1alast_processed_sequence_id\x18\x0e \x01(\x03R\x17lastProcessedSequenceId\"\xee\x04\n" +
 	"\vAgentStatus\x12\x19\n" +
 	"\bagent_id\x18\x01 \x01(\tR\aagentId\x12\x1b\n" +
 	"\tentity_id\x18\x02 \x01(\x05R\bentityId\x12-\n" +
@@ -3148,7 +3164,9 @@ const file_civquest_v1_civquest_proto_rawDesc = "" +
 	"is_on_fire\x18\f \x01(\bR\bisOnFire\x12G\n" +
 	"\x10navigation_state\x18\r \x01(\x0e2\x1c.civquest.v1.NavigationStateR\x0fnavigationState\x129\n" +
 	"\tinventory\x18\x0e \x03(\v2\x1b.civquest.v1.ItemStackProtoR\tinventory\x12,\n" +
-	"\x12leashed_entity_ids\x18\x0f \x03(\x05R\x10leashedEntityIds\"\xe2\x02\n" +
+	"\x12leashed_entity_ids\x18\x0f \x03(\x05R\x10leashedEntityIds\x12\x18\n" +
+	"\astamina\x18\x10 \x01(\x02R\astamina\x12/\n" +
+	"\x13navigation_enclosed\x18\x11 \x01(\bR\x12navigationEnclosed\"\xe2\x02\n" +
 	"\rVisibleEntity\x12\x1b\n" +
 	"\tentity_id\x18\x01 \x01(\x05R\bentityId\x12\x12\n" +
 	"\x04uuid\x18\x02 \x01(\tR\x04uuid\x12\x1f\n" +

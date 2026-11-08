@@ -157,6 +157,8 @@ message AgentStatus {
   NavigationState navigation_state = 13;
   repeated ItemStackProto inventory = 14;
   repeated int32 leashed_entity_ids = 15;
+  float stamina = 16;           // 0 - 100 sprint stamina
+  bool navigation_enclosed = 17; // true when local BFS finds no exit (pit / sealed pocket)
 }
 
 message VisibleEntity {

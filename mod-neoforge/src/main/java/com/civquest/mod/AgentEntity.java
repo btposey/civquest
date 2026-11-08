@@ -45,6 +45,7 @@ public class AgentEntity extends FakePlayer {
     private StreamRegistry streamRegistry;
     private SensoryFrustumCollector sensoryCollector;
     private final AgentNavigator navigator;
+    private final com.civquest.mod.actuator.BlockBreaker breaker = new com.civquest.mod.actuator.BlockBreaker(this);
     private Consumer<AgentEntity> deathListener;
     private Consumer<AgentEntity> removalListener;
     private final AtomicBoolean cleanedUp = new AtomicBoolean(false);
@@ -111,10 +112,13 @@ public class AgentEntity extends FakePlayer {
         super.tick();
         if (!this.level().isClientSide) {
             try {
+                if (this.breaker.isBreaking()) {
+                    this.breaker.tick();
+                }
                 if (this.navigator != null) {
                     this.navigator.tick();
                 }
-                if (this.isAlive() && !this.isSleeping()
+                if (this.isAlive() && !this.isSleeping() && !this.breaker.isBreaking()
                         && (this.navigator == null || this.navigator.getNavigationState() != com.civquest.mod.grpc.v1.NavigationState.NAVIGATION_STATE_PATHING)) {
                     updateIdleSocialGaze();
                 }
@@ -158,11 +162,14 @@ public class AgentEntity extends FakePlayer {
             double horizontalDist = Math.sqrt(dx * dx + dz * dz);
             float targetYaw = (float) (net.minecraft.util.Mth.atan2(dz, dx) * (180.0 / Math.PI)) - 90.0F;
             float targetPitch = (float) (-(net.minecraft.util.Mth.atan2(dy, Math.max(0.001, horizontalDist)) * (180.0 / Math.PI)));
-            float smoothYaw = net.minecraft.util.Mth.rotLerp(0.35F, this.getYRot(), targetYaw);
-            float smoothPitch = net.minecraft.util.Mth.rotLerp(0.35F, this.getXRot(), targetPitch);
+            // Gentle, rate-limited glance: head leads, body trails within a clamp, pitch low-passed.
+            float smoothYaw = com.civquest.mod.actuator.LookSmoothing.approach(this.getYRot(), targetYaw, 0.25F, 5.0F, 3.0F);
+            float smoothPitch = com.civquest.mod.actuator.LookSmoothing.approachLinear(this.getXRot(),
+                    net.minecraft.util.Mth.clamp(targetPitch, -25.0F, 25.0F), 0.15F, 3.0F);
             this.setYRot(smoothYaw);
             this.setYHeadRot(smoothYaw);
-            this.yBodyRot = smoothYaw;
+            float body = com.civquest.mod.actuator.LookSmoothing.approach(this.yBodyRot, smoothYaw, 0.2F, 4.0F, 0.0F);
+            this.yBodyRot = com.civquest.mod.actuator.LookSmoothing.clampBodyToHead(body, smoothYaw, 50.0F);
             this.setXRot(smoothPitch);
         }
     }
@@ -240,6 +247,24 @@ public class AgentEntity extends FakePlayer {
     }
 
     /**
+     * Equips the highest destroy-speed tool in the agent's inventory for the given {@link net.minecraft.world.level.block.state.BlockState}
+     * into the selected hotbar slot ({@code inv.selected}).
+     *
+     * @return true if a tool faster than bare hands (> 1.0F) was found and equipped
+     */
+    public boolean equipBestToolFor(net.minecraft.world.level.block.state.BlockState state) {
+        if (state == null || this.getInventory() == null) {
+            return false;
+        }
+        int slot = com.civquest.mod.actuator.BlockBreaker.bestToolSlot(this, state);
+        if (slot < 0) {
+            return false;
+        }
+        com.civquest.mod.actuator.BlockBreaker.equipBestTool(this, state);
+        return true;
+    }
+
+    /**
      * Scans the agent's inventory and equips the best melee weapon/tool into slot 0 (selected hotbar mainhand)
      * and any shield into the offhand slot.
      */
@@ -259,6 +284,10 @@ public class AgentEntity extends FakePlayer {
                     break;
                 }
             }
+        }
+
+        if (this.breaker != null && this.breaker.isBreaking()) {
+            return;
         }
 
         // 2. Equip best weapon/tool into selected hotbar slot (0)
@@ -293,6 +322,7 @@ public class AgentEntity extends FakePlayer {
         if (id.contains("stone_axe")) return 60;
         if (id.contains("wooden_sword") || id.contains("golden_sword")) return 50;
         if (id.contains("wooden_axe") || id.contains("pickaxe")) return 40;
+        if (id.contains("shovel")) return 35;
         return 0;
     }
 
@@ -487,6 +517,15 @@ public class AgentEntity extends FakePlayer {
 
     public void setRemovalListener(Consumer<AgentEntity> removalListener) {
         this.removalListener = removalListener;
+    }
+
+    /** Current stamina (0-100) from the navigator, for debug telemetry. */
+    public double getStamina() {
+        return navigator != null ? navigator.getStamina() : AgentNavigator.STAMINA_MAX;
+    }
+
+    public com.civquest.mod.actuator.BlockBreaker getBreaker() {
+        return breaker;
     }
 
     public AgentNavigator getNavigator() {

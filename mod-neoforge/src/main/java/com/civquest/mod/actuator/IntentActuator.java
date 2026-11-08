@@ -300,18 +300,9 @@ public class IntentActuator {
                 if (destroySpeed < 0.0f) {
                     return false;
                 }
-                boolean broken = false;
-                if (agent.gameMode != null) {
-                    broken = agent.gameMode.destroyBlock(pos);
-                }
-                if (!broken) {
-                    broken = level.destroyBlock(pos, true, agent);
-                }
-                if (broken) {
-                    agent.swing(InteractionHand.MAIN_HAND, true);
-                    agent.tryPickupNearbyItems();
-                }
-                return broken;
+                agent.equipBestToolFor(state);
+                // Timed, tool-aware breaking: best tool equipped, progress accrues per tick with swing animation.
+                return agent.getBreaker().start(pos);
             }
             case PAVE_ROAD_PATH -> {
                 if (level != null && level.hasChunkAt(pos)) {
@@ -367,19 +358,17 @@ public class IntentActuator {
                 }
 
                 if (!agent.isCreative()) {
-                    int slot = -1;
-                    for (int i = 0; i < agent.getInventory().getContainerSize(); i++) {
-                        ItemStack item = agent.getInventory().getItem(i);
-                        if (!item.isEmpty() && item.getItem() instanceof BlockItem bi && bi.getBlock() == blockState.getBlock()) {
-                            slot = i;
-                            break;
-                        }
-                    }
+                    int slot = findMatchingBlockItemSlot(agent, blockState, intent.getBlockOrItemId());
                     if (slot < 0) {
                         return false;
                     }
-                    agent.getInventory().getItem(slot).shrink(1);
+                    ItemStack chosen = agent.getInventory().getItem(slot);
+                    if (chosen.getItem() instanceof BlockItem chosenBi) {
+                        blockState = chosenBi.getBlock().defaultBlockState();
+                    }
+                    chosen.shrink(1);
                 }
+                agent.swing(InteractionHand.MAIN_HAND, true);
                 return level.setBlockAndUpdate(pos, blockState);
             }
             case RING_BELL -> {
@@ -398,6 +387,49 @@ public class IntentActuator {
                 return false;
             }
         }
+    }
+
+    private int findMatchingBlockItemSlot(AgentEntity agent, BlockState targetState, String requestedId) {
+        var inv = agent.getInventory();
+        if (inv == null) {
+            return -1;
+        }
+        // 1. Exact block match
+        if (targetState != null) {
+            for (int i = 0; i < inv.getContainerSize(); i++) {
+                ItemStack item = inv.getItem(i);
+                if (!item.isEmpty() && item.getItem() instanceof BlockItem bi && bi.getBlock() == targetState.getBlock()) {
+                    return i;
+                }
+            }
+        }
+        // 2. Category / family match (e.g. any planks, log, stone/cobble, or light source)
+        String req = requestedId != null ? requestedId.trim().toLowerCase() : "";
+        for (int i = 0; i < inv.getContainerSize(); i++) {
+            ItemStack item = inv.getItem(i);
+            if (item.isEmpty() || !(item.getItem() instanceof BlockItem bi)) {
+                continue;
+            }
+            String key = BuiltInRegistries.ITEM.getKey(item.getItem()).toString().toLowerCase();
+            if (req.isEmpty() || req.contains("planks") && key.endsWith("_planks")
+                    || req.contains("log") && (key.endsWith("_log") || key.endsWith("_wood") || key.endsWith("_stem"))
+                    || (req.contains("cobble") || req.contains("stone") || req.contains("dirt"))
+                    && (key.contains("cobblestone") || key.endsWith(":stone") || key.endsWith(":dirt") || key.endsWith("_planks") || key.endsWith("_log"))
+                    || (req.contains("campfire") || req.contains("torch") || req.contains("lantern"))
+                    && (key.contains("campfire") || key.contains("torch") || key.contains("lantern"))) {
+                return i;
+            }
+        }
+        // 3. Fallback to any solid placeable building block if a building block was requested
+        if (req.isEmpty() || req.contains("planks") || req.contains("log") || req.contains("cobble") || req.contains("dirt") || req.contains("stone")) {
+            for (int i = 0; i < inv.getContainerSize(); i++) {
+                ItemStack item = inv.getItem(i);
+                if (!item.isEmpty() && item.getItem() instanceof BlockItem bi && bi.getBlock().defaultBlockState().isSolid()) {
+                    return i;
+                }
+            }
+        }
+        return -1;
     }
 
     private BlockState resolveBlockState(AgentEntity agent, String blockOrItemId) {

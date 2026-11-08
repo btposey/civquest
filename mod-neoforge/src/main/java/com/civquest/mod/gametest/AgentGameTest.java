@@ -3,10 +3,14 @@ package com.civquest.mod.gametest;
 import com.civquest.mod.AgentEntity;
 import com.civquest.mod.AgentEntityManager;
 import com.civquest.mod.StreamRegistry;
+import com.civquest.mod.actuator.AgentNavigator;
+import com.civquest.mod.actuator.BlockBreaker;
+import com.civquest.mod.actuator.LookSmoothing;
 import com.civquest.mod.sensory.SensoryFrustumCollector;
 import com.civquest.mod.grpc.v1.AgentIntent;
 import com.civquest.mod.grpc.v1.AttackIntent;
 import com.civquest.mod.grpc.v1.BlockPosProto;
+import com.civquest.mod.grpc.v1.CraftItemIntent;
 import com.civquest.mod.grpc.v1.CreateWrittenBookIntent;
 import com.civquest.mod.grpc.v1.InteractBlockIntent;
 import com.civquest.mod.grpc.v1.NavigateIntent;
@@ -1061,6 +1065,318 @@ public class AgentGameTest {
         helper.assertTrue(afterInvCount == initialInvCount + 1, "Agent inventory must receive written book");
 
         manager.despawnAgent(server, "agent-gt-chronicler").join();
+        helper.succeed();
+    }
+
+    private static java.nio.file.Path resolveMotionTracePath() {
+        String xdgState = System.getenv("XDG_STATE_HOME");
+        java.nio.file.Path base = (xdgState != null && !xdgState.isBlank())
+                ? java.nio.file.Paths.get(xdgState)
+                : java.nio.file.Paths.get(System.getProperty("user.home", "."), ".local", "state");
+        return base.resolve(java.nio.file.Paths.get("civquest", "logs", "motion-integration-trace.jsonl"));
+    }
+
+    private static void appendMotionTrace(String scenario, int tick, AgentEntity agent) {
+        if (agent == null || agent.getNavigator() == null) {
+            return;
+        }
+        try {
+            java.nio.file.Path path = resolveMotionTracePath();
+            java.nio.file.Files.createDirectories(path.getParent());
+            AgentNavigator nav = agent.getNavigator();
+            net.minecraft.world.phys.Vec3 dm = agent.getDeltaMovement();
+            String line = String.format(java.util.Locale.ROOT,
+                    "{\"scenario\":\"%s\",\"tick\":%d,\"x\":%.4f,\"y\":%.4f,\"z\":%.4f,\"vx\":%.4f,\"vz\":%.4f,\"yaw\":%.2f,\"head_yaw\":%.2f,\"body_yaw\":%.2f,\"pitch\":%.2f,\"stamina\":%.2f,\"nav_state\":\"%s\"}%n",
+                    scenario, tick, agent.getX(), agent.getY(), agent.getZ(), dm.x, dm.z,
+                    agent.getYRot(), nav.getHeadYaw(), nav.getBodyYaw(), nav.getNavPitch(),
+                    nav.getStamina(), nav.getReportedNavigationState().name());
+            java.nio.file.Files.writeString(path, line, StandardCharsets.UTF_8,
+                    java.nio.file.StandardOpenOption.CREATE, java.nio.file.StandardOpenOption.APPEND);
+        } catch (Throwable ignored) {
+        }
+    }
+
+    @GameTest(template = "empty3x3x3")
+    public static void testMotionOneBlockStepUp(GameTestHelper helper) {
+        ServerLevel level = helper.getLevel();
+        MinecraftServer server = level.getServer();
+        AgentEntityManager manager = new AgentEntityManager();
+
+        // Build a 1-block step: start floor at Y=0 (standing Y=1), step at Z=2 (block at Y=1, standing Y=2)
+        for (int x = 0; x <= 2; x++) {
+            for (int z = 0; z <= 3; z++) {
+                helper.setBlock(new BlockPos(x, 0, z), Blocks.STONE);
+                helper.setBlock(new BlockPos(x, 1, z), Blocks.AIR);
+                helper.setBlock(new BlockPos(x, 2, z), Blocks.AIR);
+                helper.setBlock(new BlockPos(x, 3, z), Blocks.AIR);
+            }
+        }
+        helper.setBlock(new BlockPos(1, 1, 2), Blocks.STONE);
+        helper.setBlock(new BlockPos(1, 1, 3), Blocks.STONE);
+
+        BlockPos spawnPos = helper.absolutePos(new BlockPos(1, 1, 0));
+        BlockPos targetPos = helper.absolutePos(new BlockPos(1, 2, 3));
+        AgentEntity agent = manager.spawnAgent(server, level, SpawnAgentRequest.newBuilder()
+                .setAgentId("agent-gt-stepup")
+                .setDisplayName("StepUpAgent")
+                .setClanId("clan-ironwood")
+                .setSpawnCoords(Vec3.newBuilder().setX(spawnPos.getX() + 0.5).setY(spawnPos.getY()).setZ(spawnPos.getZ() + 0.5).build())
+                .build()).join();
+
+        agent.getNavigator().navigate(targetPos.getX() + 0.5, targetPos.getY(), targetPos.getZ() + 0.5, 1.0f, false, false, false, 1);
+        for (int t = 0; t < 40 && !agent.getNavigator().isArrived(); t++) {
+            agent.tick();
+            appendMotionTrace("one_block_step_up", t, agent);
+        }
+
+        helper.assertTrue(agent.getY() >= spawnPos.getY() + 0.9, "Agent must climb the 1-block step, y=" + agent.getY());
+        manager.despawnAgent(server, "agent-gt-stepup").join();
+        helper.succeed();
+    }
+
+    @GameTest(template = "empty3x3x3")
+    public static void testMotionTwoByThreePitEscape(GameTestHelper helper) {
+        ServerLevel level = helper.getLevel();
+        MinecraftServer server = level.getServer();
+        AgentEntityManager manager = new AgentEntityManager();
+
+        // Build a 2x3 pit (x in 0..1, z in 0..2) surrounded by 2-block-tall walls except a 1-block step exit at (2, 1, 1)
+        for (int x = -1; x <= 4; x++) {
+            for (int z = -1; z <= 4; z++) {
+                helper.setBlock(new BlockPos(x, 0, z), Blocks.STONE);
+                for (int y = 1; y <= 4; y++) {
+                    helper.setBlock(new BlockPos(x, y, z), Blocks.AIR);
+                }
+            }
+        }
+        for (int x = -1; x <= 2; x++) {
+            for (int z = -1; z <= 3; z++) {
+                boolean interior = x >= 0 && x <= 1 && z >= 0 && z <= 2;
+                if (!interior) {
+                    if (x == 2 && z == 1) {
+                        helper.setBlock(new BlockPos(x, 1, z), Blocks.STONE); // 1-block step exit
+                    } else {
+                        helper.setBlock(new BlockPos(x, 1, z), Blocks.STONE);
+                        helper.setBlock(new BlockPos(x, 2, z), Blocks.STONE);
+                    }
+                }
+            }
+        }
+        helper.setBlock(new BlockPos(3, 1, 1), Blocks.STONE);
+
+        BlockPos spawnPos = helper.absolutePos(new BlockPos(0, 1, 0));
+        BlockPos targetPos = helper.absolutePos(new BlockPos(3, 2, 1));
+        AgentEntity agent = manager.spawnAgent(server, level, SpawnAgentRequest.newBuilder()
+                .setAgentId("agent-gt-pit2x3")
+                .setDisplayName("PitEscapeAgent")
+                .setClanId("clan-ironwood")
+                .setSpawnCoords(Vec3.newBuilder().setX(spawnPos.getX() + 0.5).setY(spawnPos.getY()).setZ(spawnPos.getZ() + 0.5).build())
+                .build()).join();
+
+        agent.getNavigator().navigate(targetPos.getX() + 0.5, targetPos.getY(), targetPos.getZ() + 0.5, 1.0f, false, false, false, 1);
+        for (int t = 0; t < 80 && !agent.getNavigator().isArrived(); t++) {
+            agent.tick();
+            appendMotionTrace("pit_2x3_escape", t, agent);
+        }
+
+        helper.assertFalse(agent.getNavigator().isEnclosed(), "2x3 pit with 1-block step exit must not be marked enclosed");
+        helper.assertTrue(agent.getX() > spawnPos.getX() + 1.5, "Agent must exit pit toward target via 1-block step");
+        manager.despawnAgent(server, "agent-gt-pit2x3").join();
+        helper.succeed();
+    }
+
+    @GameTest(template = "empty3x3x3")
+    public static void testMotionEnclosedPitDigOutWithShovel(GameTestHelper helper) {
+        ServerLevel level = helper.getLevel();
+        MinecraftServer server = level.getServer();
+        AgentEntityManager manager = new AgentEntityManager();
+
+        // Build a fully enclosed 1x1x2-deep dirt pit around (1, 1, 1)
+        for (int x = 0; x <= 3; x++) {
+            for (int z = 0; z <= 3; z++) {
+                helper.setBlock(new BlockPos(x, 0, z), Blocks.STONE);
+                for (int y = 1; y <= 4; y++) {
+                    helper.setBlock(new BlockPos(x, y, z), Blocks.AIR);
+                }
+            }
+        }
+        int[][] ring = {{1, 0}, {-1, 0}, {0, 1}, {0, -1}, {1, 1}, {1, -1}, {-1, 1}, {-1, -1}};
+        for (int[] d : ring) {
+            helper.setBlock(new BlockPos(1 + d[0], 1, 1 + d[1]), Blocks.DIRT);
+            helper.setBlock(new BlockPos(1 + d[0], 2, 1 + d[1]), Blocks.DIRT);
+        }
+
+        BlockPos spawnPos = helper.absolutePos(new BlockPos(1, 1, 1));
+        BlockPos targetPos = helper.absolutePos(new BlockPos(3, 2, 1));
+        AgentEntity agent = manager.spawnAgent(server, level, SpawnAgentRequest.newBuilder()
+                .setAgentId("agent-gt-digout")
+                .setDisplayName("DigOutAgent")
+                .setClanId("clan-ironwood")
+                .setSpawnCoords(Vec3.newBuilder().setX(spawnPos.getX() + 0.5).setY(spawnPos.getY()).setZ(spawnPos.getZ() + 0.5).build())
+                .build()).join();
+
+        // Put iron shovel in non-selected slot 4 to verify tool selection equips it into mainhand
+        agent.getInventory().setItem(4, new ItemStack(Items.IRON_SHOVEL));
+        agent.getNavigator().navigate(targetPos.getX() + 0.5, targetPos.getY(), targetPos.getZ() + 0.5, 1.0f, false, true, false, 1);
+
+        boolean equippedShovel = false;
+        for (int t = 0; t < 40; t++) {
+            agent.tick();
+            if (agent.getMainHandItem().is(Items.IRON_SHOVEL)) {
+                equippedShovel = true;
+            }
+            appendMotionTrace("enclosed_pit_digout", t, agent);
+            if (helper.getBlockState(new BlockPos(2, 2, 1)).isAir()) {
+                break;
+            }
+        }
+
+        helper.assertTrue(equippedShovel, "Agent must equip the iron shovel when digging dirt");
+        helper.assertBlockNotPresent(Blocks.DIRT, new BlockPos(2, 2, 1));
+        manager.despawnAgent(server, "agent-gt-digout").join();
+        helper.succeed();
+    }
+
+    @GameTest(template = "empty3x3x3")
+    public static void testMotionWalkDefaultAndStaminaSprint(GameTestHelper helper) {
+        ServerLevel level = helper.getLevel();
+        MinecraftServer server = level.getServer();
+        AgentEntityManager manager = new AgentEntityManager();
+
+        BlockPos spawnPos = helper.absolutePos(new BlockPos(1, 1, 1));
+        AgentEntity agent = manager.spawnAgent(server, level, SpawnAgentRequest.newBuilder()
+                .setAgentId("agent-gt-stamina")
+                .setDisplayName("StaminaAgent")
+                .setClanId("clan-ironwood")
+                .setSpawnCoords(Vec3.newBuilder().setX(spawnPos.getX() + 0.5).setY(spawnPos.getY()).setZ(spawnPos.getZ() + 0.5).build())
+                .build()).join();
+
+        // 1. Default sprint=false walks and preserves full stamina
+        agent.getNavigator().navigate(spawnPos.getX() + 20.0, spawnPos.getY(), spawnPos.getZ() + 0.5, 1.0f, false, false, false, 1);
+        agent.tick();
+        helper.assertFalse(agent.isSprinting(), "Default navigation must walk, not sprint");
+        helper.assertTrue(agent.getStamina() == AgentNavigator.STAMINA_MAX, "Walking must not drain stamina");
+
+        // 2. Sprint=true drains stamina until exhausted
+        agent.getNavigator().navigate(spawnPos.getX() + 500.0, spawnPos.getY(), spawnPos.getZ() + 0.5, 1.0f, true, false, false, 1);
+        for (int t = 0; t < 200 && !agent.getNavigator().isExhausted(); t++) {
+            agent.getNavigator().setPosition(spawnPos.getX() + 0.5, spawnPos.getY(), spawnPos.getZ() + 0.5);
+            agent.getNavigator().setStuckTicks(0);
+            agent.tick();
+        }
+        helper.assertTrue(agent.getNavigator().isExhausted(), "Sustained sprinting must exhaust stamina");
+
+        manager.despawnAgent(server, "agent-gt-stamina").join();
+        helper.succeed();
+    }
+
+    @GameTest(template = "empty3x3x3")
+    public static void testMotionFluidHeadBodySmoothing(GameTestHelper helper) {
+        ServerLevel level = helper.getLevel();
+        MinecraftServer server = level.getServer();
+        AgentEntityManager manager = new AgentEntityManager();
+
+        BlockPos spawnPos = helper.absolutePos(new BlockPos(1, 1, 1));
+        AgentEntity agent = manager.spawnAgent(server, level, SpawnAgentRequest.newBuilder()
+                .setAgentId("agent-gt-smooth")
+                .setDisplayName("SmoothAgent")
+                .setClanId("clan-ironwood")
+                .setSpawnCoords(Vec3.newBuilder().setX(spawnPos.getX() + 0.5).setY(spawnPos.getY()).setZ(spawnPos.getZ() + 0.5).build())
+                .build()).join();
+
+        agent.setYRot(0.0f);
+        agent.yBodyRot = 0.0f;
+        agent.getNavigator().navigate(spawnPos.getX() + 15.0, spawnPos.getY(), spawnPos.getZ() - 15.0, 1.0f, false, false, false, 1);
+
+        float prevHead = agent.getNavigator().getHeadYaw();
+        float prevPitch = agent.getNavigator().getNavPitch();
+        for (int t = 0; t < 20; t++) {
+            agent.tick();
+            float head = agent.getNavigator().getHeadYaw();
+            float body = agent.getNavigator().getBodyYaw();
+            float pitch = agent.getNavigator().getNavPitch();
+            helper.assertTrue(Math.abs(LookSmoothing.wrap(head - prevHead)) <= 12.01f, "Head yaw delta must respect 12 deg/tick cap");
+            helper.assertTrue(Math.abs(pitch - prevPitch) <= 6.01f, "Pitch delta must respect 6 deg/tick cap");
+            helper.assertTrue(Math.abs(LookSmoothing.wrap(body - head)) <= 60.01f, "Body yaw must stay within 60 deg of head yaw");
+            prevHead = head;
+            prevPitch = pitch;
+            appendMotionTrace("fluid_head_body_smoothing", t, agent);
+        }
+
+        manager.despawnAgent(server, "agent-gt-smooth").join();
+        helper.succeed();
+    }
+
+    @GameTest(template = "empty3x3x3")
+    public static void testMotionDuskLogShelterConstruction(GameTestHelper helper) {
+        ServerLevel level = helper.getLevel();
+        MinecraftServer server = level.getServer();
+        AgentEntityManager manager = new AgentEntityManager();
+
+        for (int x = 0; x <= 2; x++) {
+            for (int z = 0; z <= 2; z++) {
+                helper.setBlock(new BlockPos(x, 0, z), Blocks.STONE);
+                helper.setBlock(new BlockPos(x, 1, z), Blocks.AIR);
+                helper.setBlock(new BlockPos(x, 2, z), Blocks.AIR);
+            }
+        }
+
+        BlockPos spawnPos = helper.absolutePos(new BlockPos(1, 1, 1));
+        AgentEntity agent = manager.spawnAgent(server, level, SpawnAgentRequest.newBuilder()
+                .setAgentId("agent-gt-shelter")
+                .setDisplayName("ShelterAgent")
+                .setClanId("clan-ironwood")
+                .setSpawnCoords(Vec3.newBuilder().setX(spawnPos.getX() + 0.5).setY(spawnPos.getY()).setZ(spawnPos.getZ() + 0.5).build())
+                .build()).join();
+
+        // Give agent 4 oak logs at dusk
+        agent.getInventory().add(new ItemStack(Items.OAK_LOG, 4));
+
+        // 1. Craft oak planks and campfire from logs
+        manager.handleIntent(server, AgentIntent.newBuilder()
+                .setAgentId("agent-gt-shelter")
+                .setCraftItem(CraftItemIntent.newBuilder().setRecipeId("minecraft:oak_planks").setBatchCount(1).build())
+                .build()).join();
+        manager.handleIntent(server, AgentIntent.newBuilder()
+                .setAgentId("agent-gt-shelter")
+                .setCraftItem(CraftItemIntent.newBuilder().setRecipeId("minecraft:campfire").setBatchCount(1).build())
+                .build()).join();
+
+        // 2. Place campfire and bottom-up oak_planks wall blocks around (1, 1, 1)
+        BlockPos absLight = helper.absolutePos(new BlockPos(2, 1, 2));
+        BlockPos absWallBottom = helper.absolutePos(new BlockPos(2, 1, 1));
+        BlockPos absWallTop = helper.absolutePos(new BlockPos(2, 2, 1));
+
+        manager.handleIntent(server, AgentIntent.newBuilder()
+                .setAgentId("agent-gt-shelter")
+                .setInteractBlock(InteractBlockIntent.newBuilder()
+                        .setPos(BlockPosProto.newBuilder().setX(absLight.getX()).setY(absLight.getY()).setZ(absLight.getZ()).build())
+                        .setInteractionType(InteractBlockIntent.InteractionType.PLACE_BLOCK)
+                        .setBlockOrItemId("minecraft:campfire")
+                        .build())
+                .build()).join();
+        manager.handleIntent(server, AgentIntent.newBuilder()
+                .setAgentId("agent-gt-shelter")
+                .setInteractBlock(InteractBlockIntent.newBuilder()
+                        .setPos(BlockPosProto.newBuilder().setX(absWallBottom.getX()).setY(absWallBottom.getY()).setZ(absWallBottom.getZ()).build())
+                        .setInteractionType(InteractBlockIntent.InteractionType.PLACE_BLOCK)
+                        .setBlockOrItemId("minecraft:oak_planks")
+                        .build())
+                .build()).join();
+        manager.handleIntent(server, AgentIntent.newBuilder()
+                .setAgentId("agent-gt-shelter")
+                .setInteractBlock(InteractBlockIntent.newBuilder()
+                        .setPos(BlockPosProto.newBuilder().setX(absWallTop.getX()).setY(absWallTop.getY()).setZ(absWallTop.getZ()).build())
+                        .setInteractionType(InteractBlockIntent.InteractionType.PLACE_BLOCK)
+                        .setBlockOrItemId("minecraft:oak_planks")
+                        .build())
+                .build()).join();
+
+        helper.assertBlockPresent(Blocks.CAMPFIRE, new BlockPos(2, 1, 2));
+        helper.assertBlockPresent(Blocks.OAK_PLANKS, new BlockPos(2, 1, 1));
+        helper.assertBlockPresent(Blocks.OAK_PLANKS, new BlockPos(2, 2, 1));
+
+        manager.despawnAgent(server, "agent-gt-shelter").join();
         helper.succeed();
     }
 }

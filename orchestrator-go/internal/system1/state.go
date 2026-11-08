@@ -55,6 +55,7 @@ type AgentState struct {
 	lastEatingTick       int64
 	lastSleepAttemptTick int64
 	lastShelterPlaceTick int64
+	shelterBlocksPlaced  int
 	lastHarvestTick      int64
 	lastCraftTick        int64
 	PavingTracker        *RoadPavingTracker
@@ -378,4 +379,24 @@ func (s *AgentState) SetLastShelterPlaceTick(tick int64) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.lastShelterPlaceTick = tick
+}
+
+// GetShelterBlocksPlaced returns the count of emergency shelter wall blocks placed during the current night.
+func (s *AgentState) GetShelterBlocksPlaced() int {
+	if s == nil {
+		return 0
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.shelterBlocksPlaced
+}
+
+// SetShelterBlocksPlaced updates the count of emergency shelter wall blocks placed.
+func (s *AgentState) SetShelterBlocksPlaced(count int) {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.shelterBlocksPlaced = count
 }

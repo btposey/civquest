@@ -132,8 +132,10 @@ public class SensoryFrustumCollector {
                 .setIsInWater(agent.isInWater())
                 .setIsOnFire(agent.isOnFire())
                 .setNavigationState(agent.getNavigator() != null
-                        ? agent.getNavigator().getNavigationState()
-                        : NavigationState.NAVIGATION_STATE_IDLE);
+                        ? agent.getNavigator().getReportedNavigationState()
+                        : NavigationState.NAVIGATION_STATE_IDLE)
+                .setStamina((float) agent.getStamina())
+                .setNavigationEnclosed(agent.getNavigator() != null && agent.getNavigator().isEnclosed());
 
         if (agent.getFoodData() != null) {
             statusBuilder.setFoodLevel(agent.getFoodData().getFoodLevel());
@@ -313,9 +315,16 @@ public class SensoryFrustumCollector {
         BlockPos feetPos = center;
         BlockPos belowFeet = feetPos.below();
 
-        // Explicitly sample blocks at and directly below agent's feet
-        for (BlockPos footPos : new BlockPos[]{feetPos, belowFeet}) {
-            if (level.hasChunkAt(footPos)) {
+        // Explicitly sample blocks at and directly below agent's feet, plus adjacent cardinal blocks at Y and Y+1
+        List<BlockPos> immediateSamples = new ArrayList<>();
+        immediateSamples.add(feetPos);
+        immediateSamples.add(belowFeet);
+        for (net.minecraft.core.Direction dir : net.minecraft.core.Direction.Plane.HORIZONTAL) {
+            immediateSamples.add(feetPos.relative(dir));
+            immediateSamples.add(feetPos.above().relative(dir));
+        }
+        for (BlockPos footPos : immediateSamples) {
+            if (level.hasChunkAt(footPos) && !addedPositions.contains(footPos)) {
                 BlockState state = level.getBlockState(footPos);
                 if (!state.isAir()) {
                     String blockId = BuiltInRegistries.BLOCK.getKey(state.getBlock()).toString();

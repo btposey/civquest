@@ -124,6 +124,7 @@ type AgentRuntime struct {
 	lastEatingTick     int64
 	lastFleeTarget     *civquestv1.Vec3
 	lastFleeTick       int64
+	lastMotionLogTick  int64
 
 	// System 1 Reflexes and Safe Node Graph Cache
 	safeNodesCache        []db.MapNode
@@ -2086,6 +2087,16 @@ func (r *AgentRuntime) evaluateSystem1Reflexes(frame *civquestv1.TelemetryFrame)
 		return
 	}
 
+	// Motion telemetry: stamina / navigation state sampled every 100 ticks into the debug log
+	if r.debugLogger != nil && (r.lastMotionLogTick == 0 || frame.WorldTick < r.lastMotionLogTick || frame.WorldTick-r.lastMotionLogTick >= 100) {
+		r.lastMotionLogTick = frame.WorldTick
+		r.debugLogger.Emit(frame.WorldTick, "MOTION", fmt.Sprintf("stamina=%.1f nav=%s", frame.Status.Stamina, frame.Status.NavigationState.String()), map[string]any{
+			"stamina":             frame.Status.Stamina,
+			"navigation_state":    frame.Status.NavigationState.String(),
+			"navigation_enclosed": frame.Status.NavigationEnclosed,
+		})
+	}
+
 	// 1. Evaluate Combat Reflexes
 	hostilesPresent := false
 	for _, e := range frame.VisibleEntities {
@@ -2326,7 +2337,9 @@ func (r *AgentRuntime) evaluateSystem1Reflexes(frame *civquestv1.TelemetryFrame)
 	}
 
 	// 4. Evaluate Road Paving Reflex
-	if frame.Status != nil && !frame.Status.IsSleeping && r.pavingTracker != nil {
+	if frame.Status != nil && !frame.Status.IsSleeping && r.pavingTracker != nil &&
+		frame.Status.NavigationState != civquestv1.NavigationState_NAVIGATION_STATE_STUCK && !frame.Status.NavigationEnclosed {
+		// Never lay path blocks while navigation is stuck (e.g. trapped in a pit).
 		if paveIntent := r.pavingTracker.EvaluatePaving(r.agentID, frame); paveIntent != nil {
 			_ = r.QueueIntent(paveIntent)
 		}

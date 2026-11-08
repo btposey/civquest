@@ -315,6 +315,36 @@ private static final long serialVersionUID = 0L;
   }
   private int leashedEntityIdsMemoizedSerializedSize = -1;
 
+  public static final int STAMINA_FIELD_NUMBER = 16;
+  private float stamina_ = 0F;
+  /**
+   * <pre>
+   * 0 - 100 sprint stamina
+   * </pre>
+   *
+   * <code>float stamina = 16;</code>
+   * @return The stamina.
+   */
+  @java.lang.Override
+  public float getStamina() {
+    return stamina_;
+  }
+
+  public static final int NAVIGATION_ENCLOSED_FIELD_NUMBER = 17;
+  private boolean navigationEnclosed_ = false;
+  /**
+   * <pre>
+   * true when local BFS finds no exit (pit / sealed pocket)
+   * </pre>
+   *
+   * <code>bool navigation_enclosed = 17;</code>
+   * @return The navigationEnclosed.
+   */
+  @java.lang.Override
+  public boolean getNavigationEnclosed() {
+    return navigationEnclosed_;
+  }
+
   private byte memoizedIsInitialized = -1;
   @java.lang.Override
   public final boolean isInitialized() {
@@ -378,6 +408,12 @@ private static final long serialVersionUID = 0L;
     }
     for (int i = 0; i < leashedEntityIds_.size(); i++) {
       output.writeInt32NoTag(leashedEntityIds_.getInt(i));
+    }
+    if (java.lang.Float.floatToRawIntBits(stamina_) != 0) {
+      output.writeFloat(16, stamina_);
+    }
+    if (navigationEnclosed_ != false) {
+      output.writeBool(17, navigationEnclosed_);
     }
     getUnknownFields().writeTo(output);
   }
@@ -457,6 +493,14 @@ private static final long serialVersionUID = 0L;
       }
       leashedEntityIdsMemoizedSerializedSize = dataSize;
     }
+    if (java.lang.Float.floatToRawIntBits(stamina_) != 0) {
+      size += com.google.protobuf.CodedOutputStream
+        .computeFloatSize(16, stamina_);
+    }
+    if (navigationEnclosed_ != false) {
+      size += com.google.protobuf.CodedOutputStream
+        .computeBoolSize(17, navigationEnclosed_);
+    }
     size += getUnknownFields().getSerializedSize();
     memoizedSize = size;
     return size;
@@ -509,6 +553,11 @@ private static final long serialVersionUID = 0L;
         .equals(other.getInventoryList())) return false;
     if (!getLeashedEntityIdsList()
         .equals(other.getLeashedEntityIdsList())) return false;
+    if (java.lang.Float.floatToIntBits(getStamina())
+        != java.lang.Float.floatToIntBits(
+            other.getStamina())) return false;
+    if (getNavigationEnclosed()
+        != other.getNavigationEnclosed()) return false;
     if (!getUnknownFields().equals(other.getUnknownFields())) return false;
     return true;
   }
@@ -564,6 +613,12 @@ private static final long serialVersionUID = 0L;
       hash = (37 * hash) + LEASHED_ENTITY_IDS_FIELD_NUMBER;
       hash = (53 * hash) + getLeashedEntityIdsList().hashCode();
     }
+    hash = (37 * hash) + STAMINA_FIELD_NUMBER;
+    hash = (53 * hash) + java.lang.Float.floatToIntBits(
+        getStamina());
+    hash = (37 * hash) + NAVIGATION_ENCLOSED_FIELD_NUMBER;
+    hash = (53 * hash) + com.google.protobuf.Internal.hashBoolean(
+        getNavigationEnclosed());
     hash = (29 * hash) + getUnknownFields().hashCode();
     memoizedHashCode = hash;
     return hash;
@@ -727,6 +782,8 @@ private static final long serialVersionUID = 0L;
       }
       bitField0_ = (bitField0_ & ~0x00002000);
       leashedEntityIds_ = emptyIntList();
+      stamina_ = 0F;
+      navigationEnclosed_ = false;
       return this;
     }
 
@@ -820,6 +877,12 @@ private static final long serialVersionUID = 0L;
         leashedEntityIds_.makeImmutable();
         result.leashedEntityIds_ = leashedEntityIds_;
       }
+      if (((from_bitField0_ & 0x00008000) != 0)) {
+        result.stamina_ = stamina_;
+      }
+      if (((from_bitField0_ & 0x00010000) != 0)) {
+        result.navigationEnclosed_ = navigationEnclosed_;
+      }
       result.bitField0_ |= to_bitField0_;
     }
 
@@ -912,6 +975,12 @@ private static final long serialVersionUID = 0L;
           leashedEntityIds_.addAll(other.leashedEntityIds_);
         }
         onChanged();
+      }
+      if (other.getStamina() != 0F) {
+        setStamina(other.getStamina());
+      }
+      if (other.getNavigationEnclosed() != false) {
+        setNavigationEnclosed(other.getNavigationEnclosed());
       }
       this.mergeUnknownFields(other.getUnknownFields());
       onChanged();
@@ -1035,6 +1104,16 @@ private static final long serialVersionUID = 0L;
               input.popLimit(limit);
               break;
             } // case 122
+            case 133: {
+              stamina_ = input.readFloat();
+              bitField0_ |= 0x00008000;
+              break;
+            } // case 133
+            case 136: {
+              navigationEnclosed_ = input.readBool();
+              bitField0_ |= 0x00010000;
+              break;
+            } // case 136
             default: {
               if (!super.parseUnknownField(input, extensionRegistry, tag)) {
                 done = true; // was an endgroup tag
@@ -1950,6 +2029,94 @@ private static final long serialVersionUID = 0L;
     public Builder clearLeashedEntityIds() {
       leashedEntityIds_ = emptyIntList();
       bitField0_ = (bitField0_ & ~0x00004000);
+      onChanged();
+      return this;
+    }
+
+    private float stamina_ ;
+    /**
+     * <pre>
+     * 0 - 100 sprint stamina
+     * </pre>
+     *
+     * <code>float stamina = 16;</code>
+     * @return The stamina.
+     */
+    @java.lang.Override
+    public float getStamina() {
+      return stamina_;
+    }
+    /**
+     * <pre>
+     * 0 - 100 sprint stamina
+     * </pre>
+     *
+     * <code>float stamina = 16;</code>
+     * @param value The stamina to set.
+     * @return This builder for chaining.
+     */
+    public Builder setStamina(float value) {
+
+      stamina_ = value;
+      bitField0_ |= 0x00008000;
+      onChanged();
+      return this;
+    }
+    /**
+     * <pre>
+     * 0 - 100 sprint stamina
+     * </pre>
+     *
+     * <code>float stamina = 16;</code>
+     * @return This builder for chaining.
+     */
+    public Builder clearStamina() {
+      bitField0_ = (bitField0_ & ~0x00008000);
+      stamina_ = 0F;
+      onChanged();
+      return this;
+    }
+
+    private boolean navigationEnclosed_ ;
+    /**
+     * <pre>
+     * true when local BFS finds no exit (pit / sealed pocket)
+     * </pre>
+     *
+     * <code>bool navigation_enclosed = 17;</code>
+     * @return The navigationEnclosed.
+     */
+    @java.lang.Override
+    public boolean getNavigationEnclosed() {
+      return navigationEnclosed_;
+    }
+    /**
+     * <pre>
+     * true when local BFS finds no exit (pit / sealed pocket)
+     * </pre>
+     *
+     * <code>bool navigation_enclosed = 17;</code>
+     * @param value The navigationEnclosed to set.
+     * @return This builder for chaining.
+     */
+    public Builder setNavigationEnclosed(boolean value) {
+
+      navigationEnclosed_ = value;
+      bitField0_ |= 0x00010000;
+      onChanged();
+      return this;
+    }
+    /**
+     * <pre>
+     * true when local BFS finds no exit (pit / sealed pocket)
+     * </pre>
+     *
+     * <code>bool navigation_enclosed = 17;</code>
+     * @return This builder for chaining.
+     */
+    public Builder clearNavigationEnclosed() {
+      bitField0_ = (bitField0_ & ~0x00010000);
+      navigationEnclosed_ = false;
       onChanged();
       return this;
     }

@@ -542,7 +542,7 @@ func (s *CompanionService) EvaluateFollowNavigation(agentPos, playerPos *civques
 		return false, nil
 	}
 
-	sprint := dist > 10.0
+	sprint := dist > 16.0 // walk by default; only sprint to catch up when far behind
 	speedMultiplier := float32(1.0)
 	if sprint {
 		speedMultiplier = 1.25

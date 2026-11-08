@@ -151,4 +151,24 @@ public interface AgentStatusOrBuilder extends
    * @return The leashedEntityIds at the given index.
    */
   int getLeashedEntityIds(int index);
+
+  /**
+   * <pre>
+   * 0 - 100 sprint stamina
+   * </pre>
+   *
+   * <code>float stamina = 16;</code>
+   * @return The stamina.
+   */
+  float getStamina();
+
+  /**
+   * <pre>
+   * true when local BFS finds no exit (pit / sealed pocket)
+   * </pre>
+   *
+   * <code>bool navigation_enclosed = 17;</code>
+   * @return The navigationEnclosed.
+   */
+  boolean getNavigationEnclosed();
 }

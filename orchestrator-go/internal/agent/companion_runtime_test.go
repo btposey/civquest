@@ -392,8 +392,8 @@ func TestRuntime_CompanionFollowNavigationAndCampingOverride(t *testing.T) {
 		if nav.Target.X != 22 || nav.Target.Z != 10 {
 			t.Errorf("expected nav target (22, 64, 10), got %+v", nav.Target)
 		}
-		if !nav.Sprint {
-			t.Errorf("expected sprinting for distance 12")
+		if nav.Sprint {
+			t.Errorf("expected walking (no sprint) for distance 12")
 		}
 	case <-time.After(500 * time.Millisecond):
 		t.Fatal("expected NavigateIntent to be queued for follow")

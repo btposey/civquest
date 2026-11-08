@@ -308,6 +308,8 @@ func EvaluateGoals(frame *civquestv1.TelemetryFrame, cfg *xdg.AgentIdentityConfi
 			immediate = "SLEEPING: Resting safely until dawn"
 		} else if state != nil && state.GetAssignedBed() != nil {
 			immediate = "SEEK_BED_SHELTER: Return to assigned bed and sleep through the night"
+		} else if inv.buildingBlockCount > 0 && (state == nil || state.GetShelterBlocksPlaced() < len(shelterWallOffsets)) {
+			immediate = "BUILD_SHELTER: Construct protective night shelter and light source from carried blocks"
 		} else {
 			immediate = "ESTABLISH_OUTPOST: Secure and light forward outpost shelter for the night"
 		}
@@ -333,20 +335,24 @@ func EvaluateGoals(frame *civquestv1.TelemetryFrame, cfg *xdg.AgentIdentityConfi
 }
 
 type bootstrapInventorySummary struct {
-	logCount     int32
-	planksCount  int32
-	stickCount   int32
-	cobbleCount  int32
-	hasAxe       bool
-	hasSword     bool
-	hasWeapon    bool
-	hasStoneGear bool
-	hasLight     bool
-	lightItemID  string
+	logCount            int32
+	planksCount         int32
+	stickCount          int32
+	cobbleCount         int32
+	nonLogBuildingCount int32
+	buildingBlockCount  int32
+	placeableBlockID    string
+	hasAxe              bool
+	hasSword            bool
+	hasWeapon           bool
+	hasStoneGear        bool
+	hasLight            bool
+	lightItemID         string
 }
 
 func inspectBootstrapInventory(inventory []*civquestv1.ItemStackProto) bootstrapInventorySummary {
 	var s bootstrapInventorySummary
+	var firstPlankID, firstSolidID, firstLogID string
 	for _, it := range inventory {
 		if it == nil || it.Count <= 0 || it.ItemId == "" {
 			continue
@@ -355,12 +361,33 @@ func inspectBootstrapInventory(inventory []*civquestv1.ItemStackProto) bootstrap
 		switch {
 		case strings.HasSuffix(id, "_log") || strings.HasSuffix(id, "_wood") || strings.HasSuffix(id, "_stem"):
 			s.logCount += it.Count
+			s.buildingBlockCount += it.Count
+			if firstLogID == "" {
+				firstLogID = it.ItemId
+			}
 		case strings.HasSuffix(id, "_planks"):
 			s.planksCount += it.Count
+			s.nonLogBuildingCount += it.Count
+			s.buildingBlockCount += it.Count
+			if firstPlankID == "" {
+				firstPlankID = it.ItemId
+			}
 		case id == "minecraft:stick" || strings.HasSuffix(id, ":stick") || id == "stick":
 			s.stickCount += it.Count
 		case strings.Contains(id, "cobblestone") || strings.Contains(id, "cobbled_deepslate") || strings.Contains(id, "blackstone"):
 			s.cobbleCount += it.Count
+			s.nonLogBuildingCount += it.Count
+			s.buildingBlockCount += it.Count
+			if firstSolidID == "" {
+				firstSolidID = it.ItemId
+			}
+		case id == "minecraft:dirt" || strings.HasSuffix(id, ":dirt") || id == "dirt" ||
+			id == "minecraft:stone" || strings.HasSuffix(id, ":stone") || id == "stone":
+			s.nonLogBuildingCount += it.Count
+			s.buildingBlockCount += it.Count
+			if firstSolidID == "" {
+				firstSolidID = it.ItemId
+			}
 		}
 		if strings.Contains(id, "_axe") {
 			s.hasAxe = true
@@ -382,7 +409,93 @@ func inspectBootstrapInventory(inventory []*civquestv1.ItemStackProto) bootstrap
 			}
 		}
 	}
+	switch {
+	case firstPlankID != "":
+		s.placeableBlockID = firstPlankID
+	case firstSolidID != "":
+		s.placeableBlockID = firstSolidID
+	case firstLogID != "":
+		s.placeableBlockID = firstLogID
+	}
 	return s
+}
+
+// shelterWallOffsets defines the 4 cardinal shelter wall positions around the outpost center,
+// ordered strictly bottom-up (dy=0 first, then dy=1, per ADR-010).
+var shelterWallOffsets = [][3]int32{
+	{1, 0, 0},
+	{-1, 0, 0},
+	{0, 0, 1},
+	{0, 0, -1},
+	{1, 1, 0},
+	{-1, 1, 0},
+	{0, 1, 1},
+	{0, 1, -1},
+}
+
+func findObstructingBlockToDig(frame *civquestv1.TelemetryFrame, pos *civquestv1.Vec3) *civquestv1.VisibleBlock {
+	if frame == nil || pos == nil {
+		return nil
+	}
+	bx := int32(math.Floor(pos.X))
+	by := int32(math.Floor(pos.Y))
+	bz := int32(math.Floor(pos.Z))
+
+	var bestHead, bestFeet *civquestv1.VisibleBlock
+	bestHeadDist := math.MaxFloat64
+	bestFeetDist := math.MaxFloat64
+
+	for _, b := range frame.InterestingBlocks {
+		if b == nil || b.Pos == nil {
+			continue
+		}
+		if b.Pos.X == bx && b.Pos.Z == bz {
+			continue
+		}
+		if b.Pos.Y != by && b.Pos.Y != by+1 {
+			continue
+		}
+		id := strings.ToLower(strings.TrimSpace(b.BlockId))
+		if !isDiggableObstruction(id) {
+			continue
+		}
+		dx := float64(b.Pos.X) + 0.5 - pos.X
+		dz := float64(b.Pos.Z) + 0.5 - pos.Z
+		hDist := math.Hypot(dx, dz)
+		if hDist > 2.5 {
+			continue
+		}
+		if b.Pos.Y == by+1 {
+			if hDist < bestHeadDist {
+				bestHeadDist = hDist
+				bestHead = b
+			}
+		} else {
+			if hDist < bestFeetDist {
+				bestFeetDist = hDist
+				bestFeet = b
+			}
+		}
+	}
+	if bestHead != nil {
+		return bestHead
+	}
+	return bestFeet
+}
+
+func isDiggableObstruction(id string) bool {
+	return strings.Contains(id, "dirt") ||
+		strings.Contains(id, "grass_block") ||
+		strings.HasSuffix(id, ":stone") || id == "stone" ||
+		strings.Contains(id, "cobblestone") ||
+		strings.Contains(id, "cobbled_deepslate") ||
+		strings.Contains(id, "sand") ||
+		strings.Contains(id, "gravel") ||
+		strings.HasSuffix(id, "_log") ||
+		strings.HasSuffix(id, "_wood") ||
+		strings.HasSuffix(id, "_stem") ||
+		strings.HasSuffix(id, "_planks") ||
+		strings.Contains(id, "leaves")
 }
 
 // EvaluateExploration computes autonomous frontier scouting waypoints, bootstrap timber/tool gathering,
@@ -421,9 +534,35 @@ func EvaluateExploration(agentID string, frame *civquestv1.TelemetryFrame, cfg *
 	}
 
 	navState := frame.Status.NavigationState
+	tod := ((frame.TimeOfDay % 24000) + 24000) % 24000
+	isDuskOrNight := tod >= 11500 && tod < 23500
+	isThunder := frame.Weather == civquestv1.Weather_WEATHER_THUNDER
+	if !isDuskOrNight && !isThunder {
+		state.shelterBlocksPlaced = 0
+	}
 
-	// 1. Immediate terrain/hill unsticking when navigation reports NAVIGATION_STATE_STUCK
+	// 1. Immediate terrain/hill unsticking or tool-aware dig-out when navigation reports NAVIGATION_STATE_STUCK
 	if navState == civquestv1.NavigationState_NAVIGATION_STATE_STUCK {
+		if obstruct := findObstructingBlockToDig(frame, pos); obstruct != nil {
+			if state.lastHarvestTick == 0 || frame.WorldTick < state.lastHarvestTick || frame.WorldTick-state.lastHarvestTick >= 20 {
+				state.lastHarvestTick = frame.WorldTick
+				return &civquestv1.AgentIntent{
+					AgentId: agentID,
+					Action: &civquestv1.AgentIntent_InteractBlock{
+						InteractBlock: &civquestv1.InteractBlockIntent{
+							Pos:             obstruct.Pos,
+							InteractionType: civquestv1.InteractBlockIntent_HARVEST_BREAK,
+							BlockOrItemId:   obstruct.BlockId,
+						},
+					},
+				}
+			}
+		}
+		if (isDuskOrNight || isThunder) && state.AssignedBed == nil {
+			if shelterIntent := evaluateDuskNightOutpostShelterLocked(agentID, frame, pos, navState, state); shelterIntent != nil {
+				return shelterIntent
+			}
+		}
 		if frame.WorldTick >= state.lastExploreTick && frame.WorldTick-state.lastExploreTick < 20 {
 			return nil
 		}
@@ -455,10 +594,6 @@ func EvaluateExploration(agentID string, frame *civquestv1.TelemetryFrame, cfg *
 	if state.telemetryFramesSeen < 2 {
 		return nil
 	}
-
-	tod := ((frame.TimeOfDay % 24000) + 24000) % 24000
-	isDuskOrNight := tod >= 11500 && tod < 23500
-	isThunder := frame.Weather == civquestv1.Weather_WEATHER_THUNDER
 
 	// 2. Dusk & Night Shelter / Forward Outpost Reflex (do NOT wander outward at dusk or night!)
 	if isDuskOrNight || isThunder {
@@ -581,7 +716,8 @@ func evaluateDuskNightOutpostShelterLocked(
 	}
 
 	distToShelter := math.Hypot(pos.X-targetX, pos.Z-targetZ)
-	if distToShelter > 4.0 {
+	isStuckOrEnclosed := navState == civquestv1.NavigationState_NAVIGATION_STATE_STUCK || frame.Status.GetNavigationEnclosed()
+	if distToShelter > 4.0 && !isStuckOrEnclosed {
 		if navState == civquestv1.NavigationState_NAVIGATION_STATE_PATHING {
 			return nil
 		}
@@ -605,7 +741,25 @@ func evaluateDuskNightOutpostShelterLocked(
 		}
 	}
 
-	// Within 4.0 blocks of shelter/outpost at dusk/night: check if a campfire or torch is nearby
+	inv := inspectBootstrapInventory(frame.Status.Inventory)
+	canCraft := state.lastCraftTick == 0 || frame.WorldTick < state.lastCraftTick || frame.WorldTick-state.lastCraftTick >= 20
+	canPlace := state.lastShelterPlaceTick == 0 || frame.WorldTick < state.lastShelterPlaceTick || frame.WorldTick-state.lastShelterPlaceTick >= 20
+
+	// 1. Convert logs in inventory into oak_planks if fewer than 8 non-log building blocks are available
+	if inv.logCount >= 2 && inv.nonLogBuildingCount < 8 && canCraft {
+		state.lastCraftTick = frame.WorldTick
+		return &civquestv1.AgentIntent{
+			AgentId: agentID,
+			Action: &civquestv1.AgentIntent_CraftItem{
+				CraftItem: &civquestv1.CraftItemIntent{
+					RecipeId:   "minecraft:oak_planks",
+					BatchCount: 1,
+				},
+			},
+		}
+	}
+
+	// 2. Check if a campfire, torch, or lantern is nearby within 8.0 blocks
 	hasNearbyLight := false
 	for _, b := range frame.InterestingBlocks {
 		if b != nil && b.Pos != nil {
@@ -619,29 +773,33 @@ func evaluateDuskNightOutpostShelterLocked(
 		}
 	}
 
-	if !hasNearbyLight && (state.lastShelterPlaceTick == 0 || frame.WorldTick < state.lastShelterPlaceTick || frame.WorldTick-state.lastShelterPlaceTick >= 600) {
-		inv := inspectBootstrapInventory(frame.Status.Inventory)
-		if inv.hasLight {
+	cx := int32(math.Floor(pos.X))
+	cy := int32(math.Floor(pos.Y))
+	cz := int32(math.Floor(pos.Z))
+
+	if !hasNearbyLight {
+		if inv.hasLight && canPlace {
 			state.lastShelterPlaceTick = frame.WorldTick
-			placePos := &civquestv1.BlockPosProto{
-				X: int32(math.Floor(pos.X)) + 1,
-				Y: int32(math.Floor(pos.Y)),
-				Z: int32(math.Floor(pos.Z)),
+			lightPos := &civquestv1.BlockPosProto{
+				X: cx + 1,
+				Y: cy,
+				Z: cz + 1,
 			}
-			state.ShelterPos = placePos
+			if state.ShelterPos == nil {
+				state.ShelterPos = &civquestv1.BlockPosProto{X: cx, Y: cy, Z: cz}
+			}
 			return &civquestv1.AgentIntent{
 				AgentId: agentID,
 				Action: &civquestv1.AgentIntent_InteractBlock{
 					InteractBlock: &civquestv1.InteractBlockIntent{
-						Pos:             placePos,
+						Pos:             lightPos,
 						InteractionType: civquestv1.InteractBlockIntent_PLACE_BLOCK,
 						BlockOrItemId:   inv.lightItemID,
 					},
 				},
 			}
 		}
-		if (inv.logCount >= 1 || inv.planksCount >= 1 || inv.stickCount >= 1) &&
-			(state.lastCraftTick == 0 || frame.WorldTick < state.lastCraftTick || frame.WorldTick-state.lastCraftTick >= 20) {
+		if !inv.hasLight && (inv.logCount >= 1 || inv.planksCount >= 1 || inv.stickCount >= 1) && canCraft {
 			state.lastCraftTick = frame.WorldTick
 			return &civquestv1.AgentIntent{
 				AgentId: agentID,
@@ -652,6 +810,31 @@ func evaluateDuskNightOutpostShelterLocked(
 					},
 				},
 			}
+		}
+	}
+
+	// 3. Progressively build bottom-up protective shelter walls (dy=0 first, then dy=1, per ADR-010)
+	if inv.buildingBlockCount > 0 && inv.placeableBlockID != "" && state.shelterBlocksPlaced < len(shelterWallOffsets) && canPlace {
+		if state.ShelterPos == nil {
+			state.ShelterPos = &civquestv1.BlockPosProto{X: cx, Y: cy, Z: cz}
+		}
+		off := shelterWallOffsets[state.shelterBlocksPlaced]
+		state.shelterBlocksPlaced++
+		state.lastShelterPlaceTick = frame.WorldTick
+		wallPos := &civquestv1.BlockPosProto{
+			X: state.ShelterPos.X + off[0],
+			Y: state.ShelterPos.Y + off[1],
+			Z: state.ShelterPos.Z + off[2],
+		}
+		return &civquestv1.AgentIntent{
+			AgentId: agentID,
+			Action: &civquestv1.AgentIntent_InteractBlock{
+				InteractBlock: &civquestv1.InteractBlockIntent{
+					Pos:             wallPos,
+					InteractionType: civquestv1.InteractBlockIntent_PLACE_BLOCK,
+					BlockOrItemId:   inv.placeableBlockID,
+				},
+			},
 		}
 	}
 
