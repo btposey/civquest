@@ -889,3 +889,308 @@ func TestRuntime_DefensiveCopies(t *testing.T) {
 	cancel()
 	_ = <-runErrCh
 }
+
+func TestRuntime_System1_PanicCombatReflexes(t *testing.T) {
+	mockSvc, client, cleanup := setupTestBridge(t)
+	defer cleanup()
+
+	tmpDir := t.TempDir()
+	resolver := xdg.NewResolver(xdg.WithCustomRoot(tmpDir))
+	_ = resolver.InitAgentDirectories("panic_agent")
+
+	cfg := agent.Config{
+		AgentID:      "panic_agent",
+		ClanID:       "pioneers",
+		Resolver:     resolver,
+		BridgeClient: client,
+	}
+
+	rt, err := agent.NewRuntime(cfg)
+	if err != nil {
+		t.Fatalf("failed creating runtime: %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	runErrCh := make(chan error, 1)
+	go func() {
+		runErrCh <- rt.Start(ctx)
+	}()
+
+	select {
+	case <-mockSvc.streamReady:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for stream readiness")
+	}
+
+	// Drain initial handshake intent
+	select {
+	case <-mockSvc.intentCh:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for handshake intent")
+	}
+
+	// Send frame with a hissing creeper 3 blocks away and agent low health with steak
+	creeperFrame := &civquestv1.TelemetryFrame{
+		WorldTick: 100,
+		Status: &civquestv1.AgentStatus{
+			AgentId:   "panic_agent",
+			Health:    12.0,
+			MaxHealth: 20.0,
+			FoodLevel: 10,
+			Position:  &civquestv1.Vec3{X: 100, Y: 64, Z: 100},
+			Inventory: []*civquestv1.ItemStackProto{
+				{ItemId: "minecraft:steak", Count: 4, Slot: 2},
+			},
+		},
+		VisibleEntities: []*civquestv1.VisibleEntity{
+			{
+				EntityId:   55,
+				EntityType: "minecraft:creeper",
+				Distance:   3.0,
+				IsHostile:  true,
+				FuseTicks:  15, // hissing!
+				Position:   &civquestv1.Vec3{X: 103, Y: 64, Z: 100},
+			},
+		},
+	}
+
+	if err := mockSvc.SendFrame(creeperFrame); err != nil {
+		t.Fatalf("failed sending frame: %v", err)
+	}
+
+	// Expect panic intents: Attack (raise shield + flee), Navigate (sprint away), UseItem (eat steak)
+	var gotAttack, gotNavigate, gotUseItem bool
+	deadline := time.After(2 * time.Second)
+
+	for !gotAttack || !gotNavigate || !gotUseItem {
+		select {
+		case intent := <-mockSvc.intentCh:
+			if att := intent.GetAttack(); att != nil {
+				gotAttack = true
+				if !att.RaiseShield || !att.FleeImmediately {
+					t.Errorf("expected panic attack intent to raise shield and flee immediately, got %+v", att)
+				}
+				if att.TargetEntityId != 55 {
+					t.Errorf("expected target entity ID 55, got %d", att.TargetEntityId)
+				}
+			}
+			if nav := intent.GetNavigate(); nav != nil {
+				gotNavigate = true
+				if !nav.Sprint {
+					t.Errorf("expected panic navigate intent to sprint")
+				}
+				if nav.Target.X >= 100 {
+					t.Errorf("expected flee target away from creeper (X < 100), got %f", nav.Target.X)
+				}
+			}
+			if use := intent.GetUseItem(); use != nil {
+				gotUseItem = true
+				if use.InventorySlot != 2 || !use.IsEatingOrDrinking {
+					t.Errorf("expected UseItem on slot 2 with is_eating=true, got %+v", use)
+				}
+			}
+		case <-deadline:
+			t.Fatalf("timed out waiting for panic intents: gotAttack=%v, gotNav=%v, gotUseItem=%v", gotAttack, gotNavigate, gotUseItem)
+		}
+	}
+
+	cancel()
+	_ = <-runErrCh
+}
+
+func TestRuntime_System1_ConfidentStandReflexes(t *testing.T) {
+	mockSvc, client, cleanup := setupTestBridge(t)
+	defer cleanup()
+
+	tmpDir := t.TempDir()
+	resolver := xdg.NewResolver(xdg.WithCustomRoot(tmpDir))
+	_ = resolver.InitAgentDirectories("confident_agent")
+
+	cfg := agent.Config{
+		AgentID:  "confident_agent",
+		ClanID:   "pioneers",
+		Resolver: resolver,
+		IdentityConfig: &xdg.AgentIdentityConfig{
+			Name:   "confident_agent",
+			ClanID: "pioneers",
+			Traits: xdg.AgentTraits{
+				Bravery:         0.9,
+				Industriousness: 0.5,
+				Sociability:     0.5,
+				Curiosity:       0.5,
+				Aggressiveness:  0.8,
+			},
+		},
+		BridgeClient: client,
+	}
+
+	rt, err := agent.NewRuntime(cfg)
+	if err != nil {
+		t.Fatalf("failed creating runtime: %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	runErrCh := make(chan error, 1)
+	go func() {
+		runErrCh <- rt.Start(ctx)
+	}()
+
+	select {
+	case <-mockSvc.streamReady:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for stream readiness")
+	}
+
+	// Drain initial handshake intent
+	select {
+	case <-mockSvc.intentCh:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for handshake intent")
+	}
+
+	// Send frame with full diamond gear facing 1 skeleton (ranged)
+	skeletonFrame := &civquestv1.TelemetryFrame{
+		WorldTick: 200,
+		Status: &civquestv1.AgentStatus{
+			AgentId:   "confident_agent",
+			Health:    20.0,
+			MaxHealth: 20.0,
+			FoodLevel: 20,
+			Position:  &civquestv1.Vec3{X: 50, Y: 64, Z: 50},
+			Inventory: []*civquestv1.ItemStackProto{
+				{ItemId: "minecraft:diamond_helmet", Count: 1, Slot: 103},
+				{ItemId: "minecraft:diamond_chestplate", Count: 1, Slot: 102},
+				{ItemId: "minecraft:diamond_leggings", Count: 1, Slot: 101},
+				{ItemId: "minecraft:diamond_boots", Count: 1, Slot: 100},
+				{ItemId: "minecraft:diamond_sword", Count: 1, Slot: 0},
+				{ItemId: "minecraft:shield", Count: 1, Slot: 40},
+			},
+		},
+		VisibleEntities: []*civquestv1.VisibleEntity{
+			{
+				EntityId:   88,
+				EntityType: "minecraft:skeleton",
+				Distance:   10.0,
+				IsHostile:  true,
+				Position:   &civquestv1.Vec3{X: 60, Y: 64, Z: 50},
+				HeldItemId: "minecraft:bow",
+			},
+		},
+	}
+
+	if err := mockSvc.SendFrame(skeletonFrame); err != nil {
+		t.Fatalf("failed sending frame: %v", err)
+	}
+
+	// Expect Confident Stand AttackIntent: target_entity_id=88, raise_shield=true (ranged), keep_distance_kite=true, flee_immediately=false
+	select {
+	case intent := <-mockSvc.intentCh:
+		att := intent.GetAttack()
+		if att == nil {
+			t.Fatalf("expected AttackIntent, got %+v", intent)
+		}
+		if att.TargetEntityId != 88 {
+			t.Errorf("expected target entity ID 88, got %d", att.TargetEntityId)
+		}
+		if !att.RaiseShield {
+			t.Errorf("expected raise_shield = true when facing ranged skeleton")
+		}
+		if !att.KeepDistanceKite {
+			t.Errorf("expected keep_distance_kite = true")
+		}
+		if att.FleeImmediately {
+			t.Errorf("expected flee_immediately = false for confident stand")
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for confident stand AttackIntent")
+	}
+
+	cancel()
+	_ = <-runErrCh
+}
+
+func TestRuntime_System1_LowHPPanic(t *testing.T) {
+	mockSvc, client, cleanup := setupTestBridge(t)
+	defer cleanup()
+
+	tmpDir := t.TempDir()
+	resolver := xdg.NewResolver(xdg.WithCustomRoot(tmpDir))
+	_ = resolver.InitAgentDirectories("low_hp_agent")
+
+	cfg := agent.Config{
+		AgentID:      "low_hp_agent",
+		ClanID:       "pioneers",
+		Resolver:     resolver,
+		BridgeClient: client,
+	}
+
+	rt, err := agent.NewRuntime(cfg)
+	if err != nil {
+		t.Fatalf("failed creating runtime: %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	runErrCh := make(chan error, 1)
+	go func() {
+		runErrCh <- rt.Start(ctx)
+	}()
+
+	select {
+	case <-mockSvc.streamReady:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for stream readiness")
+	}
+
+	// Drain initial handshake intent
+	select {
+	case <-mockSvc.intentCh:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for handshake intent")
+	}
+
+	// Send frame with low HP (5.0 <= 0.35 * 20.0 = 7.0) and cooked porkchop in slot 1
+	lowHPFrame := &civquestv1.TelemetryFrame{
+		WorldTick: 500,
+		Status: &civquestv1.AgentStatus{
+			AgentId:   "low_hp_agent",
+			Health:    5.0,
+			MaxHealth: 20.0,
+			FoodLevel: 15,
+			Position:  &civquestv1.Vec3{X: 10, Y: 64, Z: 10},
+			Inventory: []*civquestv1.ItemStackProto{
+				{ItemId: "minecraft:cooked_porkchop", Count: 8, Slot: 1},
+			},
+		},
+	}
+
+	if err := mockSvc.SendFrame(lowHPFrame); err != nil {
+		t.Fatalf("failed sending frame: %v", err)
+	}
+
+	// Low HP triggers panic override: should produce AttackIntent, NavigateIntent, and UseItemIntent
+	var gotUseItem bool
+	deadline := time.After(2 * time.Second)
+
+	for !gotUseItem {
+		select {
+		case intent := <-mockSvc.intentCh:
+			if use := intent.GetUseItem(); use != nil {
+				gotUseItem = true
+				if use.InventorySlot != 1 || !use.IsEatingOrDrinking {
+					t.Errorf("expected UseItemIntent on slot 1, got %+v", use)
+				}
+			}
+		case <-deadline:
+			t.Fatalf("timed out waiting for eating intent on low HP")
+		}
+	}
+
+	cancel()
+	_ = <-runErrCh
+}

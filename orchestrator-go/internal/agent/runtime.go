@@ -16,6 +16,7 @@ import (
 	"github.com/btposey/civquest/orchestrator-go/internal/bridge"
 	"github.com/btposey/civquest/orchestrator-go/internal/db"
 	civquestv1 "github.com/btposey/civquest/orchestrator-go/internal/proto/v1"
+	"github.com/btposey/civquest/orchestrator-go/internal/system1"
 	"github.com/btposey/civquest/orchestrator-go/internal/xdg"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -103,6 +104,11 @@ type AgentRuntime struct {
 	deathEvent         *civquestv1.DeathEvent
 	hasCachedInventory bool
 	lastCachedItems    []CachedItem
+	lastEatingTick     int64
+
+	// System 1 Reflexes and Safe Node Graph Cache
+	safeNodesMu    sync.RWMutex
+	safeNodesCache []db.MapNode
 
 	// Callbacks
 	onDeath func(*civquestv1.DeathEvent)
@@ -168,6 +174,8 @@ func NewRuntime(cfg Config) (*AgentRuntime, error) {
 		socketDone:      make(chan struct{}),
 		lastCachedItems: nil,
 	}
+
+	runtime.loadSafeNodes()
 
 	return runtime, nil
 }
@@ -567,6 +575,114 @@ func (r *AgentRuntime) processFrame(frame *civquestv1.TelemetryFrame) {
 	// Trigger permadeath terminal callback if death event occurred
 	if deathEv != nil && r.onDeath != nil {
 		r.onDeath(deathEv)
+	}
+
+	// Evaluate deterministic System 1 combat reflexes and survival panic
+	if deathEv == nil {
+		r.evaluateSystem1Reflexes(frame)
+	}
+}
+
+// loadSafeNodes pre-loads topological nodes with SafetyScore >= 0.7 from map_graph.db into in-memory cache.
+func (r *AgentRuntime) loadSafeNodes() {
+	if r.agentDB == nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+	nodes, _, err := r.agentDB.GetMapGraph(ctx)
+	if err == nil {
+		var safe []db.MapNode
+		for _, n := range nodes {
+			if n.SafetyScore >= 0.7 {
+				safe = append(safe, n)
+			}
+		}
+		r.safeNodesMu.Lock()
+		r.safeNodesCache = safe
+		r.safeNodesMu.Unlock()
+	}
+}
+
+// SetSafeNodes sets cached safe nodes for flee calculations.
+func (r *AgentRuntime) SetSafeNodes(nodes []db.MapNode) {
+	r.safeNodesMu.Lock()
+	defer r.safeNodesMu.Unlock()
+	r.safeNodesCache = nodes
+}
+
+// SafeNodes returns a defensive copy of currently cached safe nodes.
+func (r *AgentRuntime) SafeNodes() []db.MapNode {
+	r.safeNodesMu.RLock()
+	defer r.safeNodesMu.RUnlock()
+	res := make([]db.MapNode, len(r.safeNodesCache))
+	copy(res, r.safeNodesCache)
+	return res
+}
+
+// evaluateSystem1Reflexes evaluates deterministic fight-or-flight combat reflexes and survival panic.
+func (r *AgentRuntime) evaluateSystem1Reflexes(frame *civquestv1.TelemetryFrame) {
+	if frame == nil || frame.Status == nil || r.IsDead() {
+		return
+	}
+
+	hostilesPresent := false
+	for _, e := range frame.VisibleEntities {
+		if system1.IsHostile(e) {
+			hostilesPresent = true
+			break
+		}
+	}
+
+	maxHP := float64(frame.Status.MaxHealth)
+	if maxHP <= 0 {
+		maxHP = 20.0
+	}
+	lowHealth := float64(frame.Status.Health) <= 0.35*maxHP
+	lowFood := frame.Status.FoodLevel <= 6
+	damageTaken := frame.LastDamageTaken != nil
+
+	if !hostilesPresent && !damageTaken && !lowHealth && !lowFood {
+		return
+	}
+
+	bravery := 0.5
+	if r.identityConfig != nil {
+		bravery = r.identityConfig.Traits.Bravery
+	}
+
+	r.safeNodesMu.RLock()
+	safeNodes := r.safeNodesCache
+	r.safeNodesMu.RUnlock()
+
+	canEat := true
+	r.mu.RLock()
+	if r.lastEatingTick > 0 && frame.WorldTick >= r.lastEatingTick && frame.WorldTick-r.lastEatingTick < 32 {
+		canEat = false
+	}
+	r.mu.RUnlock()
+
+	ctx := system1.ReflexContext{
+		AgentID:   r.agentID,
+		Bravery:   bravery,
+		SafeNodes: safeNodes,
+		Frame:     frame,
+		CanEat:    canEat,
+	}
+
+	result := system1.EvaluateReflexes(ctx)
+	if !result.ShouldAct {
+		return
+	}
+
+	if result.EatenFoodSlot >= 0 {
+		r.mu.Lock()
+		r.lastEatingTick = frame.WorldTick
+		r.mu.Unlock()
+	}
+
+	for _, intent := range result.Intents {
+		_ = r.QueueIntent(intent)
 	}
 }
 
