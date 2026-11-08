@@ -394,3 +394,69 @@ func TestManager_Setup(t *testing.T) {
 		t.Errorf("expected updated server-port=25570 after Force setup, got: %s", string(updatedProps))
 	}
 }
+
+func TestManager_Setup_Validation(t *testing.T) {
+	tmpDir := t.TempDir()
+	r := xdg.NewResolver(xdg.WithCustomRoot(tmpDir))
+	mgr := server.NewManager(r)
+
+	// Port validation
+	for _, port := range []int{0, -1, 65536, 100000} {
+		opts := server.DefaultSetupOptions()
+		opts.Port = port
+		err := mgr.Setup(opts)
+		if err == nil || !strings.Contains(err.Error(), "invalid port") {
+			t.Errorf("expected invalid port error for port %d, got %v", port, err)
+		}
+	}
+
+	// Newline validation
+	opts := server.DefaultSetupOptions()
+	opts.Motd = "Line 1\nLine 2"
+	if err := mgr.Setup(opts); err == nil || !strings.Contains(err.Error(), "motd cannot contain newline characters") {
+		t.Errorf("expected motd newline error, got %v", err)
+	}
+
+	opts = server.DefaultSetupOptions()
+	opts.Difficulty = "normal\r\n"
+	if err := mgr.Setup(opts); err == nil || !strings.Contains(err.Error(), "difficulty cannot contain newline characters") {
+		t.Errorf("expected difficulty newline error, got %v", err)
+	}
+
+	opts = server.DefaultSetupOptions()
+	opts.Gamemode = "survival\r"
+	if err := mgr.Setup(opts); err == nil || !strings.Contains(err.Error(), "gamemode cannot contain newline characters") {
+		t.Errorf("expected gamemode newline error, got %v", err)
+	}
+}
+
+func TestManager_Setup_ServerRunning(t *testing.T) {
+	_, mgr := setupMockServer(t)
+
+	// Start server
+	pid, err := mgr.Start()
+	if err != nil {
+		t.Fatalf("Start failed: %v", err)
+	}
+	defer func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		_ = mgr.Stop(ctx, 1*time.Second)
+	}()
+
+	if pid <= 0 {
+		t.Fatalf("expected positive PID, got %d", pid)
+	}
+	time.Sleep(100 * time.Millisecond)
+
+	// Setup while server is running should fail
+	opts := server.DefaultSetupOptions()
+	err = mgr.Setup(opts)
+	if err == nil {
+		t.Fatalf("expected error running Setup while server is running, got nil")
+	}
+	expected := "server is currently running"
+	if !strings.Contains(err.Error(), expected) {
+		t.Errorf("expected %q in error, got: %v", expected, err)
+	}
+}

@@ -55,10 +55,10 @@ func DefaultSetupOptions() SetupOptions {
 // 4. Writes a default runner script run.sh if absent.
 // 5. Writes server manifest if absent.
 func (m *Manager) Setup(opts SetupOptions) error {
-	if opts.Port <= 0 {
-		opts.Port = 25565
+	if opts.Port < 1 || opts.Port > 65535 {
+		return fmt.Errorf("invalid port %d: must be between 1 and 65535", opts.Port)
 	}
-	if opts.MaxPlayers <= 0 {
+	if opts.MaxPlayers < 1 || opts.MaxPlayers > 10000 {
 		opts.MaxPlayers = 20
 	}
 	if opts.Difficulty == "" {
@@ -71,12 +71,42 @@ func (m *Manager) Setup(opts SetupOptions) error {
 		opts.Motd = "CivQuest Autonomous Settlement Server"
 	}
 
-	// 1. Initialize directories
-	if err := m.resolver.InitServerDirectories(); err != nil {
-		return fmt.Errorf("failed initializing server directories: %w", err)
+	for _, field := range []struct{ name, val string }{
+		{"motd", opts.Motd},
+		{"difficulty", opts.Difficulty},
+		{"gamemode", opts.Gamemode},
+	} {
+		if strings.ContainsAny(field.val, "\r\n") {
+			return fmt.Errorf("%s cannot contain newline characters", field.name)
+		}
 	}
+
+	// 1. Initialize directories and acquire exclusive lock
 	if err := os.MkdirAll(m.resolver.StateDir(), 0750); err != nil {
 		return fmt.Errorf("failed initializing state directory: %w", err)
+	}
+
+	lockPath := filepath.Join(m.resolver.StateDir(), "server.lock")
+	lockFile, err := os.OpenFile(lockPath, os.O_CREATE|os.O_RDWR, 0600)
+	if err != nil {
+		return fmt.Errorf("failed opening server lock file: %w", err)
+	}
+	defer lockFile.Close()
+
+	if err := syscall.Flock(int(lockFile.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+		return fmt.Errorf("another server process holds lock: %w", err)
+	}
+	defer func() {
+		_ = syscall.Flock(int(lockFile.Fd()), syscall.LOCK_UN)
+	}()
+
+	status, err := m.Status()
+	if err == nil && status.Running {
+		return fmt.Errorf("cannot setup server: server is currently running (PID %d)", status.PID)
+	}
+
+	if err := m.resolver.InitServerDirectories(); err != nil {
+		return fmt.Errorf("failed initializing server directories: %w", err)
 	}
 
 	// 2. Write eula.txt
@@ -128,8 +158,13 @@ cleanup() {
 }
 trap cleanup SIGTERM SIGINT
 
-if [ -f "${SERVER_DIR}/user_jvm_args.txt" ] && [ -f "${SERVER_DIR}/run.sh" ] && [ "${BASH_SOURCE[0]}" != "${SERVER_DIR}/run.sh" ]; then
-    exec "${SERVER_DIR}/run.sh" "$@"
+if compgen -G "${SERVER_DIR}/libraries/net/neoforged/neoforge/*/unix_args.txt" > /dev/null 2>&1; then
+    UNIX_ARGS="$(compgen -G "${SERVER_DIR}/libraries/net/neoforged/neoforge/*/unix_args.txt" | head -n 1)"
+    JVM_ARGS=""
+    if [ -f "${SERVER_DIR}/user_jvm_args.txt" ]; then
+        JVM_ARGS="@user_jvm_args.txt"
+    fi
+    exec java ${JAVA_OPTS} ${JVM_ARGS} @"${UNIX_ARGS}" nogui "$@"
 elif compgen -G "${SERVER_DIR}/neoforge-*.jar" > /dev/null 2>&1; then
     NEOFORGE_JAR="$(compgen -G "${SERVER_DIR}/neoforge-*.jar" | head -n 1)"
     exec java ${JAVA_OPTS} -jar "${NEOFORGE_JAR}" nogui "$@"
@@ -160,8 +195,11 @@ fi
 			RunnerScript:     runScriptPath,
 		}
 		data, err := json.MarshalIndent(manifest, "", "  ")
-		if err == nil {
-			_ = os.WriteFile(manifestPath, data, 0640)
+		if err != nil {
+			return fmt.Errorf("failed marshaling server manifest: %w", err)
+		}
+		if err := os.WriteFile(manifestPath, data, 0640); err != nil {
+			return fmt.Errorf("failed writing server manifest: %w", err)
 		}
 	}
 

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -43,8 +44,17 @@ func newServerSetupCmd() *cobra.Command {
 server.properties configured for client connections (port 25565),
 and runner scripts.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if port < 1 || port > 65535 {
+				return fmt.Errorf("invalid port %d: must be between 1 and 65535", port)
+			}
+
 			r := getResolver()
 			mgr := server.NewManager(r)
+
+			propsExisted := false
+			if _, err := os.Stat(r.ServerPropertiesPath()); err == nil {
+				propsExisted = true
+			}
 
 			opts := server.DefaultSetupOptions()
 			opts.Port = port
@@ -59,7 +69,11 @@ and runner scripts.`,
 			fmt.Fprintln(out, "✓ CivQuest server environment prepared successfully:")
 			fmt.Fprintf(out, "  Directory:         %s\n", r.ServerDir())
 			fmt.Fprintf(out, "  EULA:              %s (eula=true)\n", r.ServerEULAPath())
-			fmt.Fprintf(out, "  server.properties: %s (port=%d, online-mode=%t)\n", r.ServerPropertiesPath(), port, onlineMode)
+			if propsExisted && !force {
+				fmt.Fprintf(out, "  server.properties: %s (preserved existing configuration; use --force to overwrite)\n", r.ServerPropertiesPath())
+			} else {
+				fmt.Fprintf(out, "  server.properties: %s (port=%d, online-mode=%t)\n", r.ServerPropertiesPath(), port, onlineMode)
+			}
 
 			if startAfter {
 				fmt.Fprintln(out, "Starting CivQuest NeoForge server in background...")
