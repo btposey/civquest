@@ -3,10 +3,12 @@ package com.civquest.mod.actuator;
 import com.civquest.mod.SettlerEntity;
 import com.civquest.mod.grpc.v1.AgentIntent;
 import com.civquest.mod.grpc.v1.AttackIntent;
+import com.civquest.mod.grpc.v1.ChatChannel;
 import com.civquest.mod.grpc.v1.CreateWrittenBookIntent;
 import com.civquest.mod.grpc.v1.InteractBlockIntent;
 import com.civquest.mod.grpc.v1.NavigateIntent;
 import com.civquest.mod.grpc.v1.PlaceSignpostIntent;
+import com.civquest.mod.grpc.v1.SendChatIntent;
 import com.civquest.mod.grpc.v1.UseItemIntent;
 import com.mojang.logging.LogUtils;
 import net.minecraft.core.BlockPos;
@@ -16,6 +18,7 @@ import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.network.chat.Component;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.server.MinecraftServer;
+import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.server.network.Filterable;
 import net.minecraft.sounds.SoundEvents;
 import net.minecraft.sounds.SoundSource;
@@ -71,8 +74,38 @@ public class IntentActuator {
             case USE_ITEM -> actuateUseItem(settler, intent.getUseItem());
             case CREATE_BOOK -> actuateCreateWrittenBook(settler, intent.getCreateBook());
             case PLACE_SIGNPOST -> actuatePlaceSignpost(settler, intent.getPlaceSignpost());
+            case CHAT -> actuateSendChat(settler, intent.getChat());
             default -> LOGGER.debug("Unhandled or unsupported intent action: {}", intent.getActionCase());
         }
+    }
+
+    public boolean actuateSendChat(SettlerEntity settler, SendChatIntent intent) {
+        if (settler == null || intent == null || intent.getMessage().isBlank()) {
+            return false;
+        }
+
+        String msg = intent.getMessage().trim();
+        String name = settler.getGameProfile().getName();
+        Component chatComponent = Component.literal("<" + name + "> " + msg);
+
+        MinecraftServer server = settler.getServer();
+        if (server != null && server.getPlayerList() != null) {
+            if (intent.getTargetChannel() == ChatChannel.CHAT_CHANNEL_CLAN_BROADCAST) {
+                Component clanComponent = Component.literal("[" + settler.getClanId() + "] <" + name + "> " + msg);
+                server.getPlayerList().broadcastSystemMessage(clanComponent, false);
+            } else {
+                // Local broadcast: deliver to players within hearing range (48 blocks)
+                double rangeSq = 48.0 * 48.0;
+                for (ServerPlayer player : server.getPlayerList().getPlayers()) {
+                    if (player.level() == settler.level() && player.distanceToSqr(settler) <= rangeSq) {
+                        player.sendSystemMessage(chatComponent);
+                    }
+                }
+            }
+            LOGGER.info("Settler '{}' spoke in chat: {}", name, msg);
+            return true;
+        }
+        return false;
     }
 
     public boolean actuateNavigate(SettlerEntity settler, NavigateIntent intent) {

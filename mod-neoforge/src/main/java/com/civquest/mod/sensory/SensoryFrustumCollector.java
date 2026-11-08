@@ -319,6 +319,12 @@ public class SensoryFrustumCollector {
             frameBuilder.setDeathEvent(deathEvent);
         }
 
+        // 8. Pending incoming chat events
+        List<com.civquest.mod.grpc.v1.ChatEvent> chats = settler.pollIncomingChats();
+        if (chats != null && !chats.isEmpty()) {
+            frameBuilder.addAllIncomingChats(chats);
+        }
+
         frameBuilder.setStatus(statusBuilder.build());
         return frameBuilder.build();
     }

@@ -14,6 +14,7 @@ import net.minecraft.network.protocol.game.ClientboundPlayerInfoRemovePacket;
 import net.minecraft.network.protocol.game.ClientboundPlayerInfoUpdatePacket;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
+import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.level.ChunkPos;
 import net.neoforged.neoforge.event.entity.living.LivingDamageEvent;
 import net.neoforged.neoforge.event.tick.ServerTickEvent;
@@ -166,6 +167,18 @@ public class SettlerEntityManager {
             x = request.getSpawnCoords().getX();
             y = request.getSpawnCoords().getY();
             z = request.getSpawnCoords().getZ();
+        } else if (level != null) {
+            if (server != null && server.getPlayerList() != null && !server.getPlayerList().getPlayers().isEmpty()) {
+                ServerPlayer player = server.getPlayerList().getPlayers().get(0);
+                x = player.getX() + 2.0;
+                y = player.getY();
+                z = player.getZ() + 2.0;
+            } else {
+                BlockPos spawnPos = level.getSharedSpawnPos();
+                x = spawnPos.getX() + 0.5;
+                z = spawnPos.getZ() + 0.5;
+                y = level.getHeight(net.minecraft.world.level.levelgen.Heightmap.Types.MOTION_BLOCKING, spawnPos.getX(), spawnPos.getZ());
+            }
         }
 
         settler.moveTo(x, y, z, 0.0f, 0.0f);

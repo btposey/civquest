@@ -22,7 +22,10 @@ import net.neoforged.neoforge.common.CommonHooks;
 import net.neoforged.neoforge.common.util.FakePlayer;
 import org.slf4j.Logger;
 
+import java.util.ArrayList;
+import java.util.List;
 import java.util.UUID;
+import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Consumer;
 
@@ -45,6 +48,22 @@ public class SettlerEntity extends FakePlayer {
     private Consumer<SettlerEntity> deathListener;
     private Consumer<SettlerEntity> removalListener;
     private final AtomicBoolean cleanedUp = new AtomicBoolean(false);
+    private final ConcurrentLinkedQueue<com.civquest.mod.grpc.v1.ChatEvent> pendingChats = new ConcurrentLinkedQueue<>();
+
+    public void queueIncomingChat(com.civquest.mod.grpc.v1.ChatEvent chatEvent) {
+        if (chatEvent != null) {
+            pendingChats.add(chatEvent);
+        }
+    }
+
+    public List<com.civquest.mod.grpc.v1.ChatEvent> pollIncomingChats() {
+        List<com.civquest.mod.grpc.v1.ChatEvent> result = new ArrayList<>();
+        com.civquest.mod.grpc.v1.ChatEvent chat;
+        while ((chat = pendingChats.poll()) != null) {
+            result.add(chat);
+        }
+        return result;
+    }
 
     public SettlerEntity(ServerLevel level, GameProfile profile, String agentId, String clanId) {
         super(level, profile);
