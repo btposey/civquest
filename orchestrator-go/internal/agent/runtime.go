@@ -57,6 +57,8 @@ type Config struct {
 	OnDeath           func(*civquestv1.DeathEvent)
 	DialogueService   *system2.DialogueService
 	ChroniclerService *system2.ChroniclerService
+	ToponymyService   *system2.ToponymyService
+	LandmarksDB       *db.LandmarksDB
 }
 
 // SocketPosition represents 3D coordinates in the diagnostic socket payload.
@@ -128,11 +130,17 @@ type AgentRuntime struct {
 	// System 2 Deliberative Dialogue Pipeline
 	dialogueService      *system2.DialogueService
 	chroniclerService    *system2.ChroniclerService
+	toponymyService      *system2.ToponymyService
+	landmarksDB          *db.LandmarksDB
 	lastChronicleAttempt time.Time
 	lastChronicleTick    int64
+	lastToponymyAttempt  time.Time
+	lastToponymyTick     int64
+	lastToponymyPos      *civquestv1.Vec3
 	dialogueWg           sync.WaitGroup
 	tradeActive          atomic.Bool
 	chroniclerActive     atomic.Bool
+	toponymyActive       atomic.Bool
 	lastTradeTick        int64
 	lastTradePlayerUUID  string
 	lastTradeAttemptAt   time.Time
@@ -204,6 +212,8 @@ func NewRuntime(cfg Config) (*AgentRuntime, error) {
 		connector:         connector,
 		dialogueService:   cfg.DialogueService,
 		chroniclerService: cfg.ChroniclerService,
+		toponymyService:   cfg.ToponymyService,
+		landmarksDB:       cfg.LandmarksDB,
 		intentQueue:       make(chan *civquestv1.AgentIntent, queueSize),
 		socketPath:        sockPath,
 		pid:               os.Getpid(),
@@ -315,6 +325,34 @@ func (r *AgentRuntime) SetChroniclerService(c *system2.ChroniclerService) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.chroniclerService = c
+}
+
+// ToponymyService returns the configured System 2 Toponymy naming service, or nil if unset.
+func (r *AgentRuntime) ToponymyService() *system2.ToponymyService {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.toponymyService
+}
+
+// SetToponymyService assigns or updates the System 2 Toponymy naming service.
+func (r *AgentRuntime) SetToponymyService(t *system2.ToponymyService) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.toponymyService = t
+}
+
+// LandmarksDB returns the clan landmarks database handle.
+func (r *AgentRuntime) LandmarksDB() *db.LandmarksDB {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.landmarksDB
+}
+
+// SetLandmarksDB configures the clan landmarks database handle.
+func (r *AgentRuntime) SetLandmarksDB(l *db.LandmarksDB) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.landmarksDB = l
 }
 
 // System1State returns the volatile System 1 agent routine, needs, and paving state.
@@ -692,6 +730,7 @@ func (r *AgentRuntime) Stop() {
 		// Await pending asynchronous dialogue tasks
 		r.tradeActive.Store(false)
 		r.chroniclerActive.Store(false)
+		r.toponymyActive.Store(false)
 		r.dialogueWg.Wait()
 
 		// Close dialogue service if assigned
@@ -805,6 +844,7 @@ func (r *AgentRuntime) HandleTelemetryFrame(frame *civquestv1.TelemetryFrame) {
 		// 2. Await in-flight dialogue goroutines so no DB transactions remain active
 		r.tradeActive.Store(false)
 		r.chroniclerActive.Store(false)
+		r.toponymyActive.Store(false)
 		r.dialogueWg.Wait()
 
 		// 3. Stop socket server and close dialogue service to prevent IPC queries
@@ -881,6 +921,9 @@ func (r *AgentRuntime) HandleTelemetryFrame(frame *civquestv1.TelemetryFrame) {
 
 	// Dispatch System 2 Clan Chronicler synthesis at dusk or near library desks (non-blocking)
 	r.dispatchChronicler(frame)
+
+	// Dispatch System 2 Toponymy naming for exploratory landmarks (non-blocking)
+	r.dispatchToponymy(frame)
 }
 
 // dispatchDialogue asynchronously processes incoming chat messages and pending trade requests
@@ -1086,9 +1129,12 @@ func (r *AgentRuntime) dispatchChronicler(frame *civquestv1.TelemetryFrame) {
 	}
 
 	r.dialogueWg.Add(1)
+	r.mu.RUnlock()
+
+	r.mu.Lock()
 	r.lastChronicleAttempt = now
 	r.lastChronicleTick = frame.WorldTick
-	r.mu.RUnlock()
+	r.mu.Unlock()
 
 	go func() {
 		defer func() {
@@ -1135,6 +1181,206 @@ func (r *AgentRuntime) dispatchChronicler(frame *civquestv1.TelemetryFrame) {
 		if chronicle.Intent != nil {
 			if err := r.QueueIntent(chronicle.Intent); err != nil {
 				log.Printf("[WARN] agent %s failed to queue chronicle intent: %v", author, err)
+			}
+		}
+	}()
+}
+
+// TriggerToponymy invokes the System 2 Toponymy pipeline to name a landmark,
+// persist it in landmarks.db, record the discovery in agent episodic memory, and dispatch PlaceSignpostIntent.
+func (r *AgentRuntime) TriggerToponymy(ctx context.Context, req system2.ToponymRequest) (*system2.ToponymResult, error) {
+	r.mu.RLock()
+	toponymySvc := r.toponymyService
+	lmDB := r.landmarksDB
+	agentID := r.agentID
+	clanID := r.clanID
+	agentDB := r.agentDB
+	isDead := r.isDead
+	r.mu.RUnlock()
+
+	if isDead {
+		return nil, ErrAgentDead
+	}
+	if toponymySvc == nil {
+		return nil, errors.New("toponymy service not configured")
+	}
+
+	if req.AgentID == "" {
+		req.AgentID = agentID
+	}
+	if req.ClanID == "" {
+		req.ClanID = clanID
+	}
+	if req.LandmarksDB == nil {
+		req.LandmarksDB = lmDB
+	}
+
+	result, err := toponymySvc.GenerateToponym(ctx, req)
+	if err != nil {
+		return nil, err
+	}
+
+	// Persist episodic memory of landmark discovery
+	if agentDB != nil {
+		memoryDesc := fmt.Sprintf("Named landmark %q (%s) at (%.0f, %.0f, %.0f)",
+			result.DisplayName, result.Category, result.Coordinates.X, result.Coordinates.Y, result.Coordinates.Z)
+		_, _ = agentDB.InsertEpisodicMemory(ctx, db.EpisodicMemory{
+			WorldTick:     req.WorldTick,
+			EventCategory: "DISCOVERY",
+			SummaryText:   memoryDesc,
+			SaliencyScore: 0.80,
+		}, nil)
+	}
+
+	if result.Intent != nil {
+		if err := r.QueueIntent(result.Intent); err != nil {
+			log.Printf("[WARN] agent %s failed to queue signpost intent: %v", agentID, err)
+		}
+	}
+
+	return result, nil
+}
+
+// dispatchToponymy evaluates exploration conditions:
+// triggers when an EXPLORER wanders into uncharted terrain without nearby landmarks (>= 64 blocks away),
+// consecrating a new natural or settlement site and placing a signpost.
+func (r *AgentRuntime) dispatchToponymy(frame *civquestv1.TelemetryFrame) {
+	if frame == nil || frame.Status == nil || frame.Status.Position == nil {
+		return
+	}
+
+	r.mu.RLock()
+	if r.status != "RUNNING" || r.isDead || r.toponymyService == nil {
+		r.mu.RUnlock()
+		return
+	}
+
+	isExplorer := false
+	if r.identityConfig != nil {
+		if strings.EqualFold(r.identityConfig.Profession, "EXPLORER") ||
+			strings.EqualFold(r.identityConfig.SecondaryHobby, "EXPLORER") {
+			isExplorer = true
+		}
+	}
+	if !isExplorer {
+		r.mu.RUnlock()
+		return
+	}
+
+	pos := frame.Status.Position
+	now := time.Now()
+	// Rate limit: at least 60s and 600 ticks between exploration toponym syntheses
+	if now.Sub(r.lastToponymyAttempt) < 60*time.Second || (r.lastToponymyTick > 0 && frame.WorldTick-r.lastToponymyTick < 600) {
+		r.mu.RUnlock()
+		return
+	}
+
+	// Distance check: at least 64 blocks from last toponym location
+	if r.lastToponymyPos != nil {
+		dx := pos.X - r.lastToponymyPos.X
+		dz := pos.Z - r.lastToponymyPos.Z
+		if math.Sqrt(dx*dx+dz*dz) < 64.0 {
+			r.mu.RUnlock()
+			return
+		}
+	}
+
+	// Check if already in an identified landmark context
+	if frame.CurrentLandmark != nil && frame.CurrentLandmark.DisplayName != "" {
+		r.mu.RUnlock()
+		return
+	}
+
+	if !r.toponymyActive.CompareAndSwap(false, true) {
+		r.mu.RUnlock()
+		return
+	}
+
+	r.dialogueWg.Add(1)
+	r.mu.RUnlock()
+
+	r.mu.Lock()
+	r.lastToponymyAttempt = now
+	r.lastToponymyTick = frame.WorldTick
+	r.lastToponymyPos = &civquestv1.Vec3{X: pos.X, Y: pos.Y, Z: pos.Z}
+	r.mu.Unlock()
+
+	go func() {
+		defer func() {
+			r.toponymyActive.Store(false)
+			r.dialogueWg.Done()
+		}()
+
+		r.mu.RLock()
+		ctx := r.ctx
+		if ctx == nil || ctx.Err() != nil {
+			r.mu.RUnlock()
+			return
+		}
+		toponymySvc := r.toponymyService
+		lmDB := r.landmarksDB
+		agentID := r.agentID
+		clanID := r.clanID
+		agentDB := r.agentDB
+		r.mu.RUnlock()
+
+		reqCtx, cancel := context.WithTimeout(ctx, 45*time.Second)
+		defer cancel()
+
+		// Asynchronously verify landmarksDB does not already have a nearby landmark within 64 blocks
+		if lmDB != nil {
+			nearest, _ := lmDB.FindNearestLandmarkContext(reqCtx, pos.X, pos.Y, pos.Z, "")
+			if nearest != nil {
+				dx := pos.X - nearest.X
+				dz := pos.Z - nearest.Z
+				if math.Sqrt(dx*dx+dz*dz) < 64.0 {
+					return
+				}
+			}
+		}
+
+		biome := frame.BiomeId
+		if biome == "" {
+			biome = "frontier"
+		}
+
+		req := system2.ToponymRequest{
+			AgentID:  agentID,
+			ClanID:   clanID,
+			Category: db.LandmarkCategoryNatural,
+			Coordinates: system2.Vec3Coords{
+				X: pos.X,
+				Y: pos.Y,
+				Z: pos.Z,
+			},
+			ContextPrompt: fmt.Sprintf("Explored frontier biome %s", biome),
+			WorldTick:     frame.WorldTick,
+			LandmarksDB:   lmDB,
+		}
+
+		res, err := toponymySvc.GenerateToponym(reqCtx, req)
+		if err != nil {
+			if !errors.Is(err, context.Canceled) {
+				log.Printf("[WARN] agent %s toponym generation failed: %v", agentID, err)
+			}
+			return
+		}
+
+		log.Printf("[civquest-agent] Toponymist %s named landmark %q (%s) at (%.1f, %.1f, %.1f)",
+			agentID, res.DisplayName, res.Category, pos.X, pos.Y, pos.Z)
+
+		if agentDB != nil {
+			_, _ = agentDB.InsertEpisodicMemory(reqCtx, db.EpisodicMemory{
+				WorldTick:     frame.WorldTick,
+				EventCategory: "DISCOVERY",
+				SummaryText:   fmt.Sprintf("Discovered and named %s at (%.0f, %.0f, %.0f)", res.DisplayName, pos.X, pos.Y, pos.Z),
+				SaliencyScore: 0.80,
+			}, nil)
+		}
+
+		if res.Intent != nil {
+			if err := r.QueueIntent(res.Intent); err != nil {
+				log.Printf("[WARN] agent %s failed to queue signpost intent: %v", agentID, err)
 			}
 		}
 	}()

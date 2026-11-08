@@ -505,7 +505,11 @@ public class IntentActuator {
 
         BlockState existing = settler.level().getBlockState(pos);
         if (!existing.canBeReplaced()) {
-            return false;
+            pos = pos.above();
+            existing = settler.level().getBlockState(pos);
+            if (!existing.canBeReplaced()) {
+                return false;
+            }
         }
 
         BlockState signState = intent.getIsHangingSign()
@@ -518,6 +522,7 @@ public class IntentActuator {
 
         if (!settler.isCreative()) {
             int signSlot = -1;
+            int woodSlot = -1;
             for (int i = 0; i < settler.getInventory().getContainerSize(); i++) {
                 ItemStack stack = settler.getInventory().getItem(i);
                 if (!stack.isEmpty()) {
@@ -532,12 +537,18 @@ public class IntentActuator {
                             break;
                         }
                     }
+                    if (stack.is(net.minecraft.tags.ItemTags.PLANKS) || stack.is(net.minecraft.tags.ItemTags.LOGS)) {
+                        woodSlot = i;
+                    }
                 }
             }
-            if (signSlot < 0) {
+            if (signSlot >= 0) {
+                settler.getInventory().getItem(signSlot).shrink(1);
+            } else if (woodSlot >= 0) {
+                settler.getInventory().getItem(woodSlot).shrink(1);
+            } else {
                 return false;
             }
-            settler.getInventory().getItem(signSlot).shrink(1);
         }
 
         boolean placed = settler.level().setBlockAndUpdate(pos, signState);

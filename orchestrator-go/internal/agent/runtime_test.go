@@ -2418,3 +2418,164 @@ func TestRuntime_System2_ClanChroniclerBookSynthesis(t *testing.T) {
 	cancel()
 	_ = <-runErrCh
 }
+
+func TestRuntime_System2_ToponymyLandmarkNamingAndSignpost(t *testing.T) {
+	mockSvc, client, cleanupBridge := setupPermadeathMockBridge(t)
+	defer cleanupBridge()
+
+	tmpDir := t.TempDir()
+	resolver := xdg.NewResolver(xdg.WithCustomRoot(tmpDir))
+	agentID := "scout_agent"
+	clanID := "explorers"
+
+	_ = resolver.InitAgentDirectories(agentID)
+	agentDB, err := db.OpenAgentDBForAgent(resolver, agentID)
+	if err != nil {
+		t.Fatalf("failed opening agent DB: %v", err)
+	}
+	defer agentDB.Close()
+
+	landmarksDB, err := db.OpenLandmarksDBForClan(resolver, clanID)
+	if err != nil {
+		t.Fatalf("failed opening landmarks DB: %v", err)
+	}
+	defer landmarksDB.Close()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	toponymySvc := system2.NewToponymyService(nil) // Deterministic fallback
+
+	agentCfg := xdg.DefaultAgentIdentityConfig(agentID)
+	agentCfg.Profession = "EXPLORER"
+	agentCfg.ClanID = clanID
+
+	rt, err := agent.NewRuntime(agent.Config{
+		AgentID:         agentID,
+		ClanID:          clanID,
+		IdentityConfig:  agentCfg,
+		Resolver:        resolver,
+		AgentDB:         agentDB,
+		LandmarksDB:     landmarksDB,
+		BridgeClient:    client,
+		ToponymyService: toponymySvc,
+	})
+	if err != nil {
+		t.Fatalf("failed creating agent runtime: %v", err)
+	}
+
+	runErrCh := make(chan error, 1)
+	go func() {
+		runErrCh <- rt.Start(ctx)
+	}()
+
+	select {
+	case <-mockSvc.streamReady:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for stream readiness")
+	}
+
+	// Drain handshake intent
+	select {
+	case <-mockSvc.intentCh:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for handshake intent")
+	}
+
+	// 1. Direct TriggerToponymy test
+	triggerReq := system2.ToponymRequest{
+		AgentID:  agentID,
+		ClanID:   clanID,
+		Category: db.LandmarkCategoryMemorial,
+		Coordinates: system2.Vec3Coords{
+			X: 25.0,
+			Y: 64.0,
+			Z: -40.0,
+		},
+		ContextPrompt: "Fallen scout memorial cairn",
+		WorldTick:     6000,
+	}
+
+	res, err := rt.TriggerToponymy(ctx, triggerReq)
+	if err != nil {
+		t.Fatalf("TriggerToponymy failed: %v", err)
+	}
+	if len([]rune(res.DisplayName)) > system2.MaxToponymNameLen {
+		t.Errorf("DisplayName %q exceeds %d runes", res.DisplayName, system2.MaxToponymNameLen)
+	}
+	for _, line := range []string{res.Line1, res.Line2, res.Line3, res.Line4} {
+		if len([]rune(line)) > system2.MaxSignpostLineLen {
+			t.Errorf("Sign line %q exceeds %d runes", line, system2.MaxSignpostLineLen)
+		}
+	}
+
+	// Verify intent on bridge
+	select {
+	case intent := <-mockSvc.intentCh:
+		sign := intent.GetPlaceSignpost()
+		if sign == nil {
+			t.Fatalf("expected PlaceSignpostIntent, got %+v", intent)
+		}
+		if sign.Pos.X != 25 || sign.Pos.Y != 64 || sign.Pos.Z != -40 {
+			t.Errorf("unexpected sign pos: %+v", sign.Pos)
+		}
+		if sign.Line1 != res.Line1 {
+			t.Errorf("expected line1 %q, got %q", res.Line1, sign.Line1)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("timed out waiting for PlaceSignpostIntent on bridge")
+	}
+
+	// Verify landmark in landmarks.db
+	lm, err := landmarksDB.GetLandmark(res.LandmarkID)
+	if err != nil || lm == nil {
+		t.Fatalf("expected landmark %q in landmarks.db: %v", res.LandmarkID, err)
+	}
+	if lm.Category != db.LandmarkCategoryMemorial {
+		t.Errorf("expected category MEMORIAL, got %s", lm.Category)
+	}
+
+	// 2. Exploration Telemetry Frame Trigger
+	exploreFrame := &civquestv1.TelemetryFrame{
+		WorldTick: 7000,
+		BiomeId:   "minecraft:cherry_grove",
+		Status: &civquestv1.AgentStatus{
+			AgentId:   agentID,
+			Health:    20.0,
+			MaxHealth: 20.0,
+			FoodLevel: 20,
+			Position:  &civquestv1.Vec3{X: 180.0, Y: 72.0, Z: 240.0},
+		},
+	}
+
+	if err := mockSvc.SendFrame(exploreFrame); err != nil {
+		t.Fatalf("failed sending explore frame: %v", err)
+	}
+
+	// Await exploration signpost intent
+	select {
+	case intent := <-mockSvc.intentCh:
+		sign := intent.GetPlaceSignpost()
+		if sign == nil {
+			t.Fatalf("expected PlaceSignpostIntent from exploration, got %+v", intent)
+		}
+		if sign.Pos.X != 180 || sign.Pos.Y != 72 || sign.Pos.Z != 240 {
+			t.Errorf("unexpected exploration sign pos: %+v", sign.Pos)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("timed out waiting for exploration PlaceSignpostIntent")
+	}
+
+	// Verify nearest landmark in DB
+	nearest, err := landmarksDB.FindNearestLandmark(180.0, 72.0, 240.0, "")
+	if err != nil || nearest == nil {
+		t.Fatalf("expected nearest landmark to be found in landmarks.db: %v", err)
+	}
+	if nearest.X != 180.0 || nearest.Z != 240.0 {
+		t.Errorf("unexpected nearest landmark coords: (%.1f, %.1f)", nearest.X, nearest.Z)
+	}
+
+	rt.Stop()
+	cancel()
+	_ = <-runErrCh
+}

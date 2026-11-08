@@ -172,6 +172,7 @@ func run(parentCtx context.Context, args []string, stdout, stderr io.Writer, r *
 	defer dialogueSvc.Close()
 
 	chroniclerSvc := system2.NewChroniclerService(llmClient)
+	toponymySvc := system2.NewToponymyService(llmClient)
 
 	displayServerID := serverID
 	if displayServerID == "" {
@@ -210,6 +211,13 @@ func run(parentCtx context.Context, args []string, stdout, stderr io.Writer, r *
 		defer repDB.Close()
 	}
 
+	// Open clan landmarks database if available for cultural toponymy
+	var lmDB *db.LandmarksDB
+	if lm, lmErr := db.OpenLandmarksDBForClan(r, cfg.ClanID); lmErr == nil {
+		lmDB = lm
+		defer lmDB.Close()
+	}
+
 	// Dial gRPC bridge with shared key
 	bridgeClient, err := bridge.NewClient(grpcAddr, sharedKey)
 	if err != nil {
@@ -229,10 +237,12 @@ func run(parentCtx context.Context, args []string, stdout, stderr io.Writer, r *
 		Resolver:          r,
 		AgentDB:           agentDB,
 		ReputationDB:      repDB,
+		LandmarksDB:       lmDB,
 		BridgeClient:      bridgeClient,
 		SocketPath:        sockPath,
 		DialogueService:   dialogueSvc,
 		ChroniclerService: chroniclerSvc,
+		ToponymyService:   toponymySvc,
 		OnDeath: func(e *civquestv1.DeathEvent) {
 			fmt.Fprintf(stdout, "[civquest-agent] Permadeath event recorded at tick %d (cause: %s)\n",
 				e.GetWorldTick(), e.GetDamageSource())
