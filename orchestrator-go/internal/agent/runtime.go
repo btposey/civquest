@@ -6,6 +6,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
+	"math"
 	"net"
 	"os"
 	"path/filepath"
@@ -16,6 +18,7 @@ import (
 	"github.com/btposey/civquest/orchestrator-go/internal/bridge"
 	"github.com/btposey/civquest/orchestrator-go/internal/db"
 	civquestv1 "github.com/btposey/civquest/orchestrator-go/internal/proto/v1"
+	"github.com/btposey/civquest/orchestrator-go/internal/system1"
 	"github.com/btposey/civquest/orchestrator-go/internal/xdg"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -103,6 +106,12 @@ type AgentRuntime struct {
 	deathEvent         *civquestv1.DeathEvent
 	hasCachedInventory bool
 	lastCachedItems    []CachedItem
+	lastEatingTick     int64
+	lastFleeTarget     *civquestv1.Vec3
+	lastFleeTick       int64
+
+	// System 1 Reflexes and Safe Node Graph Cache
+	safeNodesCache []db.MapNode
 
 	// Callbacks
 	onDeath func(*civquestv1.DeathEvent)
@@ -168,6 +177,8 @@ func NewRuntime(cfg Config) (*AgentRuntime, error) {
 		socketDone:      make(chan struct{}),
 		lastCachedItems: nil,
 	}
+
+	runtime.loadSafeNodes()
 
 	return runtime, nil
 }
@@ -344,6 +355,62 @@ func (r *AgentRuntime) QueueIntent(intent *civquestv1.AgentIntent) error {
 // EnqueueIntent is an alias for QueueIntent.
 func (r *AgentRuntime) EnqueueIntent(intent *civquestv1.AgentIntent) error {
 	return r.QueueIntent(intent)
+}
+
+// QueuePriorityIntent enqueues a critical reflex intent into the outbound queue.
+// If the queue is full, it evicts the oldest intent from the front of the channel,
+// logging a warning with the dropped intent type, ensuring combat and panic reflexes are never dropped.
+func (r *AgentRuntime) QueuePriorityIntent(intent *civquestv1.AgentIntent) error {
+	if intent == nil {
+		return ErrNilIntent
+	}
+
+	select {
+	case <-r.done:
+		return ErrRuntimeStopped
+	default:
+	}
+
+	if intent.AgentId == "" {
+		intent.AgentId = r.agentID
+	}
+	if intent.SequenceId <= 0 {
+		intent.SequenceId = r.sequenceID.Add(1)
+	}
+
+	for {
+		select {
+		case <-r.done:
+			return ErrRuntimeStopped
+		case r.intentQueue <- intent:
+			return nil
+		default:
+		}
+
+		// Queue is full: evict front intent to prioritize reflex
+		select {
+		case dropped := <-r.intentQueue:
+			log.Printf("[WARN] agent %s: intent queue full, evicted older intent %s (seq %d) for priority reflex %s",
+				r.agentID, intentActionName(dropped), dropped.SequenceId, intentActionName(intent))
+		default:
+		}
+	}
+}
+
+func intentActionName(intent *civquestv1.AgentIntent) string {
+	if intent == nil || intent.Action == nil {
+		return "nil"
+	}
+	switch a := intent.Action.(type) {
+	case *civquestv1.AgentIntent_Attack:
+		return fmt.Sprintf("AttackIntent(target=%d,shield=%v,flee=%v)", a.Attack.TargetEntityId, a.Attack.RaiseShield, a.Attack.FleeImmediately)
+	case *civquestv1.AgentIntent_Navigate:
+		return "NavigateIntent"
+	case *civquestv1.AgentIntent_UseItem:
+		return fmt.Sprintf("UseItemIntent(slot=%d,eating=%v)", a.UseItem.InventorySlot, a.UseItem.IsEatingOrDrinking)
+	default:
+		return fmt.Sprintf("%T", intent.Action)
+	}
 }
 
 // Start boots the runtime: initializes the UNIX diagnostic socket, establishes
@@ -567,6 +634,160 @@ func (r *AgentRuntime) processFrame(frame *civquestv1.TelemetryFrame) {
 	// Trigger permadeath terminal callback if death event occurred
 	if deathEv != nil && r.onDeath != nil {
 		r.onDeath(deathEv)
+	}
+
+	// Evaluate deterministic System 1 combat reflexes and survival panic
+	if deathEv == nil {
+		r.evaluateSystem1Reflexes(frame)
+	}
+}
+
+// loadSafeNodes pre-loads topological nodes with SafetyScore >= 0.7 from map_graph.db into in-memory cache.
+func (r *AgentRuntime) loadSafeNodes() {
+	if r.agentDB == nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+	nodes, _, err := r.agentDB.GetMapGraph(ctx)
+	if err == nil {
+		var safe []db.MapNode
+		for _, n := range nodes {
+			if n.SafetyScore >= 0.7 {
+				safe = append(safe, n)
+			}
+		}
+		r.mu.Lock()
+		r.safeNodesCache = safe
+		r.mu.Unlock()
+	}
+}
+
+// SetSafeNodes sets cached safe nodes for flee calculations using a defensive copy.
+func (r *AgentRuntime) SetSafeNodes(nodes []db.MapNode) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if nodes == nil {
+		r.safeNodesCache = nil
+		return
+	}
+	cp := make([]db.MapNode, len(nodes))
+	copy(cp, nodes)
+	r.safeNodesCache = cp
+}
+
+// SafeNodes returns a defensive copy of currently cached safe nodes.
+func (r *AgentRuntime) SafeNodes() []db.MapNode {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	if r.safeNodesCache == nil {
+		return nil
+	}
+	res := make([]db.MapNode, len(r.safeNodesCache))
+	copy(res, r.safeNodesCache)
+	return res
+}
+
+// evaluateSystem1Reflexes evaluates deterministic fight-or-flight combat reflexes and survival panic.
+func (r *AgentRuntime) evaluateSystem1Reflexes(frame *civquestv1.TelemetryFrame) {
+	if frame == nil || frame.Status == nil || r.IsDead() {
+		return
+	}
+
+	hostilesPresent := false
+	for _, e := range frame.VisibleEntities {
+		if system1.IsHostile(e) {
+			hostilesPresent = true
+			break
+		}
+	}
+
+	maxHP := float64(frame.Status.MaxHealth)
+	if maxHP <= 0 {
+		maxHP = 20.0
+	}
+	lowHealth := float64(frame.Status.Health) <= 0.35*maxHP
+	lowFood := frame.Status.FoodLevel <= 6
+	damageTaken := frame.LastDamageTaken != nil
+
+	if !hostilesPresent && !damageTaken && !lowHealth && !lowFood {
+		return
+	}
+
+	bravery := 0.5
+	if r.identityConfig != nil {
+		bravery = r.identityConfig.Traits.Bravery
+	}
+
+	r.mu.RLock()
+	var safeNodes []db.MapNode
+	if r.safeNodesCache != nil {
+		safeNodes = make([]db.MapNode, len(r.safeNodesCache))
+		copy(safeNodes, r.safeNodesCache)
+	}
+
+	canEat := true
+	if r.lastEatingTick > 0 && frame.WorldTick >= r.lastEatingTick && frame.WorldTick-r.lastEatingTick < 32 {
+		canEat = false
+	}
+	r.mu.RUnlock()
+
+	ctx := system1.ReflexContext{
+		AgentID:   r.agentID,
+		Bravery:   bravery,
+		SafeNodes: safeNodes,
+		Frame:     frame,
+		CanEat:    canEat,
+	}
+
+	result := system1.EvaluateReflexes(ctx)
+	if !result.ShouldAct {
+		return
+	}
+
+	// MIN-02: Baritone Path Churn Mitigation
+	// When fleeing, only re-emit NavigateIntent if target shifted by >= 2.0 blocks
+	// or > 10 ticks (0.5s) have elapsed.
+	skipFleeNav := false
+	if result.IsPanic && result.FleeTarget != nil {
+		r.mu.Lock()
+		if r.lastFleeTarget != nil {
+			dx := result.FleeTarget.X - r.lastFleeTarget.X
+			dy := result.FleeTarget.Y - r.lastFleeTarget.Y
+			dz := result.FleeTarget.Z - r.lastFleeTarget.Z
+			dist := math.Sqrt(dx*dx + dy*dy + dz*dz)
+			ticksElapsed := frame.WorldTick - r.lastFleeTick
+			if dist < 2.0 && ticksElapsed <= 10 && ticksElapsed >= 0 {
+				skipFleeNav = true
+			}
+		}
+		if !skipFleeNav {
+			r.lastFleeTarget = &civquestv1.Vec3{
+				X: result.FleeTarget.X,
+				Y: result.FleeTarget.Y,
+				Z: result.FleeTarget.Z,
+			}
+			r.lastFleeTick = frame.WorldTick
+		}
+		r.mu.Unlock()
+	} else if !result.IsPanic {
+		r.mu.Lock()
+		r.lastFleeTarget = nil
+		r.lastFleeTick = 0
+		r.mu.Unlock()
+	}
+
+	// Dispatch priority reflex intents; update eating cooldown only if UseItem was queued successfully
+	for _, intent := range result.Intents {
+		if skipFleeNav && intent.GetNavigate() != nil {
+			continue
+		}
+		err := r.QueuePriorityIntent(intent)
+		if err == nil && intent.GetUseItem() != nil && intent.GetUseItem().IsEatingOrDrinking {
+			r.mu.Lock()
+			r.lastEatingTick = frame.WorldTick
+			r.mu.Unlock()
+		}
 	}
 }
 
