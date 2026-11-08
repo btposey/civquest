@@ -364,6 +364,231 @@ func TestComputeFleeTarget_WithSafeNodes(t *testing.T) {
 	}
 }
 
+func TestCalculateConfidence_NaNAndInf(t *testing.T) {
+	// Any NaN or Inf input must result in 0.0
+	nan := math.NaN()
+	inf := math.Inf(1)
+	negInf := math.Inf(-1)
+
+	cases := []struct {
+		name       string
+		selfHP     float64
+		alliesHP   float64
+		threat     float64
+		gear       float64
+		bravery    float64
+		expectZero bool
+	}{
+		{"NaN selfHP", nan, 0, 15, 1.0, 0.5, true},
+		{"Inf selfHP", inf, 0, 15, 1.0, 0.5, true},
+		{"-Inf selfHP", negInf, 0, 15, 1.0, 0.5, true},
+		{"NaN alliesHP", 20, nan, 15, 1.0, 0.5, true},
+		{"Inf alliesHP", 20, inf, 15, 1.0, 0.5, true},
+		{"NaN threat", 20, 0, nan, 1.0, 0.5, true},
+		{"Inf threat", 20, 0, inf, 1.0, 0.5, true},
+		{"NaN gear", 20, 0, 15, nan, 0.5, true},
+		{"Inf gear", 20, 0, 15, inf, 0.5, true},
+		{"NaN bravery", 20, 0, 15, 1.0, nan, true},
+		{"Inf bravery", 20, 0, 15, 1.0, inf, true},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := CalculateConfidence(tc.selfHP, tc.alliesHP, tc.threat, tc.gear, tc.bravery)
+			if tc.expectZero && got != 0.0 {
+				t.Errorf("expected 0.0 for %s, got %v", tc.name, got)
+			}
+		})
+	}
+}
+
+func TestShouldPanic_NaNConfidence(t *testing.T) {
+	// NaN or Inf confidence must immediately trigger panic
+	if !ShouldPanic(20.0, 20.0, math.NaN(), true, false) {
+		t.Error("expected panic when confidence is NaN with hostiles present")
+	}
+	if !ShouldPanic(20.0, 20.0, math.NaN(), false, false) {
+		t.Error("expected panic when confidence is NaN even without hostiles")
+	}
+	if !ShouldPanic(20.0, 20.0, math.Inf(1), true, false) {
+		t.Error("expected panic when confidence is +Inf")
+	}
+}
+
+func TestGearMultiplier_SlotFiltering(t *testing.T) {
+	// 1. Items in backpack (slots 9..35) must be completely ignored
+	backpackItems := []*civquestv1.ItemStackProto{
+		{ItemId: "minecraft:netherite_helmet", Count: 1, Slot: 9},
+		{ItemId: "minecraft:netherite_chestplate", Count: 1, Slot: 10},
+		{ItemId: "minecraft:netherite_leggings", Count: 1, Slot: 11},
+		{ItemId: "minecraft:netherite_boots", Count: 1, Slot: 12},
+		{ItemId: "minecraft:netherite_sword", Count: 1, Slot: 13},
+		{ItemId: "minecraft:shield", Count: 1, Slot: 14},
+	}
+	mBackpack := CalculateGearMultiplier(backpackItems)
+	if mBackpack != 0.5 {
+		t.Fatalf("expected backpack items to be ignored (multiplier 0.5), got %v", mBackpack)
+	}
+
+	// 2. Modded item like 'shield_plate' must NOT count as a shield
+	shieldPlateItem := []*civquestv1.ItemStackProto{
+		{ItemId: "mod:shield_plate", Count: 1, Slot: 40},
+	}
+	mPlate := CalculateGearMultiplier(shieldPlateItem)
+	if mPlate != 0.5 {
+		t.Fatalf("expected shield_plate to be ignored (multiplier 0.5), got %v", mPlate)
+	}
+
+	// 3. Exact shield in offhand (slot 40) counts
+	shieldOffhand := []*civquestv1.ItemStackProto{
+		{ItemId: "minecraft:shield", Count: 1, Slot: 40},
+	}
+	if m := CalculateGearMultiplier(shieldOffhand); math.Abs(m-1.0) > 1e-4 {
+		t.Fatalf("expected shield in offhand to give 1.0 (0.5+0.5), got %v", m)
+	}
+
+	// 4. Exact shield in hotbar (slot 1) counts
+	shieldHotbar := []*civquestv1.ItemStackProto{
+		{ItemId: "shield", Count: 1, Slot: 1},
+	}
+	if m := CalculateGearMultiplier(shieldHotbar); math.Abs(m-1.0) > 1e-4 {
+		t.Fatalf("expected shield in hotbar to give 1.0, got %v", m)
+	}
+
+	// 5. Weapon in offhand (slot 40) does NOT count as main weapon
+	weaponOffhand := []*civquestv1.ItemStackProto{
+		{ItemId: "minecraft:diamond_sword", Count: 1, Slot: 40},
+	}
+	if m := CalculateGearMultiplier(weaponOffhand); m != 0.5 {
+		t.Fatalf("expected weapon in offhand to be ignored, got %v", m)
+	}
+
+	// 6. Armor in vanilla slots (36..39) counts
+	armorSlots36to39 := []*civquestv1.ItemStackProto{
+		{ItemId: "minecraft:iron_boots", Count: 1, Slot: 36},
+		{ItemId: "minecraft:iron_leggings", Count: 1, Slot: 37},
+		{ItemId: "minecraft:iron_chestplate", Count: 1, Slot: 38},
+		{ItemId: "minecraft:iron_helmet", Count: 1, Slot: 39},
+	}
+	// 0.5 + 4 * 0.15 = 1.10
+	if m := CalculateGearMultiplier(armorSlots36to39); math.Abs(m-1.10) > 1e-4 {
+		t.Fatalf("expected armor in slots 36..39 to give 1.10, got %v", m)
+	}
+}
+
+func TestFoodScore_HazardousFoodRejected(t *testing.T) {
+	hazardous := []string{
+		"minecraft:suspicious_stew",
+		"suspicious_stew",
+		"minecraft:poisonous_potato",
+		"poisonous_potato",
+		"minecraft:pufferfish",
+		"pufferfish",
+		"minecraft:rotten_flesh",
+		"rotten_flesh",
+		"minecraft:spider_eye",
+		"spider_eye",
+	}
+
+	for _, item := range hazardous {
+		if score := FoodScore(item); score != 0 {
+			t.Errorf("expected FoodScore(%q) = 0, got %d", item, score)
+		}
+	}
+
+	// FindBestFoodItem with only hazardous food returns not found
+	inventory := []*civquestv1.ItemStackProto{
+		{ItemId: "minecraft:suspicious_stew", Count: 1, Slot: 0},
+		{ItemId: "minecraft:poisonous_potato", Count: 10, Slot: 1},
+		{ItemId: "minecraft:pufferfish", Count: 2, Slot: 2},
+	}
+	_, found := FindBestFoodItem(inventory)
+	if found {
+		t.Fatal("expected FindBestFoodItem to return found=false for inventory with only toxic food")
+	}
+}
+
+func TestSelectPriorityHostile_CreeperProximity(t *testing.T) {
+	// Creeper > 5.0 blocks away hissing must NOT override an adjacent skeleton
+	distantCreeper := &civquestv1.VisibleEntity{
+		EntityId:   1,
+		EntityType: "minecraft:creeper",
+		Distance:   8.0,
+		FuseTicks:  15,
+	}
+	closeSkeleton := &civquestv1.VisibleEntity{
+		EntityId:   2,
+		EntityType: "minecraft:skeleton",
+		Distance:   3.0,
+		FuseTicks:  0,
+	}
+
+	hostilesDistant := []*civquestv1.VisibleEntity{distantCreeper, closeSkeleton}
+	chosen := SelectPriorityHostile(hostilesDistant)
+	if chosen == nil || chosen.EntityId != 2 {
+		t.Fatalf("expected close skeleton (id=2) to be chosen over distant creeper (>5m), got %+v", chosen)
+	}
+
+	// Creeper <= 5.0 blocks away hissing MUST be prioritized over closer mob
+	closeCreeper := &civquestv1.VisibleEntity{
+		EntityId:   3,
+		EntityType: "minecraft:creeper",
+		Distance:   4.5,
+		FuseTicks:  10,
+	}
+	adjacentZombie := &civquestv1.VisibleEntity{
+		EntityId:   4,
+		EntityType: "minecraft:zombie",
+		Distance:   2.0,
+		FuseTicks:  0,
+	}
+
+	hostilesClose := []*civquestv1.VisibleEntity{adjacentZombie, closeCreeper}
+	chosenClose := SelectPriorityHostile(hostilesClose)
+	if chosenClose == nil || chosenClose.EntityId != 3 {
+		t.Fatalf("expected hissing creeper within 5m (id=3) to be prioritized over adjacent zombie, got %+v", chosenClose)
+	}
+}
+
+func TestComputeFleeTarget_UnseenAttackerAndFinite(t *testing.T) {
+	selfPos := &civquestv1.Vec3{X: 100, Y: 64, Z: 100}
+
+	// 1. Unseen attacker: len(hostiles) == 0, safe node present -> flees toward best safe node
+	safeNodes := []db.MapNode{
+		{ID: "safe_haven", X: 120, Y: 64, Z: 120, SafetyScore: 0.95},
+	}
+	targetSafe := ComputeFleeTarget(selfPos, nil, 16.0, safeNodes)
+	if targetSafe.X != 120 || targetSafe.Z != 120 {
+		t.Fatalf("expected flee target toward safe node (120, 64, 120), got (%v, %v, %v)", targetSafe.X, targetSafe.Y, targetSafe.Z)
+	}
+
+	// 2. Unseen attacker: no hostiles and NO safe nodes -> returns agent's current position
+	targetNoSafe := ComputeFleeTarget(selfPos, nil, 16.0, nil)
+	if targetNoSafe.X != selfPos.X || targetNoSafe.Y != selfPos.Y || targetNoSafe.Z != selfPos.Z {
+		t.Fatalf("expected current pos (%v, %v, %v), got (%v, %v, %v)", selfPos.X, selfPos.Y, selfPos.Z, targetNoSafe.X, targetNoSafe.Y, targetNoSafe.Z)
+	}
+
+	// 3. Hostiles with NaN or Inf coordinates are ignored
+	corruptedHostiles := []*civquestv1.VisibleEntity{
+		{
+			EntityId: 1,
+			Position: &civquestv1.Vec3{X: math.NaN(), Y: 64, Z: math.Inf(1)},
+		},
+		{
+			EntityId: 2,
+			Position: &civquestv1.Vec3{X: 110, Y: 64, Z: 100}, // Valid hostile East
+		},
+	}
+	targetFinite := ComputeFleeTarget(selfPos, corruptedHostiles, 16.0, nil)
+	if math.IsNaN(targetFinite.X) || math.IsInf(targetFinite.X, 0) ||
+		math.IsNaN(targetFinite.Z) || math.IsInf(targetFinite.Z, 0) {
+		t.Fatalf("expected strictly finite coordinates, got (%v, %v, %v)", targetFinite.X, targetFinite.Y, targetFinite.Z)
+	}
+	if targetFinite.X >= 100 {
+		t.Fatalf("expected flee target away from valid hostile (X < 100), got X=%v", targetFinite.X)
+	}
+}
+
 func BenchmarkEvaluateReflexes(b *testing.B) {
 	frame := &civquestv1.TelemetryFrame{
 		WorldTick: 1000,

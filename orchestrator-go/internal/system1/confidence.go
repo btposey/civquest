@@ -107,6 +107,19 @@ func IsAlly(entity *civquestv1.VisibleEntity) bool {
 	return false
 }
 
+// IsShield checks if an item ID corresponds to a Minecraft shield (exact match).
+func IsShield(itemID string) bool {
+	id := strings.ToLower(strings.TrimSpace(itemID))
+	if idx := strings.Index(id, ":"); idx != -1 {
+		id = id[idx+1:]
+	}
+	return id == "shield"
+}
+
+func isShield(itemID string) bool {
+	return IsShield(itemID)
+}
+
 // CalculateGearMultiplier evaluates the equipped and inventory armor, weapons, and shield,
 // returning a deterministic gear multiplier M_gear bounded within [0.5, 2.5].
 func CalculateGearMultiplier(inventory []*civquestv1.ItemStackProto) float64 {
@@ -123,31 +136,42 @@ func CalculateGearMultiplier(inventory []*civquestv1.ItemStackProto) float64 {
 			id = id[idx+1:]
 		}
 
-		if strings.Contains(id, "shield") {
+		isArmorSlot := (item.Slot >= 100 && item.Slot <= 103) || (item.Slot >= 36 && item.Slot <= 39)
+		isHotbarSlot := item.Slot >= 0 && item.Slot <= 8
+		isOffhandSlot := item.Slot == 40
+
+		// Shields only count if in offhand or active hotbar
+		if (isOffhandSlot || isHotbarSlot) && isShield(item.ItemId) {
 			hasShield = 0.5
 		}
 
-		if wScore := weaponScore(id); wScore > bestWeapon {
-			bestWeapon = wScore
+		// Weapons only count if in hotbar
+		if isHotbarSlot {
+			if wScore := weaponScore(id); wScore > bestWeapon {
+				bestWeapon = wScore
+			}
 		}
 
-		if aScore, slotType := armorScore(id); aScore > 0 {
-			switch slotType {
-			case "helmet":
-				if aScore > bestHelmet {
-					bestHelmet = aScore
-				}
-			case "chestplate":
-				if aScore > bestChestplate {
-					bestChestplate = aScore
-				}
-			case "leggings":
-				if aScore > bestLeggings {
-					bestLeggings = aScore
-				}
-			case "boots":
-				if aScore > bestBoots {
-					bestBoots = aScore
+		// Armor only counts if in armor slots
+		if isArmorSlot {
+			if aScore, slotType := armorScore(id); aScore > 0 {
+				switch slotType {
+				case "helmet":
+					if aScore > bestHelmet {
+						bestHelmet = aScore
+					}
+				case "chestplate":
+					if aScore > bestChestplate {
+						bestChestplate = aScore
+					}
+				case "leggings":
+					if aScore > bestLeggings {
+						bestLeggings = aScore
+					}
+				case "boots":
+					if aScore > bestBoots {
+						bestBoots = aScore
+					}
 				}
 			}
 		}
@@ -215,7 +239,15 @@ func armorScore(id string) (score float64, slotType string) {
 
 // CalculateConfidence evaluates the fight-or-flight confidence score:
 // Confidence = ((HP_self + sum(HP_allies)) / sum(Threat_hostiles)) * M_gear * (0.5 + Bravery_trait).
+// Guards against NaN and Inf; returns 0.0 if any input or result is non-finite.
 func CalculateConfidence(selfHP float64, alliesHP float64, threatHostiles float64, gearMultiplier float64, braveryTrait float64) float64 {
+	if math.IsNaN(selfHP) || math.IsInf(selfHP, 0) ||
+		math.IsNaN(alliesHP) || math.IsInf(alliesHP, 0) ||
+		math.IsNaN(threatHostiles) || math.IsInf(threatHostiles, 0) ||
+		math.IsNaN(gearMultiplier) || math.IsInf(gearMultiplier, 0) ||
+		math.IsNaN(braveryTrait) || math.IsInf(braveryTrait, 0) {
+		return 0.0
+	}
 	if threatHostiles <= 0 {
 		return 999.0
 	}
@@ -233,15 +265,22 @@ func CalculateConfidence(selfHP float64, alliesHP float64, threatHostiles float6
 	if hpTotal < 0 {
 		hpTotal = 0
 	}
-	return (hpTotal / threatHostiles) * gearMultiplier * (0.5 + braveryTrait)
+	conf := (hpTotal / threatHostiles) * gearMultiplier * (0.5 + braveryTrait)
+	if math.IsNaN(conf) || math.IsInf(conf, 0) {
+		return 0.0
+	}
+	return conf
 }
 
 // ShouldPanic checks the SURVIVAL_PANIC override rules:
 // 1. HP_self <= 0.35 * HP_max
-// 2. Confidence < 1.0 (when hostiles present within R=16)
+// 2. Confidence < 1.0 or NaN (when hostiles present within R=16)
 // 3. Creeper within 5 blocks has fuse_ticks > 0.
 func ShouldPanic(selfHP float64, maxHP float64, confidence float64, hostilesPresent bool, creeperHissingNearby bool) bool {
-	if maxHP <= 0 {
+	if math.IsNaN(selfHP) || math.IsInf(selfHP, 0) {
+		return true
+	}
+	if maxHP <= 0 || math.IsNaN(maxHP) || math.IsInf(maxHP, 0) {
 		maxHP = 20.0
 	}
 	if selfHP <= LowHPThresholdRatio*maxHP {
@@ -250,14 +289,18 @@ func ShouldPanic(selfHP float64, maxHP float64, confidence float64, hostilesPres
 	if creeperHissingNearby {
 		return true
 	}
-	if hostilesPresent && confidence < 1.0 {
+	if math.IsNaN(confidence) || math.IsInf(confidence, 0) {
+		return true
+	}
+	if hostilesPresent && (math.IsNaN(confidence) || confidence < 1.0) {
 		return true
 	}
 	return false
 }
 
 // SelectPriorityHostile selects the most critical hostile threat:
-// Creeper with fuse_ticks > 0 has top priority, otherwise the hostile with the minimum distance.
+// Creeper with fuse_ticks > 0 within CreeperPanicRadius (5.0) has top priority,
+// otherwise the hostile with the minimum distance.
 func SelectPriorityHostile(hostiles []*civquestv1.VisibleEntity) *civquestv1.VisibleEntity {
 	if len(hostiles) == 0 {
 		return nil
@@ -267,7 +310,7 @@ func SelectPriorityHostile(hostiles []*civquestv1.VisibleEntity) *civquestv1.Vis
 			continue
 		}
 		t := strings.ToLower(h.EntityType)
-		if strings.Contains(t, "creeper") && h.FuseTicks > 0 {
+		if strings.Contains(t, "creeper") && h.FuseTicks > 0 && float64(h.Distance) <= CreeperPanicRadius {
 			return h
 		}
 	}
@@ -306,12 +349,16 @@ func IsRangedAttacker(entity *civquestv1.VisibleEntity, lastDamage *civquestv1.D
 }
 
 // FoodScore ranks food items by saturation, restorative value, and safety.
+// Returns 0 (do not eat) for dangerous, poisonous, or hazardous items.
 func FoodScore(itemID string) int {
 	id := strings.ToLower(itemID)
 	if idx := strings.Index(id, ":"); idx != -1 {
 		id = id[idx+1:]
 	}
 	switch {
+	case id == "suspicious_stew" || id == "poisonous_potato" || id == "pufferfish" ||
+		id == "rotten_flesh" || id == "spider_eye":
+		return 0
 	case id == "enchanted_golden_apple":
 		return 100
 	case id == "golden_apple":
@@ -360,11 +407,20 @@ func FindBestFoodItem(inventory []*civquestv1.ItemStackProto) (slot int32, found
 
 // ComputeFleeTarget computes a 3D escape position oriented away from the centroid of hostiles,
 // prioritizing safe nodes from map_graph.db when available.
+// If hostiles is empty (unseen damage) and safe nodes exist, it flees toward the best safe node.
+// If no valid hostiles and no safe nodes exist, it returns the agent's current position.
+// Ensures returned Vec3 coordinates are strictly finite.
 func ComputeFleeTarget(selfPos *civquestv1.Vec3, hostiles []*civquestv1.VisibleEntity, fleeDist float64, safeNodes []db.MapNode) *civquestv1.Vec3 {
-	if selfPos == nil {
-		return &civquestv1.Vec3{X: 0, Y: 64, Z: 0}
+	var fallback *civquestv1.Vec3
+	if selfPos == nil || math.IsNaN(selfPos.X) || math.IsInf(selfPos.X, 0) ||
+		math.IsNaN(selfPos.Y) || math.IsInf(selfPos.Y, 0) ||
+		math.IsNaN(selfPos.Z) || math.IsInf(selfPos.Z, 0) {
+		fallback = &civquestv1.Vec3{X: 0, Y: 64, Z: 0}
+	} else {
+		fallback = &civquestv1.Vec3{X: selfPos.X, Y: selfPos.Y, Z: selfPos.Z}
 	}
-	if fleeDist <= 0 {
+
+	if fleeDist <= 0 || math.IsNaN(fleeDist) || math.IsInf(fleeDist, 0) {
 		fleeDist = DefaultFleeDistance
 	}
 
@@ -374,39 +430,69 @@ func ComputeFleeTarget(selfPos *civquestv1.Vec3, hostiles []*civquestv1.VisibleE
 		if h == nil || h.Position == nil {
 			continue
 		}
+		if math.IsNaN(h.Position.X) || math.IsInf(h.Position.X, 0) ||
+			math.IsNaN(h.Position.Y) || math.IsInf(h.Position.Y, 0) ||
+			math.IsNaN(h.Position.Z) || math.IsInf(h.Position.Z, 0) {
+			continue
+		}
 		sumX += h.Position.X
 		sumZ += h.Position.Z
 		count++
 	}
 
-	if count == 0 {
-		return &civquestv1.Vec3{
-			X: selfPos.X - fleeDist,
-			Y: selfPos.Y,
-			Z: selfPos.Z,
+	findBestSafeNode := func(centroidX, centroidZ float64, hasCentroid bool) *civquestv1.Vec3 {
+		if len(safeNodes) == 0 {
+			return nil
 		}
-	}
-
-	centroidX := sumX / count
-	centroidZ := sumZ / count
-
-	// Evaluate safe nodes in map_graph.db if provided
-	if len(safeNodes) > 0 {
-		curDistToCentroid := math.Hypot(selfPos.X-centroidX, selfPos.Z-centroidZ)
 		var bestNode *db.MapNode
 		bestScore := -1.0
+		curDistToCentroid := 0.0
+		if hasCentroid {
+			curDistToCentroid = math.Hypot(fallback.X-centroidX, fallback.Z-centroidZ)
+		}
 
 		for i := range safeNodes {
 			node := &safeNodes[i]
-			nodeDistToCentroid := math.Hypot(node.X-centroidX, node.Z-centroidZ)
-			if nodeDistToCentroid > curDistToCentroid {
-				distFromSelf := math.Hypot(node.X-selfPos.X, node.Z-selfPos.Z)
-				if distFromSelf <= 48.0 {
+			if math.IsNaN(node.X) || math.IsInf(node.X, 0) ||
+				math.IsNaN(node.Y) || math.IsInf(node.Y, 0) ||
+				math.IsNaN(node.Z) || math.IsInf(node.Z, 0) {
+				continue
+			}
+			distFromSelf := math.Hypot(node.X-fallback.X, node.Z-fallback.Z)
+			if hasCentroid {
+				nodeDistToCentroid := math.Hypot(node.X-centroidX, node.Z-centroidZ)
+				if nodeDistToCentroid > curDistToCentroid && distFromSelf <= 48.0 {
 					combinedScore := node.SafetyScore*1.5 + (nodeDistToCentroid / (distFromSelf + 1.0))
 					if combinedScore > bestScore {
 						bestScore = combinedScore
 						bestNode = node
 					}
+				}
+			} else {
+				if distFromSelf <= 48.0 {
+					score := node.SafetyScore*2.0 + (10.0 / (distFromSelf + 1.0))
+					if score > bestScore {
+						bestScore = score
+						bestNode = node
+					}
+				}
+			}
+		}
+
+		// Fallback for no hostiles: check safe nodes outside 48 blocks if none within 48
+		if !hasCentroid && bestNode == nil {
+			for i := range safeNodes {
+				node := &safeNodes[i]
+				if math.IsNaN(node.X) || math.IsInf(node.X, 0) ||
+					math.IsNaN(node.Y) || math.IsInf(node.Y, 0) ||
+					math.IsNaN(node.Z) || math.IsInf(node.Z, 0) {
+					continue
+				}
+				distFromSelf := math.Hypot(node.X-fallback.X, node.Z-fallback.Z)
+				score := node.SafetyScore*2.0 + (10.0 / (distFromSelf + 1.0))
+				if score > bestScore {
+					bestScore = score
+					bestNode = node
 				}
 			}
 		}
@@ -418,13 +504,28 @@ func ComputeFleeTarget(selfPos *civquestv1.Vec3, hostiles []*civquestv1.VisibleE
 				Z: bestNode.Z,
 			}
 		}
+		return nil
+	}
+
+	if count == 0 {
+		if target := findBestSafeNode(0, 0, false); target != nil {
+			return ensureFinite(target, fallback)
+		}
+		return fallback
+	}
+
+	centroidX := sumX / count
+	centroidZ := sumZ / count
+
+	if target := findBestSafeNode(centroidX, centroidZ, true); target != nil {
+		return ensureFinite(target, fallback)
 	}
 
 	// Centroid avoidance vector
-	dx := selfPos.X - centroidX
-	dz := selfPos.Z - centroidZ
+	dx := fallback.X - centroidX
+	dz := fallback.Z - centroidZ
 	dist := math.Hypot(dx, dz)
-	if dist < 1e-4 {
+	if dist < 1e-4 || math.IsNaN(dist) || math.IsInf(dist, 0) {
 		dx = -1.0
 		dz = 0.0
 		dist = 1.0
@@ -432,11 +533,22 @@ func ComputeFleeTarget(selfPos *civquestv1.Vec3, hostiles []*civquestv1.VisibleE
 	ux := dx / dist
 	uz := dz / dist
 
-	return &civquestv1.Vec3{
-		X: selfPos.X + ux*fleeDist,
-		Y: selfPos.Y,
-		Z: selfPos.Z + uz*fleeDist,
+	res := &civquestv1.Vec3{
+		X: fallback.X + ux*fleeDist,
+		Y: fallback.Y,
+		Z: fallback.Z + uz*fleeDist,
 	}
+	return ensureFinite(res, fallback)
+}
+
+func ensureFinite(target, fallback *civquestv1.Vec3) *civquestv1.Vec3 {
+	if target == nil ||
+		math.IsNaN(target.X) || math.IsInf(target.X, 0) ||
+		math.IsNaN(target.Y) || math.IsInf(target.Y, 0) ||
+		math.IsNaN(target.Z) || math.IsInf(target.Z, 0) {
+		return &civquestv1.Vec3{X: fallback.X, Y: fallback.Y, Z: fallback.Z}
+	}
+	return target
 }
 
 // ReflexContext encapsulates sensory and environmental state for System 1 evaluation.

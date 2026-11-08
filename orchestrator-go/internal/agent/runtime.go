@@ -6,6 +6,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
+	"math"
 	"net"
 	"os"
 	"path/filepath"
@@ -105,9 +107,10 @@ type AgentRuntime struct {
 	hasCachedInventory bool
 	lastCachedItems    []CachedItem
 	lastEatingTick     int64
+	lastFleeTarget     *civquestv1.Vec3
+	lastFleeTick       int64
 
 	// System 1 Reflexes and Safe Node Graph Cache
-	safeNodesMu    sync.RWMutex
 	safeNodesCache []db.MapNode
 
 	// Callbacks
@@ -354,6 +357,62 @@ func (r *AgentRuntime) EnqueueIntent(intent *civquestv1.AgentIntent) error {
 	return r.QueueIntent(intent)
 }
 
+// QueuePriorityIntent enqueues a critical reflex intent into the outbound queue.
+// If the queue is full, it evicts the oldest intent from the front of the channel,
+// logging a warning with the dropped intent type, ensuring combat and panic reflexes are never dropped.
+func (r *AgentRuntime) QueuePriorityIntent(intent *civquestv1.AgentIntent) error {
+	if intent == nil {
+		return ErrNilIntent
+	}
+
+	select {
+	case <-r.done:
+		return ErrRuntimeStopped
+	default:
+	}
+
+	if intent.AgentId == "" {
+		intent.AgentId = r.agentID
+	}
+	if intent.SequenceId <= 0 {
+		intent.SequenceId = r.sequenceID.Add(1)
+	}
+
+	for {
+		select {
+		case <-r.done:
+			return ErrRuntimeStopped
+		case r.intentQueue <- intent:
+			return nil
+		default:
+		}
+
+		// Queue is full: evict front intent to prioritize reflex
+		select {
+		case dropped := <-r.intentQueue:
+			log.Printf("[WARN] agent %s: intent queue full, evicted older intent %s (seq %d) for priority reflex %s",
+				r.agentID, intentActionName(dropped), dropped.SequenceId, intentActionName(intent))
+		default:
+		}
+	}
+}
+
+func intentActionName(intent *civquestv1.AgentIntent) string {
+	if intent == nil || intent.Action == nil {
+		return "nil"
+	}
+	switch a := intent.Action.(type) {
+	case *civquestv1.AgentIntent_Attack:
+		return fmt.Sprintf("AttackIntent(target=%d,shield=%v,flee=%v)", a.Attack.TargetEntityId, a.Attack.RaiseShield, a.Attack.FleeImmediately)
+	case *civquestv1.AgentIntent_Navigate:
+		return "NavigateIntent"
+	case *civquestv1.AgentIntent_UseItem:
+		return fmt.Sprintf("UseItemIntent(slot=%d,eating=%v)", a.UseItem.InventorySlot, a.UseItem.IsEatingOrDrinking)
+	default:
+		return fmt.Sprintf("%T", intent.Action)
+	}
+}
+
 // Start boots the runtime: initializes the UNIX diagnostic socket, establishes
 // the bidirectional gRPC stream, sends the initial handshake intent to register the agent
 // in the server StreamRegistry, and runs the telemetry loop.
@@ -598,23 +657,32 @@ func (r *AgentRuntime) loadSafeNodes() {
 				safe = append(safe, n)
 			}
 		}
-		r.safeNodesMu.Lock()
+		r.mu.Lock()
 		r.safeNodesCache = safe
-		r.safeNodesMu.Unlock()
+		r.mu.Unlock()
 	}
 }
 
-// SetSafeNodes sets cached safe nodes for flee calculations.
+// SetSafeNodes sets cached safe nodes for flee calculations using a defensive copy.
 func (r *AgentRuntime) SetSafeNodes(nodes []db.MapNode) {
-	r.safeNodesMu.Lock()
-	defer r.safeNodesMu.Unlock()
-	r.safeNodesCache = nodes
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if nodes == nil {
+		r.safeNodesCache = nil
+		return
+	}
+	cp := make([]db.MapNode, len(nodes))
+	copy(cp, nodes)
+	r.safeNodesCache = cp
 }
 
 // SafeNodes returns a defensive copy of currently cached safe nodes.
 func (r *AgentRuntime) SafeNodes() []db.MapNode {
-	r.safeNodesMu.RLock()
-	defer r.safeNodesMu.RUnlock()
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	if r.safeNodesCache == nil {
+		return nil
+	}
 	res := make([]db.MapNode, len(r.safeNodesCache))
 	copy(res, r.safeNodesCache)
 	return res
@@ -651,12 +719,14 @@ func (r *AgentRuntime) evaluateSystem1Reflexes(frame *civquestv1.TelemetryFrame)
 		bravery = r.identityConfig.Traits.Bravery
 	}
 
-	r.safeNodesMu.RLock()
-	safeNodes := r.safeNodesCache
-	r.safeNodesMu.RUnlock()
+	r.mu.RLock()
+	var safeNodes []db.MapNode
+	if r.safeNodesCache != nil {
+		safeNodes = make([]db.MapNode, len(r.safeNodesCache))
+		copy(safeNodes, r.safeNodesCache)
+	}
 
 	canEat := true
-	r.mu.RLock()
 	if r.lastEatingTick > 0 && frame.WorldTick >= r.lastEatingTick && frame.WorldTick-r.lastEatingTick < 32 {
 		canEat = false
 	}
@@ -675,14 +745,49 @@ func (r *AgentRuntime) evaluateSystem1Reflexes(frame *civquestv1.TelemetryFrame)
 		return
 	}
 
-	if result.EatenFoodSlot >= 0 {
+	// MIN-02: Baritone Path Churn Mitigation
+	// When fleeing, only re-emit NavigateIntent if target shifted by >= 2.0 blocks
+	// or > 10 ticks (0.5s) have elapsed.
+	skipFleeNav := false
+	if result.IsPanic && result.FleeTarget != nil {
 		r.mu.Lock()
-		r.lastEatingTick = frame.WorldTick
+		if r.lastFleeTarget != nil {
+			dx := result.FleeTarget.X - r.lastFleeTarget.X
+			dy := result.FleeTarget.Y - r.lastFleeTarget.Y
+			dz := result.FleeTarget.Z - r.lastFleeTarget.Z
+			dist := math.Sqrt(dx*dx + dy*dy + dz*dz)
+			ticksElapsed := frame.WorldTick - r.lastFleeTick
+			if dist < 2.0 && ticksElapsed <= 10 && ticksElapsed >= 0 {
+				skipFleeNav = true
+			}
+		}
+		if !skipFleeNav {
+			r.lastFleeTarget = &civquestv1.Vec3{
+				X: result.FleeTarget.X,
+				Y: result.FleeTarget.Y,
+				Z: result.FleeTarget.Z,
+			}
+			r.lastFleeTick = frame.WorldTick
+		}
+		r.mu.Unlock()
+	} else if !result.IsPanic {
+		r.mu.Lock()
+		r.lastFleeTarget = nil
+		r.lastFleeTick = 0
 		r.mu.Unlock()
 	}
 
+	// Dispatch priority reflex intents; update eating cooldown only if UseItem was queued successfully
 	for _, intent := range result.Intents {
-		_ = r.QueueIntent(intent)
+		if skipFleeNav && intent.GetNavigate() != nil {
+			continue
+		}
+		err := r.QueuePriorityIntent(intent)
+		if err == nil && intent.GetUseItem() != nil && intent.GetUseItem().IsEatingOrDrinking {
+			r.mu.Lock()
+			r.lastEatingTick = frame.WorldTick
+			r.mu.Unlock()
+		}
 	}
 }
 

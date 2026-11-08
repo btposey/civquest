@@ -15,6 +15,7 @@ import (
 
 	"github.com/btposey/civquest/orchestrator-go/internal/agent"
 	"github.com/btposey/civquest/orchestrator-go/internal/bridge"
+	"github.com/btposey/civquest/orchestrator-go/internal/db"
 	civquestv1 "github.com/btposey/civquest/orchestrator-go/internal/proto/v1"
 	"github.com/btposey/civquest/orchestrator-go/internal/xdg"
 	"google.golang.org/grpc"
@@ -1188,6 +1189,215 @@ func TestRuntime_System1_LowHPPanic(t *testing.T) {
 			}
 		case <-deadline:
 			t.Fatalf("timed out waiting for eating intent on low HP")
+		}
+	}
+
+	cancel()
+	_ = <-runErrCh
+}
+
+func TestRuntime_QueuePriorityIntent_Eviction(t *testing.T) {
+	tmpDir := t.TempDir()
+	resolver := xdg.NewResolver(xdg.WithCustomRoot(tmpDir))
+
+	rt, err := agent.NewRuntime(agent.Config{
+		AgentID:         "priority_agent",
+		ClanID:          "pioneers",
+		Resolver:        resolver,
+		IntentQueueSize: 2, // Small queue to force eviction
+	})
+	if err != nil {
+		t.Fatalf("failed creating runtime: %v", err)
+	}
+
+	// 1. Fill queue to capacity with routine intents
+	r1 := &civquestv1.AgentIntent{
+		Action: &civquestv1.AgentIntent_Navigate{
+			Navigate: &civquestv1.NavigateIntent{Target: &civquestv1.Vec3{X: 1, Y: 1, Z: 1}},
+		},
+	}
+	r2 := &civquestv1.AgentIntent{
+		Action: &civquestv1.AgentIntent_Navigate{
+			Navigate: &civquestv1.NavigateIntent{Target: &civquestv1.Vec3{X: 2, Y: 2, Z: 2}},
+		},
+	}
+	if err := rt.QueueIntent(r1); err != nil {
+		t.Fatalf("failed queueing r1: %v", err)
+	}
+	if err := rt.QueueIntent(r2); err != nil {
+		t.Fatalf("failed queueing r2: %v", err)
+	}
+
+	// 2. Normal QueueIntent now fails with ErrQueueFull
+	r3 := &civquestv1.AgentIntent{
+		Action: &civquestv1.AgentIntent_Navigate{
+			Navigate: &civquestv1.NavigateIntent{Target: &civquestv1.Vec3{X: 3, Y: 3, Z: 3}},
+		},
+	}
+	if err := rt.QueueIntent(r3); err != agent.ErrQueueFull {
+		t.Fatalf("expected ErrQueueFull on full queue, got %v", err)
+	}
+
+	// 3. QueuePriorityIntent must evict r1 (head-of-line) and successfully enqueue reflex intent
+	reflexIntent := &civquestv1.AgentIntent{
+		Action: &civquestv1.AgentIntent_Attack{
+			Attack: &civquestv1.AttackIntent{TargetEntityId: 99, RaiseShield: true, FleeImmediately: true},
+		},
+	}
+	if err := rt.QueuePriorityIntent(reflexIntent); err != nil {
+		t.Fatalf("QueuePriorityIntent failed on full queue: %v", err)
+	}
+}
+
+func TestRuntime_SafeNodesDefensiveCopy(t *testing.T) {
+	tmpDir := t.TempDir()
+	resolver := xdg.NewResolver(xdg.WithCustomRoot(tmpDir))
+
+	rt, err := agent.NewRuntime(agent.Config{
+		AgentID:  "safenode_agent",
+		Resolver: resolver,
+	})
+	if err != nil {
+		t.Fatalf("failed creating runtime: %v", err)
+	}
+
+	original := []db.MapNode{
+		{ID: "node_1", X: 10, Y: 64, Z: 10, SafetyScore: 0.95},
+	}
+	rt.SetSafeNodes(original)
+
+	// Mutate input slice: internal cache must remain unchanged
+	original[0].ID = "corrupted"
+	cached := rt.SafeNodes()
+	if len(cached) != 1 || cached[0].ID != "node_1" {
+		t.Fatalf("internal cache was mutated via caller slice: %+v", cached)
+	}
+
+	// Mutate returned slice: internal cache must remain unchanged
+	cached[0].ID = "corrupted_again"
+	cached2 := rt.SafeNodes()
+	if len(cached2) != 1 || cached2[0].ID != "node_1" {
+		t.Fatalf("internal cache was mutated via return slice: %+v", cached2)
+	}
+}
+
+func TestRuntime_System1_BaritonePathChurnMitigation(t *testing.T) {
+	mockSvc, client, cleanup := setupTestBridge(t)
+	defer cleanup()
+
+	tmpDir := t.TempDir()
+	resolver := xdg.NewResolver(xdg.WithCustomRoot(tmpDir))
+	_ = resolver.InitAgentDirectories("churn_agent")
+
+	rt, err := agent.NewRuntime(agent.Config{
+		AgentID:      "churn_agent",
+		Resolver:     resolver,
+		BridgeClient: client,
+	})
+	if err != nil {
+		t.Fatalf("failed creating runtime: %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	runErrCh := make(chan error, 1)
+	go func() {
+		runErrCh <- rt.Start(ctx)
+	}()
+
+	select {
+	case <-mockSvc.streamReady:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for stream readiness")
+	}
+
+	// Drain handshake intent
+	select {
+	case <-mockSvc.intentCh:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for handshake intent")
+	}
+
+	makePanicFrame := func(tick int64, agentX, creeperX float64) *civquestv1.TelemetryFrame {
+		return &civquestv1.TelemetryFrame{
+			WorldTick: tick,
+			Status: &civquestv1.AgentStatus{
+				AgentId:   "churn_agent",
+				Health:    10.0,
+				MaxHealth: 20.0,
+				FoodLevel: 20,
+				Position:  &civquestv1.Vec3{X: agentX, Y: 64, Z: 100},
+			},
+			VisibleEntities: []*civquestv1.VisibleEntity{
+				{
+					EntityId:   50,
+					EntityType: "minecraft:creeper",
+					Distance:   3.0,
+					FuseTicks:  20,
+					Position:   &civquestv1.Vec3{X: creeperX, Y: 64, Z: 100},
+				},
+			},
+		}
+	}
+
+	// Frame 1 at tick 100: Initial panic triggers NavigateIntent
+	if err := mockSvc.SendFrame(makePanicFrame(100, 100.0, 103.0)); err != nil {
+		t.Fatalf("failed sending frame 1: %v", err)
+	}
+
+	var gotNav1 bool
+	deadline := time.After(2 * time.Second)
+	for !gotNav1 {
+		select {
+		case intent := <-mockSvc.intentCh:
+			if intent.GetNavigate() != nil {
+				gotNav1 = true
+			}
+		case <-deadline:
+			t.Fatal("timed out waiting for initial NavigateIntent at tick 100")
+		}
+	}
+
+	// Frame 2 at tick 102 (only 2 ticks elapsed, target shifted < 2.0 blocks)
+	if err := mockSvc.SendFrame(makePanicFrame(102, 100.1, 103.1)); err != nil {
+		t.Fatalf("failed sending frame 2: %v", err)
+	}
+
+	// AttackIntent (shield) should be emitted, but NavigateIntent should be suppressed
+	var gotNav2 bool
+	drainDeadline := time.After(200 * time.Millisecond)
+drainLoop:
+	for {
+		select {
+		case intent := <-mockSvc.intentCh:
+			if intent.GetNavigate() != nil {
+				gotNav2 = true
+			}
+		case <-drainDeadline:
+			break drainLoop
+		}
+	}
+
+	if gotNav2 {
+		t.Error("expected NavigateIntent to be suppressed on minor position shift within 10 ticks")
+	}
+
+	// Frame 3 at tick 115 (> 10 ticks elapsed since tick 100) -> NavigateIntent MUST be re-emitted
+	if err := mockSvc.SendFrame(makePanicFrame(115, 100.2, 103.2)); err != nil {
+		t.Fatalf("failed sending frame 3: %v", err)
+	}
+
+	var gotNav3 bool
+	deadline3 := time.After(2 * time.Second)
+	for !gotNav3 {
+		select {
+		case intent := <-mockSvc.intentCh:
+			if intent.GetNavigate() != nil {
+				gotNav3 = true
+			}
+		case <-deadline3:
+			t.Fatal("timed out waiting for re-emitted NavigateIntent after >10 ticks elapsed")
 		}
 	}
 
