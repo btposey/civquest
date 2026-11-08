@@ -171,6 +171,8 @@ func run(parentCtx context.Context, args []string, stdout, stderr io.Writer, r *
 	}
 	defer dialogueSvc.Close()
 
+	chroniclerSvc := system2.NewChroniclerService(llmClient)
+
 	displayServerID := serverID
 	if displayServerID == "" {
 		displayServerID = "default"
@@ -221,15 +223,16 @@ func run(parentCtx context.Context, args []string, stdout, stderr io.Writer, r *
 	}
 
 	rt, err := agent.NewRuntime(agent.Config{
-		AgentID:         cfg.Name,
-		ClanID:          cfg.ClanID,
-		IdentityConfig:  cfg,
-		Resolver:        r,
-		AgentDB:         agentDB,
-		ReputationDB:    repDB,
-		BridgeClient:    bridgeClient,
-		SocketPath:      sockPath,
-		DialogueService: dialogueSvc,
+		AgentID:           cfg.Name,
+		ClanID:            cfg.ClanID,
+		IdentityConfig:    cfg,
+		Resolver:          r,
+		AgentDB:           agentDB,
+		ReputationDB:      repDB,
+		BridgeClient:      bridgeClient,
+		SocketPath:        sockPath,
+		DialogueService:   dialogueSvc,
+		ChroniclerService: chroniclerSvc,
 		OnDeath: func(e *civquestv1.DeathEvent) {
 			fmt.Fprintf(stdout, "[civquest-agent] Permadeath event recorded at tick %d (cause: %s)\n",
 				e.GetWorldTick(), e.GetDamageSource())

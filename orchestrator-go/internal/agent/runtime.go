@@ -11,6 +11,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -42,19 +43,20 @@ type StreamConnector interface {
 
 // Config provides initial configuration options for constructing an AgentRuntime.
 type Config struct {
-	AgentID         string
-	AgentUUID       string
-	ClanID          string
-	IdentityConfig  *xdg.AgentIdentityConfig
-	Resolver        *xdg.Resolver
-	AgentDB         *db.AgentDB
-	ReputationDB    *db.ReputationDB
-	BridgeClient    *bridge.Client
-	StreamConnector StreamConnector
-	SocketPath      string
-	IntentQueueSize int
-	OnDeath         func(*civquestv1.DeathEvent)
-	DialogueService *system2.DialogueService
+	AgentID           string
+	AgentUUID         string
+	ClanID            string
+	IdentityConfig    *xdg.AgentIdentityConfig
+	Resolver          *xdg.Resolver
+	AgentDB           *db.AgentDB
+	ReputationDB      *db.ReputationDB
+	BridgeClient      *bridge.Client
+	StreamConnector   StreamConnector
+	SocketPath        string
+	IntentQueueSize   int
+	OnDeath           func(*civquestv1.DeathEvent)
+	DialogueService   *system2.DialogueService
+	ChroniclerService *system2.ChroniclerService
 }
 
 // SocketPosition represents 3D coordinates in the diagnostic socket payload.
@@ -124,12 +126,16 @@ type AgentRuntime struct {
 	pavingTracker  *system1.RoadPavingTracker
 
 	// System 2 Deliberative Dialogue Pipeline
-	dialogueService     *system2.DialogueService
-	dialogueWg          sync.WaitGroup
-	tradeActive         atomic.Bool
-	lastTradeTick       int64
-	lastTradePlayerUUID string
-	lastTradeAttemptAt  time.Time
+	dialogueService      *system2.DialogueService
+	chroniclerService    *system2.ChroniclerService
+	lastChronicleAttempt time.Time
+	lastChronicleTick    int64
+	dialogueWg           sync.WaitGroup
+	tradeActive          atomic.Bool
+	chroniclerActive     atomic.Bool
+	lastTradeTick        int64
+	lastTradePlayerUUID  string
+	lastTradeAttemptAt   time.Time
 
 	// Callbacks
 	onDeath func(*civquestv1.DeathEvent)
@@ -187,27 +193,28 @@ func NewRuntime(cfg Config) (*AgentRuntime, error) {
 	}
 
 	runtime := &AgentRuntime{
-		agentID:         agentID,
-		agentUUID:       agentUUID,
-		clanID:          clanID,
-		identityConfig:  cfg.IdentityConfig,
-		resolver:        r,
-		agentDB:         cfg.AgentDB,
-		reputationDB:    cfg.ReputationDB,
-		bridgeClient:    cfg.BridgeClient,
-		connector:       connector,
-		dialogueService: cfg.DialogueService,
-		intentQueue:     make(chan *civquestv1.AgentIntent, queueSize),
-		socketPath:      sockPath,
-		pid:             os.Getpid(),
-		startTime:       time.Now().UTC(),
-		status:          "INITIALIZING",
-		onDeath:         cfg.OnDeath,
-		done:            make(chan struct{}),
-		socketDone:      make(chan struct{}),
-		lastCachedItems: nil,
-		system1State:    sys1State,
-		pavingTracker:   pavingTracker,
+		agentID:           agentID,
+		agentUUID:         agentUUID,
+		clanID:            clanID,
+		identityConfig:    cfg.IdentityConfig,
+		resolver:          r,
+		agentDB:           cfg.AgentDB,
+		reputationDB:      cfg.ReputationDB,
+		bridgeClient:      cfg.BridgeClient,
+		connector:         connector,
+		dialogueService:   cfg.DialogueService,
+		chroniclerService: cfg.ChroniclerService,
+		intentQueue:       make(chan *civquestv1.AgentIntent, queueSize),
+		socketPath:        sockPath,
+		pid:               os.Getpid(),
+		startTime:         time.Now().UTC(),
+		status:            "INITIALIZING",
+		onDeath:           cfg.OnDeath,
+		done:              make(chan struct{}),
+		socketDone:        make(chan struct{}),
+		lastCachedItems:   nil,
+		system1State:      sys1State,
+		pavingTracker:     pavingTracker,
 	}
 
 	runtime.loadSafeNodes()
@@ -294,6 +301,20 @@ func (r *AgentRuntime) DialogueService() *system2.DialogueService {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	return r.dialogueService
+}
+
+// ChroniclerService returns the configured System 2 Clan Chronicler service, or nil if unset.
+func (r *AgentRuntime) ChroniclerService() *system2.ChroniclerService {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.chroniclerService
+}
+
+// SetChroniclerService assigns or updates the System 2 Clan Chronicler service.
+func (r *AgentRuntime) SetChroniclerService(c *system2.ChroniclerService) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.chroniclerService = c
 }
 
 // System1State returns the volatile System 1 agent routine, needs, and paving state.
@@ -670,6 +691,7 @@ func (r *AgentRuntime) Stop() {
 
 		// Await pending asynchronous dialogue tasks
 		r.tradeActive.Store(false)
+		r.chroniclerActive.Store(false)
 		r.dialogueWg.Wait()
 
 		// Close dialogue service if assigned
@@ -782,6 +804,7 @@ func (r *AgentRuntime) HandleTelemetryFrame(frame *civquestv1.TelemetryFrame) {
 
 		// 2. Await in-flight dialogue goroutines so no DB transactions remain active
 		r.tradeActive.Store(false)
+		r.chroniclerActive.Store(false)
 		r.dialogueWg.Wait()
 
 		// 3. Stop socket server and close dialogue service to prevent IPC queries
@@ -855,6 +878,9 @@ func (r *AgentRuntime) HandleTelemetryFrame(frame *civquestv1.TelemetryFrame) {
 	if len(frame.IncomingChats) > 0 || frame.PendingTrade != nil {
 		r.dispatchDialogue(frame)
 	}
+
+	// Dispatch System 2 Clan Chronicler synthesis at dusk or near library desks (non-blocking)
+	r.dispatchChronicler(frame)
 }
 
 // dispatchDialogue asynchronously processes incoming chat messages and pending trade requests
@@ -1001,6 +1027,117 @@ func (r *AgentRuntime) dispatchDialogue(frame *civquestv1.TelemetryFrame) {
 			}()
 		}
 	}
+}
+
+// dispatchChronicler evaluates conditions for the CHRONICLER profession/hobby:
+// triggering narrative synthesis of unchronicled memories at dusk (ticks 11000–13000)
+// or when near a lectern / chiseled bookshelf, dispatching CreateWrittenBookIntent.
+func (r *AgentRuntime) dispatchChronicler(frame *civquestv1.TelemetryFrame) {
+	if frame == nil {
+		return
+	}
+
+	r.mu.RLock()
+	if r.status != "RUNNING" || r.isDead || r.chroniclerService == nil || r.agentDB == nil {
+		r.mu.RUnlock()
+		return
+	}
+
+	isChronicler := false
+	if r.identityConfig != nil {
+		if strings.EqualFold(r.identityConfig.Profession, "CHRONICLER") ||
+			strings.EqualFold(r.identityConfig.SecondaryHobby, "CHRONICLER") {
+			isChronicler = true
+		}
+	}
+	if !isChronicler {
+		r.mu.RUnlock()
+		return
+	}
+
+	tod := ((frame.TimeOfDay % 24000) + 24000) % 24000
+	isDusk := tod >= 11000 && tod <= 13000
+
+	now := time.Now()
+	if now.Sub(r.lastChronicleAttempt) < 60*time.Second || (r.lastChronicleTick > 0 && frame.WorldTick-r.lastChronicleTick < 600) {
+		r.mu.RUnlock()
+		return
+	}
+
+	var targetBlock *civquestv1.BlockPosProto
+	for _, b := range frame.InterestingBlocks {
+		if b != nil && b.Pos != nil {
+			id := strings.ToLower(b.BlockId)
+			if strings.Contains(id, "lectern") || strings.Contains(id, "chiseled_bookshelf") {
+				targetBlock = b.Pos
+				break
+			}
+		}
+	}
+
+	if !isDusk && targetBlock == nil {
+		r.mu.RUnlock()
+		return
+	}
+
+	if !r.chroniclerActive.CompareAndSwap(false, true) {
+		r.mu.RUnlock()
+		return
+	}
+
+	r.dialogueWg.Add(1)
+	r.lastChronicleAttempt = now
+	r.lastChronicleTick = frame.WorldTick
+	r.mu.RUnlock()
+
+	go func() {
+		defer func() {
+			r.chroniclerActive.Store(false)
+			r.dialogueWg.Done()
+		}()
+
+		r.mu.RLock()
+		ctx := r.ctx
+		if ctx == nil || ctx.Err() != nil {
+			r.mu.RUnlock()
+			return
+		}
+		author := r.agentID
+		if r.identityConfig != nil && r.identityConfig.Name != "" {
+			author = r.identityConfig.Name
+		}
+		clanID := r.clanID
+		r.mu.RUnlock()
+
+		reqCtx, cancel := context.WithTimeout(ctx, 45*time.Second)
+		defer cancel()
+
+		req := system2.ChronicleRequest{
+			AgentID:              r.agentID,
+			ClanID:               clanID,
+			AuthorName:           author,
+			MinSaliency:          0.70,
+			Limit:                10,
+			TargetLecternOrShelf: targetBlock,
+		}
+
+		chronicle, err := r.chroniclerService.ComposeChronicle(reqCtx, r.agentDB, req)
+		if err != nil {
+			if !errors.Is(err, system2.ErrNoUnchronicledMemories) && !errors.Is(err, context.Canceled) {
+				log.Printf("[WARN] agent %s chronicler compose failed: %v", author, err)
+			}
+			return
+		}
+
+		log.Printf("[civquest-agent] Chronicler %s composed book %q (%d pages)",
+			author, chronicle.Title, len(chronicle.Pages))
+
+		if chronicle.Intent != nil {
+			if err := r.QueueIntent(chronicle.Intent); err != nil {
+				log.Printf("[WARN] agent %s failed to queue chronicle intent: %v", author, err)
+			}
+		}
+	}()
 }
 
 // loadSafeNodes pre-loads topological nodes with SafetyScore >= 0.7 from map_graph.db into in-memory cache.

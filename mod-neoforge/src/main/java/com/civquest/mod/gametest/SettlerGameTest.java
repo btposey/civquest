@@ -952,4 +952,115 @@ public class SettlerGameTest {
         manager.despawnSettler(server, "agent-gt-useitem").join();
         helper.succeed();
     }
+
+    @GameTest(template = "empty3x3x3")
+    public static void testCreateWrittenBookActuation(GameTestHelper helper) {
+        MinecraftServer server = helper.getLevel().getServer();
+        ServerLevel level = helper.getLevel();
+        SettlerEntityManager manager = new SettlerEntityManager();
+
+        BlockPos relPos = new BlockPos(1, 1, 1);
+        BlockPos absPos = helper.absolutePos(relPos);
+
+        SpawnAgentRequest spawnReq = SpawnAgentRequest.newBuilder()
+                .setAgentId("agent-gt-chronicler")
+                .setDisplayName("Chronicler")
+                .setClanId("pioneers")
+                .setSpawnCoords(Vec3.newBuilder().setX(absPos.getX() + 0.5).setY(absPos.getY()).setZ(absPos.getZ() + 0.5).build())
+                .build();
+
+        SettlerEntity settler = manager.spawnSettler(server, level, spawnReq).join();
+        helper.assertTrue(settler != null, "Settler must spawn");
+
+        // 1. Materialize Written Book into a Lectern
+        BlockPos relLectern = new BlockPos(1, 1, 2);
+        helper.setBlock(relLectern, Blocks.LECTERN.defaultBlockState().setValue(LecternBlock.HAS_BOOK, false));
+        BlockPos absLectern = helper.absolutePos(relLectern);
+
+        AgentIntent bookIntent = AgentIntent.newBuilder()
+                .setAgentId("agent-gt-chronicler")
+                .setCreateBook(CreateWrittenBookIntent.newBuilder()
+                        .setTitle("Chronicle of Pioneers")
+                        .setAuthor("Chronicler")
+                        .addPages("Page 1: In the beginning...")
+                        .addPages("Page 2: The settlement grew.")
+                        .setTargetLecternOrShelf(BlockPosProto.newBuilder()
+                                .setX(absLectern.getX())
+                                .setY(absLectern.getY())
+                                .setZ(absLectern.getZ())
+                                .build())
+                        .build())
+                .build();
+
+        manager.handleIntent(server, bookIntent).join();
+
+        LecternBlockEntity lectern = (LecternBlockEntity) helper.getBlockEntity(relLectern);
+        helper.assertTrue(lectern != null, "Lectern block entity must exist");
+        helper.assertTrue(lectern.hasBook(), "Lectern must hold the synthesized book");
+
+        ItemStack bookItem = lectern.getBook();
+        helper.assertTrue(bookItem.is(Items.WRITTEN_BOOK), "Lectern item must be a written book");
+        WrittenBookContent content = bookItem.get(DataComponents.WRITTEN_BOOK_CONTENT);
+        helper.assertTrue(content != null, "Book must have written book content component");
+        helper.assertTrue("Chronicle of Pioneers".equals(content.title().raw()), "Book title must match");
+        helper.assertTrue("Chronicler".equals(content.author()), "Book author must match");
+        helper.assertTrue(content.pages().size() == 2, "Book must have 2 pages");
+
+        // 2. Materialize Written Book into a Chiseled Bookshelf
+        BlockPos relShelf = new BlockPos(2, 1, 1);
+        helper.setBlock(relShelf, Blocks.CHISELED_BOOKSHELF.defaultBlockState());
+        BlockPos absShelf = helper.absolutePos(relShelf);
+
+        AgentIntent shelfIntent = AgentIntent.newBuilder()
+                .setAgentId("agent-gt-chronicler")
+                .setCreateBook(CreateWrittenBookIntent.newBuilder()
+                        .setTitle("Volume of Archives")
+                        .setAuthor("Chronicler")
+                        .addPages("Archive records in bookshelf")
+                        .setTargetLecternOrShelf(BlockPosProto.newBuilder()
+                                .setX(absShelf.getX())
+                                .setY(absShelf.getY())
+                                .setZ(absShelf.getZ())
+                                .build())
+                        .setBookshelfSlot(2)
+                        .build())
+                .build();
+
+        manager.handleIntent(server, shelfIntent).join();
+
+        net.minecraft.world.level.block.entity.ChiseledBookShelfBlockEntity shelf =
+                (net.minecraft.world.level.block.entity.ChiseledBookShelfBlockEntity) helper.getBlockEntity(relShelf);
+        helper.assertTrue(shelf != null, "Chiseled bookshelf block entity must exist");
+        helper.assertTrue(shelf.getItem(2).is(Items.WRITTEN_BOOK), "Chiseled bookshelf slot 2 must hold written book");
+
+        // 3. Materialize Written Book into inventory when no target block specified
+        AgentIntent invBookIntent = AgentIntent.newBuilder()
+                .setAgentId("agent-gt-chronicler")
+                .setCreateBook(CreateWrittenBookIntent.newBuilder()
+                        .setTitle("Tome of Wisdom")
+                        .setAuthor("Chronicler")
+                        .addPages("First page in inventory")
+                        .build())
+                .build();
+
+        int initialInvCount = 0;
+        for (int i = 0; i < settler.getInventory().getContainerSize(); i++) {
+            if (settler.getInventory().getItem(i).is(Items.WRITTEN_BOOK)) {
+                initialInvCount++;
+            }
+        }
+
+        manager.handleIntent(server, invBookIntent).join();
+
+        int afterInvCount = 0;
+        for (int i = 0; i < settler.getInventory().getContainerSize(); i++) {
+            if (settler.getInventory().getItem(i).is(Items.WRITTEN_BOOK)) {
+                afterInvCount++;
+            }
+        }
+        helper.assertTrue(afterInvCount == initialInvCount + 1, "Settler inventory must receive written book");
+
+        manager.despawnSettler(server, "agent-gt-chronicler").join();
+        helper.succeed();
+    }
 }

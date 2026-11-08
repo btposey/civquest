@@ -2289,3 +2289,132 @@ func TestRuntime_System1_RoadPavingIntegration(t *testing.T) {
 	cancel()
 	_ = <-runErrCh
 }
+
+func TestRuntime_System2_ClanChroniclerBookSynthesis(t *testing.T) {
+	mockSvc, client, cleanupBridge := setupPermadeathMockBridge(t)
+	defer cleanupBridge()
+
+	tmpDir := t.TempDir()
+	resolver := xdg.NewResolver(xdg.WithCustomRoot(tmpDir))
+	agentID := "chronicler_agent"
+
+	_ = resolver.InitAgentDirectories(agentID)
+	agentDB, err := db.OpenAgentDBForAgent(resolver, agentID)
+	if err != nil {
+		t.Fatalf("failed opening agent DB: %v", err)
+	}
+	defer agentDB.Close()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	// Seed high-saliency event
+	memID, err := agentDB.InsertEpisodicMemory(ctx, db.EpisodicMemory{
+		WorldTick:      5000,
+		EventCategory:  "DISCOVERY",
+		SaliencyScore:  0.95,
+		SummaryText:    "Discovered the Ancient Ruins of the First Settlers.",
+		ActorsJSON:     `["chronicler_agent"]`,
+		LocationCoords: "50.0,64.0,50.0",
+		Chronicled:     false,
+	}, nil)
+	if err != nil {
+		t.Fatalf("failed inserting memory: %v", err)
+	}
+
+	chroniclerSvc := system2.NewChroniclerService(nil) // Deterministic synthesis fallback
+
+	agentCfg := xdg.DefaultAgentIdentityConfig(agentID)
+	agentCfg.Profession = "CHRONICLER"
+	agentCfg.ClanID = "pioneers"
+
+	rt, err := agent.NewRuntime(agent.Config{
+		AgentID:           agentID,
+		ClanID:            "pioneers",
+		IdentityConfig:    agentCfg,
+		Resolver:          resolver,
+		AgentDB:           agentDB,
+		BridgeClient:      client,
+		ChroniclerService: chroniclerSvc,
+	})
+	if err != nil {
+		t.Fatalf("failed creating agent runtime: %v", err)
+	}
+
+	runErrCh := make(chan error, 1)
+	go func() {
+		runErrCh <- rt.Start(ctx)
+	}()
+
+	select {
+	case <-mockSvc.streamReady:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for stream readiness")
+	}
+
+	// Drain handshake intent
+	select {
+	case <-mockSvc.intentCh:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for handshake intent")
+	}
+
+	// Send dusk frame with lectern in interesting blocks
+	duskFrame := &civquestv1.TelemetryFrame{
+		WorldTick: 5500,
+		TimeOfDay: 12000, // Dusk
+		Status: &civquestv1.AgentStatus{
+			AgentId:   agentID,
+			Health:    20.0,
+			MaxHealth: 20.0,
+			FoodLevel: 20,
+			Position:  &civquestv1.Vec3{X: 5.0, Y: 64.0, Z: 5.0},
+		},
+		InterestingBlocks: []*civquestv1.VisibleBlock{
+			{
+				Pos:     &civquestv1.BlockPosProto{X: 5, Y: 64, Z: 6},
+				BlockId: "minecraft:lectern",
+			},
+		},
+	}
+
+	if err := mockSvc.SendFrame(duskFrame); err != nil {
+		t.Fatalf("failed sending dusk frame: %v", err)
+	}
+
+	// Await CreateWrittenBookIntent
+	select {
+	case intent := <-mockSvc.intentCh:
+		createBook := intent.GetCreateBook()
+		if createBook == nil {
+			t.Fatalf("expected CreateWrittenBookIntent, got %+v", intent)
+		}
+		if createBook.Title != "Chronicle of Pioneers" {
+			t.Errorf("expected title 'Chronicle of Pioneers', got %q", createBook.Title)
+		}
+		if createBook.Author != agentID {
+			t.Errorf("expected author %s, got %s", agentID, createBook.Author)
+		}
+		if len(createBook.Pages) == 0 {
+			t.Errorf("expected non-empty pages in book")
+		}
+		if createBook.TargetLecternOrShelf == nil {
+			t.Fatalf("expected non-nil TargetLecternOrShelf")
+		}
+		if createBook.TargetLecternOrShelf.X != 5 || createBook.TargetLecternOrShelf.Y != 64 || createBook.TargetLecternOrShelf.Z != 6 {
+			t.Errorf("unexpected target lectern coords: %+v", createBook.TargetLecternOrShelf)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("timed out waiting for CreateWrittenBookIntent")
+	}
+
+	// Verify memory was marked as chronicled
+	mem, err := agentDB.GetEpisodicMemory(ctx, memID)
+	if err != nil || mem == nil || !mem.Chronicled {
+		t.Errorf("expected episodic memory to be marked chronicled in DB")
+	}
+
+	rt.Stop()
+	cancel()
+	_ = <-runErrCh
+}

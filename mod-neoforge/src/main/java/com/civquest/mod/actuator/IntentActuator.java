@@ -442,28 +442,48 @@ public class IntentActuator {
             if (settler.level() == null) {
                 return false;
             }
-            BlockPos lecternPos = new BlockPos(
+            BlockPos targetPos = new BlockPos(
                     intent.getTargetLecternOrShelf().getX(),
                     intent.getTargetLecternOrShelf().getY(),
                     intent.getTargetLecternOrShelf().getZ()
             );
-            if (!settler.level().hasChunkAt(lecternPos)) {
+            if (!settler.level().hasChunkAt(targetPos)) {
                 return false;
             }
-            if (settler.distanceToSqr(lecternPos.getX() + 0.5, lecternPos.getY() + 0.5, lecternPos.getZ() + 0.5) > INTERACT_REACH_SQ) {
+            if (settler.distanceToSqr(targetPos.getX() + 0.5, targetPos.getY() + 0.5, targetPos.getZ() + 0.5) > INTERACT_REACH_SQ) {
                 return false;
             }
-            BlockState state = settler.level().getBlockState(lecternPos);
-            if (!state.is(Blocks.LECTERN)) {
+            BlockState state = settler.level().getBlockState(targetPos);
+            if (state.is(Blocks.LECTERN)) {
+                BlockEntity be = settler.level().getBlockEntity(targetPos);
+                if (!(be instanceof LecternBlockEntity lectern) || lectern.hasBook()) {
+                    return false;
+                }
+                lectern.setBook(book, settler);
+                LecternBlock.resetBookState(settler, settler.level(), targetPos, state, true);
+                return true;
+            } else if (state.is(Blocks.CHISELED_BOOKSHELF)) {
+                BlockEntity be = settler.level().getBlockEntity(targetPos);
+                if (be instanceof net.minecraft.world.level.block.entity.ChiseledBookShelfBlockEntity shelf) {
+                    int slot = intent.getBookshelfSlot();
+                    if (slot < 0 || slot >= shelf.getContainerSize() || !shelf.getItem(slot).isEmpty()) {
+                        // Find first available slot
+                        slot = -1;
+                        for (int i = 0; i < shelf.getContainerSize(); i++) {
+                            if (shelf.getItem(i).isEmpty()) {
+                                slot = i;
+                                break;
+                            }
+                        }
+                    }
+                    if (slot >= 0 && slot < shelf.getContainerSize() && shelf.getItem(slot).isEmpty()) {
+                        shelf.setItem(slot, book);
+                        return true;
+                    }
+                }
                 return false;
             }
-            BlockEntity be = settler.level().getBlockEntity(lecternPos);
-            if (!(be instanceof LecternBlockEntity lectern) || lectern.hasBook()) {
-                return false;
-            }
-            lectern.setBook(book, settler);
-            LecternBlock.resetBookState(settler, settler.level(), lecternPos, state, true);
-            return true;
+            return false;
         }
 
         settler.getInventory().add(book);

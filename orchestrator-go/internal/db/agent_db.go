@@ -396,6 +396,80 @@ func (a *AgentDB) MarkMemoryChronicled(ctx context.Context, id int64) error {
 	return nil
 }
 
+// GetUnchronicledMemories retrieves unchronicled memories meeting either the minimum saliency score
+// or possessing the 'DEATH' event category, ordered chronologically by world_tick.
+func (a *AgentDB) GetUnchronicledMemories(ctx context.Context, minSaliency float64, limit int) ([]EpisodicMemory, error) {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+	if a.isClosed {
+		return nil, ErrClosed
+	}
+
+	if limit <= 0 {
+		limit = 10
+	}
+
+	query := `
+		SELECT id, world_tick, event_category, saliency_score, actors_json, location_coords, summary_text, chronicled
+		FROM episodic_memories
+		WHERE chronicled = FALSE AND (saliency_score >= ? OR event_category = 'DEATH')
+		ORDER BY world_tick ASC
+		LIMIT ?;
+	`
+
+	rows, err := a.memoryDB.QueryContext(ctx, query, minSaliency, limit)
+	if err != nil {
+		return nil, fmt.Errorf("querying unchronicled memories: %w", err)
+	}
+	defer rows.Close()
+
+	var memories []EpisodicMemory
+	for rows.Next() {
+		var m EpisodicMemory
+		if err := rows.Scan(
+			&m.ID, &m.WorldTick, &m.EventCategory, &m.SaliencyScore,
+			&m.ActorsJSON, &m.LocationCoords, &m.SummaryText, &m.Chronicled,
+		); err != nil {
+			return nil, fmt.Errorf("scanning unchronicled memory row: %w", err)
+		}
+		memories = append(memories, m)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterating unchronicled memory rows: %w", err)
+	}
+
+	return memories, nil
+}
+
+// MarkMemoriesChronicledBatch marks multiple episodic memories as chronicled in a single write lock.
+func (a *AgentDB) MarkMemoriesChronicledBatch(ctx context.Context, ids []int64) error {
+	if len(ids) == 0 {
+		return nil
+	}
+
+	a.memWriteMu.Lock()
+	defer a.memWriteMu.Unlock()
+
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+	if a.isClosed {
+		return ErrClosed
+	}
+
+	placeholders := make([]string, len(ids))
+	args := make([]any, len(ids))
+	for i, id := range ids {
+		placeholders[i] = "?"
+		args[i] = id
+	}
+
+	query := fmt.Sprintf("UPDATE episodic_memories SET chronicled = TRUE WHERE id IN (%s);", strings.Join(placeholders, ", "))
+	if _, err := a.memoryDB.ExecContext(ctx, query, args...); err != nil {
+		return fmt.Errorf("batch marking memories chronicled: %w", err)
+	}
+	return nil
+}
+
 // SearchEpisodicMemories retrieves the top-K highest ranking episodic memories.
 // If vec0 virtual tables are available, it executes an indexed sqlite-vec MATCH query.
 // Otherwise, it streams stored vector embeddings and evaluates cosine similarity using
