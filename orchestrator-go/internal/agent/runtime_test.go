@@ -6,6 +6,8 @@ import (
 	"errors"
 	"io"
 	"net"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"strings"
 	"sync"
@@ -17,6 +19,7 @@ import (
 	"github.com/btposey/civquest/orchestrator-go/internal/bridge"
 	"github.com/btposey/civquest/orchestrator-go/internal/db"
 	civquestv1 "github.com/btposey/civquest/orchestrator-go/internal/proto/v1"
+	"github.com/btposey/civquest/orchestrator-go/internal/system2"
 	"github.com/btposey/civquest/orchestrator-go/internal/xdg"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
@@ -1399,6 +1402,245 @@ drainLoop:
 		case <-deadline3:
 			t.Fatal("timed out waiting for re-emitted NavigateIntent after >10 ticks elapsed")
 		}
+	}
+
+	cancel()
+	_ = <-runErrCh
+}
+
+func TestRuntime_AsynchronousDialogueDispatch(t *testing.T) {
+	mockSvc, bridgeClient, cleanup := setupTestBridge(t)
+	defer cleanup()
+
+	// Mock LLM server with deliberate 50ms delay to prove non-blocking execution of System 1 reflexes
+	llmServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		time.Sleep(50 * time.Millisecond)
+
+		var capturedReq system2.ChatCompletionRequest
+		_ = json.NewDecoder(r.Body).Decode(&capturedReq)
+
+		userContent := ""
+		for _, m := range capturedReq.Messages {
+			if m.Role == system2.RoleUser {
+				userContent = m.Content
+			}
+		}
+
+		var mockResp system2.DialogueResponse
+		if strings.Contains(strings.ToLower(userContent), "emerald") || strings.Contains(strings.ToLower(userContent), "trade") {
+			mockResp = system2.DialogueResponse{
+				SpokenReply:   "Trade accepted from System 2!",
+				TradeDecision: "ACCEPT",
+				PrestigeDelta: 5.0,
+				MemorySummary: "Accepted emeralds trade.",
+			}
+		} else {
+			mockResp = system2.DialogueResponse{
+				SpokenReply:   "Greetings from System 2!",
+				TradeDecision: "NONE",
+				PrestigeDelta: 1.0,
+				MemorySummary: "Friendly greeting.",
+			}
+		}
+
+		respBytes, _ := json.Marshal(mockResp)
+		resp := system2.ChatCompletionResponse{
+			ID:      "chatcmpl-async",
+			Object:  "chat.completion",
+			Created: time.Now().Unix(),
+			Model:   capturedReq.Model,
+			Choices: []system2.ChatCompletionChoice{
+				{
+					Index: 0,
+					Message: system2.ChatMessage{
+						Role:    system2.RoleAssistant,
+						Content: string(respBytes),
+					},
+					FinishReason: "stop",
+				},
+			},
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(resp)
+	}))
+	defer llmServer.Close()
+
+	llmClient, err := system2.NewClientWithConfig(
+		xdg.LLMGatewayConfig{BaseURL: llmServer.URL},
+		xdg.InferenceGovernorConfig{MaxConcurrentLLMRequests: 2},
+		system2.WithHTTPClient(llmServer.Client()),
+	)
+	if err != nil {
+		t.Fatalf("failed creating llm client: %v", err)
+	}
+	defer llmClient.Close()
+
+	agentCfg := &xdg.AgentIdentityConfig{
+		Name:       "aria",
+		ClanID:     "clan_async",
+		Profession: "FARMER",
+		Traits: xdg.AgentTraits{
+			Bravery:         0.8,
+			Sociability:     0.7,
+			Industriousness: 0.6,
+		},
+	}
+
+	dialogueSvc, err := system2.NewDialogueService(llmClient, agentCfg)
+	if err != nil {
+		t.Fatalf("failed creating dialogue service: %v", err)
+	}
+
+	tmpDir := t.TempDir()
+	resolver := xdg.NewResolver(xdg.WithCustomRoot(tmpDir))
+	_ = resolver.InitAgentDirectories("aria")
+
+	cfg := agent.Config{
+		AgentID:         "aria",
+		ClanID:          "clan_async",
+		IdentityConfig:  agentCfg,
+		Resolver:        resolver,
+		BridgeClient:    bridgeClient,
+		DialogueService: dialogueSvc,
+	}
+
+	rt, err := agent.NewRuntime(cfg)
+	if err != nil {
+		t.Fatalf("failed creating runtime: %v", err)
+	}
+
+	if rt.DialogueService() != dialogueSvc {
+		t.Errorf("expected DialogueService to be assigned")
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	runErrCh := make(chan error, 1)
+	go func() {
+		runErrCh <- rt.Start(ctx)
+	}()
+
+	select {
+	case <-mockSvc.streamReady:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for stream readiness")
+	}
+
+	// Handshake intent
+	select {
+	case <-mockSvc.intentCh:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for handshake intent")
+	}
+
+	// 1. Send frame containing both:
+	//    - A hissing Creeper (triggers immediate System 1 combat panic)
+	//    - An incoming chat message from Steve (triggers asynchronous System 2 dialogue)
+	frame := &civquestv1.TelemetryFrame{
+		WorldTick: 500,
+		Status: &civquestv1.AgentStatus{
+			Position:  &civquestv1.Vec3{X: 100, Y: 64, Z: 100},
+			Health:    20.0,
+			FoodLevel: 20,
+		},
+		VisibleEntities: []*civquestv1.VisibleEntity{
+			{
+				EntityId:   99,
+				EntityType: "minecraft:creeper",
+				Position:   &civquestv1.Vec3{X: 102, Y: 64, Z: 100},
+				Distance:   2.0,
+				FuseTicks:  10, // hissing!
+			},
+		},
+		IncomingChats: []*civquestv1.ChatEvent{
+			{
+				SenderUuid: "player-steve",
+				SenderName: "Steve",
+				Message:    "Hello Aria!",
+				Distance:   2.0,
+			},
+		},
+	}
+
+	if err := mockSvc.SendFrame(frame); err != nil {
+		t.Fatalf("failed sending frame: %v", err)
+	}
+
+	// First intents received MUST be System 1 reflexes (Attack + Navigate), completed immediately without waiting for LLM
+	var gotAttackReflex, gotNavigateReflex bool
+	reflexDeadline := time.After(500 * time.Millisecond)
+	for !gotAttackReflex || !gotNavigateReflex {
+		select {
+		case reflexIntent := <-mockSvc.intentCh:
+			if reflexIntent.GetAttack() != nil {
+				gotAttackReflex = true
+				if !reflexIntent.GetAttack().RaiseShield {
+					t.Errorf("expected shield raised in reflex")
+				}
+			}
+			if reflexIntent.GetNavigate() != nil {
+				gotNavigateReflex = true
+			}
+		case <-reflexDeadline:
+			t.Fatalf("timed out waiting for System 1 reflexes (gotAttack=%v, gotNavigate=%v)", gotAttackReflex, gotNavigateReflex)
+		}
+	}
+
+	// Subsequent intent received is asynchronous System 2 SendChatIntent (after 50ms LLM delay)
+	select {
+	case chatIntent := <-mockSvc.intentCh:
+		if chatIntent.GetChat() == nil {
+			t.Fatalf("expected System 2 ChatIntent, got: %T", chatIntent.Action)
+		}
+		if chatIntent.GetChat().Message != "Greetings from System 2!" {
+			t.Errorf("expected chat message 'Greetings from System 2!', got %q", chatIntent.GetChat().Message)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for System 2 chat intent")
+	}
+
+	// 2. Send frame with PendingTrade
+	tradeFrame := &civquestv1.TelemetryFrame{
+		WorldTick: 510,
+		Status: &civquestv1.AgentStatus{
+			Position:  &civquestv1.Vec3{X: 100, Y: 64, Z: 100},
+			Health:    20.0,
+			FoodLevel: 20,
+		},
+		PendingTrade: &civquestv1.TradeRequest{
+			PlayerEntityId: 42,
+			PlayerUuid:     "player-steve",
+			PlayerName:     "Steve",
+			SpokenProposal: "Trade emerald for wheat?",
+			PlayerOfferedItems: []*civquestv1.ItemStackProto{
+				{ItemId: "minecraft:emerald", Count: 1},
+			},
+		},
+	}
+
+	if err := mockSvc.SendFrame(tradeFrame); err != nil {
+		t.Fatalf("failed sending trade frame: %v", err)
+	}
+
+	// Expect RespondTradeIntent
+	select {
+	case tradeIntent := <-mockSvc.intentCh:
+		if tradeIntent.GetTradeResponse() == nil {
+			t.Fatalf("expected RespondTradeIntent, got: %T", tradeIntent.Action)
+		}
+		resp := tradeIntent.GetTradeResponse()
+		if !resp.AcceptDeal {
+			t.Errorf("expected AcceptDeal true")
+		}
+		if resp.PlayerEntityId != 42 {
+			t.Errorf("expected player entity ID 42, got %d", resp.PlayerEntityId)
+		}
+		if resp.SpokenResponse != "Trade accepted from System 2!" {
+			t.Errorf("expected spoken response 'Trade accepted from System 2!', got %q", resp.SpokenResponse)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for trade response intent")
 	}
 
 	cancel()
