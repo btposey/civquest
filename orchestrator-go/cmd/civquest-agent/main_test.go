@@ -186,6 +186,35 @@ func TestCivquestAgent_PermadeathCleanExit(t *testing.T) {
 	}
 }
 
+func TestCivquestAgent_DeceasedAgentGraveyardRefusal(t *testing.T) {
+	tmpDir := t.TempDir()
+	resolver := xdg.NewResolver(xdg.WithCustomRoot(tmpDir))
+
+	agentID := "deceased_agent"
+	agentUUID := "00000000-0000-0000-0000-000000000033"
+
+	// Create graveyard directory for this agent
+	graveDir, err := resolver.GraveyardAgentDir(agentID, agentUUID, 500)
+	if err != nil {
+		t.Fatalf("failed getting graveyard dir: %v", err)
+	}
+	if err := os.MkdirAll(graveDir, 0750); err != nil {
+		t.Fatalf("failed creating graveyard dir: %v", err)
+	}
+
+	var stdout, stderr bytes.Buffer
+	err = run(context.Background(), []string{
+		"--agent-id", agentID,
+	}, &stdout, &stderr, resolver)
+
+	if err == nil {
+		t.Fatal("expected run() to fail for deceased agent in graveyard, got nil")
+	}
+	if !strings.Contains(err.Error(), "is deceased") || !strings.Contains(err.Error(), "permadeath invariant prevents respawning") {
+		t.Errorf("unexpected error message for deceased agent: %v", err)
+	}
+}
+
 func TestCivquestAgent_LegacyNameFlag(t *testing.T) {
 	serverAddr, cleanupServer := startTestServer(t, false)
 	defer cleanupServer()

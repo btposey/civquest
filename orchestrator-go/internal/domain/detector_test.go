@@ -177,6 +177,61 @@ func TestDetectTopology_AgentsInstalled(t *testing.T) {
 	}
 }
 
+func TestDetectAgents_DeceasedInGraveyard(t *testing.T) {
+	tmpDir := t.TempDir()
+	r := xdg.NewResolver(xdg.WithCustomRoot(tmpDir))
+
+	if err := r.InitDirectories(); err != nil {
+		t.Fatalf("InitDirectories failed: %v", err)
+	}
+
+	manifest := domain.AgentsManifest{
+		Version:     "0.1.0",
+		InstalledAt: "2026-11-07T12:00:00Z",
+		BinDir:      filepath.Join(tmpDir, "bin"),
+		Binaries:    []string{"civctl", "civquest-agent"},
+		ConfigDir:   r.ConfigDir(),
+		DataDir:     r.DataDir(),
+		StateDir:    r.StateDir(),
+	}
+	manifestData, _ := json.MarshalIndent(manifest, "", "  ")
+	if err := os.WriteFile(r.AgentsManifestPath(), manifestData, 0644); err != nil {
+		t.Fatalf("write agent manifest failed: %v", err)
+	}
+
+	ariaCfg := xdg.DefaultAgentIdentityConfig("aria")
+	ariaCfg.ClanID = "pioneers"
+	ariaCfg.Profession = "FARMER"
+	if err := r.SaveAgentConfig(ariaCfg); err != nil {
+		t.Fatalf("SaveAgentConfig(aria) failed: %v", err)
+	}
+
+	// Create graveyard memorial archive for aria
+	graveDir, err := r.GraveyardAgentDir("aria", "00000000-0000-0000-0000-000000000011", 1000)
+	if err != nil {
+		t.Fatalf("GraveyardAgentDir failed: %v", err)
+	}
+	if err := os.MkdirAll(graveDir, 0750); err != nil {
+		t.Fatalf("mkdir graveDir failed: %v", err)
+	}
+
+	agentsStatus, err := domain.DetectAgents(r)
+	if err != nil {
+		t.Fatalf("DetectAgents failed: %v", err)
+	}
+
+	if len(agentsStatus.ConfiguredAgents) != 1 {
+		t.Fatalf("expected 1 configured agent, got %d", len(agentsStatus.ConfiguredAgents))
+	}
+	summary := agentsStatus.ConfiguredAgents[0]
+	if !summary.Deceased {
+		t.Errorf("expected summary.Deceased == true")
+	}
+	if summary.Active {
+		t.Errorf("expected summary.Active == false for deceased agent")
+	}
+}
+
 func TestDetectAgents_StaleSocket(t *testing.T) {
 	tmpDir := t.TempDir()
 	r := xdg.NewResolver(xdg.WithCustomRoot(tmpDir))

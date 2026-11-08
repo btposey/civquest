@@ -1064,6 +1064,37 @@ func (a *AgentDB) GetMapGraph(ctx context.Context) ([]MapNode, []MapEdge, error)
 
 // Close cleanly terminates both memory.db and map_graph.db connections,
 // first acquiring write mutexes to ensure in-flight write transactions drain safely.
+// Checkpoint executes a WAL checkpoint (TRUNCATE) on both memory.db and map_graph.db,
+// flushing write-ahead logs to the main database files and truncating wal files.
+func (a *AgentDB) Checkpoint(ctx context.Context) error {
+	a.memWriteMu.Lock()
+	defer a.memWriteMu.Unlock()
+	a.mapWriteMu.Lock()
+	defer a.mapWriteMu.Unlock()
+
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+	if a.isClosed {
+		return ErrClosed
+	}
+
+	var errs []error
+	if a.memoryDB != nil {
+		if _, err := a.memoryDB.ExecContext(ctx, "PRAGMA wal_checkpoint(TRUNCATE);"); err != nil {
+			errs = append(errs, fmt.Errorf("checkpointing memory.db: %w", err))
+		}
+	}
+	if a.mapDB != nil {
+		if _, err := a.mapDB.ExecContext(ctx, "PRAGMA wal_checkpoint(TRUNCATE);"); err != nil {
+			errs = append(errs, fmt.Errorf("checkpointing map_graph.db: %w", err))
+		}
+	}
+	if len(errs) > 0 {
+		return errors.Join(errs...)
+	}
+	return nil
+}
+
 func (a *AgentDB) Close() error {
 	a.memWriteMu.Lock()
 	defer a.memWriteMu.Unlock()
@@ -1080,12 +1111,14 @@ func (a *AgentDB) Close() error {
 
 	var errs []error
 	if a.memoryDB != nil {
+		_, _ = a.memoryDB.Exec("PRAGMA wal_checkpoint(TRUNCATE);")
 		if err := a.memoryDB.Close(); err != nil {
 			errs = append(errs, fmt.Errorf("closing memory.db: %w", err))
 		}
 		a.memoryDB = nil
 	}
 	if a.mapDB != nil {
+		_, _ = a.mapDB.Exec("PRAGMA wal_checkpoint(TRUNCATE);")
 		if err := a.mapDB.Close(); err != nil {
 			errs = append(errs, fmt.Errorf("closing map_graph.db: %w", err))
 		}

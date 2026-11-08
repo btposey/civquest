@@ -604,6 +604,9 @@ public class SensoryFrustumCollector {
                 deathBuilder.setKillerEntityId(killer.getId());
                 deathBuilder.setKillerUuid(killer.getUUID().toString());
                 deathBuilder.setKillerDisplayName(killer.getName().getString());
+                if (killer instanceof Player && !deathBuilder.getDamageSource().contains("player")) {
+                    deathBuilder.setDamageSource("player." + deathBuilder.getDamageSource());
+                }
             }
         }
 

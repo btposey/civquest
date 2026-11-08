@@ -43,10 +43,12 @@ type StreamConnector interface {
 // Config provides initial configuration options for constructing an AgentRuntime.
 type Config struct {
 	AgentID         string
+	AgentUUID       string
 	ClanID          string
 	IdentityConfig  *xdg.AgentIdentityConfig
 	Resolver        *xdg.Resolver
 	AgentDB         *db.AgentDB
+	ReputationDB    *db.ReputationDB
 	BridgeClient    *bridge.Client
 	StreamConnector StreamConnector
 	SocketPath      string
@@ -81,10 +83,12 @@ type SocketStatusResponse struct {
 // synchronizes local state and inventory caches, and serves live diagnostics over a UNIX socket.
 type AgentRuntime struct {
 	agentID        string
+	agentUUID      string
 	clanID         string
 	identityConfig *xdg.AgentIdentityConfig
 	resolver       *xdg.Resolver
 	agentDB        *db.AgentDB
+	reputationDB   *db.ReputationDB
 	bridgeClient   *bridge.Client
 	connector      StreamConnector
 
@@ -107,6 +111,7 @@ type AgentRuntime struct {
 	lastProcessedSeqID int64
 	isDead             bool
 	deathEvent         *civquestv1.DeathEvent
+	permadeathResult   *PermadeathResult
 	hasCachedInventory bool
 	lastCachedItems    []CachedItem
 	lastEatingTick     int64
@@ -176,12 +181,19 @@ func NewRuntime(cfg Config) (*AgentRuntime, error) {
 	sys1State := system1.NewAgentState()
 	sys1State.PavingTracker = pavingTracker
 
+	agentUUID := cfg.AgentUUID
+	if agentUUID == "" {
+		agentUUID = OfflinePlayerUUID(agentID)
+	}
+
 	runtime := &AgentRuntime{
 		agentID:         agentID,
+		agentUUID:       agentUUID,
 		clanID:          clanID,
 		identityConfig:  cfg.IdentityConfig,
 		resolver:        r,
 		agentDB:         cfg.AgentDB,
+		reputationDB:    cfg.ReputationDB,
 		bridgeClient:    cfg.BridgeClient,
 		connector:       connector,
 		dialogueService: cfg.DialogueService,
@@ -206,6 +218,43 @@ func NewRuntime(cfg Config) (*AgentRuntime, error) {
 // AgentID returns the unique identifier for this settler avatar.
 func (r *AgentRuntime) AgentID() string {
 	return r.agentID
+}
+
+// AgentUUID returns the agent's offline UUID.
+func (r *AgentRuntime) AgentUUID() string {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.agentUUID
+}
+
+// SetAgentUUID updates the agent's offline UUID.
+func (r *AgentRuntime) SetAgentUUID(uuid string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if uuid != "" {
+		r.agentUUID = uuid
+	}
+}
+
+// ReputationDB returns the clan reputation database handle.
+func (r *AgentRuntime) ReputationDB() *db.ReputationDB {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.reputationDB
+}
+
+// SetReputationDB configures the clan reputation database handle.
+func (r *AgentRuntime) SetReputationDB(rep *db.ReputationDB) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.reputationDB = rep
+}
+
+// PermadeathResult returns the result of the permadeath teardown, or nil if not dead.
+func (r *AgentRuntime) PermadeathResult() *PermadeathResult {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.permadeathResult
 }
 
 // ClanID returns the clan identifier for this settler.
@@ -699,6 +748,13 @@ func (r *AgentRuntime) HandleTelemetryFrame(frame *civquestv1.TelemetryFrame) {
 		return
 	}
 
+	r.mu.RLock()
+	if r.isDead {
+		r.mu.RUnlock()
+		return
+	}
+	r.mu.RUnlock()
+
 	var deathEv *civquestv1.DeathEvent
 
 	r.mu.Lock()
@@ -712,6 +768,62 @@ func (r *AgentRuntime) HandleTelemetryFrame(frame *civquestv1.TelemetryFrame) {
 		deathEv = frame.DeathEvent
 	}
 	r.mu.Unlock()
+
+	// If a terminal death event occurred, run permadeath teardown immediately
+	if deathEv != nil {
+		r.mu.Lock()
+		cancel := r.cancel
+		r.mu.Unlock()
+
+		// 1. Immediately cancel context to halt any in-flight workers
+		if cancel != nil {
+			cancel()
+		}
+
+		// 2. Await in-flight dialogue goroutines so no DB transactions remain active
+		r.tradeActive.Store(false)
+		r.dialogueWg.Wait()
+
+		// 3. Stop socket server and close dialogue service to prevent IPC queries
+		r.stopSocketServer()
+		if r.dialogueService != nil {
+			_ = r.dialogueService.Close()
+		}
+
+		// 4. Run permadeath teardown (checkpoint DB, archive to graveyard, write death certificate & epitaph)
+		ctx := r.ctx
+		if ctx == nil || ctx.Err() != nil {
+			ctx = context.Background()
+		}
+
+		res, err := ExecutePermadeath(ctx, PermadeathRequest{
+			AgentID:      r.agentID,
+			AgentUUID:    r.AgentUUID(),
+			ClanID:       r.clanID,
+			DeathEvent:   deathEv,
+			Resolver:     r.resolver,
+			AgentDB:      r.agentDB,
+			ReputationDB: r.ReputationDB(),
+		})
+		if err != nil {
+			log.Printf("[ERROR] agent %s permadeath teardown failed: %v", r.agentID, err)
+		} else {
+			r.mu.Lock()
+			r.permadeathResult = res
+			r.mu.Unlock()
+		}
+
+		// 5. Trigger permadeath terminal callback if configured
+		if r.onDeath != nil {
+			r.onDeath(deathEv)
+		}
+
+		// 6. Signal runtime completion by closing r.done cleanly
+		r.stopOnce.Do(func() {
+			close(r.done)
+		})
+		return
+	}
 
 	// Update inventory cache file atomically if inventory changed
 	if frame.Status != nil {
@@ -736,18 +848,11 @@ func (r *AgentRuntime) HandleTelemetryFrame(frame *civquestv1.TelemetryFrame) {
 		}
 	}
 
-	// Trigger permadeath terminal callback if death event occurred
-	if deathEv != nil && r.onDeath != nil {
-		r.onDeath(deathEv)
-	}
-
 	// Evaluate deterministic System 1 survival reflexes, daily routine, biological needs, and paving (<5 ms)
-	if deathEv == nil {
-		r.evaluateSystem1Reflexes(frame)
-	}
+	r.evaluateSystem1Reflexes(frame)
 
 	// Dispatch System 2 dialogue and barter haggling asynchronously (non-blocking)
-	if deathEv == nil && (len(frame.IncomingChats) > 0 || frame.PendingTrade != nil) {
+	if len(frame.IncomingChats) > 0 || frame.PendingTrade != nil {
 		r.dispatchDialogue(frame)
 	}
 }

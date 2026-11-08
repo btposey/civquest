@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"syscall"
 
 	"github.com/btposey/civquest/orchestrator-go/internal/agent"
@@ -111,6 +112,12 @@ func run(parentCtx context.Context, args []string, stdout, stderr io.Writer, r *
 		}
 	}
 
+	// Invariant 4: Strict Permadeath Lifecycle. If an agent is in the graveyard, never respawn them.
+	graveyardDir := r.GraveyardDir()
+	if matches, globErr := filepath.Glob(filepath.Join(graveyardDir, fmt.Sprintf("%s_*", cfg.Name))); globErr == nil && len(matches) > 0 {
+		return fmt.Errorf("agent %s is deceased (found memorial archive in graveyard: %s); permadeath invariant prevents respawning", cfg.Name, matches[0])
+	}
+
 	// Initialize agent-specific XDG directories ($XDG_DATA_HOME/civquest/servers/{server_id}/agents/{name}, etc.)
 	if err := r.InitAgentDirectories(cfg.Name); err != nil {
 		return fmt.Errorf("initializing directories for agent %s: %w", cfg.Name, err)
@@ -194,6 +201,13 @@ func run(parentCtx context.Context, args []string, stdout, stderr io.Writer, r *
 	}
 	defer agentDB.Close()
 
+	// Open clan reputation database if available for companion and murder prestige scoring
+	var repDB *db.ReputationDB
+	if rep, repErr := db.OpenReputationDBForClan(r, cfg.ClanID); repErr == nil {
+		repDB = rep
+		defer repDB.Close()
+	}
+
 	// Dial gRPC bridge with shared key
 	bridgeClient, err := bridge.NewClient(grpcAddr, sharedKey)
 	if err != nil {
@@ -212,6 +226,7 @@ func run(parentCtx context.Context, args []string, stdout, stderr io.Writer, r *
 		IdentityConfig:  cfg,
 		Resolver:        r,
 		AgentDB:         agentDB,
+		ReputationDB:    repDB,
 		BridgeClient:    bridgeClient,
 		SocketPath:      sockPath,
 		DialogueService: dialogueSvc,
@@ -235,6 +250,9 @@ func run(parentCtx context.Context, args []string, stdout, stderr io.Writer, r *
 	}
 	if !spawnResp.GetSuccess() {
 		return fmt.Errorf("failed spawning agent %s: %s", cfg.Name, spawnResp.GetErrorMessage())
+	}
+	if spawnResp.GetOfflineUuid() != "" {
+		rt.SetAgentUUID(spawnResp.GetOfflineUuid())
 	}
 	fmt.Fprintf(stdout, "[civquest-agent] Settler '%s' spawned into Minecraft (EntityID: %d, UUID: %s)\n",
 		cfg.Name, spawnResp.GetMinecraftEntityId(), spawnResp.GetOfflineUuid())
@@ -262,6 +280,13 @@ func run(parentCtx context.Context, args []string, stdout, stderr io.Writer, r *
 
 	runErr := rt.Start(ctx)
 	if rt.IsDead() {
+		graveyardPath := ""
+		if res := rt.PermadeathResult(); res != nil && res.GraveyardDir != "" {
+			graveyardPath = res.GraveyardDir
+		} else {
+			graveyardPath = r.GraveyardDir()
+		}
+		fmt.Fprintf(stdout, "[civquest-agent] Permadeath complete. Memorial archive created at %s. Exiting cleanly.\n", graveyardPath)
 		fmt.Fprintf(stdout, "[civquest-agent] Agent %s has died. Clean permadeath exit code 0.\n", cfg.Name)
 		return nil
 	}

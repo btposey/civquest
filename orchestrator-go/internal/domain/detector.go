@@ -65,6 +65,7 @@ type AgentSummary struct {
 	ClanID     string  `json:"clan_id"`
 	Profession string  `json:"profession"`
 	Active     bool    `json:"active"`
+	Deceased   bool    `json:"deceased"`
 	SocketPath string  `json:"socket_path"`
 	Bravery    float64 `json:"bravery"`
 	Curiosity  float64 `json:"curiosity"`
@@ -272,11 +273,22 @@ func DetectAgents(r *xdg.Resolver) (AgentDomainStatus, error) {
 				}
 			}
 
+			// Check if agent is deceased in graveyard
+			isDeceased := false
+			graveyardDir := r.GraveyardDir()
+			if matches, _ := filepath.Glob(filepath.Join(graveyardDir, fmt.Sprintf("%s_*", agentName))); len(matches) > 0 {
+				isDeceased = true
+			}
+			if isDeceased {
+				isActive = false
+			}
+
 			status.ConfiguredAgents = append(status.ConfiguredAgents, AgentSummary{
 				Name:       agentCfg.Name,
 				ClanID:     agentCfg.ClanID,
 				Profession: agentCfg.Profession,
 				Active:     isActive,
+				Deceased:   isDeceased,
 				SocketPath: sockPath,
 				Bravery:    agentCfg.Traits.Bravery,
 				Curiosity:  agentCfg.Traits.Curiosity,

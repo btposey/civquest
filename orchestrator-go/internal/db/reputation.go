@@ -301,6 +301,28 @@ func (r *ReputationDB) RecordPrestigeDelta(ctx context.Context, entry PrestigeLe
 	return newScore, nil
 }
 
+// AddPrestige is a convenience method that records a prestige delta for a player in a clan's reputation database.
+func (r *ReputationDB) AddPrestige(playerUUID, playerName string, delta float64, reason string, worldTick int64) (float64, error) {
+	return r.RecordPrestigeDelta(context.Background(), PrestigeLedgerEntry{
+		PlayerUUID: playerUUID,
+		PlayerName: playerName,
+		Delta:      delta,
+		Reason:     reason,
+		WorldTick:  worldTick,
+	})
+}
+
+// AddPrestigeContext records a prestige delta for a player with context cancellation support.
+func (r *ReputationDB) AddPrestigeContext(ctx context.Context, playerUUID, playerName string, delta float64, reason string, worldTick int64) (float64, error) {
+	return r.RecordPrestigeDelta(ctx, PrestigeLedgerEntry{
+		PlayerUUID: playerUUID,
+		PlayerName: playerName,
+		Delta:      delta,
+		Reason:     reason,
+		WorldTick:  worldTick,
+	})
+}
+
 // GetPrestigeLedger returns audit trail entries for a given playerUUID (or all if empty), up to limit.
 func (r *ReputationDB) GetPrestigeLedger(ctx context.Context, playerUUID string, limit int) ([]PrestigeLedgerEntry, error) {
 	r.mu.RLock()
