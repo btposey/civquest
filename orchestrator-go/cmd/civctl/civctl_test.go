@@ -238,3 +238,38 @@ func TestCivctl_Agent_Commands(t *testing.T) {
 		t.Errorf("expected aria status header, got: %s", out)
 	}
 }
+
+func TestCivctl_ServerSetup(t *testing.T) {
+	tmpDir := t.TempDir()
+	cfgDir := filepath.Join(tmpDir, "config")
+	dataDir := filepath.Join(tmpDir, "data")
+	stateDir := filepath.Join(tmpDir, "state")
+
+	// Test server setup command
+	out, err := executeCommand(
+		"--config-dir", cfgDir,
+		"--data-dir", dataDir,
+		"--state-dir", stateDir,
+		"server", "setup", "--port", "25565",
+	)
+	if err != nil {
+		t.Fatalf("server setup failed: %v\nOutput: %s", err, out)
+	}
+	if !strings.Contains(out, "server environment prepared successfully") {
+		t.Errorf("expected success message in output, got: %s", out)
+	}
+
+	// Verify server status is now installed (STOPPED)
+	out, err = executeCommand(
+		"--config-dir", cfgDir,
+		"--data-dir", dataDir,
+		"--state-dir", stateDir,
+		"server", "status",
+	)
+	if err != nil {
+		t.Fatalf("server status failed: %v\nOutput: %s", err, out)
+	}
+	if !strings.Contains(out, "Status:    STOPPED") {
+		t.Errorf("expected STOPPED status after setup, got: %s", out)
+	}
+}

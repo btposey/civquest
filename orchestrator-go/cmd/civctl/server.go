@@ -19,12 +19,67 @@ func newServerCmd() *cobra.Command {
 the CivQuest mod, sensor frustum broadcaster, and Baritone pathfinder.`,
 	}
 
+	serverCmd.AddCommand(newServerSetupCmd())
 	serverCmd.AddCommand(newServerStartCmd())
 	serverCmd.AddCommand(newServerStopCmd())
 	serverCmd.AddCommand(newServerStatusCmd())
 	serverCmd.AddCommand(newServerLogsCmd())
 
 	return serverCmd
+}
+
+func newServerSetupCmd() *cobra.Command {
+	var (
+		port       int
+		onlineMode bool
+		force      bool
+		startAfter bool
+	)
+
+	cmd := &cobra.Command{
+		Use:   "setup",
+		Short: "Prepare the NeoForge server environment for client playtesting",
+		Long: `Prepares the server directory with pre-accepted EULA (eula=true),
+server.properties configured for client connections (port 25565),
+and runner scripts.`,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			r := getResolver()
+			mgr := server.NewManager(r)
+
+			opts := server.DefaultSetupOptions()
+			opts.Port = port
+			opts.OnlineMode = onlineMode
+			opts.Force = force
+
+			if err := mgr.Setup(opts); err != nil {
+				return fmt.Errorf("failed setting up server: %w", err)
+			}
+
+			out := cmd.OutOrStdout()
+			fmt.Fprintln(out, "✓ CivQuest server environment prepared successfully:")
+			fmt.Fprintf(out, "  Directory:         %s\n", r.ServerDir())
+			fmt.Fprintf(out, "  EULA:              %s (eula=true)\n", r.ServerEULAPath())
+			fmt.Fprintf(out, "  server.properties: %s (port=%d, online-mode=%t)\n", r.ServerPropertiesPath(), port, onlineMode)
+
+			if startAfter {
+				fmt.Fprintln(out, "Starting CivQuest NeoForge server in background...")
+				pid, err := mgr.Start()
+				if err != nil {
+					return fmt.Errorf("failed starting server: %w", err)
+				}
+				fmt.Fprintf(out, "✓ CivQuest server started in background (PID: %d)\n", pid)
+			}
+
+			return nil
+		},
+	}
+
+	cmd.Flags().IntVar(&port, "port", 25565, "Dedicated server port for Minecraft clients")
+	cmd.Flags().BoolVar(&onlineMode, "online-mode", false, "Enable Mojang online mode authentication")
+	cmd.Flags().BoolVarP(&force, "force", "f", false, "Overwrite existing server configuration files")
+	cmd.Flags().BoolVar(&startAfter, "start", false, "Immediately launch server in background after setup")
+
+	return cmd
 }
 
 func newServerStartCmd() *cobra.Command {
