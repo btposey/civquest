@@ -342,3 +342,64 @@ func toTitle(s string) string {
 	r[0] = unicode.ToUpper(r[0])
 	return string(r)
 }
+
+// SynthesizeCompanionMemorial creates narrative chronicle title, prose, and paginated pages
+// honoring a fallen companion who gave their life in battle.
+func (s *ChroniclerService) SynthesizeCompanionMemorial(ctx context.Context, agentID, clanID, bondedPlayerName, killer, damageSource string, deathTick int64) (string, string, []string, error) {
+	if clanID == "" {
+		clanID = "pioneers"
+	}
+
+	if s != nil && s.client != nil {
+		systemPrompt := fmt.Sprintf(`You are the Clan Chronicler of the "%s" clan.
+A heroic settler companion, %s, has fallen in mortal battle defending player %s.
+Compose a solemn, epic memorial tribute documenting their loyalty, courage, and sacrifice.
+
+Return a JSON object conforming strictly to this JSON schema:
+{
+  "title": "A concise title (max 32 chars)",
+  "prose": "Solemn memorial narrative prose honoring the fallen companion's loyalty and sacrifice."
+}`, clanID, agentID, bondedPlayerName)
+
+		userPrompt := fmt.Sprintf("Companion: %s\nClan: %s\nBonded Player: %s\nFell in battle against: %s\nDamage Source: %s\nWorld Tick: %d\n\nCompose the memorial chronicle volume.",
+			agentID, clanID, bondedPlayerName, killer, damageSource, deathTick)
+
+		messages := []ChatMessage{
+			{Role: RoleSystem, Content: systemPrompt},
+			{Role: RoleUser, Content: userPrompt},
+		}
+
+		var resp ChronicleSynthesisResponse
+		if err := s.client.CompleteStructuredWithTemp(ctx, messages, &resp, DefaultChroniclerSamplingTemperature); err == nil && resp.Prose != "" {
+			title := SanitizeBookTitle(resp.Title)
+			if title == "" || title == "Clan Chronicle" {
+				title = SanitizeBookTitle(fmt.Sprintf("Memorial of %s", agentID))
+			}
+			pages := PaginateProse(resp.Prose)
+			return title, resp.Prose, pages, nil
+		}
+	}
+
+	title, prose := FallbackCompanionMemorialProse(agentID, clanID, bondedPlayerName, killer, damageSource, deathTick)
+	pages := PaginateProse(prose)
+	return title, prose, pages, nil
+}
+
+// FallbackCompanionMemorialProse provides deterministic solemn prose for offline/fallback environments.
+func FallbackCompanionMemorialProse(agentID, clanID, bondedPlayerName, killer, damageSource string, deathTick int64) (string, string) {
+	title := SanitizeBookTitle(fmt.Sprintf("Memorial of %s", agentID))
+	if killer == "" || killer == "none" {
+		killer = "the darkness"
+	}
+	if bondedPlayerName == "" {
+		bondedPlayerName = "their companion"
+	}
+	prose := fmt.Sprintf(
+		"In solemn remembrance of %s of clan %s.\n\n"+
+			"On world tick %d, in mortal combat against %s (%s), %s fought faithfully at the side of %s.\n\n"+
+			"With unflinching loyalty and selfless devotion, they laid down their life so that their bonded companion might survive.\n\n"+
+			"Their shield is broken, but their honor endures forever in the chronicles of our people. Never shall their devotion be forgotten.",
+		agentID, toTitle(clanID), deathTick, killer, damageSource, agentID, bondedPlayerName,
+	)
+	return title, prose
+}

@@ -22,6 +22,8 @@ const (
 	RoutineSleep RoutineState = "SLEEP"
 	// RoutineDawnAwakening represents waking up, breakfast, and morning prep during ticks 23500–1000.
 	RoutineDawnAwakening RoutineState = "DAWN_AWAKENING"
+	// RoutineCamp represents camping with player companion during evening/night, overriding tavern and bed return.
+	RoutineCamp RoutineState = "CAMP"
 )
 
 // UtilityDecision encapsulates the output of daily utility scheduling.
@@ -41,6 +43,7 @@ type AgentState struct {
 	AssignedBed          *civquestv1.BlockPosProto
 	CurrentRoutine       RoutineState
 	PrimaryDutyBlocked   bool
+	companionActive      bool
 	lastEatingTick       int64
 	lastSleepAttemptTick int64
 	PavingTracker        *RoadPavingTracker
@@ -167,4 +170,24 @@ func (s *AgentState) SetLastSleepAttemptTick(tick int64) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.lastSleepAttemptTick = tick
+}
+
+// IsCompanionActive returns true if the agent is actively accompanying a player as a bonded companion.
+func (s *AgentState) IsCompanionActive() bool {
+	if s == nil {
+		return false
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.companionActive
+}
+
+// SetCompanionActive sets whether the agent is actively accompanying a player as a bonded companion.
+func (s *AgentState) SetCompanionActive(active bool) {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.companionActive = active
 }

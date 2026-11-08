@@ -189,6 +189,13 @@ func TestEvaluateSleep_BedFSM(t *testing.T) {
 		if nav.Target.X != 10.5 || nav.Target.Z != 10.5 {
 			t.Errorf("expected target near bed (10.5, 64, 10.5), got %+v", nav.Target)
 		}
+
+		// Companion override: when companion is active, bed navigation must be suppressed
+		state.SetCompanionActive(true)
+		companionIntent := EvaluateSleep("agent1", frame, state)
+		if companionIntent != nil {
+			t.Fatalf("expected nil intent for active companion camping with player, got %+v", companionIntent)
+		}
 	})
 
 	// 2. Night time, close to bed (dist <= 3) -> InteractBlock SLEEP_IN_BED

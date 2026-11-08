@@ -16,31 +16,37 @@ import (
 
 	"github.com/btposey/civquest/orchestrator-go/internal/db"
 	civquestv1 "github.com/btposey/civquest/orchestrator-go/internal/proto/v1"
+	"github.com/btposey/civquest/orchestrator-go/internal/system2"
 	"github.com/btposey/civquest/orchestrator-go/internal/xdg"
 	_ "modernc.org/sqlite"
 )
 
 // PermadeathRequest holds parameters for executing an agent's terminal permadeath lifecycle.
 type PermadeathRequest struct {
-	AgentID      string
-	AgentUUID    string
-	ClanID       string
-	DeathEvent   *civquestv1.DeathEvent
-	Resolver     *xdg.Resolver
-	AgentDB      *db.AgentDB
-	ReputationDB *db.ReputationDB
+	AgentID           string
+	AgentUUID         string
+	ClanID            string
+	DeathEvent        *civquestv1.DeathEvent
+	Resolver          *xdg.Resolver
+	AgentDB           *db.AgentDB
+	ReputationDB      *db.ReputationDB
+	ChroniclerService *system2.ChroniclerService
 }
 
 // PermadeathResult contains paths and outcomes of the permadeath teardown and archiving.
 type PermadeathResult struct {
-	GraveyardDir         string  `json:"graveyard_dir"`
-	DeathCertificatePath string  `json:"death_certificate_path"`
-	EpitaphPath          string  `json:"epitaph_path"`
-	MemoryDBPath         string  `json:"memory_db_path"`
-	MemorialMemoryID     int64   `json:"memorial_memory_id"`
-	SpouseUpdated        bool    `json:"spouse_updated"`
-	PrestigeDeducted     float64 `json:"prestige_deducted"`
-	PrestigeTargetPlayer string  `json:"prestige_target_player,omitempty"`
+	GraveyardDir              string  `json:"graveyard_dir"`
+	DeathCertificatePath      string  `json:"death_certificate_path"`
+	EpitaphPath               string  `json:"epitaph_path"`
+	MemoryDBPath              string  `json:"memory_db_path"`
+	MemorialMemoryID          int64   `json:"memorial_memory_id"`
+	SpouseUpdated             bool    `json:"spouse_updated"`
+	PrestigeDeducted          float64 `json:"prestige_deducted"`
+	PrestigeTargetPlayer      string  `json:"prestige_target_player,omitempty"`
+	CompanionMemorialWritten  bool    `json:"companion_memorial_written,omitempty"`
+	CompanionMemorialPath     string  `json:"companion_memorial_path,omitempty"`
+	CompanionMemorialTitle    string  `json:"companion_memorial_title,omitempty"`
+	CompanionMemorialMemoryID int64   `json:"companion_memorial_memory_id,omitempty"`
 }
 
 // DeathLocation encapsulates 3D death coordinates for JSON serialization.
@@ -210,8 +216,21 @@ func ExecutePermadeath(ctx context.Context, req PermadeathRequest) (*PermadeathR
 	}
 
 	// -------------------------------------------------------------
-	// Step 3: Deduct Player Prestige (if ReputationDB != nil)
+	// Step 3: Deduct Player Prestige & Record Companion Memorial Chronicle
 	// -------------------------------------------------------------
+	var companionMemorialTitle, companionMemorialProse string
+
+	// Find active bonded companion player if any: must meet BondCompanion threshold
+	var companion *db.Relationship
+	for i := range activeRelationships {
+		rel := &activeRelationships[i]
+		if strings.EqualFold(rel.EntityType, "PLAYER") && (rel.DispositionScore >= system2.CompanionMinDisposition && rel.Familiarity >= system2.CompanionMinFamiliarity) {
+			if companion == nil || rel.DispositionScore > companion.DispositionScore {
+				companion = rel
+			}
+		}
+	}
+
 	if req.ReputationDB != nil {
 		isPlayerMurder := false
 		killerUUID := deathEv.GetKillerUuid()
@@ -255,30 +274,76 @@ func ExecutePermadeath(ctx context.Context, req PermadeathRequest) (*PermadeathR
 					result.PrestigeTargetPlayer = targetUUID
 				}
 			}
-		} else {
-			// Settler perished from mob/environment. Check if settler had an active bonded companion player.
-			var companion *db.Relationship
-			for i := range activeRelationships {
-				rel := &activeRelationships[i]
-				if strings.EqualFold(rel.EntityType, "PLAYER") && (strings.EqualFold(rel.KinshipRole, "COMPANION") || rel.DispositionScore >= 20.0 || rel.Familiarity >= 0.5) {
-					if companion == nil || rel.DispositionScore > companion.DispositionScore {
-						companion = rel
-					}
-				}
+		} else if companion != nil {
+			compName := companion.EntityName
+			if compName == "" {
+				compName = companion.EntityUUID
 			}
+			reason := "Companion perished under player protection"
+			if _, err := req.ReputationDB.AddPrestige(companion.EntityUUID, compName, -50.0, reason, worldTick); err != nil {
+				log.Printf("[WARN] agent %s failed to record companion prestige deduction: %v", req.AgentID, err)
+			} else {
+				result.PrestigeDeducted = -50.0
+				result.PrestigeTargetPlayer = companion.EntityUUID
+			}
+		}
+	}
 
-			if companion != nil {
-				compName := companion.EntityName
-				if compName == "" {
-					compName = companion.EntityUUID
-				}
-				reason := "Companion perished under player protection"
-				if _, err := req.ReputationDB.AddPrestige(companion.EntityUUID, compName, -50.0, reason, worldTick); err != nil {
-					log.Printf("[WARN] agent %s failed to record companion prestige deduction: %v", req.AgentID, err)
-				} else {
-					result.PrestigeDeducted = -50.0
-					result.PrestigeTargetPlayer = companion.EntityUUID
-				}
+	// If companion perished in battle, synthesize and record memorial chronicle in AgentDB
+	if companion != nil && isBattleDeath(deathEv) {
+		compName := companion.EntityName
+		if compName == "" {
+			compName = companion.EntityUUID
+		}
+		killer := deathEv.GetKillerDisplayName()
+		if killer == "" {
+			killer = deathEv.GetKillerUuid()
+		}
+		if killer == "" {
+			killer = "hostile forces"
+		}
+
+		var memTitle, memProse string
+		if req.ChroniclerService != nil {
+			synthCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
+			t, p, _, err := req.ChroniclerService.SynthesizeCompanionMemorial(synthCtx, req.AgentID, clanID, compName, killer, deathEv.GetDamageSource(), worldTick)
+			cancel()
+			if err == nil {
+				memTitle = t
+				memProse = p
+			}
+		}
+		if memTitle == "" {
+			memTitle, memProse = system2.FallbackCompanionMemorialProse(req.AgentID, clanID, compName, killer, deathEv.GetDamageSource(), worldTick)
+		}
+		companionMemorialTitle = memTitle
+		companionMemorialProse = memProse
+
+		if req.AgentDB != nil {
+			locCoords := "0.0,0.0,0.0"
+			if loc := deathEv.GetDeathLocation(); loc != nil {
+				locCoords = fmt.Sprintf("%.1f,%.1f,%.1f", loc.GetX(), loc.GetY(), loc.GetZ())
+			}
+			actors := []string{req.AgentID, compName}
+			if killer != "hostile forces" && killer != "" {
+				actors = append(actors, killer)
+			}
+			actorsJSONBytes, _ := json.Marshal(actors)
+			summary := fmt.Sprintf("[Companion Memorial Chronicle] %s fell in battle defending %s against %s (%s)",
+				req.AgentID, compName, killer, deathEv.GetDamageSource())
+			compMemID, err := req.AgentDB.InsertEpisodicMemory(ctx, db.EpisodicMemory{
+				WorldTick:      worldTick,
+				EventCategory:  "DEATH",
+				SaliencyScore:  1.0,
+				SummaryText:    summary,
+				ActorsJSON:     string(actorsJSONBytes),
+				LocationCoords: locCoords,
+				Chronicled:     true,
+			}, nil)
+			if err != nil {
+				log.Printf("[WARN] agent %s failed recording companion memorial episodic memory: %v", req.AgentID, err)
+			} else {
+				result.CompanionMemorialMemoryID = compMemID
 			}
 		}
 	}
@@ -391,6 +456,19 @@ func ExecutePermadeath(ctx context.Context, req PermadeathRequest) (*PermadeathR
 		return nil, fmt.Errorf("writing epitaph %s: %w", epitaphPath, err)
 	}
 
+	// Generate and write companion_memorial_chronicle.txt if companion perished in battle
+	if companionMemorialProse != "" {
+		chroniclePath := filepath.Join(targetDir, "companion_memorial_chronicle.txt")
+		chronicleContent := fmt.Sprintf("%s\n\n%s\n", companionMemorialTitle, companionMemorialProse)
+		if err := os.WriteFile(chroniclePath, []byte(chronicleContent), 0644); err != nil {
+			log.Printf("[WARN] agent %s failed writing companion memorial chronicle: %v", req.AgentID, err)
+		} else {
+			result.CompanionMemorialWritten = true
+			result.CompanionMemorialPath = chroniclePath
+			result.CompanionMemorialTitle = companionMemorialTitle
+		}
+	}
+
 	// Set memory.db and map_graph.db files in graveyard to read-only (0400) and remove wal/shm
 	for _, dbFileName := range []string{"memory.db", "map_graph.db"} {
 		dbPath := filepath.Join(targetDir, dbFileName)
@@ -458,4 +536,28 @@ func copyFile(src, dst string, perm os.FileMode) error {
 		return err
 	}
 	return out.Sync()
+}
+
+// isBattleDeath determines if a death occurred in combat against mobs or players.
+func isBattleDeath(deathEv *civquestv1.DeathEvent) bool {
+	if deathEv == nil {
+		return false
+	}
+	if deathEv.GetKillerDisplayName() != "" || deathEv.GetKillerUuid() != "" || deathEv.GetKillerEntityId() > 0 {
+		return true
+	}
+	src := strings.ToLower(deathEv.GetDamageSource())
+	combatKeywords := []string{
+		"mob", "player", "attack", "arrow", "trident", "explosion",
+		"creeper", "zombie", "skeleton", "spider", "witch", "warden",
+		"wither", "dragon", "blaze", "ghast", "pillager", "vindicator",
+		"evoker", "ravager", "slime", "magma", "phantom", "sting",
+		"magic", "fireball", "sonic", "combat",
+	}
+	for _, kw := range combatKeywords {
+		if strings.Contains(src, kw) {
+			return true
+		}
+	}
+	return false
 }

@@ -58,6 +58,7 @@ type Config struct {
 	DialogueService   *system2.DialogueService
 	ChroniclerService *system2.ChroniclerService
 	ToponymyService   *system2.ToponymyService
+	CompanionService  *system2.CompanionService
 	LandmarksDB       *db.LandmarksDB
 }
 
@@ -131,12 +132,15 @@ type AgentRuntime struct {
 	dialogueService      *system2.DialogueService
 	chroniclerService    *system2.ChroniclerService
 	toponymyService      *system2.ToponymyService
+	companionService     *system2.CompanionService
 	landmarksDB          *db.LandmarksDB
 	lastChronicleAttempt time.Time
 	lastChronicleTick    int64
 	lastToponymyAttempt  time.Time
 	lastToponymyTick     int64
 	lastToponymyPos      *civquestv1.Vec3
+	lastFollowNavTarget  *civquestv1.Vec3
+	lastFollowNavTick    int64
 	dialogueWg           sync.WaitGroup
 	tradeActive          atomic.Bool
 	chroniclerActive     atomic.Bool
@@ -200,6 +204,11 @@ func NewRuntime(cfg Config) (*AgentRuntime, error) {
 		agentUUID = OfflinePlayerUUID(agentID)
 	}
 
+	companionService := cfg.CompanionService
+	if companionService == nil && cfg.AgentDB != nil {
+		companionService = system2.NewCompanionService(cfg.AgentDB, cfg.ReputationDB, cfg.IdentityConfig)
+	}
+
 	runtime := &AgentRuntime{
 		agentID:           agentID,
 		agentUUID:         agentUUID,
@@ -213,6 +222,7 @@ func NewRuntime(cfg Config) (*AgentRuntime, error) {
 		dialogueService:   cfg.DialogueService,
 		chroniclerService: cfg.ChroniclerService,
 		toponymyService:   cfg.ToponymyService,
+		companionService:  companionService,
 		landmarksDB:       cfg.LandmarksDB,
 		intentQueue:       make(chan *civquestv1.AgentIntent, queueSize),
 		socketPath:        sockPath,
@@ -341,6 +351,20 @@ func (r *AgentRuntime) SetToponymyService(t *system2.ToponymyService) {
 	r.toponymyService = t
 }
 
+// CompanionService returns the configured System 2 Companion service, or nil if unset.
+func (r *AgentRuntime) CompanionService() *system2.CompanionService {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.companionService
+}
+
+// SetCompanionService assigns or updates the System 2 Companion service.
+func (r *AgentRuntime) SetCompanionService(c *system2.CompanionService) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.companionService = c
+}
+
 // LandmarksDB returns the clan landmarks database handle.
 func (r *AgentRuntime) LandmarksDB() *db.LandmarksDB {
 	r.mu.RLock()
@@ -386,6 +410,26 @@ func (r *AgentRuntime) SetAssignedBed(pos *civquestv1.BlockPosProto) {
 	if r.system1State != nil {
 		r.system1State.SetAssignedBed(pos)
 	}
+}
+
+// CurrentRoutine returns the current System 1 routine state.
+func (r *AgentRuntime) CurrentRoutine() system1.RoutineState {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	if r.system1State == nil {
+		return system1.RoutineDawnAwakening
+	}
+	return r.system1State.CurrentRoutine
+}
+
+// IsCompanionActive returns true if the agent is actively accompanying a player as a bonded companion.
+func (r *AgentRuntime) IsCompanionActive() bool {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	if r.system1State == nil {
+		return false
+	}
+	return r.system1State.IsCompanionActive()
 }
 
 // SocketPath returns the bound UNIX domain socket path.
@@ -860,13 +904,14 @@ func (r *AgentRuntime) HandleTelemetryFrame(frame *civquestv1.TelemetryFrame) {
 		}
 
 		res, err := ExecutePermadeath(ctx, PermadeathRequest{
-			AgentID:      r.agentID,
-			AgentUUID:    r.AgentUUID(),
-			ClanID:       r.clanID,
-			DeathEvent:   deathEv,
-			Resolver:     r.resolver,
-			AgentDB:      r.agentDB,
-			ReputationDB: r.ReputationDB(),
+			AgentID:           r.agentID,
+			AgentUUID:         r.AgentUUID(),
+			ClanID:            r.clanID,
+			DeathEvent:        deathEv,
+			Resolver:          r.resolver,
+			AgentDB:           r.agentDB,
+			ReputationDB:      r.ReputationDB(),
+			ChroniclerService: r.chroniclerService,
 		})
 		if err != nil {
 			log.Printf("[ERROR] agent %s permadeath teardown failed: %v", r.agentID, err)
@@ -911,6 +956,9 @@ func (r *AgentRuntime) HandleTelemetryFrame(frame *civquestv1.TelemetryFrame) {
 		}
 	}
 
+	// Evaluate System 2 companion tracking and sync companion state (<1 ms)
+	r.evaluateCompanion(frame)
+
 	// Evaluate deterministic System 1 survival reflexes, daily routine, biological needs, and paving (<5 ms)
 	r.evaluateSystem1Reflexes(frame)
 
@@ -931,11 +979,12 @@ func (r *AgentRuntime) HandleTelemetryFrame(frame *civquestv1.TelemetryFrame) {
 func (r *AgentRuntime) dispatchDialogue(frame *civquestv1.TelemetryFrame) {
 	r.mu.RLock()
 	svc := r.dialogueService
+	compSvc := r.companionService
 	isDead := r.isDead
 	ctx := r.ctx
 	r.mu.RUnlock()
 
-	if svc == nil || isDead {
+	if isDead || (svc == nil && compSvc == nil) {
 		return
 	}
 	if ctx == nil {
@@ -964,7 +1013,7 @@ func (r *AgentRuntime) dispatchDialogue(frame *civquestv1.TelemetryFrame) {
 		}
 
 		r.mu.RLock()
-		if r.status != "RUNNING" || r.isDead || r.dialogueService == nil {
+		if r.status != "RUNNING" || r.isDead || (r.dialogueService == nil && r.companionService == nil) {
 			r.mu.RUnlock()
 			return
 		}
@@ -981,6 +1030,48 @@ func (r *AgentRuntime) dispatchDialogue(frame *civquestv1.TelemetryFrame) {
 			}
 
 			log.Printf("[civquest-agent] Received chat from %s (dist=%.1f): %q", c.SenderName, c.Distance, c.Message)
+
+			// 1. Check for companion voice/chat command ('follow me', 'wait here', 'return home')
+			r.mu.RLock()
+			compSvc := r.companionService
+			r.mu.RUnlock()
+
+			if compSvc != nil {
+				if cmdRes, isCmd := compSvc.ProcessCommand(ctx, c.SenderUuid, c.SenderName, c.Message, worldTick); isCmd {
+					log.Printf("[civquest-agent] Companion command %s from %s (stage=%s, obeyed=%v)",
+						cmdRes.Command, c.SenderName, cmdRes.BondStage, cmdRes.Obeyed)
+
+					if r.system1State != nil {
+						r.system1State.SetCompanionActive(compSvc.IsActive())
+					}
+					if cmdRes.Command == system2.CommandWait && frame.Status != nil && frame.Status.Position != nil {
+						compSvc.SetWaitPosition(frame.Status.Position)
+					} else if cmdRes.Command == system2.CommandFollow {
+						compSvc.SetWaitPosition(nil)
+					}
+
+					// Boost dialogue familiarity (+0.05)
+					_, _ = compSvc.RecordDialogueInteraction(ctx, c.SenderUuid, c.SenderName, 0.0, worldTick)
+
+					if cmdRes.ReplyText != "" && !r.IsDead() && ctx.Err() == nil {
+						_ = r.QueueIntent(&civquestv1.AgentIntent{
+							AgentId: r.agentID,
+							Action: &civquestv1.AgentIntent_Chat{
+								Chat: &civquestv1.SendChatIntent{
+									Message:       cmdRes.ReplyText,
+									TargetChannel: civquestv1.ChatChannel_CHAT_CHANNEL_LOCAL,
+								},
+							},
+						})
+					}
+					return
+				}
+			}
+
+			// If not a companion command, proceed with LLM dialogue service
+			if svc == nil {
+				return
+			}
 
 			req := system2.ChatDialogueRequest{
 				PlayerUUID:   c.SenderUuid,
@@ -1006,6 +1097,11 @@ func (r *AgentRuntime) dispatchDialogue(frame *civquestv1.TelemetryFrame) {
 						},
 					})
 				}
+			}
+
+			// Update companion intimacy with prestige delta and dialogue turn
+			if compSvc != nil && res != nil {
+				_, _ = compSvc.RecordDialogueInteraction(ctx, c.SenderUuid, c.SenderName, res.Response.PrestigeDelta, worldTick)
 			}
 		}()
 	}
@@ -1430,6 +1526,118 @@ func (r *AgentRuntime) SafeNodes() []db.MapNode {
 	res := make([]db.MapNode, len(r.safeNodesCache))
 	copy(res, r.safeNodesCache)
 	return res
+}
+
+// evaluateCompanion evaluates proximity, shared travel accumulation, combat aid,
+// and follow navigation towards the bonded player in <1ms without token costs.
+func (r *AgentRuntime) evaluateCompanion(frame *civquestv1.TelemetryFrame) {
+	if frame == nil || frame.Status == nil || r.IsDead() {
+		return
+	}
+
+	r.mu.RLock()
+	compSvc := r.companionService
+	s1State := r.system1State
+	ctx := r.ctx
+	r.mu.RUnlock()
+
+	if compSvc == nil {
+		return
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	// 1. Sync companion active state with System 1 state (for tavern/bed overrides)
+	isActive := compSvc.IsActive()
+	if s1State != nil {
+		s1State.SetCompanionActive(isActive)
+	}
+
+	agentPos := frame.Status.Position
+	if agentPos == nil {
+		return
+	}
+
+	// 2. Locate bonded player or nearest player in VisibleEntities
+	bondedUUID, _ := compSvc.GetBondedPlayer()
+	var playerEntity *civquestv1.VisibleEntity
+
+	for _, e := range frame.VisibleEntities {
+		if e == nil {
+			continue
+		}
+		if bondedUUID != "" {
+			if e.Uuid == bondedUUID {
+				playerEntity = e
+				break
+			}
+		} else if (strings.EqualFold(e.EntityType, "PLAYER") || strings.EqualFold(e.EntityType, "minecraft:player")) && playerEntity == nil {
+			playerEntity = e
+		}
+	}
+
+	if playerEntity == nil || playerEntity.Position == nil {
+		return
+	}
+
+	pPos := playerEntity.Position
+	pUUID := playerEntity.Uuid
+	pName := playerEntity.DisplayName
+	if pName == "" {
+		pName = playerEntity.EntityType
+	}
+
+	// 3. Accumulate shared travel distance when player is nearby (<16 blocks)
+	_, _, _ = compSvc.RecordSharedTravel(ctx, pUUID, pName, pPos, agentPos, frame.WorldTick)
+
+	// 4. Combat aid: if agent took damage near the player, record combat aid
+	if frame.LastDamageTaken != nil {
+		dx := pPos.X - agentPos.X
+		dy := pPos.Y - agentPos.Y
+		dz := pPos.Z - agentPos.Z
+		dist := math.Sqrt(dx*dx + dy*dy + dz*dz)
+		if dist <= system2.MaxCompanionTravelRadius {
+			_, _ = compSvc.RecordCombatAid(ctx, pUUID, pName, frame.WorldTick)
+		}
+	}
+
+	// 5. Follow navigation: when in FOLLOW mode and distance > 4 blocks (and <= 48 blocks)
+	if compSvc.GetState() == system2.CompanionStateFollow {
+		shouldNav, navIntent := compSvc.EvaluateFollowNavigation(agentPos, pPos)
+		if shouldNav && navIntent != nil {
+			r.mu.Lock()
+			skipNav := false
+			if r.lastFollowNavTarget != nil {
+				dx := navIntent.Target.X - r.lastFollowNavTarget.X
+				dy := navIntent.Target.Y - r.lastFollowNavTarget.Y
+				dz := navIntent.Target.Z - r.lastFollowNavTarget.Z
+				distTarget := math.Sqrt(dx*dx + dy*dy + dz*dz)
+				ticksElapsed := frame.WorldTick - r.lastFollowNavTick
+				if distTarget < 3.0 && ticksElapsed <= 15 && ticksElapsed >= 0 {
+					skipNav = true
+				}
+			}
+			if !skipNav {
+				r.lastFollowNavTarget = &civquestv1.Vec3{
+					X: navIntent.Target.X,
+					Y: navIntent.Target.Y,
+					Z: navIntent.Target.Z,
+				}
+				r.lastFollowNavTick = frame.WorldTick
+			}
+			r.mu.Unlock()
+
+			if !skipNav {
+				_ = r.QueueIntent(&civquestv1.AgentIntent{
+					AgentId: r.agentID,
+					Action: &civquestv1.AgentIntent_Navigate{
+						Navigate: navIntent,
+					},
+				})
+			}
+		}
+	}
 }
 
 // evaluateSystem1Reflexes evaluates deterministic fight-or-flight combat reflexes,

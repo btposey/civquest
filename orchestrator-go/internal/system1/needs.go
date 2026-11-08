@@ -297,6 +297,11 @@ func EvaluateSleep(agentID string, frame *civquestv1.TelemetryFrame, state *Agen
 			return nil // Already sleeping soundly
 		}
 
+		// When companion bond is active, do not force return to village bed
+		if state != nil && state.IsCompanionActive() {
+			return nil
+		}
+
 		var bedPos *civquestv1.BlockPosProto
 		if state != nil {
 			bedPos = state.GetAssignedBed()

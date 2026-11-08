@@ -412,6 +412,25 @@ func TestPermadeath_CompanionProtectionPenalty(t *testing.T) {
 	if ledger[0].Reason != "Companion perished under player protection" {
 		t.Errorf("expected reason 'Companion perished under player protection', got %q", ledger[0].Reason)
 	}
+
+	// Verification of Companion Memorial Chronicle recorded in battle
+	if !res.CompanionMemorialWritten {
+		t.Errorf("expected CompanionMemorialWritten = true")
+	}
+	if res.CompanionMemorialPath == "" {
+		t.Errorf("expected non-empty CompanionMemorialPath")
+	} else {
+		content, readErr := os.ReadFile(res.CompanionMemorialPath)
+		if readErr != nil {
+			t.Fatalf("failed reading companion memorial file: %v", readErr)
+		}
+		if !strings.Contains(string(content), "Steve") || !strings.Contains(string(content), "Memorial of lyra") {
+			t.Errorf("unexpected memorial chronicle content:\n%s", string(content))
+		}
+	}
+	if res.CompanionMemorialMemoryID == 0 {
+		t.Errorf("expected non-zero CompanionMemorialMemoryID in AgentDB")
+	}
 }
 
 // =========================================================================

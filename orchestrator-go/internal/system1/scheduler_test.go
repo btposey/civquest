@@ -278,3 +278,49 @@ func TestEvaluateUtility_NilFrame(t *testing.T) {
 		t.Fatalf("expected emergency fallback on nil frame, got %+v", decision)
 	}
 }
+
+func TestEvaluateUtility_CompanionCampingOverride(t *testing.T) {
+	state := NewAgentState()
+	state.SetCompanionActive(true)
+
+	cfg := &xdg.AgentIdentityConfig{
+		Name:       "CompanionAria",
+		Profession: "GUARD",
+	}
+
+	// 1. Ticks 11000-13000 (Normally Tavern Social) -> Should override to RoutineCamp
+	frameTavern := &civquestv1.TelemetryFrame{
+		TimeOfDay: 12000,
+		WorldTick: 5000,
+		Status: &civquestv1.AgentStatus{
+			Health:    20,
+			MaxHealth: 20,
+			FoodLevel: 20,
+		},
+	}
+	decTavern := EvaluateUtility(frameTavern, cfg, state)
+	if decTavern.State != RoutineCamp {
+		t.Fatalf("expected RoutineCamp during tavern hours, got %s", decTavern.State)
+	}
+	if decTavern.Utility != 0.85 {
+		t.Errorf("expected utility 0.85, got %v", decTavern.Utility)
+	}
+
+	// 2. Ticks 13000-23500 (Normally Sleep) -> Should override to RoutineCamp
+	frameNight := &civquestv1.TelemetryFrame{
+		TimeOfDay: 18000,
+		WorldTick: 5500,
+		Status: &civquestv1.AgentStatus{
+			Health:    20,
+			MaxHealth: 20,
+			FoodLevel: 20,
+		},
+	}
+	decNight := EvaluateUtility(frameNight, cfg, state)
+	if decNight.State != RoutineCamp {
+		t.Fatalf("expected RoutineCamp during night sleep hours, got %s", decNight.State)
+	}
+	if decNight.Utility != 0.85 {
+		t.Errorf("expected utility 0.85, got %v", decNight.Utility)
+	}
+}

@@ -215,25 +215,49 @@ func EvaluateUtility(frame *civquestv1.TelemetryFrame, agentCfg *xdg.AgentIdenti
 		}
 	} else if tod >= 11000 && tod < 13000 {
 		// Tavern Social (Ticks 11000–13000)
-		decision = &UtilityDecision{
-			State:      RoutineTavernSocial,
-			Utility:    0.65,
-			Profession: profession,
-			Hobby:      hobby,
-			Reason:     "gathering at tavern for social relaxation",
-			WorldTick:  frame.WorldTick,
-			TimeOfDay:  tod,
+		if state != nil && state.IsCompanionActive() {
+			decision = &UtilityDecision{
+				State:      RoutineCamp,
+				Utility:    0.85,
+				Profession: profession,
+				Hobby:      hobby,
+				Reason:     "camping with player companion, overriding tavern return",
+				WorldTick:  frame.WorldTick,
+				TimeOfDay:  tod,
+			}
+		} else {
+			decision = &UtilityDecision{
+				State:      RoutineTavernSocial,
+				Utility:    0.65,
+				Profession: profession,
+				Hobby:      hobby,
+				Reason:     "gathering at tavern for social relaxation",
+				WorldTick:  frame.WorldTick,
+				TimeOfDay:  tod,
+			}
 		}
 	} else {
 		// Sleep (Ticks 13000–23500)
-		decision = &UtilityDecision{
-			State:      RoutineSleep,
-			Utility:    0.90,
-			Profession: profession,
-			Hobby:      hobby,
-			Reason:     "navigating to assigned bed and sleeping through the night",
-			WorldTick:  frame.WorldTick,
-			TimeOfDay:  tod,
+		if state != nil && state.IsCompanionActive() {
+			decision = &UtilityDecision{
+				State:      RoutineCamp,
+				Utility:    0.85,
+				Profession: profession,
+				Hobby:      hobby,
+				Reason:     "camping and resting with player companion, overriding village bed routine",
+				WorldTick:  frame.WorldTick,
+				TimeOfDay:  tod,
+			}
+		} else {
+			decision = &UtilityDecision{
+				State:      RoutineSleep,
+				Utility:    0.90,
+				Profession: profession,
+				Hobby:      hobby,
+				Reason:     "navigating to assigned bed and sleeping through the night",
+				WorldTick:  frame.WorldTick,
+				TimeOfDay:  tod,
+			}
 		}
 	}
 
