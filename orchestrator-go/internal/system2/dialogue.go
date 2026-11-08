@@ -3,7 +3,9 @@ package system2
 import (
 	"context"
 	"fmt"
+	"math"
 	"math/rand"
+	"regexp"
 	"strings"
 	"sync"
 
@@ -103,6 +105,15 @@ func WithDialogueReputation(rep *db.ReputationDB) DialogueOption {
 	}
 }
 
+// WithOwnedReputation assigns the clan reputation database and marks it as owned,
+// ensuring DialogueService.Close() closes the underlying database.
+func WithOwnedReputation(rep *db.ReputationDB) DialogueOption {
+	return func(s *DialogueService) {
+		s.reputation = rep
+		s.ownsReputation = true
+	}
+}
+
 // WithDialogueRand overrides the random number generator function for stochastic checks.
 func WithDialogueRand(randFn func() float64) DialogueOption {
 	return func(s *DialogueService) {
@@ -115,12 +126,14 @@ func WithDialogueRand(randFn func() float64) DialogueOption {
 // DialogueService orchestrates Pipeline A: conversational dialogue, barter haggling,
 // Hero Prestige progression, and stochastic disobedience evaluation.
 type DialogueService struct {
-	mu          sync.RWMutex
-	client      *Client
-	memory      *memory.Pipeline
-	reputation  *db.ReputationDB
-	agentConfig *xdg.AgentIdentityConfig
-	randFn      func() float64
+	mu             sync.RWMutex
+	client         *Client
+	memory         *memory.Pipeline
+	reputation     *db.ReputationDB
+	agentConfig    *xdg.AgentIdentityConfig
+	randFn         func() float64
+	ownsReputation bool
+	isClosed       bool
 }
 
 // NewDialogueService constructs a new DialogueService instance.
@@ -177,6 +190,20 @@ func (s *DialogueService) MemoryPipeline() *memory.Pipeline {
 	return s.memory
 }
 
+// Close gracefully closes any underlying resources owned by DialogueService (such as reputation.db).
+func (s *DialogueService) Close() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.isClosed {
+		return nil
+	}
+	s.isClosed = true
+	if s.ownsReputation && s.reputation != nil {
+		return s.reputation.Close()
+	}
+	return nil
+}
+
 // ProcessChat handles an incoming chat message, querying historical context,
 // generating structured response via LLM, evaluating disobedience, updating prestige,
 // and ingesting episodic memory.
@@ -222,12 +249,15 @@ func (s *DialogueService) ProcessChat(ctx context.Context, req ChatDialogueReque
 	}
 
 	// 5. Stochastic disobedience check
+	// Disobedience on chat only applies if the player delegates a task or the request is dangerous.
+	// Basic greetings are never refused.
+	hasTaskDelegation := resp.DelegatedTask != nil && resp.DelegatedTask.TaskType != "" && resp.DelegatedTask.TaskType != "NONE"
 	isDangerous := req.Dangerous || isDangerousText(req.Message)
 	isDeficit := req.SurplusState == SurplusDeficit
 	disobeyed := false
 	var disobeyReason string
 
-	if isDangerous || isDeficit {
+	if isDangerous || (isDeficit && hasTaskDelegation) {
 		roll := randFn()
 		bravery := agentCfg.Traits.Bravery
 		if roll > bravery {
@@ -236,8 +266,8 @@ func (s *DialogueService) ProcessChat(ctx context.Context, req ChatDialogueReque
 				disobeyReason = "Refused dangerous request under clan food deficit"
 				resp.SpokenReply = "I cannot do that! Our granaries are empty, and risking my life right now would be madness."
 			} else if isDeficit {
-				disobeyReason = "Refused request due to clan food deficit"
-				resp.SpokenReply = "I must refuse. Our clan's food stores are dangerously depleted; we cannot spare anything."
+				disobeyReason = "Refused delegated task due to clan food deficit"
+				resp.SpokenReply = "I must refuse that task. Our clan's food stores are dangerously depleted; we cannot spare time or resources."
 			} else {
 				disobeyReason = "Refused dangerous order due to self-preservation"
 				resp.SpokenReply = "I refuse! That sounds far too dangerous. I am not throwing my life away."
@@ -248,19 +278,21 @@ func (s *DialogueService) ProcessChat(ctx context.Context, req ChatDialogueReque
 		}
 	}
 
-	// 6. Update Hero Prestige if delta is non-zero
+	// 6. Clamp prestige delta [-10.0, 10.0] and update Hero Prestige if delta is non-zero
+	resp.PrestigeDelta = clampPrestigeDelta(resp.PrestigeDelta, -10.0, 10.0)
 	updatedPrestige := currentPrestige
 	if repDB != nil && req.PlayerUUID != "" && resp.PrestigeDelta != 0.0 {
+		cleanName := sanitizePlayerName(req.PlayerName)
 		entry := db.PrestigeLedgerEntry{
 			PlayerUUID: req.PlayerUUID,
-			PlayerName: req.PlayerName,
+			PlayerName: cleanName,
 			AgentID:    agentCfg.Name,
 			Delta:      resp.PrestigeDelta,
 			Reason:     resp.MemorySummary,
 			WorldTick:  req.WorldTick,
 		}
 		if entry.Reason == "" {
-			entry.Reason = fmt.Sprintf("Chat interaction with %s", req.PlayerName)
+			entry.Reason = fmt.Sprintf("Chat interaction with %s", cleanName)
 		}
 		if newScore, err := repDB.RecordPrestigeDelta(ctx, entry); err == nil {
 			updatedPrestige = newScore
@@ -372,19 +404,21 @@ func (s *DialogueService) ProcessTrade(ctx context.Context, req TradeDialogueReq
 		}
 	}
 
-	// 6. Update Hero Prestige if delta is non-zero
+	// 6. Clamp prestige delta [-5.0, 5.0] and update Hero Prestige if delta is non-zero
+	resp.PrestigeDelta = clampPrestigeDelta(resp.PrestigeDelta, -5.0, 5.0)
 	updatedPrestige := currentPrestige
 	if repDB != nil && req.PlayerUUID != "" && resp.PrestigeDelta != 0.0 {
+		cleanName := sanitizePlayerName(req.PlayerName)
 		entry := db.PrestigeLedgerEntry{
 			PlayerUUID: req.PlayerUUID,
-			PlayerName: req.PlayerName,
+			PlayerName: cleanName,
 			AgentID:    agentCfg.Name,
 			Delta:      resp.PrestigeDelta,
 			Reason:     resp.MemorySummary,
 			WorldTick:  req.WorldTick,
 		}
 		if entry.Reason == "" {
-			entry.Reason = fmt.Sprintf("Barter trade with %s (%s)", req.PlayerName, resp.TradeDecision)
+			entry.Reason = fmt.Sprintf("Barter trade with %s (%s)", cleanName, resp.TradeDecision)
 		}
 		if newScore, err := repDB.RecordPrestigeDelta(ctx, entry); err == nil {
 			updatedPrestige = newScore
@@ -406,19 +440,35 @@ func (s *DialogueService) ProcessTrade(ctx context.Context, req TradeDialogueReq
 		})
 	}
 
-	// 8. Assemble result
-	if resp.SpokenReply == "" {
-		resp.SpokenReply = fmt.Sprintf("Trade decision: %s", resp.TradeDecision)
-	}
-
+	// 8. Validate counter-offers and assemble result
 	var counterOffers []*civquestv1.ItemStackProto
 	if !disobeyed && strings.EqualFold(resp.TradeDecision, "COUNTER") {
 		for _, item := range resp.CounterOfferItems {
+			itemID := strings.TrimSpace(item.ItemID)
+			if itemID == "" {
+				continue
+			}
+			count := item.Count
+			if count < 1 {
+				count = 1
+			} else if count > 64 {
+				count = 64
+			}
 			counterOffers = append(counterOffers, &civquestv1.ItemStackProto{
-				ItemId: item.ItemID,
-				Count:  item.Count,
+				ItemId: itemID,
+				Count:  count,
 			})
 		}
+		if len(counterOffers) == 0 {
+			resp.TradeDecision = "REJECT"
+			if resp.SpokenReply == "" || strings.EqualFold(resp.SpokenReply, "Trade decision: COUNTER") {
+				resp.SpokenReply = "I cannot accept that barter offer."
+			}
+		}
+	}
+
+	if resp.SpokenReply == "" {
+		resp.SpokenReply = fmt.Sprintf("Trade decision: %s", resp.TradeDecision)
 	}
 
 	acceptDeal := !disobeyed && strings.EqualFold(resp.TradeDecision, "ACCEPT")
@@ -465,6 +515,8 @@ func (s *DialogueService) buildChatPrompt(
 		thrift = 0.0
 	}
 
+	cleanPlayerName := sanitizePlayerName(req.PlayerName)
+
 	systemPrompt := fmt.Sprintf(`You are %s, an autonomous settler in the settlement simulation CivQuest.
 Clan: %s | Profession: %s | Secondary Hobby: %s
 Personality Traits:
@@ -480,8 +532,12 @@ Current Status:
 - Clan Granary State: %s (DEFICIT = clan is starving/protective; STABLE = normal; SURPLUS = thriving/generous)
 
 Interlocutor:
-- Player Name: %s (UUID: %s)
-- Hero Prestige Score: %.1f | Title: %s
+<player_info>
+Player Name: %s
+UUID: %s
+Hero Prestige Score: %.1f
+Title: %s
+</player_info>
 (Prestige Meanings: HERO >= 50.0 is revered; ALLY >= 20.0 is trusted partner; FRIEND >= 5.0 is welcomed; STRANGER > -5.0 is neutral newcomer; SUSPECT > -20.0 is distrusted; VILLAIN <= -20.0 is clan enemy).
 
 %s
@@ -500,7 +556,7 @@ Instructions:
 		cfg.Name, cfg.ClanID, cfg.Profession, cfg.SecondaryHobby,
 		cfg.Traits.Bravery, cfg.Traits.Sociability, cfg.Traits.Industriousness, thrift, cfg.Traits.Aggressiveness, cfg.Traits.Curiosity,
 		vitalsInfo, surplus,
-		req.PlayerName, req.PlayerUUID, prestigeScore, prestigeTitle,
+		cleanPlayerName, req.PlayerUUID, prestigeScore, prestigeTitle,
 		formatMemorySection(historicalContext),
 	)
 
@@ -508,7 +564,7 @@ Instructions:
 		systemPrompt += "\n\nAdditional Settler Background:\n" + cfg.SystemPrompt
 	}
 
-	userMsg := fmt.Sprintf("Player %s says (distance %.1fm): %q", req.PlayerName, req.Distance, req.Message)
+	userMsg := fmt.Sprintf("<player_chat player=%q distance=%.1f>\n%s\n</player_chat>", cleanPlayerName, req.Distance, req.Message)
 
 	return []ChatMessage{
 		{Role: RoleSystem, Content: systemPrompt},
@@ -550,6 +606,8 @@ func (s *DialogueService) buildTradePrompt(
 		}
 	}
 
+	cleanPlayerName := sanitizePlayerName(req.PlayerName)
+
 	systemPrompt := fmt.Sprintf(`You are %s, an autonomous settler negotiating barter trade in CivQuest.
 Clan: %s | Profession: %s | Secondary Hobby: %s
 Personality Traits:
@@ -564,8 +622,12 @@ Status & Economy:
 - Clan Granary State: %s (DEFICIT = protect food and high-value supplies; SURPLUS = generous trades)
 
 Trading Partner:
-- Player Name: %s (UUID: %s)
-- Hero Prestige Score: %.1f | Title: %s
+<player_info>
+Player Name: %s
+UUID: %s
+Hero Prestige Score: %.1f
+Title: %s
+</player_info>
 (HERO/ALLY receive generous barter discounts; STRANGER receives fair market rates; SUSPECT/VILLAIN are charged exorbitant premiums or refused outright).
 
 %s
@@ -584,7 +646,7 @@ Instructions:
 		cfg.Name, cfg.ClanID, cfg.Profession, cfg.SecondaryHobby,
 		cfg.Traits.Bravery, cfg.Traits.Sociability, cfg.Traits.Industriousness, thrift, cfg.Traits.Aggressiveness,
 		vitalsInfo, surplus,
-		req.PlayerName, req.PlayerUUID, prestigeScore, prestigeTitle,
+		cleanPlayerName, req.PlayerUUID, prestigeScore, prestigeTitle,
 		formatMemorySection(historicalContext),
 	)
 
@@ -592,7 +654,7 @@ Instructions:
 		systemPrompt += "\n\nAdditional Settler Background:\n" + cfg.SystemPrompt
 	}
 
-	userMsg := fmt.Sprintf("Player %s offers items: [%s]. Proposal: %q", req.PlayerName, itemsSummary.String(), req.SpokenProposal)
+	userMsg := fmt.Sprintf("<player_trade player=%q>\nOffered items: [%s]\nProposal: %s\n</player_trade>", cleanPlayerName, itemsSummary.String(), req.SpokenProposal)
 
 	return []ChatMessage{
 		{Role: RoleSystem, Content: systemPrompt},
@@ -601,22 +663,34 @@ Instructions:
 }
 
 func formatMemorySection(historicalContext string) string {
-	if strings.TrimSpace(historicalContext) == "" {
-		return "Historical Memories: No previous recorded memories with this interlocutor."
+	trimmed := strings.TrimSpace(historicalContext)
+	if trimmed == "" {
+		return "<historical_memories>\nNo previous recorded memories with this interlocutor.\n</historical_memories>"
 	}
-	return fmt.Sprintf("Historical Memories:\n%s", historicalContext)
+	return fmt.Sprintf("<historical_memories>\n%s\n</historical_memories>", trimmed)
 }
 
+func sanitizePlayerName(name string) string {
+	name = strings.ReplaceAll(name, "\r", "")
+	name = strings.ReplaceAll(name, "\n", " ")
+	return strings.TrimSpace(name)
+}
+
+func clampPrestigeDelta(val float64, minVal, maxVal float64) float64 {
+	if math.IsNaN(val) || math.IsInf(val, 0) {
+		return 0.0
+	}
+	if val < minVal {
+		return minVal
+	}
+	if val > maxVal {
+		return maxVal
+	}
+	return val
+}
+
+var dangerRegex = regexp.MustCompile(`(?i)\b(kill|attack|die|sacrifice|warden|wither|creeper|lava|suicide|dangerous|assassinate|murder)\b`)
+
 func isDangerousText(text string) bool {
-	lower := strings.ToLower(text)
-	dangerKeywords := []string{
-		"kill", "attack", "die", "sacrifice", "warden", "wither",
-		"creeper", "lava", "suicide", "dangerous", "assassinate", "murder",
-	}
-	for _, kw := range dangerKeywords {
-		if strings.Contains(lower, kw) {
-			return true
-		}
-	}
-	return false
+	return dangerRegex.MatchString(text)
 }

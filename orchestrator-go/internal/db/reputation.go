@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
 	"sync"
@@ -155,6 +156,8 @@ func (r *ReputationDB) DB() *sql.DB {
 
 // Close gracefully closes the database connection.
 func (r *ReputationDB) Close() error {
+	r.writeMu.Lock()
+	defer r.writeMu.Unlock()
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if r.isClosed {
@@ -217,12 +220,18 @@ func (r *ReputationDB) GetHeroPrestigeOrDefault(ctx context.Context, playerUUID 
 }
 
 // RecordPrestigeDelta atomically modifies a player's hero prestige score and records
-// an audit entry into prestige_ledger within a single transaction.
+// an audit entry into prestige_ledger within a single transaction using SQLite UPSERT.
 // Returns the newly updated cumulative prestige score.
 func (r *ReputationDB) RecordPrestigeDelta(ctx context.Context, entry PrestigeLedgerEntry) (float64, error) {
 	if entry.PlayerUUID == "" {
 		return 0, errors.New("player_uuid cannot be empty")
 	}
+	if math.IsNaN(entry.Delta) || math.IsInf(entry.Delta, 0) {
+		return 0, errors.New("prestige delta must be a finite number")
+	}
+
+	r.writeMu.Lock()
+	defer r.writeMu.Unlock()
 
 	r.mu.RLock()
 	if r.isClosed {
@@ -231,54 +240,49 @@ func (r *ReputationDB) RecordPrestigeDelta(ctx context.Context, entry PrestigeLe
 	}
 	r.mu.RUnlock()
 
-	r.writeMu.Lock()
-	defer r.writeMu.Unlock()
-
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
 		return 0, fmt.Errorf("beginning prestige transaction: %w", err)
 	}
 	defer tx.Rollback()
 
-	// Query existing score and name
-	var existingScore float64
-	var existingName string
-	query := `SELECT score, player_name FROM hero_prestige WHERE player_uuid = ?;`
-	err = tx.QueryRowContext(ctx, query, entry.PlayerUUID).Scan(&existingScore, &existingName)
+	// Atomic SQLite UPSERT: insert if not exists; on conflict accumulate score and update metadata
+	upsertQuery := `
+		INSERT INTO hero_prestige (player_uuid, player_name, score, title, last_interaction_tick, updated_at)
+		VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+		ON CONFLICT(player_uuid) DO UPDATE SET
+			score = hero_prestige.score + excluded.score,
+			player_name = CASE WHEN excluded.player_name != '' THEN excluded.player_name ELSE hero_prestige.player_name END,
+			last_interaction_tick = MAX(hero_prestige.last_interaction_tick, excluded.last_interaction_tick),
+			updated_at = CURRENT_TIMESTAMP;
+	`
+	initialTitle := ComputePrestigeTitle(entry.Delta)
+	if _, err := tx.ExecContext(ctx, upsertQuery, entry.PlayerUUID, entry.PlayerName, entry.Delta, initialTitle, entry.WorldTick); err != nil {
+		return 0, fmt.Errorf("upserting hero prestige: %w", err)
+	}
 
+	// Query updated score and player name from the atomic upsert
 	var newScore float64
-	var newTitle string
-	playerName := entry.PlayerName
+	var recordedName string
+	query := `SELECT score, player_name FROM hero_prestige WHERE player_uuid = ?;`
+	if err := tx.QueryRowContext(ctx, query, entry.PlayerUUID).Scan(&newScore, &recordedName); err != nil {
+		return 0, fmt.Errorf("querying updated hero prestige: %w", err)
+	}
 
-	if errors.Is(err, sql.ErrNoRows) {
-		newScore = entry.Delta
-		newTitle = ComputePrestigeTitle(newScore)
-		if playerName == "" {
-			playerName = entry.PlayerUUID
+	// Ensure recorded name falls back to player UUID if blank
+	if recordedName == "" {
+		recordedName = entry.PlayerUUID
+		updateNameQuery := `UPDATE hero_prestige SET player_name = ? WHERE player_uuid = ?;`
+		if _, err := tx.ExecContext(ctx, updateNameQuery, recordedName, entry.PlayerUUID); err != nil {
+			return 0, fmt.Errorf("updating fallback player name: %w", err)
 		}
-		insertQuery := `
-			INSERT INTO hero_prestige (player_uuid, player_name, score, title, last_interaction_tick, updated_at)
-			VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP);
-		`
-		if _, err := tx.ExecContext(ctx, insertQuery, entry.PlayerUUID, playerName, newScore, newTitle, entry.WorldTick); err != nil {
-			return 0, fmt.Errorf("inserting new hero prestige: %w", err)
-		}
-	} else if err != nil {
-		return 0, fmt.Errorf("querying existing hero prestige: %w", err)
-	} else {
-		newScore = existingScore + entry.Delta
-		newTitle = ComputePrestigeTitle(newScore)
-		if playerName == "" {
-			playerName = existingName
-		}
-		updateQuery := `
-			UPDATE hero_prestige
-			SET score = ?, title = ?, player_name = ?, last_interaction_tick = MAX(last_interaction_tick, ?), updated_at = CURRENT_TIMESTAMP
-			WHERE player_uuid = ?;
-		`
-		if _, err := tx.ExecContext(ctx, updateQuery, newScore, newTitle, playerName, entry.WorldTick, entry.PlayerUUID); err != nil {
-			return 0, fmt.Errorf("updating hero prestige: %w", err)
-		}
+	}
+
+	// Update honorary title corresponding to the newly calculated cumulative score
+	newTitle := ComputePrestigeTitle(newScore)
+	updateTitleQuery := `UPDATE hero_prestige SET title = ? WHERE player_uuid = ?;`
+	if _, err := tx.ExecContext(ctx, updateTitleQuery, newTitle, entry.PlayerUUID); err != nil {
+		return 0, fmt.Errorf("updating hero prestige title: %w", err)
 	}
 
 	// Insert into prestige_ledger
@@ -286,7 +290,7 @@ func (r *ReputationDB) RecordPrestigeDelta(ctx context.Context, entry PrestigeLe
 		INSERT INTO prestige_ledger (player_uuid, player_name, agent_id, delta, reason, world_tick, created_at)
 		VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP);
 	`
-	if _, err := tx.ExecContext(ctx, ledgerQuery, entry.PlayerUUID, playerName, entry.AgentID, entry.Delta, entry.Reason, entry.WorldTick); err != nil {
+	if _, err := tx.ExecContext(ctx, ledgerQuery, entry.PlayerUUID, recordedName, entry.AgentID, entry.Delta, entry.Reason, entry.WorldTick); err != nil {
 		return 0, fmt.Errorf("inserting prestige ledger entry: %w", err)
 	}
 

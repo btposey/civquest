@@ -3,6 +3,7 @@ package system2
 import (
 	"context"
 	"encoding/json"
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -232,7 +233,7 @@ func TestDialogueService_Trade_AcceptAndCounter(t *testing.T) {
 	acceptMock := DialogueResponse{
 		SpokenReply:   "A fair bargain! I accept your 3 emeralds for 16 carrots.",
 		TradeDecision: "ACCEPT",
-		PrestigeDelta: 6.0,
+		PrestigeDelta: 4.0,
 		MemorySummary: "Accepted emeralds for carrots from Steve.",
 	}
 	currentMock.Store(acceptMock)
@@ -265,8 +266,8 @@ func TestDialogueService_Trade_AcceptAndCounter(t *testing.T) {
 	if len(res.TradeIntent.AgentCounterOffer) != 0 {
 		t.Errorf("expected empty counter offer on ACCEPT, got %d items", len(res.TradeIntent.AgentCounterOffer))
 	}
-	if res.UpdatedPrestige != 6.0 {
-		t.Errorf("expected updated prestige 6.0, got %.1f", res.UpdatedPrestige)
+	if res.UpdatedPrestige != 4.0 {
+		t.Errorf("expected updated prestige 4.0, got %.1f", res.UpdatedPrestige)
 	}
 
 	// 2. COUNTER Trade
@@ -298,10 +299,10 @@ func TestDialogueService_Trade_AcceptAndCounter(t *testing.T) {
 		t.Errorf("unexpected counter offer item: %+v", res.TradeIntent.AgentCounterOffer[0])
 	}
 
-	// Verify prestige score in db remained 6.0
+	// Verify prestige score in db remained 4.0
 	hp, err := repDB.GetHeroPrestige(ctx, "player-steve")
-	if err != nil || hp.Score != 6.0 {
-		t.Errorf("expected score 6.0, got %.1f (err: %v)", hp.Score, err)
+	if err != nil || hp.Score != 4.0 {
+		t.Errorf("expected score 4.0, got %.1f (err: %v)", hp.Score, err)
 	}
 }
 
@@ -534,5 +535,335 @@ func TestDialogueService_PromptAssembly_PrestigeAndRAG(t *testing.T) {
 	// Check RAG historical memory in prompt
 	if !strings.Contains(sysContent, "saved the granary from zombies") {
 		t.Errorf("expected RAG memory in prompt, got:\n%s", sysContent)
+	}
+}
+
+func TestDialogueService_PrestigeClampingAndNaN(t *testing.T) {
+	var currentMock atomic.Value
+
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mock := currentMock.Load().(DialogueResponse)
+		respBytes, _ := json.Marshal(mock)
+		resp := ChatCompletionResponse{
+			ID:      "chatcmpl-clamp",
+			Object:  "chat.completion",
+			Created: 123456789,
+			Model:   "test-model",
+			Choices: []ChatCompletionChoice{
+				{
+					Index: 0,
+					Message: ChatMessage{
+						Role:    RoleAssistant,
+						Content: string(respBytes),
+					},
+					FinishReason: "stop",
+				},
+			},
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(resp)
+	})
+
+	traits := xdg.AgentTraits{Bravery: 0.5, Sociability: 0.5, Industriousness: 0.5}
+	svc, repDB, _, cleanup := setupTestDialogueService(t, handler, traits, 0.1)
+	defer cleanup()
+
+	ctx := context.Background()
+
+	// 1. ProcessChat clamps excessive positive delta (> 10.0)
+	currentMock.Store(DialogueResponse{
+		SpokenReply:   "You are amazing!",
+		TradeDecision: "NONE",
+		PrestigeDelta: 99.9,
+	})
+	res, err := svc.ProcessChat(ctx, ChatDialogueRequest{
+		PlayerUUID: "player-clamp",
+		PlayerName: "Clamper",
+		Message:    "Hello",
+		WorldTick:  100,
+	})
+	if err != nil {
+		t.Fatalf("ProcessChat failed: %v", err)
+	}
+	if res.Response.PrestigeDelta != 10.0 || res.UpdatedPrestige != 10.0 {
+		t.Errorf("expected prestige clamped to 10.0, got delta %.1f, updated %.1f", res.Response.PrestigeDelta, res.UpdatedPrestige)
+	}
+
+	// 2. ProcessChat clamps excessive negative delta (< -10.0)
+	currentMock.Store(DialogueResponse{
+		SpokenReply:   "You are terrible!",
+		TradeDecision: "NONE",
+		PrestigeDelta: -50.0,
+	})
+	res, err = svc.ProcessChat(ctx, ChatDialogueRequest{
+		PlayerUUID: "player-clamp",
+		PlayerName: "Clamper",
+		Message:    "Threatening statement",
+		WorldTick:  200,
+	})
+	if err != nil {
+		t.Fatalf("ProcessChat failed: %v", err)
+	}
+	if res.Response.PrestigeDelta != -10.0 || res.UpdatedPrestige != 0.0 {
+		t.Errorf("expected prestige clamped to -10.0 (new total 0.0), got delta %.1f, updated %.1f", res.Response.PrestigeDelta, res.UpdatedPrestige)
+	}
+
+	// 3. ProcessTrade clamps to [-5.0, 5.0]
+	currentMock.Store(DialogueResponse{
+		SpokenReply:   "Great trade!",
+		TradeDecision: "ACCEPT",
+		PrestigeDelta: 15.0,
+	})
+	tradeRes, err := svc.ProcessTrade(ctx, TradeDialogueRequest{
+		PlayerEntityID: 200,
+		PlayerUUID:     "player-clamp",
+		PlayerName:     "Clamper",
+		SpokenProposal: "Trade",
+		WorldTick:      300,
+	})
+	if err != nil {
+		t.Fatalf("ProcessTrade failed: %v", err)
+	}
+	if tradeRes.Response.PrestigeDelta != 5.0 || tradeRes.UpdatedPrestige != 5.0 {
+		t.Errorf("expected trade prestige clamped to 5.0, got delta %.1f, updated %.1f", tradeRes.Response.PrestigeDelta, tradeRes.UpdatedPrestige)
+	}
+
+	// 4. clampPrestigeDelta NaN and Inf handling
+	if val := clampPrestigeDelta(math.NaN(), -10.0, 10.0); val != 0.0 {
+		t.Errorf("expected NaN to clamp to 0.0, got %f", val)
+	}
+	if val := clampPrestigeDelta(math.Inf(1), -10.0, 10.0); val != 0.0 {
+		t.Errorf("expected +Inf to clamp to 0.0, got %f", val)
+	}
+	if val := clampPrestigeDelta(math.Inf(-1), -10.0, 10.0); val != 0.0 {
+		t.Errorf("expected -Inf to clamp to 0.0, got %f", val)
+	}
+
+	_ = repDB
+}
+
+func TestDialogueService_CounterOfferFiltering(t *testing.T) {
+	var currentMock atomic.Value
+
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mock := currentMock.Load().(DialogueResponse)
+		respBytes, _ := json.Marshal(mock)
+		resp := ChatCompletionResponse{
+			ID:      "chatcmpl-counter",
+			Object:  "chat.completion",
+			Created: 123456789,
+			Model:   "test-model",
+			Choices: []ChatCompletionChoice{
+				{
+					Index: 0,
+					Message: ChatMessage{
+						Role:    RoleAssistant,
+						Content: string(respBytes),
+					},
+					FinishReason: "stop",
+				},
+			},
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(resp)
+	})
+
+	traits := xdg.AgentTraits{Bravery: 0.5, Sociability: 0.5, Industriousness: 0.5}
+	svc, _, _, cleanup := setupTestDialogueService(t, handler, traits, 0.1)
+	defer cleanup()
+
+	ctx := context.Background()
+
+	// 1. Clamps counts: count < 1 becomes 1; count > 64 becomes 64; blanks ignored
+	currentMock.Store(DialogueResponse{
+		SpokenReply:   "Countering offer",
+		TradeDecision: "COUNTER",
+		CounterOfferItems: []CounterOfferItem{
+			{ItemID: "", Count: 10},                     // empty ItemID -> filtered out
+			{ItemID: "minecraft:iron_ingot", Count: -5}, // < 1 -> clamped to 1
+			{ItemID: "minecraft:bread", Count: 100},     // > 64 -> clamped to 64
+		},
+	})
+
+	res, err := svc.ProcessTrade(ctx, TradeDialogueRequest{
+		PlayerEntityID: 10,
+		PlayerUUID:     "trader",
+		PlayerName:     "Trader",
+		WorldTick:      1000,
+	})
+	if err != nil {
+		t.Fatalf("ProcessTrade failed: %v", err)
+	}
+	if res.TradeIntent == nil || len(res.TradeIntent.AgentCounterOffer) != 2 {
+		t.Fatalf("expected 2 valid counter offer items, got %+v", res.TradeIntent)
+	}
+	if res.TradeIntent.AgentCounterOffer[0].ItemId != "minecraft:iron_ingot" || res.TradeIntent.AgentCounterOffer[0].Count != 1 {
+		t.Errorf("expected 1x iron_ingot, got %+v", res.TradeIntent.AgentCounterOffer[0])
+	}
+	if res.TradeIntent.AgentCounterOffer[1].ItemId != "minecraft:bread" || res.TradeIntent.AgentCounterOffer[1].Count != 64 {
+		t.Errorf("expected 64x bread, got %+v", res.TradeIntent.AgentCounterOffer[1])
+	}
+
+	// 2. All items invalid -> fallback to REJECT
+	currentMock.Store(DialogueResponse{
+		SpokenReply:   "Countering offer",
+		TradeDecision: "COUNTER",
+		CounterOfferItems: []CounterOfferItem{
+			{ItemID: "", Count: 10},
+			{ItemID: "   ", Count: 5},
+		},
+	})
+	res, err = svc.ProcessTrade(ctx, TradeDialogueRequest{
+		PlayerEntityID: 10,
+		PlayerUUID:     "trader",
+		PlayerName:     "Trader",
+		WorldTick:      2000,
+	})
+	if err != nil {
+		t.Fatalf("ProcessTrade failed: %v", err)
+	}
+	if res.TradeIntent.AcceptDeal {
+		t.Error("expected AcceptDeal false")
+	}
+	if res.Response.TradeDecision != "REJECT" {
+		t.Errorf("expected TradeDecision REJECT, got %s", res.Response.TradeDecision)
+	}
+	if len(res.TradeIntent.AgentCounterOffer) != 0 {
+		t.Errorf("expected 0 counter offers, got %d", len(res.TradeIntent.AgentCounterOffer))
+	}
+}
+
+func TestDialogueService_GreetingVsDangerousDisobedience(t *testing.T) {
+	var currentMock atomic.Value
+
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mock := currentMock.Load().(DialogueResponse)
+		respBytes, _ := json.Marshal(mock)
+		resp := ChatCompletionResponse{
+			ID:      "chatcmpl-disobey",
+			Object:  "chat.completion",
+			Created: 123456789,
+			Model:   "test-model",
+			Choices: []ChatCompletionChoice{
+				{
+					Index: 0,
+					Message: ChatMessage{
+						Role:    RoleAssistant,
+						Content: string(respBytes),
+					},
+					FinishReason: "stop",
+				},
+			},
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(resp)
+	})
+
+	// Low bravery (0.1), randFn returns 0.9 (will disobey if triggered)
+	traits := xdg.AgentTraits{Bravery: 0.1, Sociability: 0.5, Industriousness: 0.5}
+	svc, _, _, cleanup := setupTestDialogueService(t, handler, traits, 0.9)
+	defer cleanup()
+
+	ctx := context.Background()
+
+	// 1. Basic greeting under food deficit (SurplusDeficit) MUST NOT be refused
+	currentMock.Store(DialogueResponse{
+		SpokenReply:   "Hello there, traveler.",
+		TradeDecision: "NONE",
+		DelegatedTask: nil,
+	})
+	res, err := svc.ProcessChat(ctx, ChatDialogueRequest{
+		PlayerUUID:   "player-greet",
+		PlayerName:   "FriendlyPlayer",
+		Message:      "Hello! Lovely weather today.",
+		SurplusState: SurplusDeficit,
+	})
+	if err != nil {
+		t.Fatalf("ProcessChat failed: %v", err)
+	}
+	if res.Disobeyed {
+		t.Errorf("expected greeting not to be disobeyed during deficit, got disobedience: %s", res.DisobeyReason)
+	}
+	if res.Response.SpokenReply != "Hello there, traveler." {
+		t.Errorf("unexpected reply: %s", res.Response.SpokenReply)
+	}
+
+	// 2. Chat with delegated task under food deficit SHOULD be refused
+	currentMock.Store(DialogueResponse{
+		SpokenReply:   "I can help gather wheat.",
+		TradeDecision: "NONE",
+		DelegatedTask: &DelegatedTask{
+			TaskType: "GATHER_RESOURCE",
+		},
+	})
+	res, err = svc.ProcessChat(ctx, ChatDialogueRequest{
+		PlayerUUID:   "player-task",
+		PlayerName:   "TaskMaster",
+		Message:      "Can you gather some wood for the clan?",
+		SurplusState: SurplusDeficit,
+	})
+	if err != nil {
+		t.Fatalf("ProcessChat failed: %v", err)
+	}
+	if !res.Disobeyed {
+		t.Error("expected delegated task to be disobeyed during food deficit")
+	}
+
+	// 3. Word boundary danger test: "skill" is NOT dangerous, "kill" IS dangerous
+	if isDangerousText("You have great skill in farming") {
+		t.Error("expected 'skill' not to trigger danger detection")
+	}
+	if !isDangerousText("Go and kill the creeper") {
+		t.Error("expected 'kill' and 'creeper' to trigger danger detection")
+	}
+	if !isDangerousText("attack the enemy") {
+		t.Error("expected 'attack' to trigger danger detection")
+	}
+}
+
+func TestDialogueService_CloseOwnedReputation(t *testing.T) {
+	tempDir := t.TempDir()
+	repDBPath := filepath.Join(tempDir, "reputation_owned.db")
+	repDB, err := db.OpenReputationDB(repDBPath, "clan_owned")
+	if err != nil {
+		t.Fatalf("failed to open reputation db: %v", err)
+	}
+
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {})
+	server := httptest.NewServer(handler)
+	defer server.Close()
+
+	client, err := NewClientWithConfig(
+		xdg.LLMGatewayConfig{BaseURL: server.URL},
+		xdg.InferenceGovernorConfig{MaxConcurrentLLMRequests: 1, RequestTimeoutSeconds: 5},
+	)
+	if err != nil {
+		t.Fatalf("failed to create client: %v", err)
+	}
+	defer client.Close()
+
+	svc, err := NewDialogueService(
+		client,
+		&xdg.AgentIdentityConfig{Name: "settler"},
+		WithOwnedReputation(repDB),
+	)
+	if err != nil {
+		t.Fatalf("failed to create dialogue service: %v", err)
+	}
+
+	// Verify reputation is open
+	ctx := context.Background()
+	if _, err := svc.ReputationDB().GetHeroPrestige(ctx, "test"); err != nil {
+		t.Fatalf("GetHeroPrestige error: %v", err)
+	}
+
+	// Close dialogue service -> closes reputation db
+	if err := svc.Close(); err != nil {
+		t.Fatalf("Close failed: %v", err)
+	}
+
+	// Subsequent call to reputation returns ErrClosed
+	if _, err := repDB.GetHeroPrestige(ctx, "test"); err != db.ErrClosed {
+		t.Errorf("expected ErrClosed after svc.Close(), got %v", err)
 	}
 }

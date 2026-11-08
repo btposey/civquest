@@ -2,6 +2,7 @@ package db
 
 import (
 	"context"
+	"math"
 	"path/filepath"
 	"sync"
 	"testing"
@@ -301,6 +302,26 @@ func TestReputationDB_ValidationAndClosed(t *testing.T) {
 		t.Error("expected error for empty playerUUID in RecordPrestigeDelta")
 	}
 
+	// NaN and Inf validation
+	if _, err := repDB.RecordPrestigeDelta(ctx, PrestigeLedgerEntry{
+		PlayerUUID: "player-nan",
+		Delta:      math.NaN(),
+	}); err == nil {
+		t.Error("expected error for NaN delta")
+	}
+	if _, err := repDB.RecordPrestigeDelta(ctx, PrestigeLedgerEntry{
+		PlayerUUID: "player-nan",
+		Delta:      math.Inf(1),
+	}); err == nil {
+		t.Error("expected error for +Inf delta")
+	}
+	if _, err := repDB.RecordPrestigeDelta(ctx, PrestigeLedgerEntry{
+		PlayerUUID: "player-nan",
+		Delta:      math.Inf(-1),
+	}); err == nil {
+		t.Error("expected error for -Inf delta")
+	}
+
 	// Close database
 	if err := repDB.Close(); err != nil {
 		t.Fatalf("Close failed: %v", err)
@@ -315,5 +336,69 @@ func TestReputationDB_ValidationAndClosed(t *testing.T) {
 	}
 	if _, err := repDB.GetPrestigeLedger(ctx, "any-uuid", 10); err != ErrClosed {
 		t.Errorf("expected ErrClosed, got %v", err)
+	}
+}
+
+func TestReputationDB_MultiInstanceConcurrentUPSERT(t *testing.T) {
+	tempDir := t.TempDir()
+	dbPath := filepath.Join(tempDir, "multi_proc_reputation.db")
+
+	// Create 3 independent DB instances pointing to the same SQLite file
+	// simulating multiple isolated agent processes in the clan.
+	const numInstances = 3
+	instances := make([]*ReputationDB, numInstances)
+	for i := 0; i < numInstances; i++ {
+		dbInst, err := OpenReputationDB(dbPath, "clan_multi")
+		if err != nil {
+			t.Fatalf("failed to open instance %d: %v", i, err)
+		}
+		defer dbInst.Close()
+		instances[i] = dbInst
+	}
+
+	ctx := context.Background()
+	playerUUID := "multi-proc-player"
+
+	const deltasPerInstance = 20
+	var wg sync.WaitGroup
+	wg.Add(numInstances * deltasPerInstance)
+
+	for instIdx := 0; instIdx < numInstances; instIdx++ {
+		inst := instances[instIdx]
+		agentName := filepath.Base(inst.Path())
+		for j := 0; j < deltasPerInstance; j++ {
+			go func(instance *ReputationDB, tick int64) {
+				defer wg.Done()
+				_, err := instance.RecordPrestigeDelta(ctx, PrestigeLedgerEntry{
+					PlayerUUID: playerUUID,
+					PlayerName: "MultiPlayer",
+					AgentID:    agentName,
+					Delta:      2.5,
+					Reason:     "Multi-instance concurrent trade",
+					WorldTick:  tick,
+				})
+				if err != nil {
+					t.Errorf("RecordPrestigeDelta error from instance: %v", err)
+				}
+			}(inst, int64(1000+j))
+		}
+	}
+
+	wg.Wait()
+
+	// Verify exact accumulation
+	expectedScore := float64(numInstances*deltasPerInstance) * 2.5
+	hp, err := instances[0].GetHeroPrestige(ctx, playerUUID)
+	if err != nil {
+		t.Fatalf("GetHeroPrestige failed: %v", err)
+	}
+	if hp == nil {
+		t.Fatal("expected non-nil HeroPrestige")
+	}
+	if hp.Score != expectedScore {
+		t.Errorf("expected score %.1f, got %.1f", expectedScore, hp.Score)
+	}
+	if hp.Title != PrestigeTitleHero {
+		t.Errorf("expected title HERO, got %s", hp.Title)
 	}
 }

@@ -32,6 +32,7 @@ var (
 	ErrRuntimeStopped = errors.New("agent runtime is stopped")
 	ErrQueueFull      = errors.New("outbound intent queue is full")
 	ErrNilIntent      = errors.New("intent cannot be nil")
+	ErrAgentDead      = errors.New("agent is dead; permadeath lifecycle prohibits new intents")
 )
 
 // StreamConnector is an interface allowing abstraction over bridge.Client or custom stream providers.
@@ -116,9 +117,12 @@ type AgentRuntime struct {
 	safeNodesCache []db.MapNode
 
 	// System 2 Deliberative Dialogue Pipeline
-	dialogueService *system2.DialogueService
-	dialogueWg      sync.WaitGroup
-	tradeActive     atomic.Bool
+	dialogueService     *system2.DialogueService
+	dialogueWg          sync.WaitGroup
+	tradeActive         atomic.Bool
+	lastTradeTick       int64
+	lastTradePlayerUUID string
+	lastTradeAttemptAt  time.Time
 
 	// Callbacks
 	onDeath func(*civquestv1.DeathEvent)
@@ -351,6 +355,13 @@ func (r *AgentRuntime) QueueIntent(intent *civquestv1.AgentIntent) error {
 		return ErrNilIntent
 	}
 
+	r.mu.RLock()
+	if r.isDead {
+		r.mu.RUnlock()
+		return ErrAgentDead
+	}
+	r.mu.RUnlock()
+
 	select {
 	case <-r.done:
 		return ErrRuntimeStopped
@@ -386,6 +397,13 @@ func (r *AgentRuntime) QueuePriorityIntent(intent *civquestv1.AgentIntent) error
 	if intent == nil {
 		return ErrNilIntent
 	}
+
+	r.mu.RLock()
+	if r.isDead {
+		r.mu.RUnlock()
+		return ErrAgentDead
+	}
+	r.mu.RUnlock()
 
 	select {
 	case <-r.done:
@@ -494,7 +512,15 @@ func (r *AgentRuntime) Start(parentCtx context.Context) error {
 	}
 
 	r.mu.Lock()
-	r.status = "RUNNING"
+	select {
+	case <-r.done:
+		r.mu.Unlock()
+		return ErrRuntimeStopped
+	default:
+	}
+	if !r.isDead && r.status != "STOPPED" {
+		r.status = "RUNNING"
+	}
 	r.startTime = time.Now().UTC()
 	r.mu.Unlock()
 
@@ -555,6 +581,11 @@ func (r *AgentRuntime) Stop() {
 		// Await pending asynchronous dialogue tasks
 		r.tradeActive.Store(false)
 		r.dialogueWg.Wait()
+
+		// Close dialogue service if assigned
+		if r.dialogueService != nil {
+			_ = r.dialogueService.Close()
+		}
 
 		// Close agent database if open
 		if r.agentDB != nil {
@@ -709,8 +740,16 @@ func (r *AgentRuntime) dispatchDialogue(frame *civquestv1.TelemetryFrame) {
 		if chat == nil || chat.SenderUuid == r.agentID || (r.identityConfig != nil && chat.SenderName == r.identityConfig.Name) {
 			continue
 		}
-		c := chat
+
+		r.mu.RLock()
+		if r.status != "RUNNING" || r.isDead || r.dialogueService == nil {
+			r.mu.RUnlock()
+			return
+		}
 		r.dialogueWg.Add(1)
+		r.mu.RUnlock()
+
+		c := chat
 		go func() {
 			defer r.dialogueWg.Done()
 			select {
@@ -734,21 +773,41 @@ func (r *AgentRuntime) dispatchDialogue(frame *civquestv1.TelemetryFrame) {
 				return
 			}
 			if res != nil && res.ChatIntent != nil {
-				_ = r.QueueIntent(&civquestv1.AgentIntent{
-					AgentId: r.agentID,
-					Action: &civquestv1.AgentIntent_Chat{
-						Chat: res.ChatIntent,
-					},
-				})
+				if !r.IsDead() && ctx.Err() == nil {
+					_ = r.QueueIntent(&civquestv1.AgentIntent{
+						AgentId: r.agentID,
+						Action: &civquestv1.AgentIntent_Chat{
+							Chat: res.ChatIntent,
+						},
+					})
+				}
 			}
 		}()
 	}
 
-	// 2. Dispatch pending trade asynchronously (prevent duplicate concurrent negotiations)
+	// 2. Dispatch pending trade asynchronously (prevent duplicate concurrent negotiations and debounce identical proposals)
 	if pendingTrade != nil {
-		if r.tradeActive.CompareAndSwap(false, true) {
-			trade := pendingTrade
+		r.mu.Lock()
+		debounced := pendingTrade.PlayerUuid == r.lastTradePlayerUUID &&
+			((worldTick >= r.lastTradeTick && worldTick-r.lastTradeTick < 100) || time.Since(r.lastTradeAttemptAt) < 5*time.Second)
+		if !debounced {
+			r.lastTradePlayerUUID = pendingTrade.PlayerUuid
+			r.lastTradeTick = worldTick
+			r.lastTradeAttemptAt = time.Now()
+		}
+		r.mu.Unlock()
+
+		if !debounced && r.tradeActive.CompareAndSwap(false, true) {
+			r.mu.RLock()
+			if r.status != "RUNNING" || r.isDead || r.dialogueService == nil {
+				r.mu.RUnlock()
+				r.tradeActive.Store(false)
+				return
+			}
 			r.dialogueWg.Add(1)
+			r.mu.RUnlock()
+
+			trade := pendingTrade
 			go func() {
 				defer r.dialogueWg.Done()
 				defer r.tradeActive.Store(false)
@@ -774,12 +833,14 @@ func (r *AgentRuntime) dispatchDialogue(frame *civquestv1.TelemetryFrame) {
 					return
 				}
 				if res != nil && res.TradeIntent != nil {
-					_ = r.QueueIntent(&civquestv1.AgentIntent{
-						AgentId: r.agentID,
-						Action: &civquestv1.AgentIntent_TradeResponse{
-							TradeResponse: res.TradeIntent,
-						},
-					})
+					if !r.IsDead() && ctx.Err() == nil {
+						_ = r.QueueIntent(&civquestv1.AgentIntent{
+							AgentId: r.agentID,
+							Action: &civquestv1.AgentIntent_TradeResponse{
+								TradeResponse: res.TradeIntent,
+							},
+						})
+					}
 				}
 			}()
 		}
