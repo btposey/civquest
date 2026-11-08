@@ -238,3 +238,91 @@ func TestCivctl_Agent_Commands(t *testing.T) {
 		t.Errorf("expected aria status header, got: %s", out)
 	}
 }
+
+func TestCivctl_ServerSetup(t *testing.T) {
+	tmpDir := t.TempDir()
+	cfgDir := filepath.Join(tmpDir, "config")
+	dataDir := filepath.Join(tmpDir, "data")
+	stateDir := filepath.Join(tmpDir, "state")
+
+	// Test server setup command
+	out, err := executeCommand(
+		"--config-dir", cfgDir,
+		"--data-dir", dataDir,
+		"--state-dir", stateDir,
+		"server", "setup", "--port", "25565",
+	)
+	if err != nil {
+		t.Fatalf("server setup failed: %v\nOutput: %s", err, out)
+	}
+	if !strings.Contains(out, "server environment prepared successfully") {
+		t.Errorf("expected success message in output, got: %s", out)
+	}
+	if !strings.Contains(out, "port=25565") {
+		t.Errorf("expected port=25565 in output, got: %s", out)
+	}
+
+	// Verify server status is now installed (STOPPED)
+	out, err = executeCommand(
+		"--config-dir", cfgDir,
+		"--data-dir", dataDir,
+		"--state-dir", stateDir,
+		"server", "status",
+	)
+	if err != nil {
+		t.Fatalf("server status failed: %v\nOutput: %s", err, out)
+	}
+	if !strings.Contains(out, "Status:    STOPPED") {
+		t.Errorf("expected STOPPED status after setup, got: %s", out)
+	}
+
+	// Preserved configuration reporting (re-run without --force)
+	out, err = executeCommand(
+		"--config-dir", cfgDir,
+		"--data-dir", dataDir,
+		"--state-dir", stateDir,
+		"server", "setup", "--port", "25566",
+	)
+	if err != nil {
+		t.Fatalf("server setup without force failed: %v\nOutput: %s", err, out)
+	}
+	if !strings.Contains(out, "preserved existing configuration; use --force to overwrite") {
+		t.Errorf("expected preserved config message, got: %s", out)
+	}
+
+	// With --force, port should update
+	out, err = executeCommand(
+		"--config-dir", cfgDir,
+		"--data-dir", dataDir,
+		"--state-dir", stateDir,
+		"server", "setup", "--port", "25566", "--force",
+	)
+	if err != nil {
+		t.Fatalf("server setup with force failed: %v\nOutput: %s", err, out)
+	}
+	if !strings.Contains(out, "port=25566") {
+		t.Errorf("expected port=25566 in output with --force, got: %s", out)
+	}
+}
+
+func TestCivctl_ServerSetup_PortValidation(t *testing.T) {
+	tmpDir := t.TempDir()
+	cfgDir := filepath.Join(tmpDir, "config")
+	dataDir := filepath.Join(tmpDir, "data")
+	stateDir := filepath.Join(tmpDir, "state")
+
+	for _, port := range []string{"0", "-5", "65536", "70000"} {
+		_, err := executeCommand(
+			"--config-dir", cfgDir,
+			"--data-dir", dataDir,
+			"--state-dir", stateDir,
+			"server", "setup", "--port", port,
+		)
+		if err == nil {
+			t.Errorf("expected error for invalid port %s, got nil", port)
+		}
+		if !strings.Contains(err.Error(), "must be between 1 and 65535") {
+			t.Errorf("expected port range error message for port %s, got: %v", port, err)
+		}
+	}
+}

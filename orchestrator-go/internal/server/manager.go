@@ -3,6 +3,7 @@ package server
 import (
 	"bufio"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -22,6 +23,188 @@ var (
 	ErrServerNotRunning = errors.New("server is not running")
 	ErrServerAlreadyUp  = errors.New("server is already running")
 )
+
+// SetupOptions provides configuration flags for server setup.
+type SetupOptions struct {
+	Port       int
+	OnlineMode bool
+	MaxPlayers int
+	Difficulty string
+	Gamemode   string
+	Motd       string
+	Force      bool
+}
+
+// DefaultSetupOptions returns standard defaults for playtesting.
+func DefaultSetupOptions() SetupOptions {
+	return SetupOptions{
+		Port:       25565,
+		OnlineMode: false,
+		MaxPlayers: 20,
+		Difficulty: "normal",
+		Gamemode:   "survival",
+		Motd:       "CivQuest Autonomous Settlement Server",
+		Force:      false,
+	}
+}
+
+// Setup initializes the server environment for playtesting:
+// 1. Initializes server directories ($XDG_DATA_HOME/civquest/server, mods, state).
+// 2. Writes eula.txt with eula=true.
+// 3. Writes server.properties with the specified port, online-mode, difficulty, etc.
+// 4. Writes a default runner script run.sh if absent.
+// 5. Writes server manifest if absent.
+func (m *Manager) Setup(opts SetupOptions) error {
+	if opts.Port < 1 || opts.Port > 65535 {
+		return fmt.Errorf("invalid port %d: must be between 1 and 65535", opts.Port)
+	}
+	if opts.MaxPlayers < 1 || opts.MaxPlayers > 10000 {
+		opts.MaxPlayers = 20
+	}
+	if opts.Difficulty == "" {
+		opts.Difficulty = "normal"
+	}
+	if opts.Gamemode == "" {
+		opts.Gamemode = "survival"
+	}
+	if opts.Motd == "" {
+		opts.Motd = "CivQuest Autonomous Settlement Server"
+	}
+
+	for _, field := range []struct{ name, val string }{
+		{"motd", opts.Motd},
+		{"difficulty", opts.Difficulty},
+		{"gamemode", opts.Gamemode},
+	} {
+		if strings.ContainsAny(field.val, "\r\n") {
+			return fmt.Errorf("%s cannot contain newline characters", field.name)
+		}
+	}
+
+	// 1. Initialize directories and acquire exclusive lock
+	if err := os.MkdirAll(m.resolver.StateDir(), 0750); err != nil {
+		return fmt.Errorf("failed initializing state directory: %w", err)
+	}
+
+	lockPath := filepath.Join(m.resolver.StateDir(), "server.lock")
+	lockFile, err := os.OpenFile(lockPath, os.O_CREATE|os.O_RDWR, 0600)
+	if err != nil {
+		return fmt.Errorf("failed opening server lock file: %w", err)
+	}
+	defer lockFile.Close()
+
+	if err := syscall.Flock(int(lockFile.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+		return fmt.Errorf("another server process holds lock: %w", err)
+	}
+	defer func() {
+		_ = syscall.Flock(int(lockFile.Fd()), syscall.LOCK_UN)
+	}()
+
+	status, err := m.Status()
+	if err == nil && status.Running {
+		return fmt.Errorf("cannot setup server: server is currently running (PID %d)", status.PID)
+	}
+
+	if err := m.resolver.InitServerDirectories(); err != nil {
+		return fmt.Errorf("failed initializing server directories: %w", err)
+	}
+
+	// 2. Write eula.txt
+	eulaPath := m.resolver.ServerEULAPath()
+	if _, err := os.Stat(eulaPath); os.IsNotExist(err) || opts.Force {
+		eulaContent := "# By changing the setting below to TRUE you are indicating your agreement to the Mojang EULA (https://aka.ms/MinecraftEULA).\neula=true\n"
+		if err := os.WriteFile(eulaPath, []byte(eulaContent), 0640); err != nil {
+			return fmt.Errorf("failed writing eula.txt: %w", err)
+		}
+	}
+
+	// 3. Write server.properties
+	propsPath := m.resolver.ServerPropertiesPath()
+	if _, err := os.Stat(propsPath); os.IsNotExist(err) || opts.Force {
+		propsContent := fmt.Sprintf(`# CivQuest Dedicated Server Properties
+level-name=world
+pause-when-empty-seconds=-1
+online-mode=%t
+server-port=%d
+enable-rcon=false
+difficulty=%s
+gamemode=%s
+max-players=%d
+sync-chunk-writes=true
+view-distance=10
+simulation-distance=10
+motd=%s
+`, opts.OnlineMode, opts.Port, opts.Difficulty, opts.Gamemode, opts.MaxPlayers, opts.Motd)
+		if err := os.WriteFile(propsPath, []byte(propsContent), 0640); err != nil {
+			return fmt.Errorf("failed writing server.properties: %w", err)
+		}
+	}
+
+	// 4. Write runner script if absent
+	runScriptPath := m.resolver.ServerRunScriptPath()
+	if _, err := os.Stat(runScriptPath); os.IsNotExist(err) || opts.Force {
+		scriptContent := `#!/usr/bin/env bash
+set -euo pipefail
+umask 0027
+
+SERVER_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "${SERVER_DIR}"
+
+JAVA_OPTS="${JAVA_OPTS:--Xms2G -Xmx4G}"
+
+cleanup() {
+    echo "[civquest-server] Received shutdown signal. Gracefully exiting..."
+    exit 0
+}
+trap cleanup SIGTERM SIGINT
+
+if compgen -G "${SERVER_DIR}/libraries/net/neoforged/neoforge/*/unix_args.txt" > /dev/null 2>&1; then
+    UNIX_ARGS="$(compgen -G "${SERVER_DIR}/libraries/net/neoforged/neoforge/*/unix_args.txt" | head -n 1)"
+    JVM_ARGS=""
+    if [ -f "${SERVER_DIR}/user_jvm_args.txt" ]; then
+        JVM_ARGS="@user_jvm_args.txt"
+    fi
+    exec java ${JAVA_OPTS} ${JVM_ARGS} @"${UNIX_ARGS}" nogui "$@"
+elif compgen -G "${SERVER_DIR}/neoforge-*.jar" > /dev/null 2>&1; then
+    NEOFORGE_JAR="$(compgen -G "${SERVER_DIR}/neoforge-*.jar" | head -n 1)"
+    exec java ${JAVA_OPTS} -jar "${NEOFORGE_JAR}" nogui "$@"
+elif [ -f "${SERVER_DIR}/server.jar" ]; then
+    exec java ${JAVA_OPTS} -jar "${SERVER_DIR}/server.jar" nogui "$@"
+else
+    echo "[civquest-server] CivQuest Server Runner Active (staging mode)"
+    while true; do
+        sleep 1
+    done
+fi
+`
+		if err := os.WriteFile(runScriptPath, []byte(scriptContent), 0750); err != nil {
+			return fmt.Errorf("failed writing runner script: %w", err)
+		}
+	}
+
+	// 5. Ensure manifest exists if absent
+	manifestPath := m.resolver.ServerManifestPath()
+	if _, err := os.Stat(manifestPath); os.IsNotExist(err) || opts.Force {
+		manifest := domain.ServerManifest{
+			Version:          "0.1.0",
+			MinecraftVersion: "1.21.1",
+			NeoForgeVersion:  "21.1.265",
+			InstalledAt:      time.Now().UTC().Format(time.RFC3339),
+			ServerDir:        m.resolver.ServerDir(),
+			ModsDir:          m.resolver.ServerModsDir(),
+			RunnerScript:     runScriptPath,
+		}
+		data, err := json.MarshalIndent(manifest, "", "  ")
+		if err != nil {
+			return fmt.Errorf("failed marshaling server manifest: %w", err)
+		}
+		if err := os.WriteFile(manifestPath, data, 0640); err != nil {
+			return fmt.Errorf("failed writing server manifest: %w", err)
+		}
+	}
+
+	return nil
+}
 
 // Manager manages the execution and lifecycle of the CivQuest NeoForge server.
 type Manager struct {

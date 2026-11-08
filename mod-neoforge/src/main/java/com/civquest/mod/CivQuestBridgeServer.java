@@ -6,6 +6,7 @@ import io.grpc.health.v1.HealthCheckResponse;
 import io.grpc.netty.shaded.io.grpc.netty.NettyServerBuilder;
 import io.grpc.protobuf.services.HealthStatusManager;
 import net.minecraft.server.MinecraftServer;
+import net.minecraft.world.level.GameRules;
 import net.neoforged.neoforge.event.server.ServerStartedEvent;
 import net.neoforged.neoforge.event.server.ServerStartingEvent;
 import net.neoforged.neoforge.event.server.ServerStoppingEvent;
@@ -357,6 +358,14 @@ public class CivQuestBridgeServer {
     public void onServerStarted(ServerStartedEvent event) {
         LOGGER.info("CivQuest server started: activating gRPC bridge");
         setMinecraftServer(event.getServer());
+        if (event.getServer() != null) {
+            try {
+                event.getServer().getGameRules().getRule(GameRules.RULE_MOBGRIEFING).set(false, event.getServer());
+                LOGGER.info("CivQuest: Enforced GameRule mobGriefing = false to protect settlements from creeper/mob destruction");
+            } catch (Exception e) {
+                LOGGER.warn("Failed to set GameRule mobGriefing = false", e);
+            }
+        }
         try {
             start();
         } catch (IOException e) {

@@ -324,3 +324,139 @@ func TestManager_LogsLargeLine(t *testing.T) {
 		t.Errorf("expected large line to be read correctly")
 	}
 }
+
+func TestManager_Setup(t *testing.T) {
+	tmpDir := t.TempDir()
+	r := xdg.NewResolver(xdg.WithCustomRoot(tmpDir))
+	mgr := server.NewManager(r)
+
+	opts := server.DefaultSetupOptions()
+	opts.Port = 25565
+	opts.OnlineMode = false
+
+	if err := mgr.Setup(opts); err != nil {
+		t.Fatalf("mgr.Setup failed: %v", err)
+	}
+
+	// 1. Verify eula.txt exists and contains eula=true
+	eulaBytes, err := os.ReadFile(r.ServerEULAPath())
+	if err != nil {
+		t.Fatalf("failed reading eula.txt: %v", err)
+	}
+	if !strings.Contains(string(eulaBytes), "eula=true") {
+		t.Errorf("expected eula.txt to contain eula=true, got: %s", string(eulaBytes))
+	}
+
+	// 2. Verify server.properties exists and contains expected configurations
+	propsBytes, err := os.ReadFile(r.ServerPropertiesPath())
+	if err != nil {
+		t.Fatalf("failed reading server.properties: %v", err)
+	}
+	propsStr := string(propsBytes)
+	if !strings.Contains(propsStr, "server-port=25565") {
+		t.Errorf("expected server-port=25565 in server.properties, got: %s", propsStr)
+	}
+	if !strings.Contains(propsStr, "online-mode=false") {
+		t.Errorf("expected online-mode=false in server.properties, got: %s", propsStr)
+	}
+
+	// 3. Verify runner script exists and is executable
+	info, err := os.Stat(r.ServerRunScriptPath())
+	if err != nil {
+		t.Fatalf("failed stat runner script: %v", err)
+	}
+	if info.Mode()&0111 == 0 {
+		t.Errorf("runner script should be executable, mode: %v", info.Mode())
+	}
+
+	// 4. Verify manifest was written
+	if _, err := os.Stat(r.ServerManifestPath()); err != nil {
+		t.Errorf("expected server manifest to exist at %s: %v", r.ServerManifestPath(), err)
+	}
+
+	// 5. Verify status detects installation
+	status, err := mgr.Status()
+	if err != nil {
+		t.Fatalf("mgr.Status failed: %v", err)
+	}
+	if !status.Installed {
+		t.Errorf("expected server status to be installed after Setup")
+	}
+
+	// 6. Test Force overwrite with different port
+	opts.Port = 25570
+	opts.Force = true
+	if err := mgr.Setup(opts); err != nil {
+		t.Fatalf("mgr.Setup with Force failed: %v", err)
+	}
+	updatedProps, _ := os.ReadFile(r.ServerPropertiesPath())
+	if !strings.Contains(string(updatedProps), "server-port=25570") {
+		t.Errorf("expected updated server-port=25570 after Force setup, got: %s", string(updatedProps))
+	}
+}
+
+func TestManager_Setup_Validation(t *testing.T) {
+	tmpDir := t.TempDir()
+	r := xdg.NewResolver(xdg.WithCustomRoot(tmpDir))
+	mgr := server.NewManager(r)
+
+	// Port validation
+	for _, port := range []int{0, -1, 65536, 100000} {
+		opts := server.DefaultSetupOptions()
+		opts.Port = port
+		err := mgr.Setup(opts)
+		if err == nil || !strings.Contains(err.Error(), "invalid port") {
+			t.Errorf("expected invalid port error for port %d, got %v", port, err)
+		}
+	}
+
+	// Newline validation
+	opts := server.DefaultSetupOptions()
+	opts.Motd = "Line 1\nLine 2"
+	if err := mgr.Setup(opts); err == nil || !strings.Contains(err.Error(), "motd cannot contain newline characters") {
+		t.Errorf("expected motd newline error, got %v", err)
+	}
+
+	opts = server.DefaultSetupOptions()
+	opts.Difficulty = "normal\r\n"
+	if err := mgr.Setup(opts); err == nil || !strings.Contains(err.Error(), "difficulty cannot contain newline characters") {
+		t.Errorf("expected difficulty newline error, got %v", err)
+	}
+
+	opts = server.DefaultSetupOptions()
+	opts.Gamemode = "survival\r"
+	if err := mgr.Setup(opts); err == nil || !strings.Contains(err.Error(), "gamemode cannot contain newline characters") {
+		t.Errorf("expected gamemode newline error, got %v", err)
+	}
+}
+
+func TestManager_Setup_ServerRunning(t *testing.T) {
+	_, mgr := setupMockServer(t)
+
+	// Start server
+	pid, err := mgr.Start()
+	if err != nil {
+		t.Fatalf("Start failed: %v", err)
+	}
+	defer func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		_ = mgr.Stop(ctx, 1*time.Second)
+	}()
+
+	if pid <= 0 {
+		t.Fatalf("expected positive PID, got %d", pid)
+	}
+	time.Sleep(100 * time.Millisecond)
+
+	// Setup while server is running should fail
+	opts := server.DefaultSetupOptions()
+	err = mgr.Setup(opts)
+	if err == nil {
+		t.Fatalf("expected error running Setup while server is running, got nil")
+	}
+	expected := "server is currently running"
+	if !strings.Contains(err.Error(), expected) {
+		t.Errorf("expected %q in error, got: %v", expected, err)
+	}
+}
