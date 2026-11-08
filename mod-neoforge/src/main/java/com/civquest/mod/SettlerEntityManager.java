@@ -42,6 +42,26 @@ public class SettlerEntityManager {
     private volatile StreamRegistry streamRegistry;
     private final SensoryFrustumCollector sensoryCollector;
     private final IntentActuator intentActuator;
+    private volatile SpawnListener spawnListener;
+    private SettlerEntityFactory entityFactory = SettlerEntity::new;
+
+    @FunctionalInterface
+    public interface SettlerEntityFactory {
+        SettlerEntity create(ServerLevel level, GameProfile profile, String agentId, String clanId);
+    }
+
+    public void setSettlerEntityFactory(SettlerEntityFactory entityFactory) {
+        this.entityFactory = entityFactory != null ? entityFactory : SettlerEntity::new;
+    }
+
+    public interface SpawnListener {
+        void onPlayerInfoBroadcast(ClientboundPlayerInfoUpdatePacket packet);
+        void onEntityAdded(SettlerEntity entity);
+    }
+
+    public void setSpawnListener(SpawnListener spawnListener) {
+        this.spawnListener = spawnListener;
+    }
 
     public SettlerEntityManager() {
         this(null, new SensoryFrustumCollector(), new IntentActuator());
@@ -148,7 +168,7 @@ public class SettlerEntityManager {
             profile.getProperties().put("textures", new Property("textures", textureValue, sig));
         }
 
-        SettlerEntity settler = new SettlerEntity(level, profile, agentId, request.getClanId());
+        SettlerEntity settler = entityFactory.create(level, profile, agentId, request.getClanId());
         settler.setStreamRegistry(this.streamRegistry);
         settler.setSensoryCollector(this.sensoryCollector);
 
@@ -186,30 +206,34 @@ public class SettlerEntityManager {
         settler.setXRot(0.0f);
         settler.setYHeadRot(0.0f);
 
-        if (level != null) {
-            ChunkPos chunkPos = new ChunkPos(BlockPos.containing(x, y, z));
-            level.setChunkForced(chunkPos.x, chunkPos.z, true);
-            boolean added = level.addFreshEntity(settler);
-            if (!added) {
-                level.setChunkForced(chunkPos.x, chunkPos.z, false);
-                throw new IllegalStateException("Failed to add SettlerEntity to level");
-            }
-            settler.setForcedChunkPos(chunkPos);
+        // Broadcast player info packet to connected tracking clients BEFORE adding entity to level.
+        // Minecraft client requires PlayerInfo to exist in playerInfoMap before processing ClientboundAddEntityPacket.
+        // Broadcasting this first prevents "Server attempted to add player prior to sending player info"
+        // and "Skipping Entity with id entity.minecraft.player".
+        ClientboundPlayerInfoUpdatePacket infoPacket = null;
+        try {
+            infoPacket = new ClientboundPlayerInfoUpdatePacket(
+                    EnumSet.of(
+                            ClientboundPlayerInfoUpdatePacket.Action.ADD_PLAYER,
+                            ClientboundPlayerInfoUpdatePacket.Action.UPDATE_LISTED,
+                            ClientboundPlayerInfoUpdatePacket.Action.UPDATE_LATENCY,
+                            ClientboundPlayerInfoUpdatePacket.Action.UPDATE_GAME_MODE
+                    ),
+                    List.of(settler)
+            );
+        } catch (Throwable t) {
+            LOGGER.debug("Could not construct ClientboundPlayerInfoUpdatePacket (headless/mock environment): {}", t.getMessage());
         }
 
-        // Broadcast player info packet to connected tracking clients
-        ClientboundPlayerInfoUpdatePacket infoPacket = new ClientboundPlayerInfoUpdatePacket(
-                EnumSet.of(
-                        ClientboundPlayerInfoUpdatePacket.Action.ADD_PLAYER,
-                        ClientboundPlayerInfoUpdatePacket.Action.UPDATE_LISTED,
-                        ClientboundPlayerInfoUpdatePacket.Action.UPDATE_LATENCY,
-                        ClientboundPlayerInfoUpdatePacket.Action.UPDATE_GAME_MODE
-                ),
-                List.of(settler)
-        );
-
-        if (server != null && server.getPlayerList() != null) {
-            server.getPlayerList().broadcastAll(infoPacket);
+        if (infoPacket != null) {
+            if (server != null && server.getPlayerList() != null) {
+                server.getPlayerList().broadcastAll(infoPacket);
+            }
+            if (spawnListener != null) {
+                spawnListener.onPlayerInfoBroadcast(infoPacket);
+            }
+        } else if (spawnListener != null) {
+            spawnListener.onPlayerInfoBroadcast(null);
         }
 
         // Broadcast custom skin payload packet if custom PNG bytes are supplied
@@ -222,6 +246,31 @@ public class SettlerEntityManager {
             if (server != null && server.getPlayerList() != null) {
                 server.getPlayerList().broadcastAll(skinPacket.toVanillaClientbound());
             }
+        }
+
+        if (level != null) {
+            ChunkPos chunkPos = new ChunkPos(BlockPos.containing(x, y, z));
+            level.setChunkForced(chunkPos.x, chunkPos.z, true);
+            boolean added = false;
+            try {
+                added = level.addFreshEntity(settler);
+            } catch (Throwable t) {
+                LOGGER.error("Unexpected error adding SettlerEntity to level for agent '{}': {}", agentId, t.getMessage(), t);
+                added = false;
+            }
+            if (!added) {
+                level.setChunkForced(chunkPos.x, chunkPos.z, false);
+                if (server != null && server.getPlayerList() != null) {
+                    ClientboundPlayerInfoRemovePacket removePacket =
+                            new ClientboundPlayerInfoRemovePacket(List.of(settler.getUUID()));
+                    server.getPlayerList().broadcastAll(removePacket);
+                }
+                throw new IllegalStateException("Failed to add SettlerEntity to level");
+            }
+            settler.setForcedChunkPos(chunkPos);
+        }
+        if (spawnListener != null) {
+            spawnListener.onEntityAdded(settler);
         }
 
         settler.setDeathListener(deadSettler -> {

@@ -1,15 +1,25 @@
 package com.civquest.mod;
 
+import com.civquest.mod.client.driver.ClientDriverInit;
 import com.civquest.mod.gametest.SettlerGameTest;
+import com.mojang.brigadier.CommandDispatcher;
+import com.mojang.brigadier.arguments.StringArgumentType;
+import com.mojang.brigadier.builder.LiteralArgumentBuilder;
+import com.mojang.brigadier.context.CommandContext;
+import com.mojang.brigadier.suggestion.Suggestions;
+import com.mojang.brigadier.suggestion.SuggestionsBuilder;
 import com.mojang.logging.LogUtils;
 import net.minecraft.commands.CommandSourceStack;
+import net.minecraft.commands.Commands;
 import net.minecraft.network.chat.Component;
 import net.minecraft.network.protocol.game.ClientboundPlayerInfoUpdatePacket;
 import net.minecraft.server.level.ServerPlayer;
 import net.neoforged.bus.api.IEventBus;
 import net.neoforged.fml.common.Mod;
+import net.neoforged.fml.loading.FMLEnvironment;
 import net.neoforged.neoforge.common.NeoForge;
 import net.neoforged.neoforge.event.CommandEvent;
+import net.neoforged.neoforge.event.RegisterCommandsEvent;
 import net.neoforged.neoforge.event.RegisterGameTestsEvent;
 import net.neoforged.neoforge.event.ServerChatEvent;
 import net.neoforged.neoforge.event.entity.living.LivingDamageEvent;
@@ -25,6 +35,7 @@ import org.slf4j.Logger;
 import java.util.EnumSet;
 import java.util.List;
 import java.util.Locale;
+import java.util.concurrent.CompletableFuture;
 
 @Mod(CivQuestMod.MOD_ID)
 public class CivQuestMod {
@@ -45,6 +56,15 @@ public class CivQuestMod {
         NeoForge.EVENT_BUS.addListener(this::onLivingDamage);
         NeoForge.EVENT_BUS.addListener(this::onServerChat);
         NeoForge.EVENT_BUS.addListener(this::onCommand);
+        NeoForge.EVENT_BUS.addListener(this::onRegisterCommands);
+
+        try {
+            if (FMLEnvironment.dist != null && FMLEnvironment.dist.isClient()) {
+                ClientDriverInit.register(modEventBus);
+            }
+        } catch (Throwable t) {
+            LOGGER.debug("Skipping client driver initialization: {}", t.getMessage());
+        }
     }
 
     private void onRegisterPayloadHandlers(RegisterPayloadHandlersEvent event) {
@@ -175,7 +195,120 @@ public class CivQuestMod {
         }
     }
 
+    private void onRegisterCommands(RegisterCommandsEvent event) {
+        CommandDispatcher<CommandSourceStack> dispatcher = event.getDispatcher();
+
+        // /civquest tell <settler> <message>
+        dispatcher.register(
+                Commands.literal("civquest")
+                        .then(buildTellSubcommand())
+        );
+
+        // /cq tell <settler> <message>
+        dispatcher.register(
+                Commands.literal("cq")
+                        .then(buildTellSubcommand())
+        );
+
+        // /settler tell <settler> <message>
+        dispatcher.register(
+                Commands.literal("settler")
+                        .then(buildTellSubcommand())
+        );
+
+        // /cqtell <settler> <message>
+        dispatcher.register(
+                Commands.literal("cqtell")
+                        .then(Commands.argument("settler", StringArgumentType.string())
+                                .suggests(this::suggestSettlers)
+                                .then(Commands.argument("message", StringArgumentType.greedyString())
+                                        .executes(ctx -> executeTell(
+                                                ctx.getSource(),
+                                                StringArgumentType.getString(ctx, "settler"),
+                                                StringArgumentType.getString(ctx, "message")
+                                        ))
+                                ))
+        );
+    }
+
+    private LiteralArgumentBuilder<CommandSourceStack> buildTellSubcommand() {
+        return Commands.literal("tell")
+                .then(Commands.argument("settler", StringArgumentType.string())
+                        .suggests(this::suggestSettlers)
+                        .then(Commands.argument("message", StringArgumentType.greedyString())
+                                .executes(ctx -> executeTell(
+                                        ctx.getSource(),
+                                        StringArgumentType.getString(ctx, "settler"),
+                                        StringArgumentType.getString(ctx, "message")
+                                ))
+                        ));
+    }
+
+    private CompletableFuture<Suggestions> suggestSettlers(CommandContext<CommandSourceStack> context, SuggestionsBuilder builder) {
+        SettlerEntityManager manager = getSettlerEntityManager();
+        if (manager != null) {
+            String remaining = builder.getRemaining().toLowerCase(Locale.ROOT);
+            for (SettlerEntity settler : manager.getAllSettlers().values()) {
+                if (settler == null) continue;
+                String name = settler.getGameProfile() != null ? settler.getGameProfile().getName() : null;
+                String agentId = settler.getAgentId();
+                if (name != null && name.toLowerCase(Locale.ROOT).startsWith(remaining)) {
+                    builder.suggest(name);
+                }
+                if (agentId != null && (name == null || !agentId.equalsIgnoreCase(name)) && agentId.toLowerCase(Locale.ROOT).startsWith(remaining)) {
+                    builder.suggest(agentId);
+                }
+            }
+        }
+        return builder.buildFuture();
+    }
+
+    public int executeTell(CommandSourceStack source, String targetName, String message) {
+        SettlerEntityManager manager = getSettlerEntityManager();
+        if (manager == null || manager.getAllSettlers().isEmpty()) {
+            source.sendFailure(Component.literal("§cNo active settlers found."));
+            return 0;
+        }
+
+        SettlerEntity targetSettler = null;
+        for (SettlerEntity settler : manager.getAllSettlers().values()) {
+            if (settler.getGameProfile().getName().equalsIgnoreCase(targetName)
+                    || settler.getAgentId().equalsIgnoreCase(targetName)) {
+                targetSettler = settler;
+                break;
+            }
+        }
+
+        if (targetSettler == null) {
+            source.sendFailure(Component.literal("§cNo settler found matching '" + targetName + "'"));
+            return 0;
+        }
+
+        ServerPlayer sender = source.getPlayer();
+        String senderUuid = sender != null ? sender.getUUID().toString() : "CONSOLE";
+        String senderName = sender != null ? sender.getName().getString() : "Console";
+        float dist = (sender != null && sender.level() == targetSettler.level())
+                ? (float) Math.sqrt(targetSettler.distanceToSqr(sender))
+                : 0.0f;
+
+        com.civquest.mod.grpc.v1.ChatEvent chat = com.civquest.mod.grpc.v1.ChatEvent.newBuilder()
+                .setSenderUuid(senderUuid)
+                .setSenderName(senderName)
+                .setMessage(message)
+                .setDistance(dist)
+                .build();
+        targetSettler.queueIncomingChat(chat);
+
+        final SettlerEntity finalSettler = targetSettler;
+        source.sendSuccess(() -> Component.literal("§7You whisper to " + finalSettler.getGameProfile().getName() + ": " + message), false);
+        LOGGER.info("Whispered to settler '{}' from '{}': {}", targetSettler.getAgentId(), senderName, message);
+        return 1;
+    }
+
     private void onCommand(CommandEvent event) {
+        if (event == null || event.getParseResults() == null || event.getParseResults().getReader() == null) {
+            return;
+        }
         String command = event.getParseResults().getReader().getString();
         if (command == null || command.isBlank()) {
             return;
@@ -200,39 +333,20 @@ public class CivQuestMod {
             return;
         }
 
-        SettlerEntity targetSettler = null;
+        boolean settlerExists = false;
         for (SettlerEntity settler : manager.getAllSettlers().values()) {
-            if (settler.getGameProfile().getName().equalsIgnoreCase(targetName)
-                    || settler.getAgentId().equalsIgnoreCase(targetName)) {
-                targetSettler = settler;
+            if (settler != null && ((settler.getGameProfile() != null && settler.getGameProfile().getName().equalsIgnoreCase(targetName))
+                    || settler.getAgentId().equalsIgnoreCase(targetName))) {
+                settlerExists = true;
                 break;
             }
         }
 
-        if (targetSettler != null) {
+        if (settlerExists && event.getParseResults().getContext() != null) {
             CommandSourceStack source = event.getParseResults().getContext().getSource();
-            ServerPlayer sender = source.getPlayer();
-            String senderUuid = sender != null ? sender.getUUID().toString() : "CONSOLE";
-            String senderName = sender != null ? sender.getName().getString() : "Console";
-            float dist = (sender != null && sender.level() == targetSettler.level())
-                    ? (float) Math.sqrt(targetSettler.distanceToSqr(sender))
-                    : 0.0f;
-
-            com.civquest.mod.grpc.v1.ChatEvent chat = com.civquest.mod.grpc.v1.ChatEvent.newBuilder()
-                    .setSenderUuid(senderUuid)
-                    .setSenderName(senderName)
-                    .setMessage(message)
-                    .setDistance(dist)
-                    .build();
-            targetSettler.queueIncomingChat(chat);
-
-            if (sender != null) {
-                sender.sendSystemMessage(Component.literal("§7You whisper to " + targetSettler.getGameProfile().getName() + ": " + message));
-            } else {
-                LOGGER.info("Whispered to {}: {}", targetSettler.getGameProfile().getName(), message);
+            if (source != null && executeTell(source, targetName, message) > 0) {
+                event.setCanceled(true);
             }
-
-            event.setCanceled(true);
         }
     }
 
