@@ -19,33 +19,59 @@
 
 ## Overview
 
-CivQuest is an autonomous, dynastic settlement engine introducing intelligent, humanoid, process-isolated `FakePlayer` agents driven by external Go orchestrators alongside the game world.
+CivQuest is an autonomous settlement engine and agent orchestration platform for Minecraft (**NeoForge 21.1+ / Java 21** and **Go 1.23+**). It introduces living, intelligent settlers into vanilla worlds—capable of independent farming, barter trading, collaborative spatial construction, and permanent stakes through permadeath.
 
-### Dual Mission & Design Philosophy
+### Architecture
 
-CivQuest is founded on two equal, complementary pillars:
+CivQuest uses a decoupled, dual-layer architecture separating physical voxel simulation on the Minecraft server from autonomous cognitive decision-making in dedicated external Go processes:
 
-1. **An Engaging In-Game Settlement Experience**:
-   A deep, living Minecraft modification introducing authentic autonomous settlements, humanoid `FakePlayer` settlers, emergent sharecropping, barter trade economies, generational lineages, and permanent stakes through permadeath.
+```
+┌──────────────────────────────────────────────┐
+│  Minecraft Java Server (NeoForge 21.1.265)   │
+│  - Headless Agent Avatars & Skin Injection   │
+│  - Embedded Netty gRPC Server (:50051)       │
+│  - 20 Hz Sub-Tick Local Physical Reflexes    │
+│  - Sensory Frustum Telemetry Stream (5 Hz)   │
+│  - Integrated Baritone Pathfinding Wrapper   │
+└──────────────────────┬───────────────────────┘
+                       │ Bidirectional gRPC / Protobuf
+┌──────────────────────┴───────────────────────┐
+│   Go Multi-Process Orchestrator (Go 1.23+)   │
+│  - Process Supervisor (`cq`) & Agent Workers │
+│  - System 1: Real-time Utility Engine (<5ms) │
+│  - System 2: Async LLM Inference (Ollama)    │
+│  - Persistence: SQLite + sqlite-vec Vector   │
+└──────────────────────────────────────────────┘
+```
 
-2. **Systems Engineering & Embodied AI Testbed (Academic & Professional)**:
-   An exercise in robust systems design for AI-integrated embodied software. CivQuest tames non-deterministic prompt chaining by combining formal Hierarchical Finite State Machines (HFSM), bounded typed slot queues, and strict OS process isolation. The architecture is inspired by biological nervous systems:
-   - **Layer 1A (Spinal / Peripheral Reflexes)**: Native in-engine server tick loops (20 Hz, $<0.1\text{ ms}$, 0 IPC) for instant hazard evasion and physical survival.
-   - **Layer 1B (Subcortical / Tactical Intuition)**: External deterministic Go utility AI (5 Hz, $<5\text{ ms}$, 0 LLM tokens) managing fight-or-flight matrices, navigation goals, and daily schedules.
-   - **Layer 2 (Cortical / Strategic Cognition)**: Asynchronous LLM inference (Ollama/vLLM) and vector RAG (`sqlite-vec`) for social dialogue, trade bargaining, and architectural blueprints.
-
-> **Purpose-Built for Minecraft**: CivQuest is engineered 100% for the Minecraft server environment. It does not introduce artificial hardware abstractions or leaky robotics drivers. Instead, Minecraft serves as a low-cost, high-fidelity spatial simulation sandbox where systems engineering principles, latency hierarchies, and perception-action feedback loops are proven in practice—yielding transferable architectural insights for future embodied systems.
-
-### The Dual-Layer Architecture:
 1. **Server Platform Mod (`mod-neoforge`)**:
-   - Engine: Built on **NeoForge 21.1+** (compatible with Java 21 game servers).
-   - Functions: Spawns headless `AgentEntity` (`FakePlayer`) avatars; delivers dynamic agent skin packets; streams sensory frustum frames (5 Hz) over embedded Netty gRPC; delegates physical voxel pathfinding to an integrated Baritone API wrapper; preserves vanilla villages and villagers for dynamic co-existence.
-2. **External Multi-Process Orchestrator (`orchestrator-go`)**:
-   - Engine: **Go 1.23+**.
-   - Functions: Multi-process supervisor (`cq`) spawning dedicated OS worker processes (`civquest-agent`) per agent.
-   - **System 1 (Reactive Utility AI Engine)**: Sub-$5\text{ ms}$, zero-token deterministic loop handling combat reflexes, fight-or-flight confidence scoring, hunger, road paving, and daily career state transitions.
-   - **System 2 (Deliberative LLM Engine)**: Asynchronous JSON-validated inference pipelines connected to local gateways (Ollama/vLLM) for dialogue, barter trade, Chronicler book writing, landmark toponymy, and Architect quadrant construction.
-   - **Persistence Tier**: Embedded SQLite databases per agent and clan with `sqlite-vec` vector RAG.
+   - Spawns server-side agent avatars with full player physics, inventory, and equipment capabilities.
+   - Streams 5 Hz sensory frustum telemetry frames over Netty gRPC and executes sub-tick local survival reflexes.
+   - Delegates voxel pathfinding and physical navigation to an integrated Baritone API wrapper.
+
+2. **External Go Orchestrator (`orchestrator-go`)**:
+   - Manages isolated per-agent OS processes (`civquest-agent`) coordinated by a supervisor daemon (`cq`).
+   - Runs a fast, deterministic utility AI loop (System 1, $<5\text{ ms}$, zero LLM tokens) for combat reflexes, threat evaluation, and tactical state routing.
+   - Connects to local LLM gateways (Ollama/vLLM) for asynchronous social dialogue, barter negotiation, and historical chronicles (System 2).
+   - Persists relational world state and vector memory embeddings in local SQLite databases (`sqlite-vec`).
+
+---
+
+## Documentation & Showcase Pages
+
+- **Project Web Showcase**:
+  - [Overview](https://btposey.github.io/civquest/) — Project landing page and architectural summary.
+  - [Gameplay Guide](https://btposey.github.io/civquest/gameplay.html) — Living settlement mechanics, sharecropping, barter trade, and permadeath.
+  - [Systems & AI Architecture](https://btposey.github.io/civquest/systems-and-ai-testbed.html) — In-depth systems design, state machine complexity control, latency hierarchies, and embodied AI simulation.
+- **Developer Documentation (`doc/ai/`)**:
+  - [Architecture Overview](doc/ai/01-architecture-overview.md)
+  - [IPC & Protobuf Contract](doc/ai/02-ipc-protobuf-contract.md)
+  - [Platform Mod Internals](doc/ai/03-neoforge-mod-internals.md)
+  - [System 1 Reactive Utility Engine](doc/ai/04-system1-utility-engine.md)
+  - [System 2 Deliberative LLM Pipelines](doc/ai/05-system2-llm-pipelines.md)
+  - [Storage, Databases & XDG](doc/ai/06-storage-and-xdg.md)
+  - [Supervisor & Management CLI (`cq`)](doc/ai/07-supervisor-and-cli.md)
+  - [Architectural Decision Records (ADRs)](doc/adr/)
 
 ---
 
