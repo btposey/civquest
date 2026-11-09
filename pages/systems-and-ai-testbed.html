@@ -1,0 +1,189 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <!-- Copyright (c) 2026 Brian Posey
+       Use of this source code is governed by an MIT-style
+       license that can be found in the LICENSE file. -->
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>CivQuest — Systems Engineering & AI Testbed</title>
+  <meta name="description" content="Explore CivQuest's AI systems architecture: Hierarchical State Machines, Tripartite Neurological Latency Hierarchy, Afferent Feedback Loops, and Embodied Simulation.">
+  <link rel="stylesheet" href="assets/css/style.css">
+</head>
+<body>
+
+  <!-- Alpha Status Banner -->
+  <div class="alpha-banner">
+    <span class="alpha-tag">Active Pre-Alpha</span>
+    <span>CivQuest is under active early architecture and development. <a href="https://github.com/btposey/civquest" target="_blank" rel="noopener">Track source & issues on GitHub</a></span>
+  </div>
+
+  <!-- Navigation -->
+  <header>
+    <div class="nav-container">
+      <a href="index.html" class="logo">
+        <span class="logo-badge">civquest</span>
+        <span>CivQuest</span>
+        <span class="badge-alpha">v0.1.0</span>
+      </a>
+      <nav class="nav-links">
+        <a href="index.html">Overview</a>
+        <a href="gameplay.html">Gameplay</a>
+        <a href="systems-and-ai-testbed.html" style="color: var(--accent-cyan); font-weight: 600;">Systems & AI Testbed</a>
+        <a href="https://github.com/btposey/civquest" class="btn-github" target="_blank" rel="noopener">
+          <svg width="18" height="18" viewBox="0 0 16 16" fill="currentColor">
+            <path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/>
+          </svg>
+          <span>GitHub</span>
+        </a>
+      </nav>
+    </div>
+  </header>
+
+  <!-- Hero Section -->
+  <section class="hero">
+    <div class="hero-pill">
+      <span>Systems Design & Biological AI Modeling</span>
+    </div>
+    <h1>Systems Engineering &<br><span>Embodied AI Testbed</span></h1>
+    <p>
+      An exercise in robust systems design: taming non-deterministic LLM complexity via formal Hierarchical State Machines, 
+      three-tier neurological latency hierarchies, and ascending afferent feedback loops.
+    </p>
+    <div class="hero-buttons">
+      <a href="gameplay.html" class="btn-secondary">&larr; Gameplay Overview</a>
+      <a href="https://github.com/btposey/civquest" class="btn-primary" target="_blank" rel="noopener">Inspect Codebase &rarr;</a>
+    </div>
+  </section>
+
+  <!-- Systems Architecture Grid -->
+  <section class="section">
+    <div class="section-header">
+      <h2>The Tripartite Latency Hierarchy</h2>
+      <p>Allocating compute and perception across three neurological tiers to maximize survival and goal throughput.</p>
+    </div>
+
+    <div class="grid">
+      <div class="card">
+        <div class="card-icon icon-blue">⚡</div>
+        <h3>Layer 1A: Peripheral Reflexes</h3>
+        <p>
+          <strong>Spinal Cord Analog:</strong> Synchronous, in-engine Java execution (20 Hz, &lt;0.1ms, 0 IPC delay). 
+          Resolves sub-tick physical emergencies (shield raising on projectile trajectory intersection, item vacuuming, obstacle climbing) 
+          and emits ascending <code>ReflexNotice</code> events.
+        </p>
+      </div>
+
+      <div class="card">
+        <div class="card-icon icon-emerald">🧠</div>
+        <h3>Layer 1B: Tactical Intuition</h3>
+        <p>
+          <strong>Basal Ganglia Analog:</strong> External deterministic Go utility AI (5 Hz, &lt;5ms, 0 LLM tokens). 
+          Evaluates threat matrices, runs the Hierarchical Finite State Machine (HFSM), manages inventory slots, 
+          and streams kinetic intents through a bounded slot queue.
+        </p>
+      </div>
+
+      <div class="card">
+        <div class="card-icon icon-purple">🏛️</div>
+        <h3>Layer 2: Strategic Cognition</h3>
+        <p>
+          <strong>Prefrontal Cortex Analog:</strong> Asynchronous LLM inference (Ollama/vLLM) and vector RAG (<code>sqlite-vec</code>). 
+          Generates structured goal directives (trade bargains, blueprint layouts, historical chronicles) that parameterize active HFSM states.
+        </p>
+      </div>
+    </div>
+  </section>
+
+  <!-- Systems Deep-Dives -->
+  <section class="section">
+    <div class="section-header">
+      <h2>Architectural Invariants & Complexity Control</h2>
+      <p>Disciplined engineering patterns replacing fragile prompt chaining with deterministic state guarantees.</p>
+    </div>
+
+    <div class="grid">
+      <div class="card">
+        <div class="card-icon icon-amber">⚙️</div>
+        <h3>Hierarchical State Machine (HFSM)</h3>
+        <p>
+          Replaces unconstrained priority cascades with an explicit state graph (<code>BOOTSTRAP</code>, <code>EXPLORE</code>, 
+          <code>SHELTER</code>, <code>EMERGENCY</code>, <code>REST</code>). Gated transitions guarantee that combat panic 
+          is never preempted by temporal routines like sleep.
+        </p>
+      </div>
+
+      <div class="card">
+        <div class="card-icon icon-cyan">🔄</div>
+        <h3>Afferent Perception-Action Loops</h3>
+        <p>
+          When in-engine reflexes fire, lightweight <code>ReflexNotice</code> telemetry reports upward to the Go harness. 
+          Tactical evaluators immediately adjust survival confidence scores and replan tasks without waiting for an active goal to fail.
+        </p>
+      </div>
+
+      <div class="card">
+        <div class="card-icon icon-blue">📦</div>
+        <h3>Typed SlotQueue Intent Coalescing</h3>
+        <p>
+          High-frequency kinetic vectors (navigation, combat attacks) are bounded and coalesced so only the freshest target vector transmits, 
+          while sequential block placement intents retain strict FIFO order for structural integrity.
+        </p>
+      </div>
+
+      <div class="card">
+        <div class="card-icon icon-emerald">🎯</div>
+        <h3>Ghost Intent Elimination</h3>
+        <p>
+          Prerequisite inventory guards validate equipment (<code>HasShield</code>, <code>HasWeapon</code>) before emitting combat directives, 
+          eliminating zero-effect gRPC payload transmissions that waste network bandwidth.
+        </p>
+      </div>
+
+      <div class="card">
+        <div class="card-icon icon-purple">🔒</div>
+        <h3>Process-Per-Agent Isolation</h3>
+        <p>
+          Each agent executes in an isolated OS process (<code>civquest-agent</code>) with dedicated XDG directories, SQLite databases, 
+          and UNIX domain sockets. Process failures are isolated and never crash neighboring agents or the game server.
+        </p>
+      </div>
+
+      <div class="card">
+        <div class="card-icon icon-amber">🧪</div>
+        <h3>Spatial Simulation Testbed</h3>
+        <p>
+          <strong>Purpose-Built for Minecraft:</strong> Rather than forcing premature hardware abstraction layers, CivQuest leverages 
+          Minecraft's voxel grid as a high-fidelity sandbox to validate systems engineering principles—yielding transferable wisdom for future physical embodied systems.
+        </p>
+      </div>
+    </div>
+  </section>
+
+  <!-- Footer & Trademark Notice -->
+  <footer>
+    <div class="footer-container">
+      <div class="disclaimer-box">
+        <strong>LEGAL & TRADEMARK DISCLAIMER:</strong><br>
+        <strong>NOT AN OFFICIAL MINECRAFT PRODUCT. NOT APPROVED BY OR ASSOCIATED WITH MOJANG OR MICROSOFT.</strong><br>
+        <em>Minecraft</em> is a registered trademark of Mojang Synergies AB / Microsoft Corporation. 
+        CivQuest is an independent, community-developed software modification and autonomous agent orchestration platform. 
+        CivQuest is not affiliated with, endorsed by, sponsored by, or associated with Mojang Synergies AB, Microsoft Corporation, 
+        or any of their subsidiaries. All references to Minecraft, related game mechanics, and block identifiers are strictly 
+        nominative references for technical compatibility and modding interoperability under applicable fair use doctrines.
+      </div>
+
+      <div class="footer-links">
+        <a href="index.html">Overview</a>
+        <a href="gameplay.html">Gameplay</a>
+        <a href="systems-and-ai-testbed.html">Systems & AI Testbed</a>
+        <a href="https://github.com/btposey/civquest">Source Code</a>
+        <a href="https://github.com/btposey/civquest/blob/main/LICENSE">MIT License</a>
+      </div>
+
+      <p class="copyright">&copy; 2026 Brian Posey. Open source under the MIT License.</p>
+    </div>
+  </footer>
+
+</body>
+</html>

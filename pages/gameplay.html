@@ -1,0 +1,155 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <!-- Copyright (c) 2026 Brian Posey
+       Use of this source code is governed by an MIT-style
+       license that can be found in the LICENSE file. -->
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>CivQuest — Gameplay & Living Settlements</title>
+  <meta name="description" content="Discover CivQuest gameplay: autonomous humanoid FakePlayer settlers, dynamic barter economies, emergent sharecropping, spatial construction, and high-stakes permadeath.">
+  <link rel="stylesheet" href="assets/css/style.css">
+</head>
+<body>
+
+  <!-- Alpha Status Banner -->
+  <div class="alpha-banner">
+    <span class="alpha-tag">Active Pre-Alpha</span>
+    <span>CivQuest is under active early architecture and development. <a href="https://github.com/btposey/civquest" target="_blank" rel="noopener">Track source & issues on GitHub</a></span>
+  </div>
+
+  <!-- Navigation -->
+  <header>
+    <div class="nav-container">
+      <a href="index.html" class="logo">
+        <span class="logo-badge">civquest</span>
+        <span>CivQuest</span>
+        <span class="badge-alpha">v0.1.0</span>
+      </a>
+      <nav class="nav-links">
+        <a href="index.html">Overview</a>
+        <a href="gameplay.html" style="color: var(--accent-cyan); font-weight: 600;">Gameplay</a>
+        <a href="systems-and-ai-testbed.html">Systems & AI Testbed</a>
+        <a href="https://github.com/btposey/civquest" class="btn-github" target="_blank" rel="noopener">
+          <svg width="18" height="18" viewBox="0 0 16 16" fill="currentColor">
+            <path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/>
+          </svg>
+          <span>GitHub</span>
+        </a>
+      </nav>
+    </div>
+  </header>
+
+  <!-- Hero Section -->
+  <section class="hero">
+    <div class="hero-pill">
+      <span>Living Settlements & Emergent Society</span>
+    </div>
+    <h1>A Living World of<br><span>Autonomous Settlers</span></h1>
+    <p>
+      CivQuest introduces authentic, humanoid <code>FakePlayer</code> settlers that build, farm, negotiate, 
+      and defend their frontier communities alongside vanilla Minecraft villages with permanent stakes.
+    </p>
+    <div class="hero-buttons">
+      <a href="index.html" class="btn-secondary">&larr; System Overview</a>
+      <a href="systems-and-ai-testbed.html" class="btn-primary">Explore AI Testbed &rarr;</a>
+    </div>
+  </section>
+
+  <!-- Feature Grid -->
+  <section class="section">
+    <div class="section-header">
+      <h2>Core In-Game Mechanics</h2>
+      <p>Purpose-built systems designed to transform Minecraft into a dynamic, persistent frontier civilization.</p>
+    </div>
+
+    <div class="grid">
+      <div class="card">
+        <div class="card-icon icon-blue">🧑‍🌾</div>
+        <h3>Humanoid FakePlayer Avatars</h3>
+        <p>
+          Settlers are not re-skinned iron golems or passive villagers. They are server-side <code>FakePlayer</code> entities 
+          with complete player physics: inventory management, dual-wielding, armor equipment, hunger depletion, 
+          and dynamic activity-based skin overlays.
+        </p>
+      </div>
+
+      <div class="card">
+        <div class="card-icon icon-emerald">🌾</div>
+        <h3>Sharecropping & Agrarian Loops</h3>
+        <p>
+          Agrarian settlers actively survey arable land, till soil, plant vanilla and modded crops, and propose 
+          sharecropping contracts to human players. Settlers cultivate designated farmland and automatically deposit 
+          agreed crop shares directly into player storage chests.
+        </p>
+      </div>
+
+      <div class="card">
+        <div class="card-icon icon-purple">⚖️</div>
+        <h3>Genuine Barter Economy</h3>
+        <p>
+          Moving beyond fixed emerald trading tables, settlers value goods based on local scarcity, community stockpiles, 
+          and production chains. Settlers negotiate trade via in-game dialogue, lead pack-beast caravans between settlements, 
+          and exchange specialized goods.
+        </p>
+      </div>
+
+      <div class="card">
+        <div class="card-icon icon-amber">📐</div>
+        <h3>Spatial Quadrant Construction</h3>
+        <p>
+          Architects parse YAML blueprints, compute Bills of Materials against local granary and lumber reserves, 
+          and partition build sites into spatial quadrants (NW, NE, SW, SE). Multiple settlers build simultaneously 
+          from the ground up ($Y_{\text{min}} \to Y_{\text{max}}$) without collision or entrapment.
+        </p>
+      </div>
+
+      <div class="card">
+        <div class="card-icon icon-blue">🛡️</div>
+        <h3>Permadeath & Memorial Graveyards</h3>
+        <p>
+          Settlers never respawn. When an agent falls in combat or environmental hazard, their state directory is 
+          permanently archived to the graveyard. Chroniclers author memorial books, epitaphs are carved on signposts, 
+          and communities mourn their loss.
+        </p>
+      </div>
+
+      <div class="card">
+        <div class="card-icon icon-emerald">📜</div>
+        <h3>Chroniclers & Communal Lore</h3>
+        <p>
+          Settlement scribes document major historical milestones—famines, mob raids, successful caravan arrivals, 
+          and landmark naming. They author multi-page Minecraft written books and place them in public lecterns 
+          for players and travelers to read.
+        </p>
+      </div>
+    </div>
+  </section>
+
+  <!-- Footer & Trademark Notice -->
+  <footer>
+    <div class="footer-container">
+      <div class="disclaimer-box">
+        <strong>LEGAL & TRADEMARK DISCLAIMER:</strong><br>
+        <strong>NOT AN OFFICIAL MINECRAFT PRODUCT. NOT APPROVED BY OR ASSOCIATED WITH MOJANG OR MICROSOFT.</strong><br>
+        <em>Minecraft</em> is a registered trademark of Mojang Synergies AB / Microsoft Corporation. 
+        CivQuest is an independent, community-developed software modification and autonomous agent orchestration platform. 
+        CivQuest is not affiliated with, endorsed by, sponsored by, or associated with Mojang Synergies AB, Microsoft Corporation, 
+        or any of their subsidiaries. All references to Minecraft, related game mechanics, and block identifiers are strictly 
+        nominative references for technical compatibility and modding interoperability under applicable fair use doctrines.
+      </div>
+
+      <div class="footer-links">
+        <a href="index.html">Overview</a>
+        <a href="gameplay.html">Gameplay</a>
+        <a href="systems-and-ai-testbed.html">Systems & AI Testbed</a>
+        <a href="https://github.com/btposey/civquest">Source Code</a>
+        <a href="https://github.com/btposey/civquest/blob/main/LICENSE">MIT License</a>
+      </div>
+
+      <p class="copyright">&copy; 2026 Brian Posey. Open source under the MIT License.</p>
+    </div>
+  </footer>
+
+</body>
+</html>
