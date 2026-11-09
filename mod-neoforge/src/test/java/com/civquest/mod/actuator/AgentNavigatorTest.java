@@ -117,6 +117,40 @@ public class AgentNavigatorTest {
     }
 
     @Test
+    @DisplayName("Target behind agent triggers zero forward throttle to pivot in place rather than orbiting")
+    void testZeroThrottleWhenTargetBehindPreventsOrbiting() {
+        AgentEntity agent = mock(AgentEntity.class);
+        Level level = mock(Level.class);
+        when(agent.level()).thenReturn(level);
+        when(agent.position()).thenReturn(new Vec3(0.0, 64.0, 0.0));
+        when(agent.getDeltaMovement()).thenReturn(Vec3.ZERO);
+        when(agent.onGround()).thenReturn(true);
+        when(agent.getYRot()).thenReturn(0.0f); // Facing South (+Z)
+        when(level.hasChunkAt(any(BlockPos.class))).thenReturn(true);
+
+        BlockState airBlock = mock(BlockState.class);
+        when(airBlock.isAir()).thenReturn(true);
+        when(airBlock.getCollisionShape(any(), any())).thenReturn(Shapes.empty());
+        when(level.getBlockState(any(BlockPos.class))).thenReturn(airBlock);
+
+        AtomicReference<Vec3> lastDelta = new AtomicReference<>(Vec3.ZERO);
+        doAnswer(inv -> {
+            lastDelta.set(inv.getArgument(0));
+            return null;
+        }).when(agent).setDeltaMovement(any(Vec3.class));
+
+        AgentNavigator navigator = new AgentNavigator(agent);
+        // Target is directly behind the agent (North = -Z, hx=0, hz=-10) -> desiredYaw = -180 deg
+        navigator.navigate(0.0, 64.0, -10.0, 1.0f, false, false, false, 1);
+        navigator.tick();
+
+        // Since yaw difference is 180 deg (> 90 deg), target is behind: throttle must be 0
+        assertNotNull(lastDelta.get());
+        assertEquals(0.0, Math.hypot(lastDelta.get().x, lastDelta.get().z), 1e-6,
+                "Forward throttle must be 0 when target is behind agent (>90 deg yaw diff)");
+    }
+
+    @Test
     @DisplayName("Sprinting drains stamina, exhaustion forces walking until recovery at 30")
     void testStaminaExhaustion() {
         AgentNavigator navigator = new AgentNavigator();

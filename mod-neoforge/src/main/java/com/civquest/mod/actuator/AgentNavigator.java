@@ -429,7 +429,7 @@ public class AgentNavigator {
         double horizontalDist = Math.sqrt(dx * dx + dz * dz);
 
         // Check arrival within arrival_tolerance
-        if (horizontalDist <= (double) this.arrivalTolerance && Math.abs(dy) <= Math.max(2.0, (double) this.arrivalTolerance)) {
+        if (horizontalDist <= (double) this.arrivalTolerance && Math.abs(dy) <= Math.max(3.5, (double) this.arrivalTolerance + 1.5)) {
             finishArrival();
             return;
         }
@@ -442,12 +442,14 @@ public class AgentNavigator {
             if (path.isEmpty() || (enclosed && !breakingNow) || navTick - lastPlanTick >= REPLAN_INTERVAL) {
                 replan(level, currentPos);
             }
-            // Advance along path
+            // Advance along path: pop waypoint when close to center or standing within the waypoint cell
             while (!path.isEmpty()) {
                 LocalPathPlanner.Cell c = path.get(0);
                 double ddx = c.x() + 0.5 - currentPos.x;
                 double ddz = c.z() + 0.5 - currentPos.z;
-                if (ddx * ddx + ddz * ddz < 0.16 && Math.abs(c.y() - currentPos.y) < 1.2) {
+                boolean reachedCell = (ddx * ddx + ddz * ddz < 0.64)
+                        || (Mth.floor(currentPos.x) == c.x() && Mth.floor(currentPos.z) == c.z());
+                if (reachedCell && Math.abs(c.y() - currentPos.y) < 1.5) {
                     path.remove(0);
                 } else {
                     break;
@@ -515,8 +517,19 @@ public class AgentNavigator {
         double baseSpeed = sprintNow ? SPRINT_SPEED : WALK_SPEED;
         double mult = Math.max(0.5, Math.min(1.5, this.speedMultiplier));
         double moveSpeed = baseSpeed * mult;
+
+        // Arrival easing: when on the final approach leg without intermediate waypoints,
+        // decelerate smoothly into the arrival zone to prevent overshoot.
+        if (path.isEmpty() && horizontalDist < 2.0) {
+            moveSpeed *= Math.max(0.25, horizontalDist / 2.0);
+        }
+
         double absYawDiff = Math.abs(yawDiff);
-        double align = absYawDiff <= 90.0 ? Math.max(0.25, Math.cos(Math.toRadians(absYawDiff))) : 0.1;
+        // Forward throttle: gentle easing in the forward hemisphere, zero throttle when heading error > 90 deg.
+        // When target is behind the agent (> 90 deg), align is 0.0 so the agent pivots in place
+        // rather than entering a perpetual fixed-wing orbiting circle.
+        double align = absYawDiff <= 90.0 ? Math.max(0.15, Math.cos(Math.toRadians(absYawDiff))) : 0.0;
+
         double headRad = Math.toRadians(headYaw);
         double tvx = -Math.sin(headRad) * moveSpeed * align;
         double tvz = Math.cos(headRad) * moveSpeed * align;

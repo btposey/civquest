@@ -637,6 +637,11 @@ func EvaluateExploration(agentID string, frame *civquestv1.TelemetryFrame, cfg *
 		return nil
 	}
 
+	// 4. Terrain-Aware Exploration Strategies (Valleys, Ridges, Fords, Rims, Flatlands, Canopy Trailblazing)
+	if terrainIntent := EvaluateTerrainExploration(agentID, frame, pos, state, cfg); terrainIntent != nil {
+		return terrainIntent
+	}
+
 	state.exploreStepIndex++
 	// Golden-angle spiral around current outpost/home origin; Explorers progressively expand rings to advance outward
 	const goldenAngle = 2.399963229728653
