@@ -141,6 +141,9 @@ public class AgentEntityManager {
         if (existing != null) {
             LOGGER.warn("Duplicate agent spawn detected for agentId='{}' (existing='{}'). Despawning old entity (uuid='{}')",
                     agentId, existingKey, existing.getUUID());
+            if (existing.getWatchdogFSM() != null) {
+                existing.getWatchdogFSM().onAgentDespawn();
+            }
             existing.releaseForcedChunk();
             existing.discard();
             if (server != null && server.getPlayerList() != null) {
@@ -275,6 +278,9 @@ public class AgentEntityManager {
         }
 
         agent.setDeathListener(deadAgent -> {
+            if (deadAgent.getWatchdogFSM() != null) {
+                deadAgent.getWatchdogFSM().onAgentDeath();
+            }
             deadAgent.releaseForcedChunk();
             agents.remove(deadAgent.getAgentId(), deadAgent);
             if (streamRegistry != null) {
@@ -288,6 +294,9 @@ public class AgentEntityManager {
         });
 
         agent.setRemovalListener(removedAgent -> {
+            if (removedAgent.getWatchdogFSM() != null) {
+                removedAgent.getWatchdogFSM().onAgentDespawn();
+            }
             removedAgent.releaseForcedChunk();
             agents.remove(removedAgent.getAgentId(), removedAgent);
             if (streamRegistry != null) {
@@ -315,6 +324,9 @@ public class AgentEntityManager {
             String canonicalKey = findCanonicalAgentKey(agentId);
             AgentEntity removed = canonicalKey != null ? agents.remove(canonicalKey) : null;
             if (removed != null) {
+                if (removed.getWatchdogFSM() != null) {
+                    removed.getWatchdogFSM().onAgentDespawn();
+                }
                 removed.releaseForcedChunk();
                 removed.discard();
                 if (server != null && server.getPlayerList() != null) {
@@ -481,6 +493,9 @@ public class AgentEntityManager {
     public void clearAll() {
         for (AgentEntity agent : agents.values()) {
             try {
+                if (agent.getWatchdogFSM() != null) {
+                    agent.getWatchdogFSM().onAgentDespawn();
+                }
                 agent.releaseForcedChunk();
                 agent.discard();
             } catch (Exception e) {

@@ -130,6 +130,7 @@ type AgentRuntime struct {
 	safeNodesCache        []db.MapNode
 	tradeValuations       map[string]db.TradeValuation
 	system1State          *system1.AgentState
+	agentFSM              *system1.AgentFSM
 	pavingTracker         *system1.RoadPavingTracker
 	memoryPipeline        *memory.Pipeline
 	lastCombatMemoryTick  int64
@@ -236,6 +237,17 @@ func NewRuntime(cfg Config) (*AgentRuntime, error) {
 		)
 	}
 
+	var agentFSM *system1.AgentFSM
+	agentFSM = system1.NewAgentFSM(system1.StateBootstrap, func(from, to system1.State, reason string) {
+		if debugLog != nil {
+			debugLog.Emit(0, "FSM_TRANSITION", fmt.Sprintf("FSM %s -> %s (%s)", from, to, reason), map[string]any{
+				"from_state": from,
+				"to_state":   to,
+				"reason":     reason,
+			})
+		}
+	})
+
 	runtime := &AgentRuntime{
 		agentID:           agentID,
 		agentUUID:         agentUUID,
@@ -263,6 +275,7 @@ func NewRuntime(cfg Config) (*AgentRuntime, error) {
 		socketDone:        make(chan struct{}),
 		lastCachedItems:   nil,
 		system1State:      sys1State,
+		agentFSM:          agentFSM,
 		pavingTracker:     pavingTracker,
 	}
 
@@ -462,7 +475,27 @@ func (r *AgentRuntime) CurrentRoutine() system1.RoutineState {
 	if r.system1State == nil {
 		return system1.RoutineDawnAwakening
 	}
-	return r.system1State.CurrentRoutine
+	return r.system1State.GetCurrentRoutine()
+}
+
+// AgentFSM returns the System 1 Hierarchical Finite State Machine instance.
+func (r *AgentRuntime) AgentFSM() *system1.AgentFSM {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.agentFSM
+}
+
+// FSMState returns the active formal System 1 HFSM state.
+func (r *AgentRuntime) FSMState() system1.State {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	if r.agentFSM != nil {
+		return r.agentFSM.CurrentState()
+	}
+	if r.system1State != nil {
+		return r.system1State.GetFSMState()
+	}
+	return system1.StateBootstrap
 }
 
 // IsCompanionActive returns true if the agent is actively accompanying a player as a bonded companion.
@@ -2081,7 +2114,7 @@ func (r *AgentRuntime) evaluateCompanion(frame *civquestv1.TelemetryFrame) {
 }
 
 // evaluateSystem1Reflexes evaluates deterministic fight-or-flight combat reflexes,
-// daily utility scheduler, biological needs FSM, and road paving reflexes in <5ms.
+// daily utility scheduler, biological needs, and road paving reflexes via the formal AgentFSM in <5ms.
 func (r *AgentRuntime) evaluateSystem1Reflexes(frame *civquestv1.TelemetryFrame) {
 	if frame == nil || frame.Status == nil || r.IsDead() {
 		return
@@ -2097,150 +2130,169 @@ func (r *AgentRuntime) evaluateSystem1Reflexes(frame *civquestv1.TelemetryFrame)
 		})
 	}
 
-	// 1. Evaluate Combat Reflexes
-	hostilesPresent := false
-	for _, e := range frame.VisibleEntities {
-		if system1.IsHostile(e) {
-			hostilesPresent = true
-			break
-		}
+	r.mu.RLock()
+	var safeNodes []db.MapNode
+	if r.safeNodesCache != nil {
+		safeNodes = make([]db.MapNode, len(r.safeNodesCache))
+		copy(safeNodes, r.safeNodesCache)
 	}
 
-	maxHP := float64(frame.Status.MaxHealth)
-	if maxHP <= 0 {
-		maxHP = 20.0
+	canEat := true
+	if r.lastEatingTick > 0 && frame.WorldTick >= r.lastEatingTick && frame.WorldTick-r.lastEatingTick < 32 {
+		canEat = false
 	}
-	lowHealth := float64(frame.Status.Health) <= 0.35*maxHP
-	lowFood := frame.Status.FoodLevel <= 6
-	damageTaken := frame.LastDamageTaken != nil
+	fsm := r.agentFSM
+	r.mu.RUnlock()
 
-	var combatResult system1.ReflexResult
-	if hostilesPresent || damageTaken || lowHealth || lowFood {
-		bravery := 0.5
-		if r.identityConfig != nil {
-			bravery = r.identityConfig.Traits.Bravery
+	if fsm == nil {
+		r.mu.Lock()
+		if r.agentFSM == nil {
+			r.agentFSM = system1.NewAgentFSM(system1.StateBootstrap, nil)
 		}
+		fsm = r.agentFSM
+		r.mu.Unlock()
+	}
 
-		r.mu.RLock()
-		var safeNodes []db.MapNode
-		if r.safeNodesCache != nil {
-			safeNodes = make([]db.MapNode, len(r.safeNodesCache))
-			copy(safeNodes, r.safeNodesCache)
+	ctx := &system1.FSMContext{
+		AgentID:        r.agentID,
+		Frame:          frame,
+		State:          r.system1State,
+		Config:         r.identityConfig,
+		SafeNodes:      safeNodes,
+		CanEat:         canEat,
+		LastEatingTick: r.lastEatingTick,
+		PavingTracker:  r.pavingTracker,
+	}
+
+	// Execute formal HFSM tick
+	result := fsm.Tick(ctx)
+
+	// Log FSM transitions
+	if result.Transitioned && r.debugLogger != nil {
+		r.debugLogger.Emit(frame.WorldTick, "FSM_TRANSITION", fmt.Sprintf("FSM %s -> %s (%s)", result.PreviousState, result.State, result.TransitionReason), map[string]any{
+			"from_state":  result.PreviousState,
+			"to_state":    result.State,
+			"reason":      result.TransitionReason,
+			"world_tick":  frame.WorldTick,
+			"time_of_day": frame.TimeOfDay,
+		})
+	}
+
+	// Dispatch emitted intents
+	for _, fsmIntent := range result.Intents {
+		if fsmIntent.Intent == nil {
+			continue
 		}
-
-		canEat := true
-		if r.lastEatingTick > 0 && frame.WorldTick >= r.lastEatingTick && frame.WorldTick-r.lastEatingTick < 32 {
-			canEat = false
-		}
-		r.mu.RUnlock()
-
-		ctx := system1.ReflexContext{
-			AgentID:   r.agentID,
-			Bravery:   bravery,
-			SafeNodes: safeNodes,
-			Frame:     frame,
-			CanEat:    canEat,
-		}
-
-		combatResult = system1.EvaluateReflexes(ctx)
-		if combatResult.ShouldAct {
-			// MIN-02: Baritone Path Churn Mitigation
-			skipFleeNav := false
-			if combatResult.IsPanic && combatResult.FleeTarget != nil {
+		if fsmIntent.Priority {
+			// Flee navigation deduplication / churn mitigation
+			skipNav := false
+			if nav := fsmIntent.Intent.GetNavigate(); nav != nil && nav.Target != nil {
 				r.mu.Lock()
 				if r.lastFleeTarget != nil {
-					dx := combatResult.FleeTarget.X - r.lastFleeTarget.X
-					dy := combatResult.FleeTarget.Y - r.lastFleeTarget.Y
-					dz := combatResult.FleeTarget.Z - r.lastFleeTarget.Z
+					dx := nav.Target.X - r.lastFleeTarget.X
+					dy := nav.Target.Y - r.lastFleeTarget.Y
+					dz := nav.Target.Z - r.lastFleeTarget.Z
 					dist := math.Sqrt(dx*dx + dy*dy + dz*dz)
 					ticksElapsed := frame.WorldTick - r.lastFleeTick
 					if dist < 2.0 && ticksElapsed <= 10 && ticksElapsed >= 0 {
-						skipFleeNav = true
+						skipNav = true
 					}
 				}
-				if !skipFleeNav {
+				if !skipNav {
 					r.lastFleeTarget = &civquestv1.Vec3{
-						X: combatResult.FleeTarget.X,
-						Y: combatResult.FleeTarget.Y,
-						Z: combatResult.FleeTarget.Z,
+						X: nav.Target.X,
+						Y: nav.Target.Y,
+						Z: nav.Target.Z,
 					}
 					r.lastFleeTick = frame.WorldTick
 				}
 				r.mu.Unlock()
-			} else if !combatResult.IsPanic {
+			}
+			if skipNav {
+				continue
+			}
+
+			err := r.QueuePriorityIntent(fsmIntent.Intent)
+			if err == nil && fsmIntent.Intent.GetUseItem() != nil && fsmIntent.Intent.GetUseItem().IsEatingOrDrinking {
 				r.mu.Lock()
-				r.lastFleeTarget = nil
-				r.lastFleeTick = 0
+				r.lastEatingTick = frame.WorldTick
 				r.mu.Unlock()
-			}
-
-			// Dispatch priority reflex intents; update eating cooldown only if UseItem was queued successfully
-			for _, intent := range combatResult.Intents {
-				if skipFleeNav && intent.GetNavigate() != nil {
-					continue
-				}
-				err := r.QueuePriorityIntent(intent)
-				if err == nil && intent.GetUseItem() != nil && intent.GetUseItem().IsEatingOrDrinking {
-					r.mu.Lock()
-					r.lastEatingTick = frame.WorldTick
-					r.mu.Unlock()
-					if r.system1State != nil {
-						r.system1State.SetLastEatingTick(frame.WorldTick)
-					}
+				if r.system1State != nil {
+					r.system1State.SetLastEatingTick(frame.WorldTick)
 				}
 			}
-
-			// Record combat/aggro encounter in recent summary and episodic memory (cooldown: 200 ticks / 10s)
-			if hostilesPresent || damageTaken {
-				_, _, hostileList := system1.AssessImmediateThreats(frame, bravery)
-				dayPhase := system1.FormatDayPhase(frame.TimeOfDay)
-				actionDesc := "engaged in combat with"
-				if combatResult.IsPanic {
-					actionDesc = "fled from"
-				}
-				targetDesc := "hostile mob"
-				if len(hostileList) > 0 {
-					targetDesc = strings.Join(hostileList, ", ")
-				} else if frame.LastDamageTaken != nil && frame.LastDamageTaken.GetAttackerName() != "" {
-					targetDesc = frame.LastDamageTaken.GetAttackerName()
-				} else if frame.LastDamageTaken != nil {
-					targetDesc = frame.LastDamageTaken.GetSourceType().String()
-				}
-				summary := fmt.Sprintf("At tick %d during %s, %s %s (HP: %.1f/%.1f).",
-					frame.WorldTick, dayPhase, actionDesc, targetDesc, frame.Status.Health, maxHP)
-
-				r.mu.Lock()
-				r.lastCombatSummary = summary
-				shouldIngestCombat := r.memoryPipeline != nil && (r.lastCombatMemoryTick == 0 || frame.WorldTick < r.lastCombatMemoryTick || frame.WorldTick-r.lastCombatMemoryTick >= 200)
-				if shouldIngestCombat {
-					r.lastCombatMemoryTick = frame.WorldTick
-				}
-				memPipe := r.memoryPipeline
-				r.mu.Unlock()
-
-				if shouldIngestCombat && memPipe != nil {
-					var locCoords string
-					if frame.Status.Position != nil {
-						locCoords = fmt.Sprintf("(%.0f, %.0f, %.0f)", frame.Status.Position.X, frame.Status.Position.Y, frame.Status.Position.Z)
-					}
-					go func(tick int64, text string, coords string) {
-						cCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-						defer cancel()
-						_, _ = memPipe.Ingest(cCtx, memory.MemoryEvent{
-							WorldTick:      tick,
-							Category:       memory.CategoryCombat,
-							SummaryText:    text,
-							Actors:         []string{r.agentID},
-							LocationCoords: coords,
-							SaliencyScore:  memory.SaliencyCombat,
-						})
-					}(frame.WorldTick, summary, locCoords)
-				}
-			}
+		} else {
+			_ = r.QueueIntent(fsmIntent.Intent)
 		}
 	}
 
-	// 1b. Evaluate Topological Mapping (records 8x8 sector nodes and edges into map_graph.db)
+	// Reset flee target if not in emergency
+	if result.State != system1.StateEmergency {
+		r.mu.Lock()
+		r.lastFleeTarget = nil
+		r.lastFleeTick = 0
+		r.mu.Unlock()
+	}
+
+	// Record combat/aggro encounter in recent summary and episodic memory (cooldown: 200 ticks / 10s)
+	hostilesPresent := ctx.HostilesPresent()
+	damageTaken := ctx.DamageTaken()
+	if hostilesPresent || damageTaken {
+		bravery := 0.5
+		if r.identityConfig != nil {
+			bravery = r.identityConfig.Traits.Bravery
+		}
+		maxHP := float64(frame.Status.MaxHealth)
+		if maxHP <= 0 {
+			maxHP = 20.0
+		}
+		_, _, hostileList := system1.AssessImmediateThreats(frame, bravery)
+		dayPhase := system1.FormatDayPhase(frame.TimeOfDay)
+		actionDesc := "engaged in combat with"
+		if ctx.ShouldPanic() {
+			actionDesc = "fled from"
+		}
+		targetDesc := "hostile mob"
+		if len(hostileList) > 0 {
+			targetDesc = strings.Join(hostileList, ", ")
+		} else if frame.LastDamageTaken != nil && frame.LastDamageTaken.GetAttackerName() != "" {
+			targetDesc = frame.LastDamageTaken.GetAttackerName()
+		} else if frame.LastDamageTaken != nil {
+			targetDesc = frame.LastDamageTaken.GetSourceType().String()
+		}
+		summary := fmt.Sprintf("At tick %d during %s, %s %s (HP: %.1f/%.1f).",
+			frame.WorldTick, dayPhase, actionDesc, targetDesc, frame.Status.Health, maxHP)
+
+		r.mu.Lock()
+		r.lastCombatSummary = summary
+		shouldIngestCombat := r.memoryPipeline != nil && (r.lastCombatMemoryTick == 0 || frame.WorldTick < r.lastCombatMemoryTick || frame.WorldTick-r.lastCombatMemoryTick >= 200)
+		if shouldIngestCombat {
+			r.lastCombatMemoryTick = frame.WorldTick
+		}
+		memPipe := r.memoryPipeline
+		r.mu.Unlock()
+
+		if shouldIngestCombat && memPipe != nil {
+			var locCoords string
+			if frame.Status.Position != nil {
+				locCoords = fmt.Sprintf("(%.0f, %.0f, %.0f)", frame.Status.Position.X, frame.Status.Position.Y, frame.Status.Position.Z)
+			}
+			go func(tick int64, text string, coords string) {
+				cCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+				defer cancel()
+				_, _ = memPipe.Ingest(cCtx, memory.MemoryEvent{
+					WorldTick:      tick,
+					Category:       memory.CategoryCombat,
+					SummaryText:    text,
+					Actors:         []string{r.agentID},
+					LocationCoords: coords,
+					SaliencyScore:  memory.SaliencyCombat,
+				})
+			}(frame.WorldTick, summary, locCoords)
+		}
+	}
+
+	// Evaluate Topological Mapping (records 8x8 sector nodes and edges into map_graph.db)
 	if node, edge := system1.EvaluateTopologicalMapping(frame, r.system1State); node != nil && r.agentDB != nil {
 		if node.SafetyScore >= 0.7 {
 			r.mu.Lock()
@@ -2274,82 +2326,18 @@ func (r *AgentRuntime) evaluateSystem1Reflexes(frame *civquestv1.TelemetryFrame)
 		}()
 	}
 
-	// 2. Evaluate Daily Utility Schedule & 3-Horizon Goal Hierarchy
-	utilRes := system1.EvaluateUtility(frame, r.identityConfig, r.system1State)
-	if utilRes != nil && utilRes.State != "" && utilRes.State != r.lastLoggedRoutine {
-		oldRoutine := r.lastLoggedRoutine
-		r.lastLoggedRoutine = utilRes.State
-		if r.debugLogger != nil {
-			r.debugLogger.Emit(frame.WorldTick, "SYSTEM1_ROUTINE", fmt.Sprintf("Routine %s -> %s (%s)", oldRoutine, utilRes.State, utilRes.Reason), map[string]any{
-				"previous_routine": oldRoutine,
-				"current_routine":  utilRes.State,
-				"utility_score":    utilRes.Utility,
-				"reason":           utilRes.Reason,
-				"time_of_day":      frame.TimeOfDay,
-			})
-		}
-	}
-
-	goals := system1.EvaluateGoals(frame, r.identityConfig, r.system1State)
-	if goals.ImmediateGoal != "" && goals.ImmediateGoal != r.lastLoggedGoal {
+	// Log goal changes
+	if result.GoalHierarchy != nil && result.GoalHierarchy.ImmediateGoal != "" && result.GoalHierarchy.ImmediateGoal != r.lastLoggedGoal {
 		oldGoal := r.lastLoggedGoal
-		r.lastLoggedGoal = goals.ImmediateGoal
+		r.lastLoggedGoal = result.GoalHierarchy.ImmediateGoal
 		if r.debugLogger != nil {
-			r.debugLogger.Emit(frame.WorldTick, "GOAL_TRANSITION", fmt.Sprintf("Goal: %s", goals.ImmediateGoal), map[string]any{
+			r.debugLogger.Emit(frame.WorldTick, "GOAL_TRANSITION", fmt.Sprintf("Goal: %s", result.GoalHierarchy.ImmediateGoal), map[string]any{
 				"previous_immediate_goal": oldGoal,
-				"immediate_goal":          goals.ImmediateGoal,
-				"short_term_goal":         goals.ShortTermGoal,
-				"long_term_goal":          goals.LongTermGoal,
+				"immediate_goal":          result.GoalHierarchy.ImmediateGoal,
+				"short_term_goal":         result.GoalHierarchy.ShortTermGoal,
+				"long_term_goal":          result.GoalHierarchy.LongTermGoal,
 				"time_of_day":             frame.TimeOfDay,
 			})
-		}
-	}
-
-	// If in combat panic, skip biological needs and road paving to prioritize survival
-	if combatResult.IsPanic {
-		return
-	}
-
-	// 3. Evaluate Biological Needs FSM (Hunger & Sleep/Wake)
-	needsIntents := system1.EvaluateBiologicalNeeds(r.agentID, frame, r.system1State)
-	for _, intent := range needsIntents {
-		if intent.GetUseItem() != nil && intent.GetUseItem().IsEatingOrDrinking {
-			r.mu.RLock()
-			canEat := (r.lastEatingTick == 0 || frame.WorldTick < r.lastEatingTick || frame.WorldTick-r.lastEatingTick >= 32)
-			r.mu.RUnlock()
-			if canEat {
-				err := r.QueuePriorityIntent(intent)
-				if err == nil {
-					r.mu.Lock()
-					r.lastEatingTick = frame.WorldTick
-					r.mu.Unlock()
-					if r.system1State != nil {
-						r.system1State.SetLastEatingTick(frame.WorldTick)
-					}
-				}
-			}
-		} else if intent.GetInteractBlock() != nil {
-			// Sleep in bed and wake up intents must use standard QueueIntent (not QueuePriorityIntent)
-			_ = r.QueueIntent(intent)
-		} else if intent.GetNavigate() != nil {
-			_ = r.QueueIntent(intent)
-		}
-	}
-
-	// 4. Evaluate Road Paving Reflex
-	if frame.Status != nil && !frame.Status.IsSleeping && r.pavingTracker != nil &&
-		frame.Status.NavigationState != civquestv1.NavigationState_NAVIGATION_STATE_STUCK && !frame.Status.NavigationEnclosed {
-		// Never lay path blocks while navigation is stuck (e.g. trapped in a pit).
-		if paveIntent := r.pavingTracker.EvaluatePaving(r.agentID, frame); paveIntent != nil {
-			_ = r.QueueIntent(paveIntent)
-		}
-	}
-
-	// 5. Evaluate Autonomous Exploration & Terrain Unsticking when not in combat/needs emergency or active player interaction
-	if !hostilesPresent && !damageTaken && !lowHealth && !lowFood && !combatResult.ShouldAct &&
-		len(needsIntents) == 0 && len(frame.IncomingChats) == 0 && frame.PendingTrade == nil {
-		if exploreIntent := system1.EvaluateExploration(r.agentID, frame, r.identityConfig, r.system1State); exploreIntent != nil {
-			_ = r.QueueIntent(exploreIntent)
 		}
 	}
 }

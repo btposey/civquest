@@ -420,6 +420,12 @@ func inspectBootstrapInventory(inventory []*civquestv1.ItemStackProto) bootstrap
 	return s
 }
 
+// HasSurvivalKit returns true if the inventory contains basic survival kit gear: an axe, a sword/weapon, and a light source (campfire/torch).
+func HasSurvivalKit(inventory []*civquestv1.ItemStackProto) bool {
+	inv := inspectBootstrapInventory(inventory)
+	return inv.hasAxe && (inv.hasSword || inv.hasWeapon) && inv.hasLight
+}
+
 // shelterWallOffsets defines the 4 cardinal shelter wall positions around the outpost center,
 // ordered strictly bottom-up (dy=0 first, then dy=1, per ADR-010).
 var shelterWallOffsets = [][3]int32{

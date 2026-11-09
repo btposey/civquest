@@ -1,6 +1,6 @@
 # CivQuest
 
-> **Autonomous, Dynastic Civilization Engine & Agent Orchestrator**
+> **Autonomous Civilization Engine & Agent Orchestrator for Minecraft**
 
 [![CI](https://github.com/btposey/civquest/actions/workflows/ci.yml/badge.svg)](https://github.com/btposey/civquest/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
@@ -19,96 +19,137 @@
 
 ## Overview
 
-CivQuest is an autonomous settlement engine and agent orchestration platform for Minecraft (**NeoForge 21.1+ / Java 21** and **Go 1.23+**). It introduces living, intelligent settlers into vanilla worlds—capable of independent farming, barter trading, collaborative spatial construction, and permanent stakes through permadeath.
+CivQuest is an open-source Minecraft modification (**NeoForge 21.1+ / Java 21**) coupled with an external multi-process orchestrator (**Go 1.23+**). The project enables autonomous, process-isolated agent entities within Minecraft worlds, communicating across an embedded gRPC telemetry and control stream.
 
-### Architecture
-
-CivQuest uses a decoupled, dual-layer architecture separating physical voxel simulation on the Minecraft server from autonomous cognitive decision-making in dedicated external Go processes:
-
-```
-┌──────────────────────────────────────────────┐
-│  Minecraft Java Server (NeoForge 21.1.265)   │
-│  - Headless Agent Avatars & Skin Injection   │
-│  - Embedded Netty gRPC Server (:50051)       │
-│  - 20 Hz Sub-Tick Local Physical Reflexes    │
-│  - Sensory Frustum Telemetry Stream (5 Hz)   │
-│  - Integrated Baritone Pathfinding Wrapper   │
-└──────────────────────┬───────────────────────┘
-                       │ Bidirectional gRPC / Protobuf
-┌──────────────────────┴───────────────────────┐
-│   Go Multi-Process Orchestrator (Go 1.23+)   │
-│  - Process Supervisor (`cq`) & Agent Workers │
-│  - System 1: Real-time Utility Engine (<5ms) │
-│  - System 2: Async LLM Inference (Ollama)    │
-│  - Persistence: SQLite + sqlite-vec Vector   │
-└──────────────────────────────────────────────┘
-```
-
-1. **Server Platform Mod (`mod-neoforge`)**:
-   - Spawns server-side agent avatars with full player physics, inventory, and equipment capabilities.
-   - Streams 5 Hz sensory frustum telemetry frames over Netty gRPC and executes sub-tick local survival reflexes.
-   - Delegates voxel pathfinding and physical navigation to an integrated Baritone API wrapper.
-
-2. **External Go Orchestrator (`orchestrator-go`)**:
-   - Manages isolated per-agent OS processes (`civquest-agent`) coordinated by a supervisor daemon (`cq`).
-   - Runs a fast, deterministic utility AI loop (System 1, $<5\text{ ms}$, zero LLM tokens) for combat reflexes, threat evaluation, and tactical state routing.
-   - Connects to local LLM gateways (Ollama/vLLM) for asynchronous social dialogue, barter negotiation, and historical chronicles (System 2).
-   - Persists relational world state and vector memory embeddings in local SQLite databases (`sqlite-vec`).
+This document serves as the developer guide for configuring a local workspace, building subsystems, executing tests, and contributing code. End-user documentation, gameplay guides, and system showcases are hosted on the [project showcase pages](https://btposey.github.io/civquest/).
 
 ---
 
-## Documentation & Showcase Pages
+## Prerequisites
 
-- **Project Web Showcase**:
-  - [Overview](https://btposey.github.io/civquest/) — Project landing page and architectural summary.
-  - [Gameplay Guide](https://btposey.github.io/civquest/gameplay.html) — Living settlement mechanics, sharecropping, barter trade, and permadeath.
-  - [Systems & AI Architecture](https://btposey.github.io/civquest/systems-and-ai-testbed.html) — In-depth systems design, state machine complexity control, latency hierarchies, and embodied AI simulation.
-- **Developer Documentation (`doc/ai/`)**:
-  - [Architecture Overview](doc/ai/01-architecture-overview.md)
-  - [IPC & Protobuf Contract](doc/ai/02-ipc-protobuf-contract.md)
-  - [Platform Mod Internals](doc/ai/03-neoforge-mod-internals.md)
-  - [System 1 Reactive Utility Engine](doc/ai/04-system1-utility-engine.md)
-  - [System 2 Deliberative LLM Pipelines](doc/ai/05-system2-llm-pipelines.md)
-  - [Storage, Databases & XDG](doc/ai/06-storage-and-xdg.md)
-  - [Supervisor & Management CLI (`cq`)](doc/ai/07-supervisor-and-cli.md)
-  - [Architectural Decision Records (ADRs)](doc/adr/)
+Ensure the following dependencies are installed or managed via the automated setup script:
+
+- **Java JDK 21** (e.g., Eclipse Temurin 21)
+- **Go 1.23+**
+- **Protocol Buffers Compiler (`protoc` 28+)** & **Buf CLI**
+- **SQLite 3** with `sqlite-vec` extension library
+- **Beads (`bd`)** for issue and backlog management
 
 ---
 
-## Getting Started
+## Development Environment Setup
 
-### 1. Toolchain Setup
-Run the automated toolchain installer to set up `protoc`, `buf`, Go protobuf plugins, and `sqlite-vec`:
+### 1. Automated Toolchain Installation
+
+Run the project setup script to install `protoc`, `buf`, required Go gRPC plugins, the `protoc-gen-grpc-java` plugin, `sqlite-vec` binaries, and `bd`:
 
 ```bash
 ./setup.sh
 ```
 
-### 2. Task Backlog & Beads
-CivQuest uses **Beads (`bd`)** for issue and dependency tracking:
+Ensure local binary directories are included in your shell `PATH`:
 
 ```bash
-bd ready              # View unblocked, actionable tasks
-bd show cq-bu1.1      # Inspect root task
-bd update <id> --claim # Claim a task before starting work
+export PATH="${HOME}/.local/bin:$(go env GOPATH)/bin:${PATH}"
 ```
 
-### 3. Progressive Documentation
-Explore the progressive discovery documentation suite in `doc/`:
-- [Architecture Overview](doc/ai/01-architecture-overview.md)
-- [IPC & Protobuf Contract](doc/ai/02-ipc-protobuf-contract.md)
-- [Platform Mod Internals](doc/ai/03-neoforge-mod-internals.md)
-- [System 1 Reactive Utility Engine](doc/ai/04-system1-utility-engine.md)
-- [System 2 Deliberative LLM Pipelines](doc/ai/05-system2-llm-pipelines.md)
-- [Storage, Databases & XDG](doc/ai/06-storage-and-xdg.md)
-- [Supervisor & Management CLI (`cq`)](doc/ai/07-supervisor-and-cli.md)
-- [Branching & Release Strategy](doc/ai/08-versioning-and-branching-strategy.md)
-- [Architectural Decision Records (ADRs)](doc/adr/)
+### 2. Manual Dependency Verification
+
+Verify tool availability across your environment:
+
+```bash
+java -version    # Must report Java 21
+go version       # Must report Go 1.23+
+protoc --version # Protobuf compiler
+buf --version    # Buf CLI
+bd version       # Beads issue tracker
+```
 
 ---
 
-## Open Source Credits & Legal Notices
+## Building & Testing
 
-CivQuest is built on the shoulders of the open-source community:
-- Consult [ACKNOWLEDGEMENTS.md](ACKNOWLEDGEMENTS.md) for community credits and architectural philosophy.
-- Consult [NOTICES.md](NOTICES.md) for full third-party software notices and license texts.
+### Protocol Buffer Compilation
+
+When modifying definitions in `proto/civquest/v1/civquest.proto`, regenerate the Go and Java gRPC stubs:
+
+```bash
+./scripts/gen-proto.sh
+```
+
+### Go Orchestrator (`orchestrator-go`)
+
+Build all binaries (`cq` supervisor and `civquest-agent` worker) and execute tests:
+
+```bash
+cd orchestrator-go
+
+# Run unit and integration tests
+go test ./...
+
+# Build CLI and worker binaries
+go build ./cmd/cq
+go build ./cmd/civquest-agent
+```
+
+### NeoForge Server Mod (`mod-neoforge`)
+
+Compile the server mod and run test suites using the Gradle wrapper:
+
+```bash
+# Build the mod JAR
+./gradlew build
+
+# Run unit tests
+./gradlew test
+```
+
+### Integration Test Harness
+
+Launch the automated playtest server and headless agent driver:
+
+```bash
+# Start local playtest dedicated server
+./scripts/start-playtest-server.sh
+
+# Run end-to-end integration test harness
+./scripts/run-integration-test.sh
+```
+
+---
+
+## Contributing Workflow
+
+### Task Management with Beads (`bd`)
+
+CivQuest uses **Beads (`bd`)** for distributed issue tracking. All ongoing engineering tasks and dependencies are tracked through `bd`:
+
+```bash
+bd prime                 # Output AI and contributor workflow context
+bd ready                 # List open, unblocked tasks ready for work
+bd show <task-id>        # View task requirements and acceptance criteria
+bd update <task-id> --claim # Claim a task before beginning implementation
+bd close <task-id>       # Mark task complete after passing validation
+```
+
+### Code Style & Quality Standards
+
+- **Go**: Ensure all Go code is formatted using `gofmt` and passes `go vet ./...` and `golangci-lint` without warnings.
+- **Java**: Follow standard NeoForge conventions and ensure code compiles with zero compiler warnings under Java 21.
+- **Protobuf**: Keep Protobuf contracts backward-compatible. Validate definitions using `buf lint`.
+- **Commits**: Write clear, imperative commit messages describing the functional impact of changes.
+
+### Technical Reference Documentation
+
+For deeper subsystem details and architectural specifications, consult the reference documents in `doc/`:
+
+- [Progressive Discovery Documentation](doc/ai/00-index.md) — In-depth guides for IPC protocols, mod internals, AI loops, storage schemas, and release management.
+- [Architectural Decision Records (ADRs)](doc/adr/) — Formal records of technical choices, invariants, and design patterns.
+
+---
+
+## Open Source & Legal Notices
+
+- See [ACKNOWLEDGEMENTS.md](ACKNOWLEDGEMENTS.md) for open-source credits and third-party software details.
+- See [NOTICES.md](NOTICES.md) for full license texts and distribution disclosures.
+- Licensed under the [MIT License](LICENSE).

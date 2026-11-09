@@ -8,7 +8,7 @@ import (
 
 func TestRoadPavingTracker_AccumulationAndPaving(t *testing.T) {
 	tracker := NewRoadPavingTracker(100, 3)
-	pos := civquestv1.BlockPosProto{X: 10, Y: 63, Z: 20}
+	pos := &civquestv1.BlockPosProto{X: 10, Y: 63, Z: 20}
 
 	// 1st Step on grass_block
 	intent1 := tracker.RecordStep("agent1", pos, "minecraft:grass_block")
@@ -57,7 +57,7 @@ func TestRoadPavingTracker_AccumulationAndPaving(t *testing.T) {
 
 func TestRoadPavingTracker_AvoidsAlreadyPaved(t *testing.T) {
 	tracker := NewRoadPavingTracker(100, 3)
-	pos := civquestv1.BlockPosProto{X: 15, Y: 63, Z: 25}
+	pos := &civquestv1.BlockPosProto{X: 15, Y: 63, Z: 25}
 
 	// Traversals over already paved dirt_path should never emit intent
 	// and must NOT pollute the tracker cache with new entries
@@ -78,7 +78,7 @@ func TestRoadPavingTracker_AvoidsAlreadyPaved(t *testing.T) {
 	}
 
 	// If block was previously tracked as grass, stepping on dirt_path marks it paved without re-adding
-	grassPos := civquestv1.BlockPosProto{X: 16, Y: 63, Z: 25}
+	grassPos := &civquestv1.BlockPosProto{X: 16, Y: 63, Z: 25}
 	_ = tracker.RecordStep("agent1", grassPos, "minecraft:grass_block")
 	_ = tracker.RecordStep("agent1", grassPos, "minecraft:dirt_path")
 	steps, paved, foundGrass := tracker.GetEntry(grassPos)
@@ -90,7 +90,7 @@ func TestRoadPavingTracker_AvoidsAlreadyPaved(t *testing.T) {
 
 func TestRoadPavingTracker_NonPaveableBlocks(t *testing.T) {
 	tracker := NewRoadPavingTracker(100, 3)
-	pos := civquestv1.BlockPosProto{X: 20, Y: 63, Z: 30}
+	pos := &civquestv1.BlockPosProto{X: 20, Y: 63, Z: 30}
 
 	// Stone should be ignored
 	for i := 0; i < 5; i++ {
@@ -123,14 +123,14 @@ func TestRoadPavingTracker_EvaluatePaving_MovementCheck(t *testing.T) {
 
 	// Step 1
 	_ = tracker.EvaluatePaving("agent1", frame)
-	steps, _, _ := tracker.GetEntry(civquestv1.BlockPosProto{X: 10, Y: 63, Z: 10})
+	steps, _, _ := tracker.GetEntry(&civquestv1.BlockPosProto{X: 10, Y: 63, Z: 10})
 	if steps != 1 {
 		t.Fatalf("expected 1 step, got %d", steps)
 	}
 
 	// Same frame / same position -> should NOT increment step
 	_ = tracker.EvaluatePaving("agent1", frame)
-	steps, _, _ = tracker.GetEntry(civquestv1.BlockPosProto{X: 10, Y: 63, Z: 10})
+	steps, _, _ = tracker.GetEntry(&civquestv1.BlockPosProto{X: 10, Y: 63, Z: 10})
 	if steps != 1 {
 		t.Fatalf("expected still 1 step when standing still, got %d", steps)
 	}
@@ -151,7 +151,7 @@ func TestRoadPavingTracker_EvaluatePaving_MovementCheck(t *testing.T) {
 
 	// Move back to (10.5, 64.0, 10.5) -> step 2 on first block
 	_ = tracker.EvaluatePaving("agent1", frame)
-	steps, _, _ = tracker.GetEntry(civquestv1.BlockPosProto{X: 10, Y: 63, Z: 10})
+	steps, _, _ = tracker.GetEntry(&civquestv1.BlockPosProto{X: 10, Y: 63, Z: 10})
 	if steps != 2 {
 		t.Fatalf("expected 2 steps after returning, got %d", steps)
 	}
@@ -171,10 +171,10 @@ func TestRoadPavingTracker_LRUBoundedCacheEviction(t *testing.T) {
 	// Small capacity of 3
 	tracker := NewRoadPavingTracker(3, 3)
 
-	posA := civquestv1.BlockPosProto{X: 1, Y: 63, Z: 1}
-	posB := civquestv1.BlockPosProto{X: 2, Y: 63, Z: 2}
-	posC := civquestv1.BlockPosProto{X: 3, Y: 63, Z: 3}
-	posD := civquestv1.BlockPosProto{X: 4, Y: 63, Z: 4}
+	posA := &civquestv1.BlockPosProto{X: 1, Y: 63, Z: 1}
+	posB := &civquestv1.BlockPosProto{X: 2, Y: 63, Z: 2}
+	posC := &civquestv1.BlockPosProto{X: 3, Y: 63, Z: 3}
+	posD := &civquestv1.BlockPosProto{X: 4, Y: 63, Z: 4}
 
 	tracker.RecordStep("agent1", posA, "minecraft:dirt")
 	tracker.RecordStep("agent1", posB, "minecraft:dirt")
@@ -229,7 +229,7 @@ func TestRoadPavingTracker_YOffsetAndDirtPathHeight(t *testing.T) {
 	}
 
 	_ = tracker.EvaluatePaving("agent1", frame)
-	steps, _, found := tracker.GetEntry(civquestv1.BlockPosProto{X: 10, Y: 63, Z: 10})
+	steps, _, found := tracker.GetEntry(&civquestv1.BlockPosProto{X: 10, Y: 63, Z: 10})
 	if !found || steps != 1 {
 		t.Fatalf("expected step recorded at Y=63 for pos.Y=63.9375, got found=%v steps=%d", found, steps)
 	}
@@ -266,7 +266,7 @@ func TestRoadPavingTracker_MissingBlockDoesNotLockOut(t *testing.T) {
 	}
 
 	_ = tracker.EvaluatePaving("agent1", frame2)
-	steps, _, found := tracker.GetEntry(civquestv1.BlockPosProto{X: 20, Y: 63, Z: 20})
+	steps, _, found := tracker.GetEntry(&civquestv1.BlockPosProto{X: 20, Y: 63, Z: 20})
 	if !found || steps != 1 {
 		t.Fatalf("expected step to be recorded once block is delivered, got found=%v, steps=%d", found, steps)
 	}

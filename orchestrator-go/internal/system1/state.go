@@ -46,19 +46,21 @@ type GoalHierarchy struct {
 
 // AgentState tracks volatile in-memory System 1 agent routine, needs, and paving state.
 type AgentState struct {
-	mu                   sync.RWMutex
-	AssignedBed          *civquestv1.BlockPosProto
-	ShelterPos           *civquestv1.BlockPosProto
-	CurrentRoutine       RoutineState
-	PrimaryDutyBlocked   bool
-	companionActive      bool
-	lastEatingTick       int64
-	lastSleepAttemptTick int64
-	lastShelterPlaceTick int64
-	shelterBlocksPlaced  int
-	lastHarvestTick      int64
-	lastCraftTick        int64
-	PavingTracker        *RoadPavingTracker
+	mu                     sync.RWMutex
+	AssignedBed            *civquestv1.BlockPosProto
+	ShelterPos             *civquestv1.BlockPosProto
+	CurrentRoutine         RoutineState
+	FSMState               State
+	PrimaryDutyBlocked     bool
+	companionActive        bool
+	lastEatingTick         int64
+	lastSleepAttemptTick   int64
+	lastShelterPlaceTick   int64
+	lastShelterTimeoutTick int64
+	shelterBlocksPlaced    int
+	lastHarvestTick        int64
+	lastCraftTick          int64
+	PavingTracker          *RoadPavingTracker
 
 	// Autonomous exploration, forward outposts & topological mapping state
 	homeOrigin          *civquestv1.Vec3
@@ -77,6 +79,7 @@ type AgentState struct {
 func NewAgentState() *AgentState {
 	return &AgentState{
 		CurrentRoutine: RoutineDawnAwakening,
+		FSMState:       StateBootstrap,
 		PavingTracker:  NewRoadPavingTracker(1000, 3),
 		goals: GoalHierarchy{
 			ImmediateGoal: "GATHER_TIMBER: Gather 4 logs and craft basic wooden tools",
@@ -159,6 +162,29 @@ func (s *AgentState) SetCurrentRoutine(r RoutineState) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.CurrentRoutine = r
+}
+
+// GetFSMState returns the active formal System 1 HFSM state.
+func (s *AgentState) GetFSMState() State {
+	if s == nil {
+		return StateBootstrap
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if s.FSMState == "" {
+		return StateBootstrap
+	}
+	return s.FSMState
+}
+
+// SetFSMState updates the active formal System 1 HFSM state.
+func (s *AgentState) SetFSMState(st State) {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.FSMState = st
 }
 
 // GetLastEatingTick safely returns the world tick of the last consumption event.
@@ -379,6 +405,26 @@ func (s *AgentState) SetLastShelterPlaceTick(tick int64) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.lastShelterPlaceTick = tick
+}
+
+// GetLastShelterTimeoutTick safely returns the world tick of the last shelter fallback timeout.
+func (s *AgentState) GetLastShelterTimeoutTick() int64 {
+	if s == nil {
+		return 0
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.lastShelterTimeoutTick
+}
+
+// SetLastShelterTimeoutTick safely records the world tick of a shelter fallback timeout.
+func (s *AgentState) SetLastShelterTimeoutTick(tick int64) {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.lastShelterTimeoutTick = tick
 }
 
 // GetShelterBlocksPlaced returns the count of emergency shelter wall blocks placed during the current night.

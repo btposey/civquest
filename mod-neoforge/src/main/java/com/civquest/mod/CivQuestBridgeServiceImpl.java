@@ -102,6 +102,10 @@ public class CivQuestBridgeServiceImpl extends CivQuestBridgeServiceGrpc.CivQues
                 LOGGER.info("ConnectAgent stream cancelled by client for agent '{}'", agentId);
                 if (agentId != null) {
                     streamRegistry.unregister(agentId, responseObserver);
+                    AgentEntity agent = agentEntityManager.getAgent(agentId);
+                    if (agent != null && agent.getWatchdogFSM() != null) {
+                        agent.getWatchdogFSM().onDisconnected();
+                    }
                 }
             });
         }
@@ -129,6 +133,10 @@ public class CivQuestBridgeServiceImpl extends CivQuestBridgeServiceGrpc.CivQues
                             terminated.set(true);
                             return;
                         }
+                        AgentEntity agent = agentEntityManager.getAgent(intentAgentId);
+                        if (agent != null && agent.getWatchdogFSM() != null) {
+                            agent.getWatchdogFSM().onConnected();
+                        }
                         LOGGER.info("Registered agent '{}' in StreamRegistry", intentAgentId);
                     } else {
                         current = sessionAgentId.get();
@@ -144,6 +152,11 @@ public class CivQuestBridgeServiceImpl extends CivQuestBridgeServiceGrpc.CivQues
 
                 LOGGER.debug("Received AgentIntent: agent_id={}, action_case={}",
                         value.getAgentId(), value.getActionCase());
+
+                AgentEntity agent = agentEntityManager.getAgent(intentAgentId);
+                if (agent != null && agent.getWatchdogFSM() != null) {
+                    agent.getWatchdogFSM().onIntentReceived(value);
+                }
 
                 MinecraftServer server = getServer();
                 agentEntityManager.handleIntent(server, value)
@@ -173,6 +186,10 @@ public class CivQuestBridgeServiceImpl extends CivQuestBridgeServiceGrpc.CivQues
                     String current = sessionAgentId.get();
                     if (current != null) {
                         streamRegistry.unregister(current, responseObserver);
+                        AgentEntity agent = agentEntityManager.getAgent(current);
+                        if (agent != null && agent.getWatchdogFSM() != null) {
+                            agent.getWatchdogFSM().onStreamError(error);
+                        }
                     }
                 }
             }
@@ -184,6 +201,10 @@ public class CivQuestBridgeServiceImpl extends CivQuestBridgeServiceGrpc.CivQues
                 String agentId = sessionAgentId.get();
                 if (agentId != null) {
                     streamRegistry.unregister(agentId, responseObserver);
+                    AgentEntity agent = agentEntityManager.getAgent(agentId);
+                    if (agent != null && agent.getWatchdogFSM() != null) {
+                        agent.getWatchdogFSM().onStreamError(t);
+                    }
                     LOGGER.info("Unregistered agent '{}' from StreamRegistry due to stream error", agentId);
                 }
             }
@@ -194,6 +215,10 @@ public class CivQuestBridgeServiceImpl extends CivQuestBridgeServiceGrpc.CivQues
                 String agentId = sessionAgentId.get();
                 if (agentId != null) {
                     streamRegistry.unregister(agentId, responseObserver);
+                    AgentEntity agent = agentEntityManager.getAgent(agentId);
+                    if (agent != null && agent.getWatchdogFSM() != null) {
+                        agent.getWatchdogFSM().onDisconnected();
+                    }
                     LOGGER.info("Unregistered agent '{}' from StreamRegistry due to stream completion", agentId);
                 }
                 if (terminated.compareAndSet(false, true)) {
