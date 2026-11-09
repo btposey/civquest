@@ -1,8 +1,9 @@
 # Progressive Discovery: System 1 Reactive Utility Engine
 
 ## 1. Principles & Timing Constraints
-System 1 is the deterministic survival and routine engine running in the Go agent process.
-- **Latency Budget**: $<5\text{ ms}$ per incoming frame.
+System 1 represents the deterministic survival and tactical routine tier. It operates across two complementary sub-tiers:
+- **Layer 1A (Spinal / Peripheral Reflexes)**: Executes natively inside `mod-neoforge` (`AgentEntity.tick()`, 20 Hz, $<0.1\text{ ms}$, 0 IPC) for instant physical hazard defense (shield deflection on projectile impact, item vacuuming, step climbing) and emits ascending `ReflexNotice` telemetry.
+- **Layer 1B (Subcortical / Tactical Intuition)**: Executes in the Go agent process (`civquest-agent`, 5 Hz, $<5\text{ ms}$, 0 LLM tokens). Evaluates spatial threat matrices, fight-or-flight confidence, and schedule state transitions.
 - **Token Cost**: Exactly 0 LLM tokens.
 - **Execution Model**: Pure in-memory state evaluation against incoming `TelemetryFrame` data and local SQLite graph caches.
 - **Hardware Acceleration (CPU SIMD)**: System 1 leverages host CPU multimedia vector extensions (AVX2 / AVX-512 / ARM NEON) for 3D spatial geometry, threat distance matrices, and utility scoring. This guarantees sub-millisecond execution on CPU threads while preserving 100% of GPU compute and VRAM for System 2 LLM inference.

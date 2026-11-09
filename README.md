@@ -21,6 +21,21 @@
 
 CivQuest is an autonomous, dynastic settlement engine introducing intelligent, humanoid, process-isolated `FakePlayer` agents driven by external Go orchestrators alongside the game world.
 
+### Dual Mission & Design Philosophy
+
+CivQuest is founded on two equal, complementary pillars:
+
+1. **An Engaging In-Game Settlement Experience**:
+   A deep, living Minecraft modification introducing authentic autonomous settlements, humanoid `FakePlayer` settlers, emergent sharecropping, barter trade economies, generational lineages, and permanent stakes through permadeath.
+
+2. **Systems Engineering & Embodied AI Testbed (Academic & Professional)**:
+   An exercise in robust systems design for AI-integrated embodied software. CivQuest tames non-deterministic prompt chaining by combining formal Hierarchical Finite State Machines (HFSM), bounded typed slot queues, and strict OS process isolation. The architecture is inspired by biological nervous systems:
+   - **Layer 1A (Spinal / Peripheral Reflexes)**: Native in-engine server tick loops (20 Hz, $<0.1\text{ ms}$, 0 IPC) for instant hazard evasion and physical survival.
+   - **Layer 1B (Subcortical / Tactical Intuition)**: External deterministic Go utility AI (5 Hz, $<5\text{ ms}$, 0 LLM tokens) managing fight-or-flight matrices, navigation goals, and daily schedules.
+   - **Layer 2 (Cortical / Strategic Cognition)**: Asynchronous LLM inference (Ollama/vLLM) and vector RAG (`sqlite-vec`) for social dialogue, trade bargaining, and architectural blueprints.
+
+> **Purpose-Built for Minecraft**: CivQuest is engineered 100% for the Minecraft server environment. It does not introduce artificial hardware abstractions or leaky robotics drivers. Instead, Minecraft serves as a low-cost, high-fidelity spatial simulation sandbox where systems engineering principles, latency hierarchies, and perception-action feedback loops are proven in practice—yielding transferable architectural insights for future embodied systems.
+
 ### The Dual-Layer Architecture:
 1. **Server Platform Mod (`mod-neoforge`)**:
    - Engine: Built on **NeoForge 21.1+** (compatible with Java 21 game servers).
