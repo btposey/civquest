@@ -1,0 +1,404 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <!-- Copyright (c) 2026 Brian Posey
+       Use of this source code is governed by an MIT-style
+       license that can be found in the LICENSE file. -->
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Getting Started — CivQuest</title>
+  <meta name="description" content="Install CivQuest with a single command. Learn about system requirements, the cq CLI, and how to run your first autonomous settlement.">
+  <link rel="stylesheet" href="assets/css/style.css">
+</head>
+<body>
+
+  <!-- Alpha Status Banner -->
+  <div class="alpha-banner">
+    <span class="alpha-tag">Active Pre-Alpha</span>
+    <span>CivQuest is under active early architecture and development. <a href="https://github.com/btposey/civquest" target="_blank" rel="noopener">Track source & issues on GitHub</a></span>
+  </div>
+
+  <!-- Navigation -->
+  <header>
+    <div class="nav-container">
+      <a href="index.html" class="logo">
+        <span class="logo-badge">civquest</span>
+        <span>CivQuest</span>
+        <span class="badge-alpha">v0.1.0</span>
+      </a>
+      <nav class="nav-links">
+        <a href="index.html">Overview</a>
+        <a href="getting-started.html" style="color: var(--accent-cyan); font-weight: 600;">Getting Started</a>
+        <a href="gameplay.html">Gameplay</a>
+        <a href="technical/index.html">Systems Engineering</a>
+        <a href="https://github.com/btposey/civquest" class="btn-github" target="_blank" rel="noopener">
+          <svg width="18" height="18" viewBox="0 0 16 16" fill="currentColor">
+            <path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/>
+          </svg>
+          <span>GitHub</span>
+        </a>
+      </nav>
+    </div>
+  </header>
+
+  <!-- Hero Section -->
+  <section class="hero">
+    <div class="hero-pill">
+      <span>One-Command Installation • No Build Tools Required</span>
+    </div>
+    <h1>Get CivQuest<br><span>Running in Minutes</span></h1>
+    <p>
+      Install the <code>cq</code> CLI, configure your inference endpoint, and launch autonomous settlers — 
+      all without cloning a repository or installing build toolchains.
+    </p>
+  </section>
+
+  <!-- Install Command -->
+  <section class="section">
+    <div class="section-header">
+      <h2>Install Command</h2>
+      <p>Run a single command to download and install the CivQuest CLI and dependencies.</p>
+    </div>
+
+    <div class="terminal-card">
+      <div class="terminal-header">
+        <div class="dot dot-red"></div>
+        <div class="dot dot-yellow"></div>
+        <div class="dot dot-green"></div>
+        <span style="font-size: 0.8rem; color: #64748b; margin-left: 0.5rem; font-family: var(--font-mono);">bash — install CivQuest</span>
+      </div>
+      <div class="terminal-body">
+        <pre><span class="cmd">curl -fsSL https://raw.githubusercontent.com/btposey/civquest/main/install.sh | bash -s -- -y all</span></pre>
+      </div>
+    </div>
+
+    <p style="margin-top: 1.5rem; color: var(--text-muted);">
+      This downloads prebuilt binaries from <a href="https://github.com/btposey/civquest/releases" style="color: var(--accent-cyan);">GitHub Releases</a> 
+      and installs them to <code>~/.local/bin</code>. No Go compiler, Gradle, or repository clone is required.
+    </p>
+    <p style="margin-top: 0.5rem; color: var(--text-muted);">
+      To install a specific version, append <code>-- --version 0.1.0</code> before the target:
+    </p>
+    <div class="terminal-card" style="margin-top: 0.75rem;">
+      <div class="terminal-header">
+        <div class="dot dot-red"></div>
+        <div class="dot dot-yellow"></div>
+        <div class="dot dot-green"></div>
+        <span style="font-size: 0.8rem; color: #64748b; margin-left: 0.5rem; font-family: var(--font-mono);">bash — install specific version</span>
+      </div>
+      <div class="terminal-body">
+        <pre><span class="cmd">curl -fsSL https://raw.githubusercontent.com/btposey/civquest/main/install.sh | bash -s -- --version 0.1.0 -y all</span></pre>
+      </div>
+    </div>
+  </section>
+
+  <!-- Prerequisites -->
+  <section class="section">
+    <div class="section-header">
+      <h2>System Requirements</h2>
+      <p>What you need before running CivQuest.</p>
+    </div>
+
+    <div class="grid">
+      <div class="card">
+        <div class="card-icon icon-blue">🖥️</div>
+        <h3>Hardware</h3>
+        <p>
+          <strong>RAM:</strong> Minimum 8 GB (4 GB for the Minecraft server, 2 GB for agent processes, remainder for LLM inference).<br>
+          <strong>Disk:</strong> 10 GB for server runtime, mod JAR, and agent state databases.<br>
+          <strong>CPU:</strong> x86_64 (amd64) or ARM64 (aarch64) Linux system.
+        </p>
+      </div>
+
+      <div class="card">
+        <div class="card-icon icon-emerald">☕</div>
+        <h3>Java Runtime</h3>
+        <p>
+          <strong>Java 21</strong> is required for the NeoForge Minecraft server. Install via your package manager 
+          or <code>sudo apt install openjdk-21-jdk</code> on Debian/Ubuntu systems.
+        </p>
+      </div>
+
+      <div class="card">
+        <div class="card-icon icon-purple">🧠</div>
+        <h3>LLM Inference Endpoint</h3>
+        <p>
+          Agents require a local or remote LLM gateway for dialogue, barter negotiation, and construction planning. 
+          Supported backends: <strong>Ollama</strong> (default) or <strong>vLLM</strong>. 
+          You must deploy and maintain your own inference server.
+        </p>
+      </div>
+    </div>
+
+    <div class="callout callout-warning" style="margin-top: 2rem;">
+      <div class="callout-title">Inference Cost Disclaimer</div>
+      <p>
+        Running LLM inference consumes compute resources and/or API tokens. <strong>All inference costs are borne by the user.</strong> 
+        CivQuest does not provide, manage, or subsidize any LLM inference service. 
+        If you use a cloud-based inference provider (e.g., OpenAI, Anthropic, Together AI), you are responsible for all associated API costs. 
+        Local inference via Ollama or vLLM requires GPU or CPU compute capacity.
+      </p>
+    </div>
+  </section>
+
+  <!-- Quick Start Workflow -->
+  <section class="section">
+    <div class="section-header">
+      <h2>Quick Start</h2>
+      <p>From installation to your first autonomous settlers in five steps.</p>
+    </div>
+
+    <div class="spec-table-wrapper">
+      <table class="spec-table">
+        <thead>
+          <tr>
+            <th style="width: 5rem;">Step</th>
+            <th>Command</th>
+            <th>Description</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><strong>1</strong></td>
+            <td><code>cq status</code></td>
+            <td>Verify your installation. Displays the XDG directory topology, binary paths, and runtime status.</td>
+          </tr>
+          <tr>
+            <td><strong>2</strong></td>
+            <td><code>cq gateway test</code></td>
+            <td>Confirm your LLM inference endpoint is reachable. Tests connectivity to the configured Ollama/vLLM gateway.</td>
+          </tr>
+          <tr>
+            <td><strong>3</strong></td>
+            <td><code>cq server setup</code></td>
+            <td>Download and configure the NeoForge dedicated server with the CivQuest mod pre-installed.</td>
+          </tr>
+          <tr>
+            <td><strong>4</strong></td>
+            <td><code>cq agent create aria</code></td>
+            <td>Create your first agent profile. Starter agents (Aria the farmer, Boreas the builder) are pre-configured.</td>
+          </tr>
+          <tr>
+            <td><strong>5</strong></td>
+            <td><code>cq server start</code></td>
+            <td>Launch the Minecraft server. Agents will spawn as autonomous settlers in your world.</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <p style="margin-top: 1.5rem; color: var(--text-muted);">
+      To join the world as a player, install the Minecraft launcher profile:
+    </p>
+    <div class="terminal-card" style="margin-top: 0.75rem;">
+      <div class="terminal-header">
+        <div class="dot dot-red"></div>
+        <div class="dot dot-yellow"></div>
+        <div class="dot dot-green"></div>
+        <span style="font-size: 0.8rem; color: #64748b; margin-left: 0.5rem; font-family: var(--font-mono);">bash — install client profile</span>
+      </div>
+      <div class="terminal-body">
+        <pre><span class="cmd">cq client install</span></pre>
+      </div>
+    </div>
+    <p style="margin-top: 0.75rem; color: var(--text-muted);">
+      Then select the <strong>"CivQuest"</strong> profile in the Minecraft launcher and join your server.
+    </p>
+  </section>
+
+  <!-- CLI Reference -->
+  <section class="section">
+    <div class="section-header">
+      <h2>CLI Reference</h2>
+      <p>Complete reference for the <code>cq</code> command-line interface, organized by domain.</p>
+    </div>
+
+    <!-- Server Commands -->
+    <div class="cli-group">
+      <h3 style="color: var(--accent-cyan); margin-bottom: 1rem; display: flex; align-items: center; gap: 0.5rem;">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
+        Server Management
+      </h3>
+      <div class="spec-table-wrapper">
+        <table class="spec-table">
+          <thead>
+            <tr><th>Command</th><th>Description</th></tr>
+          </thead>
+          <tbody>
+            <tr><td><code>cq server setup</code></td><td>Download NeoForge server runtime, stage the mod JAR, and write default configuration files.</td></tr>
+            <tr><td><code>cq server start</code></td><td>Start the dedicated Minecraft server in the background.</td></tr>
+            <tr><td><code>cq server stop</code></td><td>Gracefully stop the running server.</td></tr>
+            <tr><td><code>cq server status</code></td><td>Show server process status, port binding, and uptime.</td></tr>
+            <tr><td><code>cq server logs</code></td><td>Stream live server logs (follow mode).</td></tr>
+            <tr><td><code>cq server export-recipes</code></td><td>Export all registered crafting recipes to JSON for blueprint authoring.</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- Agent Commands -->
+    <div class="cli-group">
+      <h3 style="color: var(--accent-emerald); margin-bottom: 1rem; display: flex; align-items: center; gap: 0.5rem;">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="8" r="4"/><path d="M20 21a8 8 0 10-16 0"/></svg>
+        Agent Management
+      </h3>
+      <div class="spec-table-wrapper">
+        <table class="spec-table">
+          <thead>
+            <tr><th>Command</th><th>Description</th></tr>
+          </thead>
+          <tbody>
+            <tr><td><code>cq agent list</code></td><td>List all configured agent profiles and their current states.</td></tr>
+            <tr><td><code>cq agent status &lt;name&gt;</code></td><td>Show detailed status for a specific agent: position, health, inventory, and active goals.</td></tr>
+            <tr><td><code>cq agent create &lt;name&gt;</code></td><td>Create a new agent profile with the specified name and default traits.</td></tr>
+            <tr><td><code>cq agent start &lt;name&gt;</code></td><td>Start the isolated agent process and connect it to the server.</td></tr>
+            <tr><td><code>cq agent stop &lt;name&gt;</code></td><td>Gracefully stop an agent process.</td></tr>
+            <tr><td><code>cq agent start-clan &lt;clan&gt;</code></td><td>Start all agents belonging to a specific clan.</td></tr>
+            <tr><td><code>cq agent logs &lt;name&gt;</code></td><td>Stream live logs from a specific agent process.</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- Gateway Commands -->
+    <div class="cli-group">
+      <h3 style="color: var(--accent-purple); margin-bottom: 1rem; display: flex; align-items: center; gap: 0.5rem;">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>
+        Inference Gateway
+      </h3>
+      <div class="spec-table-wrapper">
+        <table class="spec-table">
+          <thead>
+            <tr><th>Command</th><th>Description</th></tr>
+          </thead>
+          <tbody>
+            <tr><td><code>cq gateway test</code></td><td>Test connectivity to the configured LLM gateway (Ollama/vLLM) and verify model availability.</td></tr>
+            <tr><td><code>cq gateway eval</code></td><td>Run a diagnostic evaluation: send a test prompt and measure latency, token count, and JSON schema compliance.</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- Client Commands -->
+    <div class="cli-group">
+      <h3 style="color: var(--accent-amber); margin-bottom: 1rem; display: flex; align-items: center; gap: 0.5rem;">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2"/><polyline points="8 21 12 17 16 21"/></svg>
+        Client Configuration
+      </h3>
+      <div class="spec-table-wrapper">
+        <table class="spec-table">
+          <thead>
+            <tr><th>Command</th><th>Description</th></tr>
+          </thead>
+          <tbody>
+            <tr><td><code>cq client install</code></td><td>Install the NeoForge client, stage the CivQuest mod, and create a "CivQuest" launcher profile.</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- Blueprint Commands -->
+    <div class="cli-group">
+      <h3 style="color: var(--accent-cyan); margin-bottom: 1rem; display: flex; align-items: center; gap: 0.5rem;">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+        Blueprints
+      </h3>
+      <div class="spec-table-wrapper">
+        <table class="spec-table">
+          <thead>
+            <tr><th>Command</th><th>Description</th></tr>
+          </thead>
+          <tbody>
+            <tr><td><code>cq blueprint list</code></td><td>List all available construction blueprints (official, player-imported, and LLM-generated).</td></tr>
+            <tr><td><code>cq blueprint validate &lt;file&gt;</code></td><td>Validate a YAML blueprint file for structural correctness and Bill of Materials completeness.</td></tr>
+            <tr><td><code>cq blueprint generate</code></td><td>Use the LLM gateway to generate a new blueprint from a natural language description.</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- Clan Commands -->
+    <div class="cli-group">
+      <h3 style="color: var(--accent-emerald); margin-bottom: 1rem; display: flex; align-items: center; gap: 0.5rem;">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 00-3-3.87"/><path d="M16 3.13a4 4 0 010 7.75"/></svg>
+        Clans
+      </h3>
+      <div class="spec-table-wrapper">
+        <table class="spec-table">
+          <thead>
+            <tr><th>Command</th><th>Description</th></tr>
+          </thead>
+          <tbody>
+            <tr><td><code>cq clan inspect &lt;clan&gt;</code></td><td>Show clan membership, prestige score, granary stock, and diplomatic relationships.</td></tr>
+            <tr><td><code>cq clan prestige &lt;clan&gt;</code></td><td>Display detailed prestige breakdown: completed structures, surviving agents, and chronicler entries.</td></tr>
+            <tr><td><code>cq clan diplomacy &lt;clan&gt;</code></td><td>Show inter-clan diplomacy state: alliances, trade agreements, and hostilities.</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- General Commands -->
+    <div class="cli-group">
+      <h3 style="color: var(--text-muted); margin-bottom: 1rem; display: flex; align-items: center; gap: 0.5rem;">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>
+        General
+      </h3>
+      <div class="spec-table-wrapper">
+        <table class="spec-table">
+          <thead>
+            <tr><th>Command</th><th>Description</th></tr>
+          </thead>
+          <tbody>
+            <tr><td><code>cq status</code></td><td>Display installation topology: XDG directory paths, binary versions, server status, and active agent count.</td></tr>
+            <tr><td><code>cq --help</code></td><td>Show available subcommands and global flags.</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+
+  <!-- Configuration -->
+  <section class="section">
+    <div class="section-header">
+      <h2>Configuration</h2>
+      <p>CivQuest follows the XDG Base Directory specification. All paths are dynamically resolved.</p>
+    </div>
+
+    <div class="spec-table-wrapper">
+      <table class="spec-table">
+        <thead>
+          <tr><th>Environment Variable</th><th>Default</th><th>Purpose</th></tr>
+        </thead>
+        <tbody>
+          <tr><td><code>XDG_CONFIG_HOME</code></td><td><code>~/.config</code></td><td>Agent profiles, global.yaml, blueprints</td></tr>
+          <tr><td><code>XDG_DATA_HOME</code></td><td><code>~/.local/share</code></td><td>Server runtime, agent databases, clan data, graveyard</td></tr>
+          <tr><td><code>XDG_STATE_HOME</code></td><td><code>~/.local/state</code></td><td>Logs, PID files, UNIX domain sockets</td></tr>
+          <tr><td><code>INSTALL_BIN_DIR</code></td><td><code>~/.local/bin</code></td><td>Installed binaries (cq, civquest-agent)</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <p style="margin-top: 1.5rem; color: var(--text-muted);">
+      The global configuration file at <code>~/.config/civquest/global.yaml</code> controls LLM gateway settings, 
+      inference temperature, supervisor limits, and gRPC connectivity. Edit this file to point to your Ollama or vLLM endpoint.
+    </p>
+  </section>
+
+  <!-- Footer -->
+  <footer>
+    <div class="footer-container">
+      <div class="footer-links">
+        <a href="index.html">Overview</a>
+        <a href="getting-started.html">Getting Started</a>
+        <a href="gameplay.html">Gameplay</a>
+        <a href="technical/index.html">Systems Engineering</a>
+        <a href="https://github.com/btposey/civquest">Source Code</a>
+        <a href="https://github.com/btposey/civquest/blob/main/LICENSE">MIT License</a>
+      </div>
+
+      <p class="copyright">&copy; 2026 Brian Posey. Open source under the MIT License.</p>
+    </div>
+  </footer>
+
+</body>
+</html>

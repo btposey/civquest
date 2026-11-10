@@ -1,0 +1,224 @@
+name: Nightly Release Build
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  resolve-version:
+    name: Resolve Version
+    runs-on: ubuntu-latest
+    outputs:
+      semver: ${{ steps.version_step.outputs.semver }}
+      loader_version: ${{ steps.version_step.outputs.loader_version }}
+      engine_compat: ${{ steps.version_step.outputs.engine_compat }}
+      build_date: ${{ steps.version_step.outputs.build_date }}
+      commit_sha: ${{ steps.version_step.outputs.commit_sha }}
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Parse Version Target
+        id: version_step
+        run: |
+          SEMVER=$(jq -r '.semver' .version-target.json)
+          LOADER_VER=$(jq -r '.target_loader_version' .version-target.json)
+          ENGINE_COMPAT=$(jq -r '.engine_compatibility' .version-target.json)
+          BUILD_DATE=$(date -u +%Y%m%d)
+          COMMIT_SHA=${GITHUB_SHA::8}
+
+          echo "semver=${SEMVER}" >> "$GITHUB_OUTPUT"
+          echo "loader_version=${LOADER_VER}" >> "$GITHUB_OUTPUT"
+          echo "engine_compat=${ENGINE_COMPAT}" >> "$GITHUB_OUTPUT"
+          echo "build_date=${BUILD_DATE}" >> "$GITHUB_OUTPUT"
+          echo "commit_sha=${COMMIT_SHA}" >> "$GITHUB_OUTPUT"
+
+          echo "Version: ${SEMVER}-${BUILD_DATE} (${COMMIT_SHA})"
+          echo "NeoForge: ${LOADER_VER}, Minecraft: ${ENGINE_COMPAT}"
+
+  build-go:
+    name: Build Go Binaries (${{ matrix.os }}/${{ matrix.arch }})
+    needs: resolve-version
+    strategy:
+      matrix:
+        include:
+          - os: linux
+            arch: amd64
+            goarch: amd64
+          - os: linux
+            arch: arm64
+            goarch: arm64
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.23'
+          cache-dependency-path: 'orchestrator-go/go.sum'
+
+      - name: Set up QEMU (for cross-compilation)
+        if: matrix.arch == 'arm64'
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: arm64
+
+      - name: Install Protoc
+        run: |
+          sudo apt-get update && sudo apt-get install -y protobuf-compiler
+          go install google.golang.org/protobuf/cmd/protoc-gen-go@latest
+          go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@latest
+
+      - name: Build Go Binaries
+        env:
+          GOOS: ${{ matrix.os }}
+          GOARCH: ${{ matrix.goarch }}
+          SEMVER: ${{ needs.resolve-version.outputs.semver }}
+          BUILD_DATE: ${{ needs.resolve-version.outputs.build_date }}
+          COMMIT_SHA: ${{ needs.resolve-version.outputs.commit_sha }}
+        run: |
+          VERSION="${SEMVER}-nightly-${BUILD_DATE}"
+          OUT_DIR="dist/${GOOS}/${GOARCH}"
+          mkdir -p "${OUT_DIR}"
+
+          cd orchestrator-go
+          CGO_ENABLED=0 go build -ldflags "-s -w -X main.Version=${VERSION}" -o "${OUT_DIR}/cq" ./cmd/cq
+          CGO_ENABLED=0 go build -ldflags "-s -w -X main.Version=${VERSION}" -o "${OUT_DIR}/civquest-agent" ./cmd/civquest-agent
+          cd ..
+
+          # Create tar.gz archives with SHA256 checksums
+          for binary in cq civquest-agent; do
+            ARCHIVE="${binary}-${VERSION}-${GOOS}-${GOARCH}.tar.gz"
+            tar -czf "dist/${ARCHIVE}" -C "${OUT_DIR}" "${binary}"
+            sha256sum "dist/${ARCHIVE}" > "dist/${ARCHIVE}.sha256"
+          done
+
+      - name: Upload Go Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: go-binaries-${{ matrix.os }}-${{ matrix.arch }}
+          path: dist/*.tar.gz*
+
+  build-mod:
+    name: Build NeoForge Mod
+    needs: resolve-version
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up Java 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '21'
+
+      - name: Build Mod JAR
+        env:
+          ENGINE_COMPAT: ${{ needs.resolve-version.outputs.engine_compat }}
+          LOADER_VER: ${{ needs.resolve-version.outputs.loader_version }}
+          SEMVER: ${{ needs.resolve-version.outputs.semver }}
+          BUILD_DATE: ${{ needs.resolve-version.outputs.build_date }}
+        run: |
+          VERSION="${SEMVER}-nightly-${BUILD_DATE}"
+          ./gradlew :mod-neoforge:build \
+            -PgameVersion="${ENGINE_COMPAT}" \
+            -PloaderVersion="${LOADER_VER}" \
+            -PmodVersion="${VERSION}"
+
+          # Copy the built JAR with the release-friendly name
+          mkdir -p dist
+          cp mod-neoforge/build/libs/*.jar "dist/civquest-mod-${VERSION}.jar" || true
+          sha256sum "dist/civquest-mod-${VERSION}.jar" > "dist/civquest-mod-${VERSION}.jar.sha256"
+
+      - name: Upload Mod Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: mod-jar
+          path: dist/civquest-mod-*
+
+  publish-release:
+    name: Publish Nightly Release
+    needs: [resolve-version, build-go, build-mod]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Download All Artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist/
+
+      - name: Display Artifacts
+        run: |
+          echo "=== All downloaded artifacts ==="
+          find dist/ -type f | sort
+
+      - name: Create Release Body
+        env:
+          SEMVER: ${{ needs.resolve-version.outputs.semver }}
+          BUILD_DATE: ${{ needs.resolve-version.outputs.build_date }}
+          COMMIT_SHA: ${{ needs.resolve-version.outputs.commit_sha }}
+          ENGINE_COMPAT: ${{ needs.resolve-version.outputs.engine_compat }}
+          LOADER_VER: ${{ needs.resolve-version.outputs.loader_version }}
+        run: |
+          VERSION="${SEMVER}-nightly-${BUILD_DATE}"
+          cat > dist/release-body.md << EOF
+          # Nightly Build: ${VERSION}
+
+          **Commit:** [\`${COMMIT_SHA}\`](https://github.com/btposey/civquest/commit/${GITHUB_SHA})
+          **Built:** $(date -u '+%Y-%m-%d %H:%M UTC')
+
+          ## Stack
+          - Minecraft: ${ENGINE_COMPAT}
+          - NeoForge: ${LOADER_VER}
+          - Go: 1.23
+          - Java: 21
+
+          ## Assets
+          - \`cq\` CLI binary (linux/amd64, linux/arm64)
+          - \`civquest-agent\` worker binary (linux/amd64, linux/arm64)
+          - \`civquest-mod\`.jar (NeoForge server mod)
+
+          ## Installation
+          \`\`\`bash
+          curl -fsSL https://raw.githubusercontent.com/btposey/civquest/main/install.sh | bash -s -- -y all
+          \`\`\`
+
+          > [!NOTE]
+          > This is an automated nightly build from \`main\`. Use with caution.
+          EOF
+
+      - name: Publish to GitHub Releases
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SEMVER: ${{ needs.resolve-version.outputs.semver }}
+          BUILD_DATE: ${{ needs.resolve-version.outputs.build_date }}
+        run: |
+          VERSION="${SEMVER}-nightly-${BUILD_DATE}"
+
+          # Remove existing 'nightly' release if it exists (to avoid duplicate assets)
+          # Note: --cleanup-tag is intentionally omitted to preserve the git annotation tag
+          gh release delete nightly --yes 2>/dev/null || true
+
+          # Create new release tagged 'nightly' (isolated from semver releases)
+          gh release create nightly \
+            --title "Nightly Build ${VERSION}" \
+            --prerelease \
+            --notes-file dist/release-body.md \
+            dist/go-binaries-linux-amd64/*.tar.gz \
+            dist/go-binaries-linux-amd64/*.sha256 \
+            dist/go-binaries-linux-arm64/*.tar.gz \
+            dist/go-binaries-linux-arm64/*.sha256 \
+            dist/mod-jar/civquest-mod-*.jar \
+            dist/mod-jar/*.sha256
+
+          echo "Published nightly release: ${VERSION}"

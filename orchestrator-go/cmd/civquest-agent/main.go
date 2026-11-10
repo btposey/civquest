@@ -21,6 +21,9 @@ import (
 	"github.com/btposey/civquest/orchestrator-go/internal/xdg"
 )
 
+// Version is set at build time via -ldflags -X main.Version=...
+var Version = "dev"
+
 func main() {
 	if err := run(context.Background(), os.Args[1:], os.Stdout, os.Stderr, nil); err != nil {
 		fmt.Fprintf(os.Stderr, "[-] Fatal error: %v\n", err)

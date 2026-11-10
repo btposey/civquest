@@ -66,8 +66,9 @@ func NewRootCmd() *cobra.Command {
 		Long: `cq is the management interface and process supervisor for CivQuest.
 It provides control over the NeoForge server, autonomous agents,
 clans, blueprints, and system health.`,
-		SilenceUsage:  true,
-		SilenceErrors: true,
+		Version:           Version,
+		SilenceUsage:      true,
+		SilenceErrors:     true,
 		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
 			if flagServerID != "" {
 				if err := xdg.ValidateServerID(flagServerID); err != nil {
