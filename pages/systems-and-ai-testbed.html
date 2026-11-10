@@ -29,7 +29,7 @@
       <nav class="nav-links">
         <a href="index.html">Overview</a>
         <a href="gameplay.html">Gameplay</a>
-        <a href="systems-and-ai-testbed.html" style="color: var(--accent-cyan); font-weight: 600;">Systems & AI Testbed</a>
+        <a href="technical/index.html" style="color: var(--accent-cyan); font-weight: 600;">Systems Engineering</a>
         <a href="https://github.com/btposey/civquest" class="btn-github" target="_blank" rel="noopener">
           <svg width="18" height="18" viewBox="0 0 16 16" fill="currentColor">
             <path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/>
@@ -52,7 +52,7 @@
     </p>
     <div class="hero-buttons">
       <a href="gameplay.html" class="btn-secondary">&larr; Gameplay Overview</a>
-      <a href="https://github.com/btposey/civquest" class="btn-primary" target="_blank" rel="noopener">Inspect Codebase &rarr;</a>
+      <a href="technical/index.html" class="btn-primary">Systems Engineering Suite &rarr;</a>
     </div>
   </section>
 
@@ -72,6 +72,9 @@
           Resolves sub-tick physical emergencies (shield raising on projectile trajectory intersection, item vacuuming, obstacle climbing) 
           and emits ascending <code>ReflexNotice</code> events.
         </p>
+        <p style="margin-top: 1rem;">
+          <a href="technical/tripartite-orchestration.html" style="color: var(--accent-cyan); font-weight: 600; text-decoration: underline;">Read Latency Specification &rarr;</a>
+        </p>
       </div>
 
       <div class="card">
@@ -82,6 +85,9 @@
           Evaluates threat matrices, runs the Hierarchical Finite State Machine (HFSM), manages inventory slots, 
           and streams kinetic intents through a bounded slot queue.
         </p>
+        <p style="margin-top: 1rem;">
+          <a href="technical/fsm-and-intent-pipeline.html" style="color: var(--accent-emerald); font-weight: 600; text-decoration: underline;">Read HFSM Specification &rarr;</a>
+        </p>
       </div>
 
       <div class="card">
@@ -90,6 +96,9 @@
         <p>
           <strong>Prefrontal Cortex Analog:</strong> Asynchronous LLM inference (Ollama/vLLM) and vector RAG (<code>sqlite-vec</code>). 
           Generates structured goal directives (trade bargains, blueprint layouts, historical chronicles) that parameterize active HFSM states.
+        </p>
+        <p style="margin-top: 1rem;">
+          <a href="technical/inference-and-context.html" style="color: var(--accent-purple); font-weight: 600; text-decoration: underline;">Read Inference Specification &rarr;</a>
         </p>
       </div>
     </div>
@@ -111,6 +120,9 @@
           <code>SHELTER</code>, <code>EMERGENCY</code>, <code>REST</code>). Gated transitions guarantee that combat panic 
           is never preempted by temporal routines like sleep.
         </p>
+        <p style="margin-top: 1rem;">
+          <a href="technical/fsm-and-intent-pipeline.html" style="color: var(--accent-amber); font-weight: 600; text-decoration: underline;">Read HFSM Specification &rarr;</a>
+        </p>
       </div>
 
       <div class="card">
@@ -119,6 +131,9 @@
         <p>
           When in-engine reflexes fire, lightweight <code>ReflexNotice</code> telemetry reports upward to the Go harness. 
           Tactical evaluators immediately adjust survival confidence scores and replan tasks without waiting for an active goal to fail.
+        </p>
+        <p style="margin-top: 1rem;">
+          <a href="technical/tripartite-orchestration.html" style="color: var(--accent-cyan); font-weight: 600; text-decoration: underline;">Read Reflex Loop Specs &rarr;</a>
         </p>
       </div>
 
@@ -129,6 +144,9 @@
           High-frequency kinetic vectors (navigation, combat attacks) are bounded and coalesced so only the freshest target vector transmits, 
           while sequential block placement intents retain strict FIFO order for structural integrity.
         </p>
+        <p style="margin-top: 1rem;">
+          <a href="technical/networked-ipc-streaming.html" style="color: var(--accent-cyan); font-weight: 600; text-decoration: underline;">Read IPC Streaming Specs &rarr;</a>
+        </p>
       </div>
 
       <div class="card">
@@ -137,6 +155,9 @@
         <p>
           Prerequisite inventory guards validate equipment (<code>HasShield</code>, <code>HasWeapon</code>) before emitting combat directives, 
           eliminating zero-effect gRPC payload transmissions that waste network bandwidth.
+        </p>
+        <p style="margin-top: 1rem;">
+          <a href="technical/fsm-and-intent-pipeline.html" style="color: var(--accent-emerald); font-weight: 600; text-decoration: underline;">Read Intent Guard Specs &rarr;</a>
         </p>
       </div>
 
@@ -147,6 +168,9 @@
           Each agent executes in an isolated OS process (<code>civquest-agent</code>) with dedicated XDG directories, SQLite databases, 
           and UNIX domain sockets. Process failures are isolated and never crash neighboring agents or the game server.
         </p>
+        <p style="margin-top: 1rem;">
+          <a href="technical/agent-harness-isolation.html" style="color: var(--accent-purple); font-weight: 600; text-decoration: underline;">Read Isolation Specs &rarr;</a>
+        </p>
       </div>
 
       <div class="card">
@@ -155,6 +179,9 @@
         <p>
           <strong>Purpose-Built for Minecraft:</strong> Rather than forcing premature hardware abstraction layers, CivQuest leverages 
           Minecraft's voxel grid as a high-fidelity sandbox to validate systems engineering principles—yielding transferable wisdom for future physical embodied systems.
+        </p>
+        <p style="margin-top: 1rem;">
+          <a href="technical/physical-embodiment.html" style="color: var(--accent-amber); font-weight: 600; text-decoration: underline;">Read Embodiment Specs &rarr;</a>
         </p>
       </div>
     </div>
@@ -176,7 +203,7 @@
       <div class="footer-links">
         <a href="index.html">Overview</a>
         <a href="gameplay.html">Gameplay</a>
-        <a href="systems-and-ai-testbed.html">Systems & AI Testbed</a>
+        <a href="technical/index.html">Systems Engineering</a>
         <a href="https://github.com/btposey/civquest">Source Code</a>
         <a href="https://github.com/btposey/civquest/blob/main/LICENSE">MIT License</a>
       </div>

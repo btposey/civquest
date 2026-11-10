@@ -1,0 +1,347 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <!-- Copyright (c) 2026 Brian Posey
+       Use of this source code is governed by an MIT-style
+       license that can be found in the LICENSE file. -->
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Physical Embodiment &amp; Navigation — CivQuest Technical Architecture</title>
+  <meta name="description" content="Technical specification for CivQuest's physical embodiment: Server-Side FakePlayer avatars, dynamic packet skin injection, Baritone A* pathfinding, and spatial quadrant construction.">
+  <link rel="stylesheet" href="../assets/css/style.css">
+</head>
+<body>
+
+  <!-- Alpha Status Banner -->
+  <div class="alpha-banner">
+    <span class="alpha-tag">Active Pre-Alpha</span>
+    <span>CivQuest is under active early architecture and development. <a href="https://github.com/btposey/civquest" target="_blank" rel="noopener">Track source & issues on GitHub</a></span>
+  </div>
+
+  <!-- Navigation -->
+  <header>
+    <div class="nav-container">
+      <a href="../index.html" class="logo">
+        <span class="logo-badge">civquest</span>
+        <span>CivQuest</span>
+        <span class="badge-alpha">v0.1.0</span>
+      </a>
+      <nav class="nav-links">
+        <a href="../index.html">Overview</a>
+        <a href="../gameplay.html">Gameplay</a>
+        <a href="index.html" style="color: var(--accent-cyan); font-weight: 600;">Systems Engineering</a>
+        <a href="https://github.com/btposey/civquest" class="btn-github" target="_blank" rel="noopener">
+          <svg width="18" height="18" viewBox="0 0 16 16" fill="currentColor">
+            <path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/>
+          </svg>
+          <span>GitHub</span>
+        </a>
+      </nav>
+    </div>
+  </header>
+
+  <main class="tech-container">
+    
+    <!-- Breadcrumb Navigation -->
+    <nav class="breadcrumb-nav">
+      <a href="../index.html">Overview</a>
+      <span class="breadcrumb-separator">/</span>
+      <a href="index.html">Systems Engineering Hub</a>
+      <span class="breadcrumb-separator">/</span>
+      <span class="breadcrumb-current">6. Embodiment &amp; Navigation</span>
+    </nav>
+
+    <!-- Hero -->
+    <div class="tech-hero">
+      <div class="tech-meta-pills">
+        <span class="meta-pill pill-cyan">Server-Side FakePlayer</span>
+        <span class="meta-pill pill-emerald">ADR-007 &amp; ADR-009</span>
+        <span class="meta-pill pill-purple">Baritone Voxel A*</span>
+        <span class="meta-pill pill-amber">Spatial Quadrants (ADR-010)</span>
+      </div>
+      <h1>Physical Embodiment, Avatars &amp;<br><span>Spatial Voxel Navigation</span></h1>
+      <p class="tech-lead">
+        Embodied simulation demands physical fidelity: gravity, hitbox collisions, reach distances, and tool degradation. 
+        CivQuest manifests agents as server-side <code>FakePlayer</code> avatars, injects dynamic client skin packets without Mojang auth, 
+        delegates physical pathfinding to an integrated Baritone API wrapper, and coordinates multi-agent construction via spatial quadrant partitioning.
+      </p>
+    </div>
+
+    <!-- DEPTH LAYER 1: TMLI-15 -->
+    <section class="depth-layer">
+      <div class="depth-header">
+        <div class="depth-title-group">
+          <span class="depth-indicator depth-1-tag">Level 1: Intuitive Mental Model</span>
+          <h2>Putting Robots on a Construction Site</h2>
+        </div>
+        <span style="font-family: var(--font-mono); font-size: 0.8rem; color: var(--text-muted);">TMLI-15 Framing</span>
+      </div>
+      <div class="depth-body">
+        <p>
+          In a physical world, an agent cannot simply wish a building into existence or teleport through walls. 
+          To place a brick, the agent must physically walk over to the site, possess the brick in their inventory, stand within reach distance, 
+          and make sure they aren't standing in the exact spot where the brick is about to be placed.
+        </p>
+        <p>
+          When multiple builders work on the same house simultaneously, two major problems occur:
+        </p>
+        <ul>
+          <li><strong>Physical Collisions:</strong> If four builders try to work on the same corner block at the same time, they push each other into lava or get stuck in a doorway.</li>
+          <li><strong>Entombment (Trapped Inside Walls):</strong> If a builder places the roof before finishing the walls, or builds a wall while standing inside it, they trap themselves and starve.</li>
+        </ul>
+        <p>
+          CivQuest solves this by organizing construction like a real-world civil engineering project: 
+          the plot is divided into four spatial quadrants ($NW, NE, SW, SE$), and building proceeds strictly 
+          from the bottom up ($Y_{\text{min}} \to Y_{\text{max}}$). Each builder is assigned an exclusive sector so they never collide.
+        </p>
+      </div>
+    </section>
+
+    <!-- DEPTH LAYER 2: TRIC & SPATIAL QUADRANTS -->
+    <section class="depth-layer">
+      <div class="depth-header">
+        <div class="depth-title-group">
+          <span class="depth-indicator depth-2-tag">Level 2: Architecture &amp; Boundaries</span>
+          <h2>TRIC Unit Specifications &amp; Spatial Quadrant Architecture</h2>
+        </div>
+        <span style="font-family: var(--font-mono); font-size: 0.8rem; color: var(--text-muted);">Visual TRIC Decomposition</span>
+      </div>
+      <div class="depth-body">
+
+        <!-- TRIC Unit 1 -->
+        <div class="tric-unit">
+          <div class="tric-grid">
+            <div class="tric-segment t-topic">
+              <div class="tric-label">Topic: Spatial Partitioning for Multi-Agent Building</div>
+              <p>Simultaneous multi-agent construction on a 3D discrete voxel grid without builder entrapment or voxel collisions.</p>
+            </div>
+            <div class="tric-segment t-restriction">
+              <div class="tric-label">Restriction: Partition &amp; Elevation Invariants</div>
+              <p>No builder may place blocks outside their assigned quadrant. All quadrants must synchronize layer completion at elevation $Y$ before any agent ascends to $Y+1$.</p>
+            </div>
+            <div class="tric-segment t-illustration">
+              <div class="tric-label">Illustration: Spatial Quadrant Partitioning Map</div>
+              <p>The diagram below illustrates the $NW, NE, SW, SE$ quadrant division, vertical layer ordering, and independent builder staging zones.</p>
+            </div>
+            <div class="tric-segment t-conclusion">
+              <div class="tric-label">Conclusion: Entrapment-Free Construction</div>
+              <p>Guarantees zero builder entombment, zero voxel overwrite collisions, and optimal parallel building speed.</p>
+            </div>
+          </div>
+        </div>
+
+        <!-- SVG Spatial Quadrant Diagram -->
+        <div class="diagram-container">
+          <svg class="responsive-svg" viewBox="0 0 940 460" xmlns="http://www.w3.org/2000/svg">
+            <defs>
+              <linearGradient id="nwGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+                <stop offset="0%" stop-color="#083344" />
+                <stop offset="100%" stop-color="#041824" />
+              </linearGradient>
+              <linearGradient id="neGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+                <stop offset="0%" stop-color="#064e3b" />
+                <stop offset="100%" stop-color="#022c22" />
+              </linearGradient>
+              <linearGradient id="swGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+                <stop offset="0%" stop-color="#3b0764" />
+                <stop offset="100%" stop-color="#19022c" />
+              </linearGradient>
+              <linearGradient id="seGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+                <stop offset="0%" stop-color="#451a03" />
+                <stop offset="100%" stop-color="#240c01" />
+              </linearGradient>
+            </defs>
+
+            <!-- Plot Boundary Header -->
+            <rect x="50" y="25" width="840" height="400" rx="10" fill="#070a10" stroke="#334155" stroke-width="2" />
+            <text x="470" y="55" fill="#f8fafc" font-size="14" font-weight="700" font-family="monospace" text-anchor="middle">SPATIAL QUADRANT PARTITIONING MATRIX (16x16 Plot)</text>
+            <text x="470" y="75" fill="#64748b" font-size="11" font-family="sans-serif" text-anchor="middle">Layer Synchronization: Floor Y=64 &rarr; Walls Y=65-67 &rarr; Roof Y=68</text>
+
+            <!-- Quadrant 1: North-West (NW) -->
+            <rect x="80" y="95" width="370" height="145" rx="8" fill="url(#nwGrad)" stroke="#00d2ff" stroke-width="1.5" />
+            <text x="100" y="125" fill="#38bdf8" font-size="13" font-weight="700" font-family="monospace">QUADRANT 1: NORTH-WEST (NW)</text>
+            <text x="100" y="145" fill="#cbd5e1" font-size="11" font-family="sans-serif">Assigned Builder: <strong>Able (Avatar 1)</strong></text>
+            <text x="100" y="165" fill="#94a3b8" font-size="10" font-family="monospace">Voxel Range: [X: 0..7, Z: 0..7]</text>
+            <text x="100" y="185" fill="#cbd5e1" font-size="10" font-family="sans-serif">Tasks: NW Corner Pillar, Front Porch, Left Window</text>
+            <text x="100" y="210" fill="#22d3ee" font-size="10" font-family="monospace">Status: Layer Y=65 [8 / 8 Blocks Placed]</text>
+
+            <!-- Quadrant 2: North-East (NE) -->
+            <rect x="490" y="95" width="370" height="145" rx="8" fill="url(#neGrad)" stroke="#10b981" stroke-width="1.5" />
+            <text x="510" y="125" fill="#34d399" font-size="13" font-weight="700" font-family="monospace">QUADRANT 2: NORTH-EAST (NE)</text>
+            <text x="510" y="145" fill="#cbd5e1" font-size="11" font-family="sans-serif">Assigned Builder: <strong>Baker (Avatar 2)</strong></text>
+            <text x="510" y="165" fill="#94a3b8" font-size="10" font-family="monospace">Voxel Range: [X: 8..15, Z: 0..7]</text>
+            <text x="510" y="185" fill="#cbd5e1" font-size="10" font-family="sans-serif">Tasks: NE Corner Pillar, Main Entrance Doorframe</text>
+            <text x="510" y="210" fill="#6ee7b7" font-size="10" font-family="monospace">Status: Layer Y=65 [8 / 8 Blocks Placed]</text>
+
+            <!-- Quadrant 3: South-West (SW) -->
+            <rect x="80" y="255" width="370" height="145" rx="8" fill="url(#swGrad)" stroke="#8b5cf6" stroke-width="1.5" />
+            <text x="100" y="285" fill="#c084fc" font-size="13" font-weight="700" font-family="monospace">QUADRANT 3: SOUTH-WEST (SW)</text>
+            <text x="100" y="305" fill="#cbd5e1" font-size="11" font-family="sans-serif">Assigned Builder: <strong>Charlie (Avatar 3)</strong></text>
+            <text x="100" y="325" fill="#94a3b8" font-size="10" font-family="monospace">Voxel Range: [X: 0..7, Z: 8..15]</text>
+            <text x="100" y="345" fill="#cbd5e1" font-size="10" font-family="sans-serif">Tasks: SW Corner Pillar, Hearth / Chimney Base</text>
+            <text x="100" y="370" fill="#d8b4fe" font-size="10" font-family="monospace">Status: Layer Y=65 [8 / 8 Blocks Placed]</text>
+
+            <!-- Quadrant 4: South-East (SE) -->
+            <rect x="490" y="255" width="370" height="145" rx="8" fill="url(#seGrad)" stroke="#f59e0b" stroke-width="1.5" />
+            <text x="510" y="285" fill="#fbbf24" font-size="13" font-weight="700" font-family="monospace">QUADRANT 4: SOUTH-EAST (SE)</text>
+            <text x="510" y="305" fill="#cbd5e1" font-size="11" font-family="sans-serif">Assigned Builder: <strong>David (Avatar 4)</strong></text>
+            <text x="510" y="325" fill="#94a3b8" font-size="10" font-family="monospace">Voxel Range: [X: 8..15, Z: 8..15]</text>
+            <text x="510" y="345" fill="#cbd5e1" font-size="10" font-family="sans-serif">Tasks: SE Corner Pillar, Back Wall, Storage Nook</text>
+            <text x="510" y="370" fill="#fde68a" font-size="10" font-family="monospace">Status: Layer Y=65 [8 / 8 Blocks Placed]</text>
+
+            <!-- Center Barrier Crosshair -->
+            <line x1="470" y1="95" x2="470" y2="400" stroke="#334155" stroke-dasharray="4,4" stroke-width="2" />
+            <line x1="80" y1="247" x2="860" y2="247" stroke="#334155" stroke-dasharray="4,4" stroke-width="2" />
+
+          </svg>
+          <div class="diagram-caption">Figure 6.0: Spatial Quadrant Partitioning grid showing non-overlapping builder working zones and layer synchronization.</div>
+        </div>
+
+      </div>
+    </section>
+
+    <!-- DEPTH LAYER 3: TMLI-PRO -->
+    <section class="depth-layer">
+      <div class="depth-header">
+        <div class="depth-title-group">
+          <span class="depth-indicator depth-3-tag">Level 3: Deep As-Built Implementation</span>
+          <h2>FakePlayer Internals, Skin Packets &amp; Baritone A*</h2>
+        </div>
+        <span style="font-family: var(--font-mono); font-size: 0.8rem; color: var(--text-muted);">TMLI-Pro Systems Engineering</span>
+      </div>
+      <div class="depth-body">
+
+        <h3>1. Server-Side `AgentEntity` Architecture (`AgentEntity.java`)</h3>
+        <p>
+          Settler avatars inherit directly from `net.minecraft.server.level.ServerPlayer`. They are headless server-side player instances 
+          with standard player dimensions ($0.6\text{m} \times 1.8\text{m}$), eye heights, gravity vectors, and inventory equipment slots:
+        </p>
+        <div class="terminal-card">
+          <div class="terminal-header">
+            <span class="dot dot-red"></span>
+            <span class="dot dot-yellow"></span>
+            <span class="dot dot-green"></span>
+            <span style="font-family: var(--font-mono); font-size: 0.75rem; color: #94a3b8; margin-left: 0.5rem;">mod-neoforge/src/main/java/com/civquest/mod/entity/AgentEntity.java</span>
+          </div>
+          <div class="terminal-body">
+            <pre><code>public class AgentEntity extends ServerPlayer {
+    private final String agentId;
+    private final UUID offlineUuid;
+    private final BaritoneWrapper pathfinder;
+
+    public AgentEntity(MinecraftServer server, ServerLevel level, GameProfile profile, String agentId) {
+        super(server, level, profile, ClientInformation.createDefault());
+        this.agentId = agentId;
+        this.offlineUuid = UUID.nameUUIDFromBytes(("CivQuest:" + agentId).getBytes(StandardCharsets.UTF_8));
+        this.pathfinder = new BaritoneWrapper(this);
+    }
+}</code></pre>
+          </div>
+        </div>
+
+        <h3>2. Dynamic Packet Skin Injection without Mojang Authentication (ADR-007)</h3>
+        <p>
+          Standard Minecraft servers fetch player skins via Mojang's authentication session servers. Because CivQuest agents are offline-generated entities, 
+          the server mod injects skin metadata directly into the player tab list and entity tracker packets:
+        </p>
+        <ol>
+          <li>The agent spawn request transmits raw 64x64 RGBA PNG bytes or a signed Mojang texture property payload (`SpawnAgentRequest.skin_texture_value`).</li>
+          <li>`AgentSkinManager.java` populates the `GameProfile` property map with `textures` key-value pairs.</li>
+          <li>The server broadcasts `ClientboundPlayerInfoUpdatePacket.Action.ADD_PLAYER` to all connected clients, causing clients to render custom skins immediately.</li>
+        </ol>
+
+        <h3>3. Baritone A* Pathfinding Integration (ADR-009)</h3>
+        <p>
+          Rather than relying on basic mob navigation meshes, CivQuest embeds Baritone's full voxel A* search engine. 
+          The wrapper supports complex 3D maneuvers:
+        </p>
+        <ul>
+          <li><strong>Dynamic Parkour:</strong> Sprint-jumping across 3-block chasms and jumping up 1-block stone steps without placing scaffolding.</li>
+          <li><strong>Obstacle Clearance:</strong> Automatically breaking obstructing leaves or cobwebs if a path cannot be found within 400 iterations.</li>
+          <li><strong>Safety Invariants:</strong> Baritone costs penalize lava ($+10,000$), deep water ($+500$), and fall damage heights greater than 3 blocks ($+1,000$).</li>
+        </ul>
+
+        <h3>4. Specification &amp; Voxel Parameter Matrix</h3>
+        <div class="spec-table-wrap">
+          <table class="spec-table">
+            <thead>
+              <tr>
+                <th>Physical Property</th>
+                <th>Game Engine Value</th>
+                <th>Physical Invariant</th>
+                <th>Actuation Method</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><code>Avatar Hitbox</code></td>
+                <td>$0.6\text{m} \times 1.8\text{m} \times 0.6\text{m}$</td>
+                <td>Rigid Body Voxel Collision</td>
+                <td>`ServerPlayer.setBoundingBox()`</td>
+              </tr>
+              <tr>
+                <td><code>Reach Distance</code></td>
+                <td>4.5 Blocks</td>
+                <td>Raycast distance check</td>
+                <td>`GameMode.useItemOn()`</td>
+              </tr>
+              <tr>
+                <td><code>Pathfinder Search</code></td>
+                <td>A* Voxel Grid (Baritone)</td>
+                <td>Max 400 Iterations / Replanning</td>
+                <td>`CustomGoal.calculate()`</td>
+              </tr>
+              <tr>
+                <td><code>Quadrant Partition</code></td>
+                <td>$NW, NE, SW, SE$ (8x8 subgrid)</td>
+                <td>Bottom-up ($Y_{\text{min}} \to Y_{\text{max}}$)</td>
+                <td>`BlueprintCoordinator.SyncLayer()`</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+      </div>
+    </section>
+
+    <!-- Pagination Navigation -->
+    <div class="tech-pagination">
+      <a href="inference-and-context.html" class="pagination-card">
+        <span class="pagination-sub">&larr; Previous Specification</span>
+        <span class="pagination-title">5. Inference &amp; Context Assembly</span>
+      </a>
+      <a href="persistence-and-memory.html" class="pagination-card" style="text-align: right;">
+        <span class="pagination-sub">Next Specification &rarr;</span>
+        <span class="pagination-title">7. Persistence &amp; Vector Memory</span>
+      </a>
+    </div>
+
+  </main>
+
+  <!-- Footer & Trademark Notice -->
+  <footer>
+    <div class="footer-container">
+      <div class="disclaimer-box">
+        <strong>LEGAL & TRADEMARK DISCLAIMER:</strong><br>
+        <strong>NOT AN OFFICIAL MINECRAFT PRODUCT. NOT APPROVED BY OR ASSOCIATED WITH MOJANG OR MICROSOFT.</strong><br>
+        <em>Minecraft</em> is a registered trademark of Mojang Synergies AB / Microsoft Corporation. 
+        CivQuest is an independent, community-developed software modification and autonomous agent orchestration platform. 
+        CivQuest is not affiliated with, endorsed by, sponsored by, or associated with Mojang Synergies AB, Microsoft Corporation, 
+        or any of their subsidiaries. All references to Minecraft, related game mechanics, and block identifiers are strictly 
+        nominative references for technical compatibility and modding interoperability under applicable fair use doctrines.
+      </div>
+
+      <div class="footer-links">
+        <a href="../index.html">Overview</a>
+        <a href="../gameplay.html">Gameplay</a>
+        <a href="index.html">Systems Engineering</a>
+        <a href="https://github.com/btposey/civquest">Source Code</a>
+        <a href="https://github.com/btposey/civquest/blob/main/LICENSE">MIT License</a>
+      </div>
+
+      <p class="copyright">&copy; 2026 Brian Posey. Open source under the MIT License.</p>
+    </div>
+  </footer>
+
+</body>
+</html>
