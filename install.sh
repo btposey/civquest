@@ -127,7 +127,6 @@ resolve_release_tag() {
 
     echo "${tag}"
 }
-
 download_binary() {
     local name="$1"
     local version="$2"
@@ -180,7 +179,6 @@ download_binary() {
         log_warn "SHA256 sidecar not available for ${name}, skipping verification."
     fi
     rm -f "${tmpsha}"
-
     local tmpdir
     tmpdir="$(mktemp -d)"
     tar -xzf "${tmpfile}" -C "${tmpdir}" 2>/dev/null || {
@@ -261,7 +259,6 @@ download_mod_jar() {
 
     cp -f "${tmpjar}" "${dest_dir}/${jar_name}"
     rm -f "${tmpjar}"
-
     log_info "Installed mod JAR v${tag} to ${dest_dir}/${jar_name}"
     echo "${jar_name}"
 }
