@@ -48,7 +48,7 @@
       <span class="breadcrumb-separator">/</span>
       <a href="index.html">Systems Engineering Hub</a>
       <span class="breadcrumb-separator">/</span>
-      <span class="breadcrumb-current">7. Persistence &amp; Vector Memory</span>
+      <span class="breadcrumb-current">8. Persistence &amp; Memory</span>
     </nav>
 
     <!-- Hero -->
@@ -196,74 +196,107 @@
       <section class="tech-section">
         <h2>DDL Schemas, WAL PRAGMAs &amp; sqlite-vec Extension</h2>
 
-        <h3>1. Database Initialization &amp; WAL PRAGMAs (<code>internal/db/agent_db.go</code>)</h3>
+        <h3>1. Database Initialization &amp; WAL Concurrency Primitives</h3>
         <p>
-          Every agent process initializes its database connection with strict concurrency and performance tuning:
+          Every agent process initializes its database connection with strict concurrency tuning: Write-Ahead Logging mode, 
+          normalized synchronous commits, and a single-writer connection pool to prevent write contention.<sup><a href="#fn3" id="ref3" class="footnote-ref">[3]</a></sup>
         </p>
 
-        <div class="code-block">
-func OpenAgentDB(dbPath string) (*sql.DB, error) {
-    db, err := sql.Open("sqlite3", dbPath+"?_journal_mode=WAL&amp;_synchronous=NORMAL&amp;_busy_timeout=5000")
-    if err != nil {
-        return nil, err
-    }
-    
-    // Load sqlite-vec shared extension library
-    if err := loadSqliteVecExtension(db); err != nil {
-        return nil, fmt.Errorf("failed to load sqlite-vec: %w", err)
-    }
+        <figure class="diagram-figure">
+          <div class="diagram-container">
+            <svg class="responsive-svg" viewBox="0 0 860 140" xmlns="http://www.w3.org/2000/svg">
+              <rect x="20" y="20" width="820" height="100" rx="8" fill="#0a101f" stroke="#1e293b" />
+              <text x="40" y="45" fill="#38bdf8" font-size="12" font-weight="700" font-family="monospace">DATABASE INITIALIZATION &amp; CONCURRENCY PRIMITIVES</text>
 
-    db.SetMaxOpenConns(1) // Single writer per process
-    return db, nil
-}
-        </div>
+              <rect x="40" y="60" width="200" height="45" rx="4" fill="#0f172a" stroke="#00d2ff" />
+              <text x="50" y="80" fill="#f8fafc" font-size="11" font-weight="600" font-family="sans-serif">WAL Journal Mode</text>
+              <text x="50" y="95" fill="#38bdf8" font-size="9" font-family="monospace">Non-blocking concurrent reads</text>
 
-        <h3>2. Schema Definition &amp; Virtual Vector Table DDL</h3>
+              <rect x="255" y="60" width="200" height="45" rx="4" fill="#0f172a" stroke="#10b981" />
+              <text x="265" y="80" fill="#f8fafc" font-size="11" font-weight="600" font-family="sans-serif">Single-Writer Pool</text>
+              <text x="265" y="95" fill="#34d399" font-size="9" font-family="monospace">MaxOpenConns = 1</text>
+
+              <rect x="470" y="60" width="190" height="45" rx="4" fill="#0f172a" stroke="#f59e0b" />
+              <text x="480" y="80" fill="#f8fafc" font-size="11" font-weight="600" font-family="sans-serif">Busy Timeout Guard</text>
+              <text x="480" y="95" fill="#fbbf24" font-size="9" font-family="monospace">5000 ms lock contention</text>
+
+              <rect x="675" y="60" width="155" height="45" rx="4" fill="#0f172a" stroke="#8b5cf6" />
+              <text x="685" y="80" fill="#f8fafc" font-size="11" font-weight="600" font-family="sans-serif">sqlite-vec Load</text>
+              <text x="685" y="95" fill="#c084fc" font-size="9" font-family="monospace">Shared extension DLL</text>
+            </svg>
+          </div>
+          <figcaption class="diagram-caption">Figure 7.1: Database initialization parameters and concurrency safeguards.</figcaption>
+        </figure>
+
+        <h3>2. Relational Schema &amp; Virtual Vector Table Topology</h3>
         <p>
-          The schema establishes the relational backbone and vector virtual table:
+          The schema establishes the relational backbone for episodic memory, relationships, and barter transactions, 
+          alongside a virtual vector table for cosine-similarity nearest-neighbor search:<sup><a href="#fn4" id="ref4" class="footnote-ref">[4]</a></sup>
         </p>
 
-        <div class="code-block">
-CREATE TABLE IF NOT EXISTS episodes (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    tick INTEGER NOT NULL,
-    summary TEXT NOT NULL,
-    emotion_tag TEXT,
-    location_x REAL,
-    location_y REAL,
-    location_z REAL,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
+        <figure class="diagram-figure">
+          <div class="diagram-container">
+            <svg class="responsive-svg" viewBox="0 0 860 160" xmlns="http://www.w3.org/2000/svg">
+              <rect x="20" y="20" width="820" height="120" rx="8" fill="#0a101f" stroke="#1e293b" />
+              <text x="40" y="45" fill="#38bdf8" font-size="12" font-weight="700" font-family="monospace">RELATIONAL SCHEMA &amp; VIRTUAL VECTOR TABLE MAPPING</text>
 
--- sqlite-vec virtual table for 384-dimensional dense embeddings
-CREATE VIRTUAL TABLE IF NOT EXISTS vec_episodes USING vec0(
-    embedding float[384] distance_metric=cosine
-);
-        </div>
+              <rect x="40" y="60" width="220" height="60" rx="4" fill="#0f172a" stroke="#00d2ff" />
+              <text x="50" y="82" fill="#f8fafc" font-size="11" font-weight="600" font-family="sans-serif">episodes (Relational)</text>
+              <text x="50" y="100" fill="#38bdf8" font-size="9" font-family="monospace">id, tick, summary, emotion, XYZ</text>
 
-        <h3>3. Vector Ingestion &amp; RAG Query Pipeline (<code>internal/db/vector.go</code>)</h3>
+              <path d="M 260 90 L 300 90" stroke="#00d2ff" stroke-width="2" stroke-dasharray="4,3" />
+              <text x="260" y="80" fill="#94a3b8" font-size="8" font-family="monospace">rowid FK</text>
+
+              <rect x="300" y="60" width="220" height="60" rx="4" fill="#0f172a" stroke="#8b5cf6" />
+              <text x="310" y="82" fill="#f8fafc" font-size="11" font-weight="600" font-family="sans-serif">vec_episodes (Virtual)</text>
+              <text x="310" y="100" fill="#c084fc" font-size="9" font-family="monospace">rowid, embedding float[384]</text>
+
+              <rect x="540" y="60" width="280" height="60" rx="4" fill="#0f172a" stroke="#10b981" />
+              <text x="550" y="82" fill="#f8fafc" font-size="11" font-weight="600" font-family="sans-serif">KNN Query via Cosine Distance</text>
+              <text x="550" y="100" fill="#34d399" font-size="9" font-family="monospace">MATCH query_embedding LIMIT 3</text>
+            </svg>
+          </div>
+          <figcaption class="diagram-caption">Figure 7.2: Relational-to-vector foreign key mapping and KNN query path.</figcaption>
+        </figure>
+
+        <h3>3. Vector Ingestion &amp; Retrieval-Augmented Generation Pipeline</h3>
         <p>
-          When an episode is recorded, the embedding is computed and inserted atomically into both the relational table and the virtual vector index:
+          When an episode is recorded, the text summary is embedded into a 384-dimensional vector and inserted atomically 
+          into both the relational table and the virtual vector index. At retrieval time, the system performs a cosine-similarity 
+          nearest-neighbor search joined back to the relational episodes table to reconstruct the full memory context:<sup><a href="#fn5" id="ref5" class="footnote-ref">[5]</a></sup>
         </p>
 
-        <div class="code-block">
-func (db *AgentDB) QuerySimilarEpisodes(ctx context.Context, queryEmbedding []float32, limit int) ([]Episode, error) {
-    query := `
-        SELECT e.id, e.tick, e.summary, e.emotion_tag, v.distance
-        FROM vec_episodes v
-        JOIN episodes e ON e.id = v.rowid
-        WHERE v.embedding MATCH ?
-        ORDER BY v.distance ASC
-        LIMIT ?;
-    `
-    rows, err := db.conn.QueryContext(ctx, query, serializeEmbedding(queryEmbedding), limit)
-    if err != nil {
-        return nil, err
-    }
-    defer rows.Close()
-    return scanEpisodes(rows)
-}
-        </div>
+        <figure class="diagram-figure">
+          <div class="diagram-container">
+            <svg class="responsive-svg" viewBox="0 0 860 140" xmlns="http://www.w3.org/2000/svg">
+              <rect x="20" y="20" width="820" height="100" rx="8" fill="#0a101f" stroke="#1e293b" />
+              <text x="40" y="45" fill="#38bdf8" font-size="12" font-weight="700" font-family="monospace">RAG RETRIEVAL PIPELINE: QUERY TO CONTEXT WINDOW</text>
+
+              <rect x="40" y="60" width="180" height="45" rx="4" fill="#0f172a" stroke="#334155" />
+              <text x="50" y="80" fill="#f8fafc" font-size="11" font-weight="600" font-family="sans-serif">Query Embedding</text>
+              <text x="50" y="95" fill="#94a3b8" font-size="9" font-family="monospace">float32[384] vector</text>
+
+              <path d="M 220 82 L 260 82" stroke="#00d2ff" stroke-width="2" />
+
+              <rect x="260" y="60" width="200" height="45" rx="4" fill="#0f172a" stroke="#8b5cf6" />
+              <text x="270" y="80" fill="#f8fafc" font-size="11" font-weight="600" font-family="sans-serif">Cosine KNN Search (Top-3)</text>
+              <text x="270" y="95" fill="#c084fc" font-size="9" font-family="monospace">vec_episodes MATCH query</text>
+
+              <path d="M 460 82 L 500 82" stroke="#00d2ff" stroke-width="2" />
+
+              <rect x="500" y="60" width="200" height="45" rx="4" fill="#0f172a" stroke="#10b981" />
+              <text x="510" y="80" fill="#f8fafc" font-size="11" font-weight="600" font-family="sans-serif">JOIN Episodes Table</text>
+              <text x="510" y="95" fill="#34d399" font-size="9" font-family="monospace">Reconstruct summary text</text>
+
+              <path d="M 700 82 L 740 82" stroke="#00d2ff" stroke-width="2" />
+
+              <rect x="740" y="60" width="100" height="45" rx="4" fill="#064e3b" stroke="#10b981" />
+              <text x="750" y="80" fill="#f8fafc" font-size="11" font-weight="600" font-family="sans-serif">Context</text>
+              <text x="750" y="95" fill="#a7f3d0" font-size="9" font-family="monospace">RAG chunks</text>
+            </svg>
+          </div>
+          <figcaption class="diagram-caption">Figure 7.3: End-to-end RAG retrieval pipeline from query embedding to context window injection.</figcaption>
+        </figure>
 
         <h3>4. Specification &amp; Storage Matrix</h3>
         <div class="spec-table-wrap">
@@ -323,6 +356,24 @@ func (db *AgentDB) QuerySimilarEpisodes(ctx context.Context, queryEmbedding []fl
             <strong>Episodic vs. Semantic Memory in Cognitive Architectures:</strong> 
             Endel Tulving's division between episodic memory (temporally organized autobiographical life events) and semantic memory (timeless structural facts and relationships) provides the cognitive blueprint for RAG retrieval over autobiographical logs. 
             See: Tulving, E. (1983). <em>Elements of Episodic Memory</em>. Oxford University Press; Park, J. S., et al. (2023). <em>Generative Agents: Interactive Simulacra of Human Behavior</em>. UIST'23.
+          </li>
+          <li id="fn3">
+            <strong>Database Initialization &amp; WAL PRAGMA Implementation:</strong> 
+            Opens the embedded SQLite connection with Write-Ahead Logging, normalized synchronous commits, and a single-writer connection pool to prevent write contention. Loads the sqlite-vec shared extension for vector operations. 
+            Source contract: <code>orchestrator-go/internal/db/agent_db.go</code>.
+            <a href="#ref3" class="footnote-backref" title="Jump back to text">&hookleftarrow;</a>
+          </li>
+          <li id="fn4">
+            <strong>Relational Schema &amp; Virtual Vector Table DDL:</strong> 
+            Defines the relational tables for episodes, relationships, barter transactions, and landmarks, alongside the sqlite-vec virtual table for 384-dimensional cosine-similarity embeddings. 
+            Source contract: <code>orchestrator-go/internal/db/schema.go</code>.
+            <a href="#ref4" class="footnote-backref" title="Jump back to text">&hookleftarrow;</a>
+          </li>
+          <li id="fn5">
+            <strong>Vector Ingestion &amp; RAG Query Implementation:</strong> 
+            Computes text embeddings, inserts them atomically into the virtual vector index, and performs cosine-similarity KNN searches joined back to the relational episodes table. 
+            Source contract: <code>orchestrator-go/internal/db/vector.go</code>.
+            <a href="#ref5" class="footnote-backref" title="Jump back to text">&hookleftarrow;</a>
           </li>
         </ol>
       </section>

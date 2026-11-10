@@ -179,61 +179,50 @@
       <section class="tech-section">
         <h2>Supervisor Lifecycle, Signal Traps &amp; Graveyard Archival</h2>
 
-        <h3>1. The <code>cq</code> Supervisor Daemon (<code>cmd/cq/</code>)</h3>
+        <h3>1. The Supervisor Daemon Process Group Management</h3>
         <p>
-          The supervisor binary acts as an init system for autonomous settlers. It manages agent worker subprocesses via isolated POSIX process groups:
+          The supervisor binary acts as an initialization and process manager for autonomous settlers.<sup><a href="#fn3" id="ref3" class="footnote-ref">[3]</a></sup> 
+          It isolates agent worker subprocesses via POSIX process groups, mapping dedicated domain sockets and tracking process health:
         </p>
 
-        <div class="code-block">
-func (l *Launcher) SpawnAgentProcess(ctx context.Context, agentID string) (*exec.Cmd, error) {
-    cmd := exec.CommandContext(ctx, "civquest-agent",
-        "--agent-id", agentID,
-        "--grpc-addr", l.config.GRPCAddr,
-        "--socket-path", xdg.StateFile(fmt.Sprintf("%s.sock", agentID)),
-    )
-    cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true} // Isolate process group
-    
-    if err := cmd.Start(); err != nil {
-        return nil, fmt.Errorf("failed to spawn agent %s: %w", agentID, err)
-    }
-    return cmd, nil
-}
-        </div>
+        <figure class="diagram-figure">
+          <div class="diagram-container">
+            <svg class="responsive-svg" viewBox="0 0 860 160" xmlns="http://www.w3.org/2000/svg">
+              <rect x="20" y="20" width="820" height="120" rx="8" fill="#0a101f" stroke="#1e293b" />
+              <text x="40" y="45" fill="#38bdf8" font-size="12" font-weight="700" font-family="monospace">SUPERVISOR DAEMON PROCESS CONTROL LIFECYCLE</text>
+
+              <rect x="40" y="60" width="240" height="60" rx="6" fill="#0f172a" stroke="#00d2ff" />
+              <text x="50" y="82" fill="#00d2ff" font-size="11" font-weight="700" font-family="sans-serif">Process Group Isolation</text>
+              <text x="50" y="102" fill="#cbd5e1" font-size="10" font-family="sans-serif">Setpgid: true (Clean signals)</text>
+
+              <rect x="310" y="60" width="240" height="60" rx="6" fill="#0f172a" stroke="#10b981" />
+              <text x="320" y="82" fill="#10b981" font-size="11" font-weight="700" font-family="sans-serif">Socket Heartbeat Monitor</text>
+              <text x="320" y="102" fill="#cbd5e1" font-size="10" font-family="sans-serif">UNIX Domain Socket ping (1 Hz)</text>
+
+              <rect x="580" y="60" width="240" height="60" rx="6" fill="#0f172a" stroke="#f59e0b" />
+              <text x="590" y="82" fill="#f59e0b" font-size="11" font-weight="700" font-family="sans-serif">Crash Restart Budget</text>
+              <text x="590" y="102" fill="#cbd5e1" font-size="10" font-family="sans-serif">Max 3 retries with backoff</text>
+            </svg>
+          </div>
+          <figcaption class="diagram-caption">Figure 4.1: Supervisor daemon management of child process groups and telemetry sockets.</figcaption>
+        </figure>
 
         <h3>2. Graceful Shutdown &amp; Signal Traps</h3>
         <p>
-          When the game server stops or <code>cq agent stop</code> is executed, the agent process intercepts <code>SIGTERM</code> and <code>SIGINT</code> signals. 
-          It flushes the SQLite Write-Ahead Log (WAL), disconnects the gRPC channel, unlinks the UNIX domain socket, and terminates cleanly:
+          When the game server halts or an administrator requests agent deactivation, the worker intercepts termination signals.<sup><a href="#fn4" id="ref4" class="footnote-ref">[4]</a></sup> 
+          It executes an atomic draining routine: flushing Write-Ahead Log frames to disk, closing open gRPC streams, unlinking runtime domain sockets, and terminating cleanly within a bounded five-second window.
         </p>
-
-        <div class="code-block">
-sigChan := make(chan os.Signal, 1)
-signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
-
-go func() {
-    sig := &lt;-sigChan
-    log.Infof("Received termination signal %s, initiating graceful drain...", sig)
-    runtime.DrainAndClose(5 * time.Second)
-    db.Close()
-    os.Remove(socketPath)
-    os.Exit(0)
-}()
-        </div>
 
         <h3>3. Permadeath Graveyard Protocol</h3>
         <p>
-          When an agent's avatar is slain in Minecraft, the game server emits a fatal <code>DeathEvent</code> frame. 
+          When an agent's avatar is slain, the game server emits a fatal death event notice. 
           The agent process immediately executes the graveyard migration sequence:
         </p>
         <ol>
-          <li><strong>Memorial Inscription:</strong> Executes <code>system2.WriteEpitaph()</code> to commit the agent's life summary into the SQLite ledger.</li>
-          <li><strong>Database Checkpoint:</strong> Forces a <code>PRAGMA wal_checkpoint(TRUNCATE)</code> to collapse all WAL frames into the main database file.</li>
-          <li><strong>Filesystem Archival:</strong> Atomically renames the agent's active data folder:
-            <div class="code-block" style="margin: 0.5rem 0;">
-$XDG_DATA_HOME/civquest/agents/{id}/ &rarr; $XDG_DATA_HOME/civquest/graveyard/{id}_{timestamp}/
-            </div>
-          </li>
-          <li><strong>Process Exit:</strong> Unregisters from the supervisor daemon and terminates with exit code 0 (preventing automatic restart).</li>
+          <li><strong>Memorial Inscription:</strong> Commits the agent's life summary and dynastic achievements into the local relational ledger.</li>
+          <li><strong>Database Checkpoint:</strong> Forces a full WAL truncation checkpoint to collapse all journal frames into the primary database file.</li>
+          <li><strong>Filesystem Archival:</strong> Atomically moves the agent's active data directory into the graveyard archive path, updating permissions to read-only.</li>
+          <li><strong>Process Exit:</strong> Unregisters from the supervisor daemon and terminates with exit code zero to prevent automatic process resurrection.</li>
         </ol>
 
         <h3>4. Directory Specification &amp; XDG Path Matrix</h3>
@@ -296,6 +285,18 @@ $XDG_DATA_HOME/civquest/agents/{id}/ &rarr; $XDG_DATA_HOME/civquest/graveyard/{i
             <strong>XDG Base Directory Specification:</strong> 
             Standards-compliant separation of user-specific configuration, persistent application data, and transient runtime state ensures clean multi-tenant isolation, automated backup compatibility, and deterministic sandbox mounting. 
             See: freedesktop.org XDG Base Directory Specification (v0.8).
+          </li>
+          <li id="fn3">
+            <strong>Supervisor Daemon &amp; Process Launcher Implementation:</strong> 
+            Manages OS worker subprocesses, POSIX process group assignments, and UNIX domain socket telemetry descriptors. 
+            Source contract: <code>orchestrator-go/cmd/cq/</code>.
+            <a href="#ref3" class="footnote-backref" title="Jump back to text">&hookleftarrow;</a>
+          </li>
+          <li id="fn4">
+            <strong>Runtime Signal Trap &amp; WAL Drain Implementation:</strong> 
+            Handles graceful termination signals, database checkpointing, and socket cleanup. 
+            Source contract: <code>orchestrator-go/internal/runtime/</code>.
+            <a href="#ref4" class="footnote-backref" title="Jump back to text">&hookleftarrow;</a>
           </li>
         </ol>
       </section>

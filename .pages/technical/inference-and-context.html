@@ -192,62 +192,79 @@
 
       <!-- Section 3 -->
       <section class="tech-section">
-        <h2>Concrete Schemas, Book Pagination &amp; Fallback Circuit Breakers</h2>
+        <h2>Structured Schemas, Book Pagination &amp; Fallback Circuit Breakers</h2>
 
-        <h3>1. The Barter Proposal JSON Schema (<code>internal/system2/types.go</code>)</h3>
+        <h3>1. Structured Barter Negotiation Schema</h3>
         <p>
-          When an agent initiates a trade with another settler or player, the LLM must return a validated JSON payload adhering to strict bounds:
+          When an agent initiates trade with another settler, the executive gateway enforces strict JSON schema validation over all proposal parameters:<sup><a href="#fn3" id="ref3" class="footnote-ref">[3]</a></sup>
         </p>
 
-        <div class="code-block">
-type TradeProposalResponse struct {
-    OfferedItem   string  `json:"offered_item"`   // e.g. "minecraft:bread"
-    OfferedCount  int32   `json:"offered_count"`  // Must be &gt; 0 and &lt;= HeldInventoryCount
-    DemandedItem  string  `json:"demanded_item"`  // e.g. "minecraft:iron_ingot"
-    DemandedCount int32   `json:"demanded_count"` // Must be &gt; 0
-    DialogueText  string  `json:"dialogue_text"`  // Max 120 chars for chat packet
-    FairnessScore float64 `json:"fairness_score"` // Clamped [0.0, 1.0]
-}
-        </div>
+        <figure class="diagram-figure">
+          <div class="diagram-container">
+            <svg class="responsive-svg" viewBox="0 0 860 140" xmlns="http://www.w3.org/2000/svg">
+              <rect x="20" y="20" width="820" height="100" rx="8" fill="#0a101f" stroke="#1e293b" />
+              <text x="40" y="45" fill="#38bdf8" font-size="12" font-weight="700" font-family="monospace">BARTER PROPOSAL STRUCTURED SCHEMA</text>
 
-        <h3>2. Chronicler Book Pagination Algorithm (<code>internal/system2/chronicler.go</code>)</h3>
+              <rect x="40" y="60" width="180" height="45" rx="4" fill="#0f172a" stroke="#00d2ff" />
+              <text x="50" y="80" fill="#f8fafc" font-size="11" font-weight="600" font-family="sans-serif">Offered Item &amp; Count</text>
+              <text x="50" y="95" fill="#38bdf8" font-size="9" font-family="monospace">string item, int32 qty</text>
+
+              <rect x="235" y="60" width="180" height="45" rx="4" fill="#0f172a" stroke="#10b981" />
+              <text x="245" y="80" fill="#f8fafc" font-size="11" font-weight="600" font-family="sans-serif">Demanded Item &amp; Count</text>
+              <text x="245" y="95" fill="#34d399" font-size="9" font-family="monospace">string item, int32 qty</text>
+
+              <rect x="430" y="60" width="200" height="45" rx="4" fill="#0f172a" stroke="#f59e0b" />
+              <text x="440" y="80" fill="#f8fafc" font-size="11" font-weight="600" font-family="sans-serif">Dialogue Utterance</text>
+              <text x="440" y="95" fill="#fbbf24" font-size="9" font-family="monospace">string (&le; 120 chars)</text>
+
+              <rect x="645" y="60" width="175" height="45" rx="4" fill="#0f172a" stroke="#8b5cf6" />
+              <text x="655" y="80" fill="#f8fafc" font-size="11" font-weight="600" font-family="sans-serif">Fairness Metric</text>
+              <text x="655" y="95" fill="#c084fc" font-size="9" font-family="monospace">float64 [0.0, 1.0]</text>
+            </svg>
+          </div>
+          <figcaption class="diagram-caption">Figure 5.1: Structured barter response schema verified before transaction execution.</figcaption>
+        </figure>
+
+        <h3>2. Chronicler Book Pagination Pipeline</h3>
         <p>
-          Minecraft writable books (<code>Items.WRITABLE_BOOK</code>) enforce strict physical limitations: a maximum of <strong>255 characters per page</strong> 
-          and up to 100 pages per volume. The Chronicler engine formats generated lore into discrete pages without splitting words across line breaks:
+          In-game writable books enforce physical storage constraints: a ceiling of 255 characters per page across a maximum of 100 pages. 
+          The chronicler pipeline partitions generated prose into discrete pages along word boundaries with safety margins:<sup><a href="#fn4" id="ref4" class="footnote-ref">[4]</a></sup>
         </p>
 
-        <div class="code-block">
-func PaginateBookContent(rawText string) []string {
-    const MaxPageChars = 240 // Safety margin below 255 Minecraft limit
-    words := strings.Fields(rawText)
-    var pages []string
-    var currentPage strings.Builder
+        <figure class="diagram-figure">
+          <div class="diagram-container">
+            <svg class="responsive-svg" viewBox="0 0 860 140" xmlns="http://www.w3.org/2000/svg">
+              <rect x="20" y="20" width="820" height="100" rx="8" fill="#0a101f" stroke="#1e293b" />
+              <text x="40" y="45" fill="#38bdf8" font-size="12" font-weight="700" font-family="monospace">LORE TEXT PAGINATION &amp; BOUNDARY NORMALIZATION</text>
 
-    for _, word := range words {
-        if currentPage.Len()+len(word)+1 &gt; MaxPageChars {
-            pages = append(pages, currentPage.String())
-            currentPage.Reset()
-        }
-        if currentPage.Len() &gt; 0 {
-            currentPage.WriteString(" ")
-        }
-        currentPage.WriteString(word)
-    }
-    if currentPage.Len() &gt; 0 {
-        pages = append(pages, currentPage.String())
-    }
-    return pages
-}
-        </div>
+              <rect x="40" y="60" width="230" height="45" rx="4" fill="#0f172a" stroke="#334155" />
+              <text x="50" y="80" fill="#f8fafc" font-size="11" font-weight="600" font-family="sans-serif">Raw Generated Chronicle</text>
+              <text x="50" y="95" fill="#94a3b8" font-size="9" font-family="monospace">Continuous Markdown stream</text>
+
+              <path d="M 270 82 L 310 82" stroke="#00d2ff" stroke-width="2" />
+
+              <rect x="310" y="60" width="250" height="45" rx="4" fill="#0f172a" stroke="#00d2ff" />
+              <text x="320" y="80" fill="#38bdf8" font-size="11" font-weight="600" font-family="sans-serif">Word-Boundary Tokenizer</text>
+              <text x="320" y="95" fill="#cbd5e1" font-size="9" font-family="monospace">Cap: 240 chars per page</text>
+
+              <path d="M 560 82 L 600 82" stroke="#10b981" stroke-width="2" />
+
+              <rect x="600" y="60" width="220" height="45" rx="4" fill="#064e3b" stroke="#10b981" />
+              <text x="610" y="80" fill="#6ee7b7" font-size="11" font-weight="600" font-family="sans-serif">Paginated Book NBT</text>
+              <text x="610" y="95" fill="#a7f3d0" font-size="9" font-family="monospace">ItemEntity ledger written</text>
+            </svg>
+          </div>
+          <figcaption class="diagram-caption">Figure 5.2: Word-boundary normalization and NBT book pagination pipeline.</figcaption>
+        </figure>
 
         <h3>3. Failure Modes &amp; Circuit Breakers</h3>
         <p>
-          System 2 runs entirely in non-blocking background goroutines. If the local Ollama instance experiences high VRAM pressure or fails to respond within $3000\text{ ms}$, the following circuit-breaker sequence triggers:
+          Executive deliberation runs entirely within non-blocking background routines. If the local inference engine experiences compute saturation or fails to respond within bounded deadlines, the following circuit-breaker sequence triggers:
         </p>
         <ol>
-          <li>The pending request context cancels via <code>context.WithTimeout</code>.</li>
-          <li>System 1 utility AI falls back to deterministic item-value lookup tables (<code>internal/system1/trade_evaluator.go</code>).</li>
-          <li>The agent executes the trade immediately without blocking movement or starving sensory telemetry.</li>
+          <li>The pending request context cancels via timeout propagation.</li>
+          <li>The procedural utility engine falls back to deterministic item-value lookup tables.</li>
+          <li>The agent resolves the interaction immediately without stalling movement or starving sensory telemetry.</li>
         </ol>
 
         <h3>4. Inference Specification &amp; Parameter Matrix</h3>
@@ -313,8 +330,20 @@ func PaginateBookContent(rawText string) []string {
           </li>
           <li id="fn2">
             <strong>Temperature Scaling in Autoregressive Sampling:</strong> 
-            Calibrating the softmax temperature parameter ($\tau$) allows cognitive architectures to shift between minimum-entropy deterministic decision logic ($\tau \le 0.2$) and high-entropy stochastic linguistic creativity ($\tau \ge 0.7$). 
+            Calibrating the softmax temperature parameter (<math xmlns="http://www.w3.org/1998/Math/MathML"><mi>&tau;</mi></math>) allows cognitive architectures to shift between minimum-entropy deterministic decision logic (<math xmlns="http://www.w3.org/1998/Math/MathML"><mi>&tau;</mi><mo>&le;</mo><mn>0.2</mn></math>) and high-entropy stochastic linguistic creativity (<math xmlns="http://www.w3.org/1998/Math/MathML"><mi>&tau;</mi><mo>&ge;</mo><mn>0.7</mn></math>). 
             See: Holtzman, A., et al. (2020). <em>The Curious Case of Neural Text Degeneration</em>. ICLR 2020.
+          </li>
+          <li id="fn3">
+            <strong>Structured Proposal Types &amp; Schema Parser:</strong> 
+            Encapsulates Go struct definitions, JSON field tags, and value clamping validators for barter proposals, landmark toponymy, and chat dialogues. 
+            Source contract: <code>orchestrator-go/internal/system2/types.go</code>.
+            <a href="#ref3" class="footnote-backref" title="Jump back to text">&hookleftarrow;</a>
+          </li>
+          <li id="fn4">
+            <strong>Chronicler Pagination &amp; NBT Formatter:</strong> 
+            Partitions raw Markdown narrative streams into discrete page strings respecting physical character limits and word boundaries. 
+            Source contract: <code>orchestrator-go/internal/system2/chronicler.go</code>.
+            <a href="#ref4" class="footnote-backref" title="Jump back to text">&hookleftarrow;</a>
           </li>
         </ol>
       </section>

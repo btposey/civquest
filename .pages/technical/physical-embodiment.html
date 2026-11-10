@@ -6,8 +6,8 @@
        license that can be found in the LICENSE file. -->
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Physical Embodiment &amp; Navigation — CivQuest Technical Architecture</title>
-  <meta name="description" content="Technical specification for CivQuest's physical embodiment: Server-Side FakePlayer avatars, dynamic packet skin injection, Baritone A* pathfinding, and spatial quadrant construction.">
+  <title>Avatar Embodiment &amp; Voxel Navigation — CivQuest Technical Architecture</title>
+  <meta name="description" content="Technical specification for CivQuest's physical avatar embodiment: Server-Side FakePlayer entities, dynamic packet skin injection, and Baritone A* heuristic voxel pathfinding.">
   <link rel="stylesheet" href="../assets/css/style.css">
 </head>
 <body>
@@ -57,13 +57,13 @@
         <span class="meta-pill pill-cyan">Server-Side FakePlayer</span>
         <span class="meta-pill pill-emerald">Voxel Kinematics</span>
         <span class="meta-pill pill-purple">Baritone Voxel A*</span>
-        <span class="meta-pill pill-amber">Spatial Quadrants</span>
+        <span class="meta-pill pill-amber">Dynamic Skin Packets</span>
       </div>
-      <h1>Physical Embodiment, Avatars &amp;<br><span>Spatial Voxel Navigation</span></h1>
+      <h1>Avatar Embodiment &amp;<br><span>Spatial Voxel Navigation</span></h1>
       <p class="tech-lead">
-        Embodied simulation demands physical fidelity: gravity, hitbox collisions, reach distances, and tool degradation. 
-        CivQuest manifests agents as server-side <code>FakePlayer</code> avatars, injects dynamic client skin packets without Mojang auth, 
-        delegates physical pathfinding to an integrated Baritone API wrapper, and coordinates multi-agent construction via spatial quadrant partitioning.
+        Embodied simulation demands physical grounding: gravity, bounding box collisions, reach envelopes, and tool degradation. 
+        CivQuest manifests autonomous agents as server-side avatars, broadcasts dynamic skin packets without external authentication dependencies, 
+        and executes voxel traversal via an integrated A* heuristic pathfinding engine.
       </p>
     </div>
 
@@ -72,162 +72,161 @@
 
       <!-- Section 1 -->
       <section class="tech-section">
-        <h2>Physical Grounding &amp; Multi-Agent Construction Challenges</h2>
+        <h2>Physical Grounding &amp; Kinematic Locomotion</h2>
         <p>
-          In a physical world, an agent cannot simply wish a building into existence or teleport through walls. 
-          To place a brick, the agent must physically walk over to the site, possess the brick in their inventory, stand within reach distance, 
-          and make sure they aren't standing in the exact spot where the brick is about to be placed.
+          In an embodied physical environment, intelligence is bounded by spatial constraints.<sup><a href="#fn1" id="ref1" class="footnote-ref">[1]</a></sup> 
+          An agent cannot teleport across barriers or place blocks instantaneously. To manipulate the world, the avatar must physically traverse 
+          irregular terrain, manage momentum and fall velocity, stand within reach range, and maintain line-of-sight clearance.
         </p>
         <p>
-          When multiple builders work on the same house simultaneously, two major failure modes occur:
+          Simulating autonomous settlers alongside human players introduces three core architectural requirements:
         </p>
         <ul>
-          <li><strong>Physical Collisions:</strong> If four builders try to work on the same corner block at the same time, they push each other into hazards or get stuck in narrow doorways.</li>
-          <li><strong>Entombment (Trapped Inside Walls):</strong> If a builder places the roof before finishing the walls, or builds a wall while standing inside it, they trap themselves and starve.</li>
+          <li><strong>Physics and Hitbox Parity:</strong> Settler avatars must possess identical bounding boxes, eye levels, jump physics, and inventory mechanics as vanilla players to prevent unfair advantages or physics glitches.</li>
+          <li><strong>Offline Visual Identity:</strong> Agents must display distinct humanoid skins and clan cloaks without requiring active authentication sessions with external servers.</li>
+          <li><strong>3D Voxel Pathfinding:</strong> Unlike standard mobs restricted to pre-baked navigation meshes, settlers must navigate arbitrary dynamic voxel structures, sprint-jump across chasms, step up elevation changes, and clear obstructing blocks when necessary.</li>
         </ul>
-        <p>
-          CivQuest solves this by organizing construction like a real-world civil engineering project: 
-          the plot is divided into four spatial quadrants ($NW, NE, SW, SE$), and building proceeds strictly 
-          from the bottom up ($Y_{\text{min}} \to Y_{\text{max}}$). Each builder is assigned an exclusive sector so they never collide.
-        </p>
       </section>
 
       <!-- Section 2 -->
       <section class="tech-section">
-        <h2>Spatial Quadrant Partitioning Architecture</h2>
+        <h2>Avatar Architecture &amp; Sensory-Kinematic Loop</h2>
         <p>
-          Collaborative multi-agent construction maps out discrete 3D voxel coordinate assignments across non-overlapping sectors. 
-          Elevation layers synchronize at each height step before builders ascend.
+          The avatar executes within the server tick loop, bridging motor intents from the orchestrator into physical in-engine actions 
+          while streaming sensory frustum frames back to the cognitive harness.
         </p>
 
         <div class="callout callout-invariant">
-          <div class="callout-title">Spatial Quadrant Invariants</div>
-          <p><strong>Sector Locking:</strong> No builder may place or break blocks outside their designated quadrant ($NW, NE, SW, SE$).</p>
-          <p><strong>Elevation Synchronization:</strong> All quadrants must synchronize layer completion at elevation $Y$ before any agent is permitted to place blocks at $Y+1$.</p>
+          <div class="callout-title">Physical Embodiment Invariants</div>
+          <p><strong>Server-Side Execution:</strong> All avatar physics, item interactions, and block placements execute server-side through standard player entity APIs, ensuring complete compatibility with vanilla game mechanics.</p>
+          <p><strong>Reach &amp; Collision Envelopes:</strong> Block interactions strictly enforce the 4.5-block reach radius and raycast visibility checks, preventing out-of-reach block modifications.</p>
         </div>
 
         <figure class="diagram-figure">
           <div class="diagram-container">
-            <svg class="responsive-svg" viewBox="0 0 940 460" xmlns="http://www.w3.org/2000/svg">
-              <defs>
-                <linearGradient id="nwGrad" x1="0%" y1="0%" x2="100%" y2="100%">
-                  <stop offset="0%" stop-color="#083344" />
-                  <stop offset="100%" stop-color="#041824" />
-                </linearGradient>
-                <linearGradient id="neGrad" x1="0%" y1="0%" x2="100%" y2="100%">
-                  <stop offset="0%" stop-color="#064e3b" />
-                  <stop offset="100%" stop-color="#022c22" />
-                </linearGradient>
-                <linearGradient id="swGrad" x1="0%" y1="0%" x2="100%" y2="100%">
-                  <stop offset="0%" stop-color="#3b0764" />
-                  <stop offset="100%" stop-color="#19022c" />
-                </linearGradient>
-                <linearGradient id="seGrad" x1="0%" y1="0%" x2="100%" y2="100%">
-                  <stop offset="0%" stop-color="#451a03" />
-                  <stop offset="100%" stop-color="#240c01" />
-                </linearGradient>
-              </defs>
+            <svg class="responsive-svg" viewBox="0 0 920 340" xmlns="http://www.w3.org/2000/svg">
+              <rect x="20" y="20" width="880" height="300" rx="10" fill="#070a10" stroke="#1e293b" />
+              <text x="460" y="48" fill="#f8fafc" font-size="13" font-weight="700" font-family="monospace" text-anchor="middle">AVATAR EMBODIMENT &amp; SENSORIMOTOR CLOSED LOOP</text>
 
-              <!-- Plot Boundary Header -->
-              <rect x="50" y="25" width="840" height="400" rx="10" fill="#070a10" stroke="#334155" stroke-width="2" />
-              <text x="470" y="55" fill="#f8fafc" font-size="14" font-weight="700" font-family="monospace" text-anchor="middle">SPATIAL QUADRANT PARTITIONING MATRIX (16x16 Plot)</text>
-              <text x="470" y="75" fill="#64748b" font-size="11" font-family="sans-serif" text-anchor="middle">Layer Synchronization: Floor Y=64 &rarr; Walls Y=65-67 &rarr; Roof Y=68</text>
+              <!-- Node 1: In-Engine ServerPlayer -->
+              <rect x="50" y="80" width="240" height="110" rx="8" fill="#083344" stroke="#00d2ff" stroke-width="1.5" />
+              <text x="65" y="105" fill="#38bdf8" font-size="12" font-weight="700" font-family="monospace">Server-Side Avatar Entity</text>
+              <text x="65" y="125" fill="#cbd5e1" font-size="10" font-family="sans-serif">Headless Player Instance</text>
+              <text x="65" y="142" fill="#cbd5e1" font-size="10" font-family="sans-serif">Hitbox: 0.6m &times; 1.8m &times; 0.6m</text>
+              <text x="65" y="160" fill="#22d3ee" font-size="9" font-family="monospace">Deterministic Offline UUID</text>
 
-              <!-- Quadrant 1: North-West (NW) -->
-              <rect x="80" y="95" width="370" height="145" rx="8" fill="url(#nwGrad)" stroke="#00d2ff" stroke-width="1.5" />
-              <text x="100" y="125" fill="#38bdf8" font-size="13" font-weight="700" font-family="monospace">QUADRANT 1: NORTH-WEST (NW)</text>
-              <text x="100" y="145" fill="#cbd5e1" font-size="11" font-family="sans-serif">Assigned Builder: <strong>Able (Avatar 1)</strong></text>
-              <text x="100" y="165" fill="#94a3b8" font-size="10" font-family="monospace">Voxel Range: [X: 0..7, Z: 0..7]</text>
-              <text x="100" y="185" fill="#cbd5e1" font-size="10" font-family="sans-serif">Tasks: NW Corner Pillar, Front Porch, Left Window</text>
-              <text x="100" y="210" fill="#22d3ee" font-size="10" font-family="monospace">Status: Layer Y=65 [8 / 8 Blocks Placed]</text>
+              <!-- Node 2: Baritone Wrapper -->
+              <rect x="50" y="210" width="240" height="90" rx="8" fill="#064e3b" stroke="#10b981" stroke-width="1.5" />
+              <text x="65" y="235" fill="#34d399" font-size="12" font-weight="700" font-family="monospace">Baritone A* Pathfinder</text>
+              <text x="65" y="255" fill="#cbd5e1" font-size="10" font-family="sans-serif">3D Voxel Lattice Search</text>
+              <text x="65" y="272" fill="#cbd5e1" font-size="10" font-family="sans-serif">Parkour, Step, Break Costs</text>
 
-              <!-- Quadrant 2: North-East (NE) -->
-              <rect x="490" y="95" width="370" height="145" rx="8" fill="url(#neGrad)" stroke="#10b981" stroke-width="1.5" />
-              <text x="510" y="125" fill="#34d399" font-size="13" font-weight="700" font-family="monospace">QUADRANT 2: NORTH-EAST (NE)</text>
-              <text x="510" y="145" fill="#cbd5e1" font-size="11" font-family="sans-serif">Assigned Builder: <strong>Baker (Avatar 2)</strong></text>
-              <text x="510" y="165" fill="#94a3b8" font-size="10" font-family="monospace">Voxel Range: [X: 8..15, Z: 0..7]</text>
-              <text x="510" y="185" fill="#cbd5e1" font-size="10" font-family="sans-serif">Tasks: NE Corner Pillar, Main Entrance Doorframe</text>
-              <text x="510" y="210" fill="#6ee7b7" font-size="10" font-family="monospace">Status: Layer Y=65 [8 / 8 Blocks Placed]</text>
+              <!-- Node 3: Skin Packet Injector -->
+              <rect x="340" y="80" width="240" height="110" rx="8" fill="#3b0764" stroke="#8b5cf6" stroke-width="1.5" />
+              <text x="355" y="105" fill="#c084fc" font-size="12" font-weight="700" font-family="monospace">Skin Packet Distribution</text>
+              <text x="355" y="125" fill="#cbd5e1" font-size="10" font-family="sans-serif">Tab List &amp; Entity Tracker</text>
+              <text x="355" y="142" fill="#cbd5e1" font-size="10" font-family="sans-serif">Direct Base64 Property Map</text>
+              <text x="355" y="160" fill="#d8b4fe" font-size="9" font-family="monospace">Zero External Auth Dependency</text>
 
-              <!-- Quadrant 3: South-West (SW) -->
-              <rect x="80" y="255" width="370" height="145" rx="8" fill="url(#swGrad)" stroke="#8b5cf6" stroke-width="1.5" />
-              <text x="100" y="285" fill="#c084fc" font-size="13" font-weight="700" font-family="monospace">QUADRANT 3: SOUTH-WEST (SW)</text>
-              <text x="100" y="305" fill="#cbd5e1" font-size="11" font-family="sans-serif">Assigned Builder: <strong>Charlie (Avatar 3)</strong></text>
-              <text x="100" y="325" fill="#94a3b8" font-size="10" font-family="monospace">Voxel Range: [X: 0..7, Z: 8..15]</text>
-              <text x="100" y="345" fill="#cbd5e1" font-size="10" font-family="sans-serif">Tasks: SW Corner Pillar, Hearth / Chimney Base</text>
-              <text x="100" y="370" fill="#d8b4fe" font-size="10" font-family="monospace">Status: Layer Y=65 [8 / 8 Blocks Placed]</text>
+              <!-- Node 4: Frustum Telemetry -->
+              <rect x="340" y="210" width="240" height="90" rx="8" fill="#1e293b" stroke="#334155" stroke-width="1.5" />
+              <text x="355" y="235" fill="#f8fafc" font-size="12" font-weight="700" font-family="monospace">Sensory Frustum Raycaster</text>
+              <text x="355" y="255" fill="#cbd5e1" font-size="10" font-family="sans-serif">Cone: 90&deg; FOV, 16 Block Radius</text>
+              <text x="355" y="272" fill="#94a3b8" font-size="9" font-family="monospace">Emits 5 Hz TelemetryFrame</text>
 
-              <!-- Quadrant 4: South-East (SE) -->
-              <rect x="490" y="255" width="370" height="145" rx="8" fill="url(#seGrad)" stroke="#f59e0b" stroke-width="1.5" />
-              <text x="510" y="285" fill="#fbbf24" font-size="13" font-weight="700" font-family="monospace">QUADRANT 4: SOUTH-EAST (SE)</text>
-              <text x="510" y="305" fill="#cbd5e1" font-size="11" font-family="sans-serif">Assigned Builder: <strong>David (Avatar 4)</strong></text>
-              <text x="510" y="325" fill="#94a3b8" font-size="10" font-family="monospace">Voxel Range: [X: 8..15, Z: 8..15]</text>
-              <text x="510" y="345" fill="#cbd5e1" font-size="10" font-family="sans-serif">Tasks: SE Corner Pillar, Back Wall, Storage Nook</text>
-              <text x="510" y="370" fill="#fde68a" font-size="10" font-family="monospace">Status: Layer Y=65 [8 / 8 Blocks Placed]</text>
+              <!-- Node 5: External Go Orchestrator -->
+              <rect x="630" y="140" width="240" height="110" rx="8" fill="#451a03" stroke="#f59e0b" stroke-width="1.5" />
+              <text x="645" y="165" fill="#fbbf24" font-size="12" font-weight="700" font-family="monospace">External Go Harness</text>
+              <text x="645" y="185" fill="#cbd5e1" font-size="10" font-family="sans-serif">System 1 HFSM &amp; Kinematics</text>
+              <text x="645" y="202" fill="#cbd5e1" font-size="10" font-family="sans-serif">Dispatches NavigateIntent</text>
+              <text x="645" y="222" fill="#fde68a" font-size="9" font-family="monospace">gRPC IPC Streaming</text>
 
-              <!-- Center Barrier Crosshair -->
-              <line x1="470" y1="95" x2="470" y2="400" stroke="#334155" stroke-dasharray="4,4" stroke-width="2" />
-              <line x1="80" y1="247" x2="860" y2="247" stroke="#334155" stroke-dasharray="4,4" stroke-width="2" />
-
+              <!-- Connections -->
+              <path d="M 290 135 L 340 135" stroke="#8b5cf6" stroke-width="2" />
+              <path d="M 290 255 L 340 255" stroke="#10b981" stroke-width="2" />
+              <path d="M 580 255 L 630 210" stroke="#f59e0b" stroke-width="2" marker-end="url(#arrow-amber)" />
+              <path d="M 630 180 L 290 110" stroke="#00d2ff" stroke-width="2" stroke-dasharray="4,3" />
             </svg>
           </div>
-          <figcaption class="diagram-caption">Figure 6.0: Spatial Quadrant Partitioning grid showing non-overlapping builder working zones and layer synchronization.</figcaption>
+          <figcaption class="diagram-caption">Figure 6.0: Server-side avatar entity architecture, sensory frustum raycasting, and Baritone pathfinder integration.</figcaption>
         </figure>
 
         <div class="callout callout-guarantee">
-          <div class="callout-title">Entrapment-Free Construction Guarantee</div>
-          <p>By enforcing bottom-up vertical layering ($Y_{\text{min}} \to Y_{\text{max}}$) and spatial quadrant boundaries ($NW, NE, SW, SE$), multi-agent construction projects guarantee zero builder entombment and zero voxel overwrite race conditions.</p>
+          <div class="callout-title">Physical Parity Guarantee</div>
+          <p>By subclassing server player entities, autonomous avatars remain subject to identical gravitational acceleration, breath meters, fall damage, and reach distances as human players, preserving fair gameplay simulation.</p>
         </div>
       </section>
 
       <!-- Section 3 -->
       <section class="tech-section">
-        <h2>FakePlayer Internals, Skin Packets &amp; Baritone A* Search</h2>
+        <h2>Subsystem Mechanics, Packet Distribution &amp; A* Heuristic</h2>
 
-        <h3>1. Server-Side <code>AgentEntity</code> Architecture (<code>AgentEntity.java</code>)</h3>
+        <h3>1. Server-Side Avatar Entity Architecture</h3>
         <p>
-          Settler avatars inherit directly from <code>net.minecraft.server.level.ServerPlayer</code>. They are headless server-side player instances 
-          with standard player dimensions ($0.6\text{m} \times 1.8\text{m}$), eye heights, gravity vectors, and inventory equipment slots:
+          Settler avatars inherit directly from the server player base class.<sup><a href="#fn3" id="ref3" class="footnote-ref">[3]</a></sup> 
+          They are headless server-side player instances with standard player dimensions, eye heights, gravity vectors, and inventory equipment slots. 
+          To ensure stability across world reloads, each avatar's offline UUID is generated deterministically from its unique agent identifier using a standard namespaced hash.
         </p>
 
-        <div class="code-block">
-public class AgentEntity extends ServerPlayer {
-    private final String agentId;
-    private final UUID offlineUuid;
-    private final BaritoneWrapper pathfinder;
-
-    public AgentEntity(MinecraftServer server, ServerLevel level, GameProfile profile, String agentId) {
-        super(server, level, profile, ClientInformation.createDefault());
-        this.agentId = agentId;
-        this.offlineUuid = UUID.nameUUIDFromBytes(("CivQuest:" + agentId).getBytes(StandardCharsets.UTF_8));
-        this.pathfinder = new BaritoneWrapper(this);
-    }
-}
-        </div>
-
-        <h3>2. Dynamic Packet Skin Injection without Mojang Authentication</h3>
+        <h3>2. Dynamic Packet Skin Injection without Authentication</h3>
         <p>
-          Standard Minecraft servers fetch player skins via Mojang's authentication session servers. Because CivQuest agents are offline-generated entities, 
-          the server mod injects skin metadata directly into the player tab list and entity tracker packets:
+          Standard game servers fetch player skin textures by querying external session servers. Because autonomous agents are offline-generated entities, 
+          the server mod injects skin metadata directly into the player tab list and entity tracker packets:<sup><a href="#fn4" id="ref4" class="footnote-ref">[4]</a></sup>
         </p>
         <ol>
-          <li>The agent spawn request transmits raw 64x64 RGBA PNG bytes or a signed Mojang texture property payload (<code>SpawnAgentRequest.skin_texture_value</code>).</li>
-          <li><code>AgentSkinManager.java</code> populates the <code>GameProfile</code> property map with <code>textures</code> key-value pairs.</li>
-          <li>The server broadcasts <code>ClientboundPlayerInfoUpdatePacket.Action.ADD_PLAYER</code> to all connected clients, causing clients to render custom skins immediately.</li>
+          <li>The agent spawn request transmits raw 64x64 texture bytes or signed texture property strings.</li>
+          <li>The skin manager populates the game profile property map with the corresponding texture key-value pairs.</li>
+          <li>The server broadcasts player info update packets to all connected clients, instructing clients to render the custom skin immediately without network lookups.</li>
         </ol>
 
-        <h3>3. Baritone A* Pathfinding Integration</h3>
+        <h3>3. Baritone A* Pathfinding Heuristic &amp; Cost Modeling</h3>
         <p>
-          Rather than relying on basic mob navigation meshes, CivQuest embeds Baritone's full voxel A* search engine. 
-          The wrapper supports complex 3D maneuvers:
+          Rather than relying on basic mob navigation meshes, the architecture embeds an integrated A* voxel search engine.<sup><a href="#fn2" id="ref2" class="footnote-ref">[2]</a></sup> 
+          The pathfinder evaluates total traversal cost for each candidate voxel node:<sup><a href="#fn5" id="ref5" class="footnote-ref">[5]</a></sup>
         </p>
-        <ul>
-          <li><strong>Dynamic Parkour:</strong> Sprint-jumping across 3-block chasms and jumping up 1-block stone steps without placing scaffolding.</li>
-          <li><strong>Obstacle Clearance:</strong> Automatically breaking obstructing leaves or cobwebs if a path cannot be found within 400 iterations.</li>
-          <li><strong>Safety Invariants:</strong> Baritone costs penalize lava ($+10,000$), deep water ($+500$), and fall damage heights greater than 3 blocks ($+1,000$).</li>
-        </ul>
+        
+        <div class="math-block">
+          <math xmlns="http://www.w3.org/1998/Math/MathML" display="block">
+            <mi>f</mi>
+            <mo stretchy="false">(</mo>
+            <mi>n</mi>
+            <mo stretchy="false">)</mo>
+            <mo>=</mo>
+            <mi>g</mi>
+            <mo stretchy="false">(</mo>
+            <mi>n</mi>
+            <mo stretchy="false">)</mo>
+            <mo>+</mo>
+            <mi>h</mi>
+            <mo stretchy="false">(</mo>
+            <mi>n</mi>
+            <mo stretchy="false">)</mo>
+            <mo>+</mo>
+            <msub>
+              <mi>C</mi>
+              <mtext>break</mtext>
+            </msub>
+            <mo stretchy="false">(</mo>
+            <mi>n</mi>
+            <mo stretchy="false">)</mo>
+            <mo>+</mo>
+            <msub>
+              <mi>C</mi>
+              <mtext>hazard</mtext>
+            </msub>
+            <mo stretchy="false">(</mo>
+            <mi>n</mi>
+            <mo stretchy="false">)</mo>
+          </math>
+        </div>
 
-        <h3>4. Physical Embodiment &amp; Voxel Parameter Matrix</h3>
+        <p>
+          Where <math xmlns="http://www.w3.org/1998/Math/MathML"><mi>h</mi><mo stretchy="false">(</mo><mi>n</mi><mo stretchy="false">)</mo><mo>=</mo><msub><mrow><mo stretchy="false">&#x2225;</mo><msub><mi mathvariant="bold">P</mi><mi>n</mi></msub><mo>&#x2212;</mo><msub><mi mathvariant="bold">P</mi><mtext>goal</mtext></msub><mo stretchy="false">&#x2225;</mo></mrow><mn>2</mn></msub></math> represents Euclidean goal distance, 
+          <math xmlns="http://www.w3.org/1998/Math/MathML"><msub><mi>C</mi><mtext>break</mtext></msub><mo stretchy="false">(</mo><mi>n</mi><mo stretchy="false">)</mo></math> models hardness penalties for clearing obstructing blocks, and 
+          <math xmlns="http://www.w3.org/1998/Math/MathML"><msub><mi>C</mi><mtext>hazard</mtext></msub><mo stretchy="false">(</mo><mi>n</mi><mo stretchy="false">)</mo></math> penalizes hazardous voxels such as lava, deep water, or dangerous fall distances.
+        </p>
+
+        <h3>4. Physical Embodiment &amp; Navigation Parameter Matrix</h3>
         <div class="spec-table-wrap">
           <table class="spec-table">
             <thead>
@@ -235,33 +234,33 @@ public class AgentEntity extends ServerPlayer {
                 <th>Physical Property</th>
                 <th>Game Engine Value</th>
                 <th>Physical Invariant</th>
-                <th>Actuation Method</th>
+                <th>Actuation Interface</th>
               </tr>
             </thead>
             <tbody>
               <tr>
                 <td><code>Avatar Hitbox</code></td>
-                <td>$0.6\text{m} \times 1.8\text{m} \times 0.6\text{m}$</td>
+                <td>0.6m &times; 1.8m &times; 0.6m</td>
                 <td>Rigid Body Voxel Collision</td>
-                <td><code>ServerPlayer.setBoundingBox()</code></td>
+                <td>Server player bounding box API</td>
               </tr>
               <tr>
-                <td><code>Reach Distance</code></td>
+                <td><code>Reach Envelope</code></td>
                 <td>4.5 Blocks</td>
-                <td>Raycast distance check</td>
-                <td><code>GameMode.useItemOn()</code></td>
+                <td>Raycast visibility and range check</td>
+                <td>Game mode item use API</td>
               </tr>
               <tr>
                 <td><code>Pathfinder Search</code></td>
                 <td>A* Voxel Grid (Baritone)</td>
-                <td>Max 400 Iterations / Replanning</td>
-                <td><code>CustomGoal.calculate()</code></td>
+                <td>Max 400 Iterations / Dynamic Replanning</td>
+                <td>Goal execution wrapper</td>
               </tr>
               <tr>
-                <td><code>Quadrant Partition</code></td>
-                <td>$NW, NE, SW, SE$ (8x8 subgrid)</td>
-                <td>Bottom-up ($Y_{\text{min}} \to Y_{\text{max}}$)</td>
-                <td><code>BlueprintCoordinator.SyncLayer()</code></td>
+                <td><code>Skin Injection</code></td>
+                <td>64x64 RGBA PNG / Base64</td>
+                <td>Zero External Auth Dependency</td>
+                <td>Player info update packet</td>
               </tr>
             </tbody>
           </table>
@@ -282,16 +281,31 @@ public class AgentEntity extends ServerPlayer {
             <strong>Embodied AI and Sensorimotor Grounding:</strong> 
             Embodied cognition posits that intelligence emerges from physical interaction with a spatial environment, where perception and motor actuation form a continuous closed loop governed by physics and kinematic constraints. 
             See: Brooks, R. (1991). <em>Intelligence without representation</em>. Artificial Intelligence, 47(1-3), 139–159; Pfeifer, R., &amp; Bongard, J. (2006). <em>How the Body Shapes the Way We Think: A New View of Intelligence</em>. MIT Press.
+            <a href="#ref1" class="footnote-backref" title="Jump back to text">&hookleftarrow;</a>
           </li>
           <li id="fn2">
             <strong>Heuristic 3D Voxel Pathfinding:</strong> 
             A* search extended across dynamic 3D discrete voxel lattices with jump-placing, block destruction penalties, and kinetic momentum modeling. 
             See: Hart, P. E., Nilsson, N. J., &amp; Raphael, B. (1968). <em>A formal basis for the heuristic determination of minimum cost paths</em>. IEEE Transactions on Systems Science and Cybernetics, 4(2), 100–107.
+            <a href="#ref2" class="footnote-backref" title="Jump back to text">&hookleftarrow;</a>
           </li>
           <li id="fn3">
-            <strong>Spatial Domain Decomposition in Collective Construction:</strong> 
-            Partitioning continuous construction volumes into strict non-overlapping spatial quadrants ($NW, NE, SW, SE$) and monotonic vertical layers ($Y_{\text{min}} \to Y_{\text{max}}$) guarantees deadlock-free and collision-free multi-agent structural synthesis. 
-            See: Werfel, J., Petersen, K., &amp; Nagpal, R. (2014). <em>Designing collective behavior in a billion-robot swarm</em>. Science, 343(6172), 754–758.
+            <strong>Server-Side FakePlayer Entity Implementation:</strong> 
+            Headless player entity subclass maintaining server-side hitboxes, offline UUID hashing, and Baritone execution handles. 
+            Source contract: <code>mod-neoforge/src/main/java/com/civquest/agent/AgentEntity.java</code>.
+            <a href="#ref3" class="footnote-backref" title="Jump back to text">&hookleftarrow;</a>
+          </li>
+          <li id="fn4">
+            <strong>Packet-Level Skin Injection Manager:</strong> 
+            Injects custom skin texture properties into client-bound player information packets without requiring Mojang session verification. 
+            Source contract: <code>mod-neoforge/src/main/java/com/civquest/agent/AgentSkinManager.java</code>.
+            <a href="#ref4" class="footnote-backref" title="Jump back to text">&hookleftarrow;</a>
+          </li>
+          <li id="fn5">
+            <strong>Baritone Pathfinding Wrapper &amp; Cost Adapter:</strong> 
+            Translates incoming high-level navigation coordinates into Baritone goals and tracks kinematic progress across server ticks. 
+            Source contract: <code>mod-neoforge/src/main/java/com/civquest/agent/BaritoneWrapper.java</code>.
+            <a href="#ref5" class="footnote-backref" title="Jump back to text">&hookleftarrow;</a>
           </li>
         </ol>
       </section>
@@ -304,9 +318,9 @@ public class AgentEntity extends ServerPlayer {
         <span class="pagination-sub">&larr; Previous Specification</span>
         <span class="pagination-title">5. Inference &amp; Context Assembly</span>
       </a>
-      <a href="persistence-and-memory.html" class="pagination-card" style="text-align: right;">
+      <a href="spatial-quadrant-construction.html" class="pagination-card" style="text-align: right;">
         <span class="pagination-sub">Next Specification &rarr;</span>
-        <span class="pagination-title">7. Persistence &amp; Vector Memory</span>
+        <span class="pagination-title">7. Spatial Quadrant Construction &rarr;</span>
       </a>
     </div>
 

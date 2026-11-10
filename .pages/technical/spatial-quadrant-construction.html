@@ -1,0 +1,373 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <!-- Copyright (c) 2026 Brian Posey
+       Use of this source code is governed by an MIT-style
+       license that can be found in the LICENSE file. -->
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Spatial Quadrant Construction — CivQuest Technical Architecture</title>
+  <meta name="description" content="Technical specification for CivQuest's spatial domain decomposition: Quadrant sector locking, monotonic elevation layer synchronization, and entrapment-free multi-agent construction.">
+  <link rel="stylesheet" href="../assets/css/style.css">
+</head>
+<body>
+
+  <!-- Alpha Status Banner -->
+  <div class="alpha-banner">
+    <span class="alpha-tag">Active Pre-Alpha</span>
+    <span>CivQuest is under active early architecture and development. <a href="https://github.com/btposey/civquest" target="_blank" rel="noopener">Track source & issues on GitHub</a></span>
+  </div>
+
+  <!-- Navigation -->
+  <header>
+    <div class="nav-container">
+      <a href="../index.html" class="logo">
+        <span class="logo-badge">civquest</span>
+        <span>CivQuest</span>
+        <span class="badge-alpha">v0.1.0</span>
+      </a>
+      <nav class="nav-links">
+        <a href="../index.html">Overview</a>
+        <a href="../gameplay.html">Gameplay</a>
+        <a href="index.html" style="color: var(--accent-cyan); font-weight: 600;">Systems Engineering</a>
+        <a href="https://github.com/btposey/civquest" class="btn-github" target="_blank" rel="noopener">
+          <svg width="18" height="18" viewBox="0 0 16 16" fill="currentColor">
+            <path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/>
+          </svg>
+          <span>GitHub</span>
+        </a>
+      </nav>
+    </div>
+  </header>
+
+  <main class="tech-container">
+    
+    <!-- Breadcrumb Navigation -->
+    <nav class="breadcrumb-nav">
+      <a href="../index.html">Overview</a>
+      <span class="breadcrumb-separator">/</span>
+      <a href="index.html">Systems Engineering Hub</a>
+      <span class="breadcrumb-separator">/</span>
+      <span class="breadcrumb-current">7. Spatial Construction</span>
+    </nav>
+
+    <!-- Hero -->
+    <div class="tech-hero">
+      <div class="tech-meta-pills">
+        <span class="meta-pill pill-cyan">Domain Decomposition</span>
+        <span class="meta-pill pill-emerald">Sector Locking</span>
+        <span class="meta-pill pill-purple">Monotonic Synchronization</span>
+        <span class="meta-pill pill-amber">Entombment Avoidance</span>
+      </div>
+      <h1>Spatial Quadrant Partitioning &amp;<br><span>Collective Multi-Agent Construction</span></h1>
+      <p class="tech-lead">
+        Coordinating multiple embodied builder agents on a shared architectural site requires spatial partitioning to eliminate physical collisions, 
+        deadlocks, and structural entombment. CivQuest divides building plots into four orthogonal quadrants, enforces sector-exclusive locking, 
+        and synchronizes elevation layers bottom-up.
+      </p>
+    </div>
+
+    <!-- Article Content -->
+    <article class="tech-article">
+
+      <!-- Section 1 -->
+      <section class="tech-section">
+        <h2>Spatial Conflicts in Collective Construction</h2>
+        <p>
+          In collective construction tasks, embodied agents manipulate discrete voxel blocks in shared coordinate space.<sup><a href="#fn1" id="ref1" class="footnote-ref">[1]</a></sup> 
+          Without centralized spatial partitioning, uncoordinated builders experience severe spatial hazards:
+        </p>
+        <ul>
+          <li><strong>Physical Collisions and Push Deadlocks:</strong> When multiple builders attempt to place adjacent corner blocks concurrently, their physical bounding boxes collide, pushing each other into hazards or wedging in narrow corridors.</li>
+          <li><strong>Builder Entombment:</strong> If an agent places upper wall or ceiling blocks before completing floor foundations and internal exits, builders become physically trapped inside structural cavities and starve.</li>
+          <li><strong>Voxel Overwrite Race Conditions:</strong> Concurrent placements at identical voxel coordinates cause network race conditions and corrupted structural integrity.</li>
+        </ul>
+        <p>
+          CivQuest resolves these failure modes by treating construction plots as a 2D spatial domain decomposition with monotonic vertical layer synchronization.
+        </p>
+      </section>
+
+      <!-- Section 2 -->
+      <section class="tech-section">
+        <h2>Spatial Quadrant Partitioning Architecture</h2>
+        <p>
+          Building blueprints are mapped across four non-overlapping sectors corresponding to the cardinal quadrants: North-West, North-East, South-West, and South-East. 
+          Each active builder avatar is assigned exclusive ownership of one quadrant during construction.
+        </p>
+
+        <div class="callout callout-invariant">
+          <div class="callout-title">Spatial Quadrant Invariants</div>
+          <p><strong>Sector-Exclusive Locking:</strong> No agent may place, break, or occupy blocks outside its assigned spatial quadrant boundaries.</p>
+          <p><strong>Monotonic Elevation Barrier:</strong> All four quadrants must confirm layer completion at elevation <math xmlns="http://www.w3.org/1998/Math/MathML"><mi>Y</mi></math> before any agent is permitted to place blocks at elevation <math xmlns="http://www.w3.org/1998/Math/MathML"><mi>Y</mi><mo>+</mo><mn>1</mn></math>.</p>
+        </div>
+
+        <figure class="diagram-figure">
+          <div class="diagram-container">
+            <svg class="responsive-svg" viewBox="0 0 940 440" xmlns="http://www.w3.org/2000/svg">
+              <defs>
+                <linearGradient id="nwGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+                  <stop offset="0%" stop-color="#083344" />
+                  <stop offset="100%" stop-color="#041824" />
+                </linearGradient>
+                <linearGradient id="neGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+                  <stop offset="0%" stop-color="#064e3b" />
+                  <stop offset="100%" stop-color="#022c22" />
+                </linearGradient>
+                <linearGradient id="swGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+                  <stop offset="0%" stop-color="#3b0764" />
+                  <stop offset="100%" stop-color="#19022c" />
+                </linearGradient>
+                <linearGradient id="seGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+                  <stop offset="0%" stop-color="#451a03" />
+                  <stop offset="100%" stop-color="#240c01" />
+                </linearGradient>
+              </defs>
+
+              <!-- Plot Boundary Header -->
+              <rect x="50" y="25" width="840" height="390" rx="10" fill="#070a10" stroke="#334155" stroke-width="2" />
+              <text x="470" y="55" fill="#f8fafc" font-size="13" font-weight="700" font-family="monospace" text-anchor="middle">SPATIAL QUADRANT PARTITIONING MATRIX (16x16 Plot)</text>
+              <text x="470" y="75" fill="#64748b" font-size="11" font-family="sans-serif" text-anchor="middle">Layer Synchronization: Floor Y=64 &rarr; Walls Y=65-67 &rarr; Roof Y=68</text>
+
+              <!-- Quadrant 1: North-West (NW) -->
+              <rect x="80" y="95" width="370" height="140" rx="8" fill="url(#nwGrad)" stroke="#00d2ff" stroke-width="1.5" />
+              <text x="100" y="125" fill="#38bdf8" font-size="12" font-weight="700" font-family="monospace">QUADRANT 1: NORTH-WEST (NW)</text>
+              <text x="100" y="145" fill="#cbd5e1" font-size="11" font-family="sans-serif">Assigned Builder: <strong>Settler 1</strong></text>
+              <text x="100" y="165" fill="#94a3b8" font-size="10" font-family="monospace">Voxel Range: [X: 0..7, Z: 0..7]</text>
+              <text x="100" y="185" fill="#cbd5e1" font-size="10" font-family="sans-serif">Tasks: NW Corner Pillar, Porch, Window Frame</text>
+              <text x="100" y="208" fill="#22d3ee" font-size="10" font-family="monospace">Status: Layer Y=65 [Synchronized]</text>
+
+              <!-- Quadrant 2: North-East (NE) -->
+              <rect x="490" y="95" width="370" height="140" rx="8" fill="url(#neGrad)" stroke="#10b981" stroke-width="1.5" />
+              <text x="510" y="125" fill="#34d399" font-size="12" font-weight="700" font-family="monospace">QUADRANT 2: NORTH-EAST (NE)</text>
+              <text x="510" y="145" fill="#cbd5e1" font-size="11" font-family="sans-serif">Assigned Builder: <strong>Settler 2</strong></text>
+              <text x="510" y="165" fill="#94a3b8" font-size="10" font-family="monospace">Voxel Range: [X: 8..15, Z: 0..7]</text>
+              <text x="510" y="185" fill="#cbd5e1" font-size="10" font-family="sans-serif">Tasks: NE Corner Pillar, Main Entrance Doorframe</text>
+              <text x="510" y="208" fill="#6ee7b7" font-size="10" font-family="monospace">Status: Layer Y=65 [Synchronized]</text>
+
+              <!-- Quadrant 3: South-West (SW) -->
+              <rect x="80" y="250" width="370" height="140" rx="8" fill="url(#swGrad)" stroke="#8b5cf6" stroke-width="1.5" />
+              <text x="100" y="280" fill="#c084fc" font-size="12" font-weight="700" font-family="monospace">QUADRANT 3: SOUTH-WEST (SW)</text>
+              <text x="100" y="300" fill="#cbd5e1" font-size="11" font-family="sans-serif">Assigned Builder: <strong>Settler 3</strong></text>
+              <text x="100" y="320" fill="#94a3b8" font-size="10" font-family="monospace">Voxel Range: [X: 0..7, Z: 8..15]</text>
+              <text x="100" y="340" fill="#cbd5e1" font-size="10" font-family="sans-serif">Tasks: SW Corner Pillar, Hearth &amp; Chimney Base</text>
+              <text x="100" y="363" fill="#d8b4fe" font-size="10" font-family="monospace">Status: Layer Y=65 [Synchronized]</text>
+
+              <!-- Quadrant 4: South-East (SE) -->
+              <rect x="490" y="250" width="370" height="140" rx="8" fill="url(#seGrad)" stroke="#f59e0b" stroke-width="1.5" />
+              <text x="510" y="280" fill="#fbbf24" font-size="12" font-weight="700" font-family="monospace">QUADRANT 4: SOUTH-EAST (SE)</text>
+              <text x="510" y="300" fill="#cbd5e1" font-size="11" font-family="sans-serif">Assigned Builder: <strong>Settler 4</strong></text>
+              <text x="510" y="320" fill="#94a3b8" font-size="10" font-family="monospace">Voxel Range: [X: 8..15, Z: 8..15]</text>
+              <text x="510" y="340" fill="#cbd5e1" font-size="10" font-family="sans-serif">Tasks: SE Corner Pillar, Back Wall, Storage Nook</text>
+              <text x="510" y="363" fill="#fde68a" font-size="10" font-family="monospace">Status: Layer Y=65 [Synchronized]</text>
+
+              <!-- Center Barrier Crosshair -->
+              <line x1="470" y1="95" x2="470" y2="390" stroke="#334155" stroke-dasharray="4,4" stroke-width="2" />
+              <line x1="80" y1="242" x2="860" y2="242" stroke="#334155" stroke-dasharray="4,4" stroke-width="2" />
+
+            </svg>
+          </div>
+          <figcaption class="diagram-caption">Figure 7.0: Spatial Quadrant Partitioning grid showing non-overlapping builder working zones and layer synchronization.</figcaption>
+        </figure>
+
+        <div class="callout callout-guarantee">
+          <div class="callout-title">Entrapment-Free Construction Guarantee</div>
+          <p>By enforcing bottom-up vertical layering and orthogonal quadrant boundaries, multi-agent construction projects guarantee zero builder entombment and zero voxel overwrite race conditions.</p>
+        </div>
+      </section>
+
+      <!-- Section 3 -->
+      <section class="tech-section">
+        <h2>Partition Mathematics, Barrier Predicates &amp; Coordination</h2>
+
+        <h3>1. Spatial Domain Decomposition Mapping</h3>
+        <p>
+          Given a rectangular building footprint defined by corner coordinates with midpoint <math xmlns="http://www.w3.org/1998/Math/MathML"><mo stretchy="false">(</mo><msub><mi>x</mi><mtext>mid</mtext></msub><mo>,</mo><msub><mi>z</mi><mtext>mid</mtext></msub><mo stretchy="false">)</mo></math>, 
+          every candidate voxel coordinate maps deterministically into an exclusive quadrant:<sup><a href="#fn2" id="ref2" class="footnote-ref">[2]</a></sup>
+        </p>
+
+        <div class="math-block">
+          <math xmlns="http://www.w3.org/1998/Math/MathML" display="block">
+            <mi>Q</mi>
+            <mo stretchy="false">(</mo>
+            <mi>x</mi>
+            <mo>,</mo>
+            <mi>z</mi>
+            <mo stretchy="false">)</mo>
+            <mo>=</mo>
+            <mrow>
+              <mo>{</mo>
+              <mtable columnalign="left left">
+                <mtr>
+                  <mtd><mi>N</mi><mi>W</mi></mtd>
+                  <mtd><mtext>if&nbsp;</mtext><mi>x</mi><mo>&lt;</mo><msub><mi>x</mi><mtext>mid</mtext></msub><mo>&and;</mo><mi>z</mi><mo>&lt;</mo><msub><mi>z</mi><mtext>mid</mtext></msub></mtd>
+                </mtr>
+                <mtr>
+                  <mtd><mi>N</mi><mi>E</mi></mtd>
+                  <mtd><mtext>if&nbsp;</mtext><mi>x</mi><mo>&ge;</mo><msub><mi>x</mi><mtext>mid</mtext></msub><mo>&and;</mo><mi>z</mi><mo>&lt;</mo><msub><mi>z</mi><mtext>mid</mtext></msub></mtd>
+                </mtr>
+                <mtr>
+                  <mtd><mi>S</mi><mi>W</mi></mtd>
+                  <mtd><mtext>if&nbsp;</mtext><mi>x</mi><mo>&lt;</mo><msub><mi>x</mi><mtext>mid</mtext></msub><mo>&and;</mo><mi>z</mi><mo>&ge;</mo><msub><mi>z</mi><mtext>mid</mtext></msub></mtd>
+                </mtr>
+                <mtr>
+                  <mtd><mi>S</mi><mi>E</mi></mtd>
+                  <mtd><mtext>if&nbsp;</mtext><mi>x</mi><mo>&ge;</mo><msub><mi>x</mi><mtext>mid</mtext></msub><mo>&and;</mo><mi>z</mi><mo>&ge;</mo><msub><mi>z</mi><mtext>mid</mtext></msub></mtd>
+                </mtr>
+              </mtable>
+            </mrow>
+          </math>
+        </div>
+
+        <h3>2. Monotonic Elevation Barrier Synchronization</h3>
+        <p>
+          To prevent upper-level structural overhangs from trapping builders below, the blueprint coordinator enforces a synchronization barrier across all sectors:<sup><a href="#fn3" id="ref3" class="footnote-ref">[3]</a></sup>
+        </p>
+
+        <div class="math-block">
+          <math xmlns="http://www.w3.org/1998/Math/MathML" display="block">
+            <mtext>Ready</mtext>
+            <mo stretchy="false">(</mo>
+            <mi>Y</mi>
+            <mo>+</mo>
+            <mn>1</mn>
+            <mo stretchy="false">)</mo>
+            <mo>&iff;</mo>
+            <munder>
+              <mo>&and;</mo>
+              <mrow>
+                <mi>q</mi>
+                <mo>&isin;</mo>
+                <mo>{</mo>
+                <mi>N</mi>
+                <mi>W</mi>
+                <mo>,</mo>
+                <mi>N</mi>
+                <mi>E</mi>
+                <mo>,</mo>
+                <mi>S</mi>
+                <mi>W</mi>
+                <mo>,</mo>
+                <mi>S</mi>
+                <mi>E</mi>
+                <mo>}</mo>
+              </mrow>
+            </munder>
+            <mtext>Completed</mtext>
+            <mo stretchy="false">(</mo>
+            <mi>q</mi>
+            <mo>,</mo>
+            <mi>Y</mi>
+            <mo stretchy="false">)</mo>
+          </math>
+        </div>
+
+        <p>
+          Builders that finish their sector's layer early enter an idle stand-down state at their designated perimeter staging coordinate, 
+          preventing premature ascension into unfinished structural volumes.
+        </p>
+
+        <h3>3. Construction Coordination Specification Matrix</h3>
+        <div class="spec-table-wrap">
+          <table class="spec-table">
+            <thead>
+              <tr>
+                <th>Coordination Parameter</th>
+                <th>Standard Value</th>
+                <th>Invariance Rule</th>
+                <th>Enforcement Point</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><code>Sector Partition</code></td>
+                <td>4 Quadrants (NW, NE, SW, SE)</td>
+                <td>Mutually exclusive bounding boxes</td>
+                <td>Blueprint coordinator assignment</td>
+              </tr>
+              <tr>
+                <td><code>Layer Ordering</code></td>
+                <td>Monotonic Bottom-Up</td>
+                <td>Layer Y must complete before Y+1</td>
+                <td>Barrier synchronization predicate</td>
+              </tr>
+              <tr>
+                <td><code>Perimeter Staging</code></td>
+                <td>Outer corner offset (+2 blocks)</td>
+                <td>Stand-down outside active volume</td>
+                <td>Baritone standby goal</td>
+              </tr>
+              <tr>
+                <td><code>Material Replenishment</code></td>
+                <td>Direct chest withdrawal</td>
+                <td>Staged supply chest per sector</td>
+                <td>Inventory restocking routine</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+      </section>
+
+      <!-- Footnotes & Provenance Section -->
+      <section class="footnotes-section">
+        <div class="footnotes-title">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253" />
+          </svg>
+          <span>Footnotes &amp; Conceptual Provenance</span>
+        </div>
+        <ol class="footnotes-list">
+          <li id="fn1">
+            <strong>Spatial Domain Decomposition in Collective Construction:</strong> 
+            Partitioning continuous construction volumes into strict non-overlapping spatial quadrants and monotonic vertical layers guarantees deadlock-free and collision-free multi-agent structural synthesis. 
+            See: Werfel, J., Petersen, K., &amp; Nagpal, R. (2014). <em>Designing collective behavior in a billion-robot swarm</em>. Science, 343(6172), 754–758.
+            <a href="#ref1" class="footnote-backref" title="Jump back to text">&hookleftarrow;</a>
+          </li>
+          <li id="fn2">
+            <strong>Architect Blueprint Grammar &amp; Sector Generator:</strong> 
+            Decomposes high-level LLM structural templates into sector-partitioned discrete voxel coordinate maps. 
+            Source contract: <code>orchestrator-go/internal/system2/architect.go</code>.
+            <a href="#ref2" class="footnote-backref" title="Jump back to text">&hookleftarrow;</a>
+          </li>
+          <li id="fn3">
+            <strong>In-Engine Blueprint Coordinator Implementation:</strong> 
+            Manages layer barrier synchronization, verifies voxel placement progress across sectors, and enforces perimeter staging. 
+            Source contract: <code>mod-neoforge/src/main/java/com/civquest/agent/construction/BlueprintCoordinator.java</code>.
+            <a href="#ref3" class="footnote-backref" title="Jump back to text">&hookleftarrow;</a>
+          </li>
+        </ol>
+      </section>
+
+    </article>
+
+    <!-- Pagination Navigation -->
+    <div class="tech-pagination">
+      <a href="physical-embodiment.html" class="pagination-card">
+        <span class="pagination-sub">&larr; Previous Specification</span>
+        <span class="pagination-title">6. Avatar Embodiment &amp; Navigation</span>
+      </a>
+      <a href="persistence-and-memory.html" class="pagination-card" style="text-align: right;">
+        <span class="pagination-sub">Next Specification &rarr;</span>
+        <span class="pagination-title">8. Relational &amp; Vector Persistence &rarr;</span>
+      </a>
+    </div>
+
+  </main>
+
+  <!-- Footer -->
+  <footer>
+    <div class="footer-container">
+      <div class="footer-links">
+        <a href="../index.html">Overview</a>
+        <a href="../gameplay.html">Gameplay</a>
+        <a href="index.html">Systems Engineering</a>
+        <a href="https://github.com/btposey/civquest">Source Code</a>
+        <a href="https://github.com/btposey/civquest/blob/main/LICENSE">MIT License</a>
+      </div>
+
+      <p class="copyright">&copy; 2026 Brian Posey. Open source under the MIT License.</p>
+    </div>
+  </footer>
+
+</body>
+</html>
