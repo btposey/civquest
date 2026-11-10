@@ -137,6 +137,13 @@ public class AgentWatchdogFSM {
             return false;
         }
 
+        // Terminal state invariant: Once shut down, the agent cannot transition back
+        if (this.currentState == WatchdogState.SHUTDOWN) {
+            LOGGER.debug("Rejected transition from terminal SHUTDOWN to {} for agent '{}'",
+                    newState, agent != null ? agent.getAgentId() : "unknown");
+            return false;
+        }
+
         WatchdogState oldState = this.currentState;
         this.previousState = oldState;
         this.currentState = newState;
@@ -156,6 +163,9 @@ public class AgentWatchdogFSM {
      * Called when the gRPC stream connects or registers for this agent.
      */
     public synchronized void onConnected() {
+        if (this.currentState == WatchdogState.SHUTDOWN) {
+            return;
+        }
         this.streamRegistered = true;
         this.lastIntentTick = currentTick;
         transitionTo(WatchdogState.CONNECTED_ACTIVE, "grpc_stream_connected");
@@ -165,6 +175,9 @@ public class AgentWatchdogFSM {
      * Called when an intent is received over the gRPC stream.
      */
     public synchronized void onIntentReceived(AgentIntent intent) {
+        if (this.currentState == WatchdogState.SHUTDOWN) {
+            return;
+        }
         this.lastIntentTick = currentTick;
         if (currentState == WatchdogState.STREAM_DEGRADED || currentState == WatchdogState.DISCONNECTED_SAFE_MODE) {
             if (streamRegistered) {
@@ -178,6 +191,9 @@ public class AgentWatchdogFSM {
      */
     public synchronized void onDisconnected() {
         this.streamRegistered = false;
+        if (this.currentState == WatchdogState.SHUTDOWN) {
+            return;
+        }
         transitionTo(WatchdogState.DISCONNECTED_SAFE_MODE, "grpc_stream_disconnected");
     }
 
@@ -186,6 +202,9 @@ public class AgentWatchdogFSM {
      */
     public synchronized void onStreamError(Throwable t) {
         this.streamRegistered = false;
+        if (this.currentState == WatchdogState.SHUTDOWN) {
+            return;
+        }
         transitionTo(WatchdogState.DISCONNECTED_SAFE_MODE, "grpc_stream_error: " + (t != null ? t.getMessage() : "unknown"));
     }
 
@@ -345,8 +364,17 @@ public class AgentWatchdogFSM {
             }
         }
 
+        boolean wasDefensiveLock = defensiveLockActive;
         agent.setShiftKeyDown(true);
         defensiveLockActive = true;
+
+        if (!wasDefensiveLock) {
+            agent.recordReflexNotice(com.civquest.mod.grpc.v1.ReflexNotice.newBuilder()
+                    .setReflexType(com.civquest.mod.grpc.v1.ReflexNotice.ReflexType.REFLEX_TYPE_SHIELD_DEFENSE)
+                    .setTick(currentTick)
+                    .setDetails("Autonomous watchdog shield defense engaged")
+                    .build());
+        }
     }
 
     /**
@@ -382,9 +410,15 @@ public class AgentWatchdogFSM {
             if (stack != null && !stack.isEmpty()) {
                 FoodProperties food = stack.get(DataComponents.FOOD);
                 if (food != null) {
+                    String foodId = net.minecraft.core.registries.BuiltInRegistries.ITEM.getKey(stack.getItem()).toString();
                     agent.getFoodData().eat(food);
                     stack.shrink(1);
                     this.eatCooldownTicks = EAT_COOLDOWN_TICKS;
+                    agent.recordReflexNotice(com.civquest.mod.grpc.v1.ReflexNotice.newBuilder()
+                            .setReflexType(com.civquest.mod.grpc.v1.ReflexNotice.ReflexType.REFLEX_TYPE_AUTO_EAT)
+                            .setTick(currentTick)
+                            .setDetails("Autonomous watchdog food consumption: " + foodId)
+                            .build());
                     return true;
                 }
             }

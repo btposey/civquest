@@ -272,10 +272,7 @@ public class AgentMotorFSM {
                         return woke;
                     }
                     case PLACE_BLOCK, PAVE_ROAD_PATH, RING_BELL -> {
-                        transitionTo(MotorState.BUILDING, "interact_building_intent");
-                        boolean result = agent != null ? actuator.actuateInteractBlock(agent, interact) : true;
-                        transitionTo(MotorState.IDLE, "interact_building_complete");
-                        return result;
+                        return agent != null ? actuator.actuateInteractBlock(agent, interact) : true;
                     }
                     default -> {
                         return agent != null ? actuator.actuateInteractBlock(agent, interact) : true;
@@ -284,17 +281,11 @@ public class AgentMotorFSM {
             }
             case BUILD_BLOCK -> {
                 BuildBlockIntent build = intent.getBuildBlock();
-                transitionTo(MotorState.BUILDING, "build_block_intent");
-                boolean built = agent != null ? actuator.actuateBuildBlock(agent, build) : true;
-                transitionTo(MotorState.IDLE, "build_block_complete");
-                return built;
+                return agent != null ? actuator.actuateBuildBlock(agent, build) : true;
             }
             case PLACE_SIGNPOST -> {
                 PlaceSignpostIntent sign = intent.getPlaceSignpost();
-                transitionTo(MotorState.BUILDING, "place_signpost_intent");
-                boolean placed = agent != null ? actuator.actuatePlaceSignpost(agent, sign) : true;
-                transitionTo(MotorState.IDLE, "place_signpost_complete");
-                return placed;
+                return agent != null ? actuator.actuatePlaceSignpost(agent, sign) : true;
             }
             case USE_ITEM -> {
                 UseItemIntent use = intent.getUseItem();

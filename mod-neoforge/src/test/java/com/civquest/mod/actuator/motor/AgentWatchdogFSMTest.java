@@ -75,8 +75,33 @@ public class AgentWatchdogFSMTest {
         assertEquals(WatchdogState.SHUTDOWN, watchdogFSM.getState());
         assertFalse(watchdogFSM.isStreamRegistered());
 
-        watchdogFSM.transitionTo(WatchdogState.CONNECTED_ACTIVE, "reset");
+        // Create fresh watchdog for death test
+        AgentWatchdogFSM deathFSM = new AgentWatchdogFSM(null);
+        deathFSM.onConnected();
+        deathFSM.onAgentDeath();
+        assertEquals(WatchdogState.SHUTDOWN, deathFSM.getState());
+    }
+
+    @Test
+    @DisplayName("SHUTDOWN state is terminal and cannot be resurrected by async disconnects or errors")
+    void testShutdownIsTerminalSink() {
+        watchdogFSM.onConnected();
+        assertEquals(WatchdogState.CONNECTED_ACTIVE, watchdogFSM.getState());
+
         watchdogFSM.onAgentDeath();
+        assertEquals(WatchdogState.SHUTDOWN, watchdogFSM.getState());
+
+        // Async stream events arriving after death must be rejected
+        watchdogFSM.onDisconnected();
+        assertEquals(WatchdogState.SHUTDOWN, watchdogFSM.getState());
+
+        watchdogFSM.onStreamError(new RuntimeException("stream closed after death"));
+        assertEquals(WatchdogState.SHUTDOWN, watchdogFSM.getState());
+
+        watchdogFSM.onConnected();
+        assertEquals(WatchdogState.SHUTDOWN, watchdogFSM.getState());
+
+        assertFalse(watchdogFSM.transitionTo(WatchdogState.CONNECTED_ACTIVE, "resurrect"));
         assertEquals(WatchdogState.SHUTDOWN, watchdogFSM.getState());
     }
 

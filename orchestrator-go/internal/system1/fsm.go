@@ -564,11 +564,11 @@ type RestStateHandler struct{}
 
 func (h *RestStateHandler) Name() State { return StateRest }
 func (h *RestStateHandler) Guard(ctx *FSMContext) bool {
-	// Guard Invariant: REST is strictly blocked when hostiles are present, damage is taken, or health is critical!
+	// Guard Invariant: REST is strictly blocked when hostiles are present, damage is taken, health is critical, or hunger is critical!
 	if ctx == nil {
 		return true
 	}
-	if ctx.HostilesPresent() || ctx.DamageTaken() || ctx.IsHealthCritical() || ctx.IsOnFire() {
+	if ctx.HostilesPresent() || ctx.DamageTaken() || ctx.IsHealthCritical() || ctx.IsOnFire() || ctx.IsCriticalHunger() || ctx.ShouldPanic() {
 		return false
 	}
 	return true
@@ -741,8 +741,12 @@ func (fsm *AgentFSM) Tick(ctx *FSMContext) FSMResult {
 			} else {
 				fsm.stuckTicks = 0
 			}
+			fsm.lastPos.X = pos.X
+			fsm.lastPos.Y = pos.Y
+			fsm.lastPos.Z = pos.Z
+		} else {
+			fsm.lastPos = &civquestv1.Vec3{X: pos.X, Y: pos.Y, Z: pos.Z}
 		}
-		fsm.lastPos = &civquestv1.Vec3{X: pos.X, Y: pos.Y, Z: pos.Z}
 	}
 	if ctx != nil {
 		ctx.StuckTicks = fsm.stuckTicks

@@ -327,6 +327,46 @@ func TestFSM_ShelterTimeoutCooldownPreventsImmediateReentry(t *testing.T) {
 	}
 }
 
+func TestFSM_CriticalHungerBlocksRestGuard(t *testing.T) {
+	fsm := NewAgentFSM(StateEmergency, nil)
+	state := NewAgentState()
+
+	// Critical hunger (foodLevel 4) with food in inventory
+	ctx := &FSMContext{
+		AgentID: "hungry_rest_agent",
+		State:   state,
+		Frame: &civquestv1.TelemetryFrame{
+			WorldTick: 500,
+			TimeOfDay: 18000, // Midnight
+			Status: &civquestv1.AgentStatus{
+				AgentId:   "hungry_rest_agent",
+				Health:    20.0,
+				MaxHealth: 20.0,
+				FoodLevel: 4,
+				Position:  &civquestv1.Vec3{X: 10, Y: 64, Z: 10},
+				Inventory: []*civquestv1.ItemStackProto{
+					{ItemId: "minecraft:cooked_beef", Count: 5},
+				},
+			},
+		},
+	}
+
+	// RestStateHandler.Guard must reject entry when critically hungry
+	handler := &RestStateHandler{}
+	if handler.Guard(ctx) {
+		t.Fatalf("VIOLATION: RestStateHandler.Guard returned true during critical hunger")
+	}
+
+	// Attempt forced transition to REST - must be rejected
+	allowed := fsm.TransitionTo(StateRest, "force rest during critical hunger", ctx)
+	if allowed {
+		t.Fatalf("VIOLATION: TransitionTo(StateRest) succeeded during critical hunger")
+	}
+	if fsm.CurrentState() != StateEmergency {
+		t.Fatalf("expected state to remain %s, got %s", StateEmergency, fsm.CurrentState())
+	}
+}
+
 func TestFSM_ConcurrentSafety(t *testing.T) {
 	fsm := NewAgentFSM(StateBootstrap, nil)
 	state := NewAgentState()

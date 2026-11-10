@@ -56,6 +56,7 @@ public class AgentEntity extends FakePlayer {
     private final AtomicBoolean cleanedUp = new AtomicBoolean(false);
     private final ConcurrentLinkedQueue<com.civquest.mod.grpc.v1.ChatEvent> pendingChats = new ConcurrentLinkedQueue<>();
     private final ConcurrentLinkedQueue<com.civquest.mod.grpc.v1.TradeRequest> pendingTrades = new ConcurrentLinkedQueue<>();
+    private final ConcurrentLinkedQueue<com.civquest.mod.grpc.v1.ReflexNotice> pendingReflexNotices = new ConcurrentLinkedQueue<>();
     private long lastInventoryFullNoticeTick = -1000L;
 
     public void queueIncomingChat(com.civquest.mod.grpc.v1.ChatEvent chatEvent) {
@@ -81,6 +82,21 @@ public class AgentEntity extends FakePlayer {
 
     public com.civquest.mod.grpc.v1.TradeRequest pollPendingTrade() {
         return pendingTrades.poll();
+    }
+
+    public void recordReflexNotice(com.civquest.mod.grpc.v1.ReflexNotice notice) {
+        if (notice != null) {
+            pendingReflexNotices.add(notice);
+        }
+    }
+
+    public List<com.civquest.mod.grpc.v1.ReflexNotice> pollReflexNotices() {
+        List<com.civquest.mod.grpc.v1.ReflexNotice> result = new ArrayList<>();
+        com.civquest.mod.grpc.v1.ReflexNotice notice;
+        while ((notice = pendingReflexNotices.poll()) != null) {
+            result.add(notice);
+        }
+        return result;
     }
 
     public AgentEntity(ServerLevel level, GameProfile profile, String agentId, String clanId) {

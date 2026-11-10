@@ -220,7 +220,7 @@ public class SensoryFrustumCollector {
             frameBuilder.setDeathEvent(deathEvent);
         }
 
-        // 8. Pending incoming chat events and trade requests
+        // 8. Pending incoming chat events, trade requests, and afferent reflex notices (ADR-015)
         List<com.civquest.mod.grpc.v1.ChatEvent> chats = agent.pollIncomingChats();
         if (chats != null && !chats.isEmpty()) {
             frameBuilder.addAllIncomingChats(chats);
@@ -228,6 +228,10 @@ public class SensoryFrustumCollector {
         com.civquest.mod.grpc.v1.TradeRequest pendingTrade = agent.pollPendingTrade();
         if (pendingTrade != null) {
             frameBuilder.setPendingTrade(pendingTrade);
+        }
+        List<com.civquest.mod.grpc.v1.ReflexNotice> reflexNotices = agent.pollReflexNotices();
+        if (reflexNotices != null && !reflexNotices.isEmpty()) {
+            frameBuilder.addAllReflexNotices(reflexNotices);
         }
 
         frameBuilder.setStatus(statusBuilder.build());

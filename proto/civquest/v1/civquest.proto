@@ -139,6 +139,7 @@ message TelemetryFrame {
   LandmarkContext current_landmark = 12;
   DeathEvent death_event = 13;  // Terminal event triggering permadeath teardown
   int64 last_processed_sequence_id = 14;
+  repeated ReflexNotice reflex_notices = 15; // ADR-015 afferent telemetry for Layer 1A in-engine reflexes
 }
 
 message AgentStatus {
@@ -227,6 +228,18 @@ message DeathEvent {
   string killer_uuid = 6;
   string killer_display_name = 7;
   repeated ItemStackProto dropped_loot = 8;
+}
+
+message ReflexNotice {
+  enum ReflexType {
+    REFLEX_TYPE_UNSPECIFIED = 0;
+    REFLEX_TYPE_SHIELD_DEFENSE = 1;
+    REFLEX_TYPE_AUTO_EAT = 2;
+    REFLEX_TYPE_ITEM_VACUUM = 3;
+  }
+  ReflexType reflex_type = 1;
+  int64 tick = 2;
+  string details = 3;
 }
 
 // ==================== INTENTS (Agent -> Server) ====================
