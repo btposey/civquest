@@ -198,65 +198,145 @@
 
       <!-- Section 3 -->
       <section class="tech-section">
-        <h2>As-Built Subsystem Contracts &amp; Data Flow</h2>
+        <h2>Subsystem Contracts, Signal Mathematics &amp; Afferent Flow</h2>
 
-        <h3>1. In-Engine Java Peripheral Reflexes: Layer 1 (<code>AgentEntity.java</code>)</h3>
+        <h3>1. In-Engine Peripheral Reflexes: Layer 1</h3>
         <p>
-          Layer 1 operates as System 1 at the periphery, executing directly inside Minecraft's dedicated server tick (<code>ServerTickEvent</code>). 
-          At 20 Hz, each server tick provides an absolute budget of 50.0 ms across all entities. To prevent lag spikes, 
-          CivQuest's in-engine reflexes are hard-capped at <strong>0.1 ms per agent</strong>.
+          Layer 1 operates as System 1 at the periphery, executing directly inside the dedicated server tick loop.<sup><a href="#fn5" id="ref5" class="footnote-ref">[5]</a></sup> 
+          At 20 Hz, each server tick provides an absolute budget of 50.0 ms across all entities. To prevent tick degradation, 
+          in-engine peripheral reflexes are bounded by a hard ceiling of <strong>0.1 ms per agent</strong>.
         </p>
         <p>
-          <strong>Trajectory Intersection Algorithm:</strong> Every tick, <code>AgentEntity</code> scans active projectile entities within a bounding sphere (radius $r = 12\text{ blocks}$). 
-          For each projectile $\vec{P}$ with velocity $\vec{V}$, it computes the closest point of approach ($t_{\text{cpa}}$) to the agent's bounding box:
-        </p>
-        <div class="code-block">
-t_cpa = -((P_0 - A) · V) / |V|²
-        </div>
-        <p>
-          If $0 &lt; t_{\text{cpa}} &lt; 0.5\text{s}$ and the impact distance is within the agent's hitbox radius, the avatar automatically raises its offhand shield (<code>startUsingItem(InteractionHand.OFF_HAND)</code>) and appends a <code>ReflexNotice</code> into the outgoing telemetry buffer.
-        </p>
-
-        <h3>2. Ascending Afferent Telemetry (<code>ReflexNotice</code>)</h3>
-        <p>
-          In biology, afferent nerves carry sensory signals from peripheral receptors upward to the central nervous system. 
-          CivQuest implements this via typed <code>ReflexNotice</code> messages inside the Protobuf <code>TelemetryFrame</code>:
+          <strong>Trajectory Intersection Physics:</strong> Every tick, the avatar scans active projectile entities within a bounding sphere of radius <math xmlns="http://www.w3.org/1998/Math/MathML"><mi>r</mi><mo>=</mo><mn>12</mn><mtext>&nbsp;blocks</mtext></math>. 
+          For each projectile with position <math xmlns="http://www.w3.org/1998/Math/MathML"><msub><mi mathvariant="bold">P</mi><mn>0</mn></msub></math> and velocity vector <math xmlns="http://www.w3.org/1998/Math/MathML"><mi mathvariant="bold">V</mi></math> relative to the agent's bounding center <math xmlns="http://www.w3.org/1998/Math/MathML"><mi mathvariant="bold">A</mi></math>, the engine evaluates the closest point of approach time:
         </p>
         
-        <div class="code-block">
-message ReflexNotice {
-  enum ReflexType {
-    REFLEX_TYPE_UNSPECIFIED = 0;
-    REFLEX_TYPE_SHIELD_RAISED = 1;
-    REFLEX_TYPE_OBSTACLE_STEP = 2;
-    REFLEX_TYPE_ITEM_VACUUMED = 3;
-    REFLEX_TYPE_FIRE_EXTINGUISHED = 4;
-  }
-  ReflexType type = 1;
-  int64 tick = 2;
-  int32 source_entity_id = 3;
-  string details = 4;
-}
+        <div class="math-block">
+          <math xmlns="http://www.w3.org/1998/Math/MathML" display="block">
+            <msub>
+              <mi>t</mi>
+              <mtext>cpa</mtext>
+            </msub>
+            <mo>=</mo>
+            <mo>&#x2212;</mo>
+            <mfrac>
+              <mrow>
+                <mo stretchy="false">(</mo>
+                <msub>
+                  <mi mathvariant="bold">P</mi>
+                  <mn>0</mn>
+                </msub>
+                <mo>&#x2212;</mo>
+                <mi mathvariant="bold">A</mi>
+                <mo stretchy="false">)</mo>
+                <mo>&#x22C5;</mo>
+                <mi mathvariant="bold">V</mi>
+              </mrow>
+              <msup>
+                <mrow>
+                  <mo stretchy="false">&#x2225;</mo>
+                  <mi mathvariant="bold">V</mi>
+                  <mo stretchy="false">&#x2225;</mo>
+                </mrow>
+                <mn>2</mn>
+              </msup>
+            </mfrac>
+          </math>
         </div>
 
-        <h3>3. Go Procedural Execution Loop: Layer 2 (<code>internal/system1/evaluator.go</code>)</h3>
         <p>
-          Layer 2 functions as System 1 at the center, executing within the dedicated Go worker process at 5 Hz (every 200 ms). When a <code>TelemetryFrame</code> is received containing a <code>ReflexNotice</code>, 
-          the procedural utility evaluator immediately penalizes the agent's survival confidence score without waiting for higher-level timers:
-        </p>
-        <div class="code-block">
-Confidence = (Health / MaxHealth * 0.4) + (GearScore * 0.4) - (ThreatCount * 0.15) - ReflexPenalty
-        </div>
-        <p>
-          Where <code>ReflexPenalty = 0.25</code> if a <code>REFLEX_TYPE_SHIELD_RAISED</code> notice was ingested within the last 1.0 second. 
-          If <code>Confidence &lt; 0.40</code>, the Hierarchical FSM immediately triggers a transition to <code>EMERGENCY</code> state, issuing an immediate reverse vector <code>NavigateIntent</code> to escape danger.
+          When <math xmlns="http://www.w3.org/1998/Math/MathML"><mn>0</mn><mo>&lt;</mo><msub><mi>t</mi><mtext>cpa</mtext></msub><mo>&lt;</mo><mn>0.50</mn><mtext>&nbsp;s</mtext></math> and the spatial intercept distance falls within the hitbox radius, the avatar automatically raises its shield and enqueues an afferent telemetry notice into the outgoing telemetry buffer.
         </p>
 
-        <h3>4. Deliberative Executive Inference: Layer 3 (<code>internal/system2/gateway.go</code>)</h3>
+        <h3>2. Ascending Afferent Telemetry Packet</h3>
         <p>
-          Layer 3 acts as System 2 at the center, operating completely asynchronously via HTTP REST to local Ollama or vLLM inference gateways. 
-          It evaluates long-horizon decisions—dialogue synthesis, barter value negotiation, architectural quadrant planning, and chronicler diary entries. 
-          Because Layer 3 runs out-of-band with strict JSON Schema constraints, multi-second token generation latencies never stall Layer 1 peripheral defenses or Layer 2 procedural motor execution.
+          In biological organisms, afferent pathways carry sensory signals from peripheral somatic receptors upward to the central procedural engine. 
+          The architecture implements this via typed afferent notices multiplexed into the outgoing telemetry stream:<sup><a href="#fn6" id="ref6" class="footnote-ref">[6]</a></sup>
+        </p>
+
+        <figure class="diagram-figure">
+          <div class="diagram-container">
+            <svg class="responsive-svg" viewBox="0 0 860 140" xmlns="http://www.w3.org/2000/svg">
+              <rect x="20" y="20" width="820" height="100" rx="8" fill="#0a101f" stroke="#1e293b" />
+              <text x="40" y="45" fill="#38bdf8" font-size="12" font-weight="700" font-family="monospace">AFFERENT REFLEX TELEMETRY PACKET SCHEMA</text>
+              
+              <rect x="40" y="60" width="180" height="45" rx="4" fill="#0f172a" stroke="#00d2ff" />
+              <text x="50" y="80" fill="#f8fafc" font-size="11" font-weight="600" font-family="sans-serif">Reflex Type</text>
+              <text x="50" y="95" fill="#38bdf8" font-size="9" font-family="monospace">Shield / Step / Vacuum</text>
+
+              <rect x="235" y="60" width="160" height="45" rx="4" fill="#0f172a" stroke="#334155" />
+              <text x="245" y="80" fill="#f8fafc" font-size="11" font-weight="600" font-family="sans-serif">Server Tick</text>
+              <text x="245" y="95" fill="#94a3b8" font-size="9" font-family="monospace">int64 Timestamp</text>
+
+              <rect x="410" y="60" width="190" height="45" rx="4" fill="#0f172a" stroke="#334155" />
+              <text x="420" y="80" fill="#f8fafc" font-size="11" font-weight="600" font-family="sans-serif">Source Entity Identifier</text>
+              <text x="420" y="95" fill="#94a3b8" font-size="9" font-family="monospace">int32 Attacker / Item ID</text>
+
+              <rect x="615" y="60" width="205" height="45" rx="4" fill="#0f172a" stroke="#334155" />
+              <text x="625" y="80" fill="#f8fafc" font-size="11" font-weight="600" font-family="sans-serif">Context Metadata</text>
+              <text x="625" y="95" fill="#94a3b8" font-size="9" font-family="monospace">string Vector &amp; Damage</text>
+            </svg>
+          </div>
+          <figcaption class="diagram-caption">Figure 1.2: Afferent reflex notice payload structure emitted from Layer 1 into Layer 2 sensory telemetry.</figcaption>
+        </figure>
+
+        <h3>3. Procedural Execution &amp; Confidence Scoring: Layer 2</h3>
+        <p>
+          Layer 2 functions as System 1 at the center, executing within the dedicated worker process at 5 Hz. When incoming telemetry carries a reflex notice, 
+          the procedural utility evaluator immediately penalizes the agent's survival confidence score without waiting for higher-level deliberation cycles:<sup><a href="#fn7" id="ref7" class="footnote-ref">[7]</a></sup>
+        </p>
+        
+        <div class="math-block">
+          <math xmlns="http://www.w3.org/1998/Math/MathML" display="block">
+            <msub>
+              <mi>C</mi>
+              <mtext>survival</mtext>
+            </msub>
+            <mo>=</mo>
+            <mn>0.40</mn>
+            <mrow>
+              <mo>(</mo>
+              <mfrac>
+                <mi>H</mi>
+                <msub>
+                  <mi>H</mi>
+                  <mtext>max</mtext>
+                </msub>
+              </mfrac>
+              <mo>)</mo>
+            </mrow>
+            <mo>+</mo>
+            <mn>0.40</mn>
+            <mspace width="0.2em"/>
+            <msub>
+              <mi>S</mi>
+              <mtext>gear</mtext>
+            </msub>
+            <mo>&#x2212;</mo>
+            <mn>0.15</mn>
+            <mspace width="0.2em"/>
+            <msub>
+              <mi>N</mi>
+              <mtext>threats</mtext>
+            </msub>
+            <mo>&#x2212;</mo>
+            <msub>
+              <mi>P</mi>
+              <mtext>reflex</mtext>
+            </msub>
+          </math>
+        </div>
+
+        <p>
+          Where <math xmlns="http://www.w3.org/1998/Math/MathML"><msub><mi>P</mi><mtext>reflex</mtext></msub><mo>=</mo><mn>0.25</mn></math> when a shield-raise notice was ingested within the preceding 1.0 second. 
+          When <math xmlns="http://www.w3.org/1998/Math/MathML"><msub><mi>C</mi><mtext>survival</mtext></msub><mo>&lt;</mo><mn>0.40</mn></math>, the Hierarchical FSM executes an emergency transition, dispatching an immediate reverse escape navigation intent.
+        </p>
+
+        <h3>4. Executive Deliberation: Layer 3</h3>
+        <p>
+          Layer 3 acts as System 2 at the center, operating asynchronously via an HTTP gateway to local inference endpoints. 
+          It evaluates long-horizon objectives including dialogue generation, barter value negotiation, architectural quadrant planning, and chronicler diary entries. 
+          Because Layer 3 runs out-of-band with strict JSON Schema constraints, multi-second token generation latencies never stall peripheral defenses or procedural motor routines.
         </p>
 
         <h3>5. Operational Specification Matrix</h3>
@@ -339,6 +419,24 @@ Confidence = (Health / MaxHealth * 0.4) + (GearScore * 0.4) - (ThreatCount * 0.1
             The prefrontal cortex governs top-down goal representation, symbolic reasoning, linguistic discourse, and counterfactual planning over multi-second to multi-minute horizons, operating under strict working memory capacity limits. 
             See: Miller, E. K., &amp; Cohen, J. D. (2001). <em>An integrative theory of prefrontal cortex function</em>. Annual Review of Neuroscience, 24(1), 167–202.
             <a href="#ref4" class="footnote-backref" title="Jump back to text">&hookleftarrow;</a>
+          </li>
+          <li id="fn5">
+            <strong>In-Tick Peripheral Reflex Interceptor Implementation:</strong> 
+            Implemented as an entity event hook scanning projectile bounding boxes within 12 blocks and executing non-blocking shield raises in under 0.1 ms per agent tick. 
+            Source contract: <code>mod-neoforge/src/main/java/com/civquest/agent/AgentEntity.java</code>.
+            <a href="#ref5" class="footnote-backref" title="Jump back to text">&hookleftarrow;</a>
+          </li>
+          <li id="fn6">
+            <strong>Afferent Reflex Notice Protocol Contract:</strong> 
+            Encapsulates tick timestamp, reflex identifier, source attacker entity ID, and incident metadata within the <code>ReflexNotice</code> submessage of <code>TelemetryFrame</code>. 
+            Source contract: <code>proto/civquest/v1/civquest.proto</code>.
+            <a href="#ref6" class="footnote-backref" title="Jump back to text">&hookleftarrow;</a>
+          </li>
+          <li id="fn7">
+            <strong>Procedural Confidence Evaluator Implementation:</strong> 
+            Computes deterministic survival confidence scores and gates emergency FSM state transitions based on incoming reflex telemetry and threat densities. 
+            Source contract: <code>orchestrator-go/internal/system1/evaluator.go</code>.
+            <a href="#ref7" class="footnote-backref" title="Jump back to text">&hookleftarrow;</a>
           </li>
         </ol>
       </section>

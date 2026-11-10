@@ -850,3 +850,57 @@ footer {
   text-decoration: none;
   margin-left: 0.35rem;
 }
+
+/* MathML & Equation Presentation */
+.math-block {
+  margin: 1.75rem 0;
+  padding: 1.25rem 1.5rem;
+  background-color: var(--bg-card);
+  border: 1px solid var(--border-color);
+  border-left: 3px solid var(--accent-cyan);
+  border-radius: 8px;
+  overflow-x: auto;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+}
+
+math {
+  font-family: 'STIX Two Math', 'Latin Modern Math', 'Cambria Math', 'Times New Roman', serif;
+  font-size: 1.15rem;
+  color: #f1f5f9;
+}
+
+math[display="block"] {
+  display: block;
+  margin: 0 auto;
+}
+
+math mi {
+  font-style: italic;
+  color: var(--accent-cyan);
+}
+
+math mi[mathvariant="normal"],
+math mi.normal,
+math mtext {
+  font-style: normal;
+  color: #cbd5e1;
+}
+
+math mo {
+  color: #94a3b8;
+  padding: 0 0.15em;
+}
+
+math mn {
+  color: #34d399;
+}
+
+math msub, math msup, math msubsup {
+  font-size: 0.9em;
+}
+
+math mfrac {
+  padding: 0 0.2em;
+}
