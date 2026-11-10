@@ -1,0 +1,383 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <!-- Copyright (c) 2026 Brian Posey
+       Use of this source code is governed by an MIT-style
+       license that can be found in the LICENSE file. -->
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Inference &amp; Context Assembly — CivQuest Technical Architecture</title>
+  <meta name="description" content="Technical specification for CivQuest's System 2 LLM inference pipeline: Ollama/vLLM gateway, strict JSON Schema validation, dual-temperature sampling, and context budgeting.">
+  <link rel="stylesheet" href="../assets/css/style.css">
+</head>
+<body>
+
+  <!-- Alpha Status Banner -->
+  <div class="alpha-banner">
+    <span class="alpha-tag">Active Pre-Alpha</span>
+    <span>CivQuest is under active early architecture and development. <a href="https://github.com/btposey/civquest" target="_blank" rel="noopener">Track source & issues on GitHub</a></span>
+  </div>
+
+  <!-- Navigation -->
+  <header>
+    <div class="nav-container">
+      <a href="../index.html" class="logo">
+        <span class="logo-badge">civquest</span>
+        <span>CivQuest</span>
+        <span class="badge-alpha">v0.1.0</span>
+      </a>
+      <nav class="nav-links">
+        <a href="../index.html">Overview</a>
+        <a href="../gameplay.html">Gameplay</a>
+        <a href="index.html" style="color: var(--accent-cyan); font-weight: 600;">Systems Engineering</a>
+        <a href="https://github.com/btposey/civquest" class="btn-github" target="_blank" rel="noopener">
+          <svg width="18" height="18" viewBox="0 0 16 16" fill="currentColor">
+            <path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/>
+          </svg>
+          <span>GitHub</span>
+        </a>
+      </nav>
+    </div>
+  </header>
+
+  <main class="tech-container">
+    
+    <!-- Breadcrumb Navigation -->
+    <nav class="breadcrumb-nav">
+      <a href="../index.html">Overview</a>
+      <span class="breadcrumb-separator">/</span>
+      <a href="index.html">Systems Engineering Hub</a>
+      <span class="breadcrumb-separator">/</span>
+      <span class="breadcrumb-current">5. Inference &amp; Context Assembly</span>
+    </nav>
+
+    <!-- Hero -->
+    <div class="tech-hero">
+      <div class="tech-meta-pills">
+        <span class="meta-pill pill-purple">System 2 Pipeline</span>
+        <span class="meta-pill pill-cyan">ADR-005 &amp; ADR-006</span>
+        <span class="meta-pill pill-amber">Strict JSON Schema</span>
+        <span class="meta-pill pill-emerald">Dual-Temp Sampling</span>
+      </div>
+      <h1>Deliberative Inference &amp;<br><span>Context Assembly Pipelines</span></h1>
+      <p class="tech-lead">
+        While System 1 guarantees physical survival, System 2 drives high-level cognitive life: social barter negotiation, 
+        dynastic book chronicles, settlement landmark naming, and spatial architectural blueprints. 
+        CivQuest connects to local LLM gateways via strict JSON Schema boundaries and dual-temperature sampling.
+      </p>
+    </div>
+
+    <!-- DEPTH LAYER 1: TMLI-15 -->
+    <section class="depth-layer">
+      <div class="depth-header">
+        <div class="depth-title-group">
+          <span class="depth-indicator depth-1-tag">Level 1: Intuitive Mental Model</span>
+          <h2>Directing Actors with Strict Stage Scripts</h2>
+        </div>
+        <span style="font-family: var(--font-mono); font-size: 0.8rem; color: var(--text-muted);">TMLI-15 Framing</span>
+      </div>
+      <div class="depth-body">
+        <p>
+          Imagine directing an improvisational theatre actor. If you give them complete freedom with no guardrails, 
+          they might hallucinate alien spaceships in the middle of a medieval historical play. 
+          If you instead hand them an exact template with specific slots—such as <em>"Trade Proposal: Offer X items for Y items"</em>—they 
+          can express creative personality without breaking the rules of the world.
+        </p>
+        <p>
+          Furthermore, different cognitive tasks require different levels of randomness:
+        </p>
+        <ul>
+          <li><strong>Structured Tactical Decisions (Low Temperature $\tau = 0.2$):</strong> When calculating barter exchange ratios or assembling construction blueprints, we need deterministic, mathematical consistency. Zero hallucinations are tolerated.</li>
+          <li><strong>Narrative Lore &amp; Social Dialogue (High Temperature $\tau = 0.8$):</strong> When settlers sit around an evening campfire writing chronicles in Minecraft books or chatting with players, we want rich literary vocabulary, humor, and unique dynastic personalities.</li>
+        </ul>
+        <p>
+          CivQuest enforces this separation by routing structured outputs through strict JSON Schema parsers before any action touches the game engine.
+        </p>
+      </div>
+    </section>
+
+    <!-- DEPTH LAYER 2: TRIC & PIPELINE FLOW -->
+    <section class="depth-layer">
+      <div class="depth-header">
+        <div class="depth-title-group">
+          <span class="depth-indicator depth-2-tag">Level 2: Architecture &amp; Boundaries</span>
+          <h2>TRIC Unit Specifications &amp; Context Pipeline</h2>
+        </div>
+        <span style="font-family: var(--font-mono); font-size: 0.8rem; color: var(--text-muted);">Visual TRIC Decomposition</span>
+      </div>
+      <div class="depth-body">
+
+        <!-- TRIC Unit 1 -->
+        <div class="tric-unit">
+          <div class="tric-grid">
+            <div class="tric-segment t-topic">
+              <div class="tric-label">Topic: Schema-Validated LLM Inference</div>
+              <p>Asynchronous generation of structured game parameters via external LLM gateways (Ollama / vLLM).</p>
+            </div>
+            <div class="tric-segment t-restriction">
+              <div class="tric-label">Restriction: Schema Invariants &amp; Token Budgets</div>
+              <p>Prompts must never exceed a 4,096 token context window. Raw generated text must strictly validate against Go struct JSON tags before dispatching into the HFSM.</p>
+            </div>
+            <div class="tric-segment t-illustration">
+              <div class="tric-label">Illustration: Context Assembly &amp; Validation Pipeline</div>
+              <p>The diagram below traces context gathering from SQLite vector memory, token budgeting, gateway inference, and schema validation.</p>
+            </div>
+            <div class="tric-segment t-conclusion">
+              <div class="tric-label">Conclusion: Hallucination Defense</div>
+              <p>Eliminates malformed tool commands and ensures prompt latency stays bounded below 3.0 seconds on local GPU hardware.</p>
+            </div>
+          </div>
+        </div>
+
+        <!-- SVG Context Assembly Diagram -->
+        <div class="diagram-container">
+          <svg class="responsive-svg" viewBox="0 0 940 450" xmlns="http://www.w3.org/2000/svg">
+            <defs>
+              <linearGradient id="ragGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+                <stop offset="0%" stop-color="#1e1b4b" />
+                <stop offset="100%" stop-color="#0f0e26" />
+              </linearGradient>
+              <linearGradient id="llmGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+                <stop offset="0%" stop-color="#3b0764" />
+                <stop offset="100%" stop-color="#1f0238" />
+              </linearGradient>
+            </defs>
+
+            <!-- Box 1: Context Aggregator -->
+            <rect x="30" y="30" width="260" height="390" rx="10" fill="#0f172a" stroke="#334155" stroke-width="2" />
+            <text x="50" y="60" fill="#f8fafc" font-size="14" font-weight="700" font-family="monospace">CONTEXT BUDGETING</text>
+            <text x="50" y="80" fill="#64748b" font-size="11" font-family="sans-serif">Max Budget: 4,096 Tokens</text>
+
+            <rect x="50" y="100" width="220" height="65" rx="6" fill="#1e293b" stroke="#38bdf8" stroke-width="1" />
+            <text x="65" y="125" fill="#38bdf8" font-size="11" font-weight="700" font-family="monospace">1. Persona &amp; Clan Role</text>
+            <text x="65" y="145" fill="#94a3b8" font-size="10" font-family="sans-serif">Fixed System Prompt (512 t)</text>
+
+            <rect x="50" y="180" width="220" height="65" rx="6" fill="#1e293b" stroke="#10b981" stroke-width="1" />
+            <text x="65" y="205" fill="#34d399" font-size="11" font-weight="700" font-family="monospace">2. Sensory Snapshot</text>
+            <text x="65" y="225" fill="#94a3b8" font-size="10" font-family="sans-serif">Health, Inventory, Mobs (768 t)</text>
+
+            <rect x="50" y="260" width="220" height="65" rx="6" fill="#1e293b" stroke="#8b5cf6" stroke-width="1" />
+            <text x="65" y="285" fill="#c084fc" font-size="11" font-weight="700" font-family="monospace">3. Vector RAG Memory</text>
+            <text x="65" y="305" fill="#94a3b8" font-size="10" font-family="sans-serif">Top-3 sqlite-vec Chunks (1536 t)</text>
+
+            <rect x="50" y="340" width="220" height="65" rx="6" fill="#1e293b" stroke="#f59e0b" stroke-width="1" />
+            <text x="65" y="365" fill="#fbbf24" font-size="11" font-weight="700" font-family="monospace">4. Active Task Trigger</text>
+            <text x="65" y="385" fill="#94a3b8" font-size="10" font-family="sans-serif">Trade / Chronicle / Plan (1276 t)</text>
+
+            <!-- Connector to LLM Gateway -->
+            <path d="M 290 225 L 360 225" stroke="#00d2ff" stroke-width="2" marker-end="url(#arrow)" />
+
+            <!-- Box 2: Local LLM Gateway -->
+            <rect x="360" y="30" width="270" height="390" rx="10" fill="url(#llmGrad)" stroke="#8b5cf6" stroke-width="2" />
+            <text x="380" y="60" fill="#f8fafc" font-size="14" font-weight="700" font-family="monospace">LLM GATEWAY (vLLM / Ollama)</text>
+            <text x="380" y="80" fill="#c084fc" font-size="11" font-family="sans-serif">Local HTTP Endpoint (:11434)</text>
+
+            <rect x="380" y="110" width="230" height="110" rx="6" fill="#2e1065" stroke="#a855f7" stroke-width="1.5" />
+            <text x="395" y="135" fill="#e9d5ff" font-size="11" font-weight="700" font-family="monospace">Route A: Structured Action</text>
+            <text x="395" y="155" fill="#cbd5e1" font-size="10" font-family="sans-serif">Temperature: <strong>&tau; = 0.2</strong></text>
+            <text x="395" y="175" fill="#cbd5e1" font-size="10" font-family="sans-serif">Task: Barter, Blueprints</text>
+            <text x="395" y="195" fill="#d8b4fe" font-size="9" font-family="monospace">Format: Strict JSON Schema</text>
+
+            <rect x="380" y="240" width="230" height="110" rx="6" fill="#2e1065" stroke="#a855f7" stroke-width="1.5" />
+            <text x="395" y="265" fill="#e9d5ff" font-size="11" font-weight="700" font-family="monospace">Route B: Creative Narrative</text>
+            <text x="395" y="285" fill="#cbd5e1" font-size="10" font-family="sans-serif">Temperature: <strong>&tau; = 0.8</strong></text>
+            <text x="395" y="305" fill="#cbd5e1" font-size="10" font-family="sans-serif">Task: Dialogue, Chronicler</text>
+            <text x="395" y="325" fill="#d8b4fe" font-size="9" font-family="monospace">Format: Paginated Book Strings</text>
+
+            <!-- Connector to Schema Validation -->
+            <path d="M 630 225 L 700 225" stroke="#00d2ff" stroke-width="2" marker-end="url(#arrow)" />
+
+            <!-- Box 3: Schema Validation & HFSM Dispatch -->
+            <rect x="700" y="30" width="210" height="390" rx="10" fill="#0f172a" stroke="#10b981" stroke-width="2" />
+            <text x="715" y="60" fill="#f8fafc" font-size="13" font-weight="700" font-family="monospace">SCHEMA VALIDATION</text>
+            <text x="715" y="80" fill="#34d399" font-size="11" font-family="sans-serif">Go Unmarshal Gate</text>
+
+            <rect x="715" y="110" width="180" height="90" rx="6" fill="#064e3b" stroke="#10b981" stroke-width="1.5" />
+            <text x="725" y="135" fill="#6ee7b7" font-size="11" font-weight="700" font-family="monospace">JSON Parse: PASS</text>
+            <text x="725" y="155" fill="#cbd5e1" font-size="10" font-family="sans-serif">Parameterizes active</text>
+            <text x="725" y="170" fill="#cbd5e1" font-size="10" font-family="sans-serif">HFSM state targets</text>
+            <text x="725" y="185" fill="#a7f3d0" font-size="9" font-family="monospace">&rarr; Dispatch Intent</text>
+
+            <rect x="715" y="240" width="180" height="90" rx="6" fill="#450a0a" stroke="#ef4444" stroke-width="1.5" />
+            <text x="725" y="265" fill="#fca5a5" font-size="11" font-weight="700" font-family="monospace">JSON Parse: FAIL</text>
+            <text x="725" y="285" fill="#cbd5e1" font-size="10" font-family="sans-serif">Retry budget (max 2)</text>
+            <text x="725" y="300" fill="#cbd5e1" font-size="10" font-family="sans-serif">Fallback to baseline</text>
+            <text x="725" y="315" fill="#f87171" font-size="9" font-family="monospace">&rarr; Deterministic rule</text>
+
+          </svg>
+          <div class="diagram-caption">Figure 5.0: The System 2 inference pipeline showing context budget partitioning, dual-temperature gateway routing, and JSON schema gates.</div>
+        </div>
+
+      </div>
+    </section>
+
+    <!-- DEPTH LAYER 3: TMLI-PRO -->
+    <section class="depth-layer">
+      <div class="depth-header">
+        <div class="depth-title-group">
+          <span class="depth-indicator depth-3-tag">Level 3: Deep As-Built Implementation</span>
+          <h2>Schemas, Minecraft Book Pagination &amp; Fallbacks</h2>
+        </div>
+        <span style="font-family: var(--font-mono); font-size: 0.8rem; color: var(--text-muted);">TMLI-Pro Systems Engineering</span>
+      </div>
+      <div class="depth-body">
+
+        <h3>1. The Barter Proposal JSON Schema (`internal/system2/types.go`)</h3>
+        <p>
+          When an agent initiates a trade with another settler or player, the LLM must return a validated JSON payload adhering to strict bounds:
+        </p>
+        <div class="terminal-card">
+          <div class="terminal-header">
+            <span class="dot dot-red"></span>
+            <span class="dot dot-yellow"></span>
+            <span class="dot dot-green"></span>
+            <span style="font-family: var(--font-mono); font-size: 0.75rem; color: #94a3b8; margin-left: 0.5rem;">orchestrator-go/internal/system2/types.go</span>
+          </div>
+          <div class="terminal-body">
+            <pre><code>type TradeProposalResponse struct {
+    OfferedItem   string  `json:"offered_item"`   // e.g. "minecraft:bread"
+    OfferedCount  int32   `json:"offered_count"`  // Must be &gt; 0 and &lt;= HeldInventoryCount
+    DemandedItem  string  `json:"demanded_item"`  // e.g. "minecraft:iron_ingot"
+    DemandedCount int32   `json:"demanded_count"` // Must be &gt; 0
+    DialogueText  string  `json:"dialogue_text"`  // Max 120 chars for chat packet
+    FairnessScore float64 `json:"fairness_score"` // Clamped [0.0, 1.0]
+}</code></pre>
+          </div>
+        </div>
+
+        <h3>2. Chronicler Book Pagination Algorithm (`internal/system2/chronicler.go`)</h3>
+        <p>
+          Minecraft writable books (`Items.WRITABLE_BOOK`) enforce strict physical limitations: a maximum of <strong>255 characters per page</strong> 
+          and up to 100 pages per volume. The Chronicler engine formats generated lore into discrete pages without splitting words across line breaks:
+        </p>
+        <div class="terminal-card">
+          <div class="terminal-header">
+            <span class="dot dot-red"></span>
+            <span class="dot dot-yellow"></span>
+            <span class="dot dot-green"></span>
+            <span style="font-family: var(--font-mono); font-size: 0.75rem; color: #94a3b8; margin-left: 0.5rem;">orchestrator-go/internal/system2/chronicler.go</span>
+          </div>
+          <div class="terminal-body">
+            <pre><code>func PaginateBookContent(rawText string) []string {
+    const MaxPageChars = 240 // Safety margin below 255 Minecraft limit
+    words := strings.Fields(rawText)
+    var pages []string
+    var currentPage strings.Builder
+
+    for _, word := range words {
+        if currentPage.Len()+len(word)+1 &gt; MaxPageChars {
+            pages = append(pages, currentPage.String())
+            currentPage.Reset()
+        }
+        if currentPage.Len() &gt; 0 {
+            currentPage.WriteString(" ")
+        }
+        currentPage.WriteString(word)
+    }
+    if currentPage.Len() &gt; 0 {
+        pages = append(pages, currentPage.String())
+    }
+    return pages
+}</code></pre>
+          </div>
+        </div>
+
+        <h3>3. Failure Modes &amp; Circuit Breakers</h3>
+        <p>
+          System 2 runs entirely in non-blocking background goroutines. If the local Ollama instance experiences high VRAM pressure or fails to respond within $3000\text{ ms}$, the following circuit-breaker sequence triggers:
+        </p>
+        <ol>
+          <li>The pending request context cancels via `context.WithTimeout`.</li>
+          <li>System 1 utility AI falls back to deterministic item-value lookup tables (`internal/system1/trade_evaluator.go`).</li>
+          <li>The agent executes the trade immediately without blocking movement or starving sensory telemetry.</li>
+        </ol>
+
+        <h3>4. Specification &amp; Inference Parameter Matrix</h3>
+        <div class="spec-table-wrap">
+          <table class="spec-table">
+            <thead>
+              <tr>
+                <th>Pipeline Task</th>
+                <th>Temperature (&tau;)</th>
+                <th>Output Format</th>
+                <th>Timeout Ceiling</th>
+                <th>Fallback Action</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><code>Barter Negotiation</code></td>
+                <td>0.2 (Deterministic)</td>
+                <td>JSON Schema (Strict)</td>
+                <td>1,500 ms</td>
+                <td>Deterministic Value Table</td>
+              </tr>
+              <tr>
+                <td><code>Architect Quadrant</code></td>
+                <td>0.1 (Strict Logic)</td>
+                <td>3D Voxel Coordinate JSON</td>
+                <td>3,000 ms</td>
+                <td>Default 5x5 Shelter Blueprint</td>
+              </tr>
+              <tr>
+                <td><code>Chronicler Book</code></td>
+                <td>0.8 (Creative)</td>
+                <td>Paginated String Array</td>
+                <td>4,000 ms</td>
+                <td>Standard Roster Ledger Entry</td>
+              </tr>
+              <tr>
+                <td><code>Social Chat / Dialogue</code></td>
+                <td>0.7 (Conversational)</td>
+                <td>Single String (&le; 120 chars)</td>
+                <td>1,200 ms</td>
+                <td>Pre-scripted greeting emote</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+      </div>
+    </section>
+
+    <!-- Pagination Navigation -->
+    <div class="tech-pagination">
+      <a href="agent-harness-isolation.html" class="pagination-card">
+        <span class="pagination-sub">&larr; Previous Specification</span>
+        <span class="pagination-title">4. Harness &amp; Process Isolation</span>
+      </a>
+      <a href="physical-embodiment.html" class="pagination-card" style="text-align: right;">
+        <span class="pagination-sub">Next Specification &rarr;</span>
+        <span class="pagination-title">6. Embodiment &amp; Navigation</span>
+      </a>
+    </div>
+
+  </main>
+
+  <!-- Footer & Trademark Notice -->
+  <footer>
+    <div class="footer-container">
+      <div class="disclaimer-box">
+        <strong>LEGAL & TRADEMARK DISCLAIMER:</strong><br>
+        <strong>NOT AN OFFICIAL MINECRAFT PRODUCT. NOT APPROVED BY OR ASSOCIATED WITH MOJANG OR MICROSOFT.</strong><br>
+        <em>Minecraft</em> is a registered trademark of Mojang Synergies AB / Microsoft Corporation. 
+        CivQuest is an independent, community-developed software modification and autonomous agent orchestration platform. 
+        CivQuest is not affiliated with, endorsed by, sponsored by, or associated with Mojang Synergies AB, Microsoft Corporation, 
+        or any of their subsidiaries. All references to Minecraft, related game mechanics, and block identifiers are strictly 
+        nominative references for technical compatibility and modding interoperability under applicable fair use doctrines.
+      </div>
+
+      <div class="footer-links">
+        <a href="../index.html">Overview</a>
+        <a href="../gameplay.html">Gameplay</a>
+        <a href="index.html">Systems Engineering</a>
+        <a href="https://github.com/btposey/civquest">Source Code</a>
+        <a href="https://github.com/btposey/civquest/blob/main/LICENSE">MIT License</a>
+      </div>
+
+      <p class="copyright">&copy; 2026 Brian Posey. Open source under the MIT License.</p>
+    </div>
+  </footer>
+
+</body>
+</html>

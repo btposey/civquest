@@ -1,0 +1,399 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <!-- Copyright (c) 2026 Brian Posey
+       Use of this source code is governed by an MIT-style
+       license that can be found in the LICENSE file. -->
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Persistence &amp; Vector Memory — CivQuest Technical Architecture</title>
+  <meta name="description" content="Technical specification for CivQuest's embedded SQLite and sqlite-vec persistence engine: relational schemas, vector RAG embeddings, and WAL concurrency.">
+  <link rel="stylesheet" href="../assets/css/style.css">
+</head>
+<body>
+
+  <!-- Alpha Status Banner -->
+  <div class="alpha-banner">
+    <span class="alpha-tag">Active Pre-Alpha</span>
+    <span>CivQuest is under active early architecture and development. <a href="https://github.com/btposey/civquest" target="_blank" rel="noopener">Track source & issues on GitHub</a></span>
+  </div>
+
+  <!-- Navigation -->
+  <header>
+    <div class="nav-container">
+      <a href="../index.html" class="logo">
+        <span class="logo-badge">civquest</span>
+        <span>CivQuest</span>
+        <span class="badge-alpha">v0.1.0</span>
+      </a>
+      <nav class="nav-links">
+        <a href="../index.html">Overview</a>
+        <a href="../gameplay.html">Gameplay</a>
+        <a href="index.html" style="color: var(--accent-cyan); font-weight: 600;">Systems Engineering</a>
+        <a href="https://github.com/btposey/civquest" class="btn-github" target="_blank" rel="noopener">
+          <svg width="18" height="18" viewBox="0 0 16 16" fill="currentColor">
+            <path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/>
+          </svg>
+          <span>GitHub</span>
+        </a>
+      </nav>
+    </div>
+  </header>
+
+  <main class="tech-container">
+    
+    <!-- Breadcrumb Navigation -->
+    <nav class="breadcrumb-nav">
+      <a href="../index.html">Overview</a>
+      <span class="breadcrumb-separator">/</span>
+      <a href="index.html">Systems Engineering Hub</a>
+      <span class="breadcrumb-separator">/</span>
+      <span class="breadcrumb-current">7. Persistence &amp; Vector Memory</span>
+    </nav>
+
+    <!-- Hero -->
+    <div class="tech-hero">
+      <div class="tech-meta-pills">
+        <span class="meta-pill pill-amber">Embedded SQLite</span>
+        <span class="meta-pill pill-cyan">sqlite-vec RAG (ADR-006)</span>
+        <span class="meta-pill pill-emerald">WAL Mode Concurrency</span>
+        <span class="meta-pill pill-purple">Per-Agent DBs</span>
+      </div>
+      <h1>Relational &amp; Vector<br><span>Persistence Engine</span></h1>
+      <p class="tech-lead">
+        Autonomous dynastic agents require durable episodic memory: exact transactional records for economic barter, 
+        relationship meters for clan politics, and semantic vector embeddings for associative memory recall. 
+        CivQuest embeds a dedicated SQLite database per agent augmented with the <code>sqlite-vec</code> extension.
+      </p>
+    </div>
+
+    <!-- DEPTH LAYER 1: TMLI-15 -->
+    <section class="depth-layer">
+      <div class="depth-header">
+        <div class="depth-title-group">
+          <span class="depth-indicator depth-1-tag">Level 1: Intuitive Mental Model</span>
+          <h2>The Accounting Ledger &amp; The Associative Brain</h2>
+        </div>
+        <span style="font-family: var(--font-mono); font-size: 0.8rem; color: var(--text-muted);">TMLI-15 Framing</span>
+      </div>
+      <div class="depth-body">
+        <p>
+          Human memory operates in two very different ways:
+        </p>
+        <ul>
+          <li><strong>Exact Relational Memory:</strong> <em>"How many iron ingots did I trade to Baker yesterday at noon?"</em> This requires an exact accounting ledger. If the record is fuzzy or estimated, trade disputes and starvation follow.</li>
+          <li><strong>Associative Semantic Memory:</strong> <em>"Where was that dark ravine where a creeper ambushed me in the rain last week?"</em> This is not an exact spreadsheet query; it is a conceptual search across sensations, emotions, and landmarks.</li>
+        </ul>
+        <p>
+          CivQuest combines both memory models inside a single, high-performance database file. 
+          Standard SQL tables record exact inventory transactions, clan contracts, and reputation points. 
+          Simultaneously, the <code>sqlite-vec</code> extension converts sensory experiences and dialogue into 
+          mathematical vector coordinates, allowing the agent to recall relevant memories using cosine similarity.
+        </p>
+        <p>
+          By utilizing SQLite's <strong>Write-Ahead Logging (WAL)</strong> mode, the agent's fast 5 Hz sensory loop can write updates 
+          continuously without ever being blocked when an LLM is reading historical memories in the background.
+        </p>
+      </div>
+    </section>
+
+    <!-- DEPTH LAYER 2: TRIC & SCHEMA TOPOLOGY -->
+    <section class="depth-layer">
+      <div class="depth-header">
+        <div class="depth-title-group">
+          <span class="depth-indicator depth-2-tag">Level 2: Architecture &amp; Boundaries</span>
+          <h2>TRIC Unit Specifications &amp; Persistence Topology</h2>
+        </div>
+        <span style="font-family: var(--font-mono); font-size: 0.8rem; color: var(--text-muted);">Visual TRIC Decomposition</span>
+      </div>
+      <div class="depth-body">
+
+        <!-- TRIC Unit 1 -->
+        <div class="tric-unit">
+          <div class="tric-grid">
+            <div class="tric-segment t-topic">
+              <div class="tric-label">Topic: Embedded Relational &amp; Vector Storage</div>
+              <p>Per-agent persistence combining ACID transactional guarantees with low-latency vector nearest-neighbor search.</p>
+            </div>
+            <div class="tric-segment t-restriction">
+              <div class="tric-label">Restriction: Zero External Daemon Invariant</div>
+              <p>Storage must not depend on external database servers (e.g. Postgres, Redis, Milvus). All persistence must reside inside a single `$XDG_DATA_HOME/civquest/agents/{id}/agent.db` file.</p>
+            </div>
+            <div class="tric-segment t-illustration">
+              <div class="tric-label">Illustration: Relational ERD &amp; Vector Memory Layout</div>
+              <p>The schema diagram below details the primary entity tables, vector virtual tables (`vec_episodes`), and WAL ring buffer concurrency.</p>
+            </div>
+            <div class="tric-segment t-conclusion">
+              <div class="tric-label">Conclusion: Portable Zero-Maintenance RAG</div>
+              <p>Enables instant agent backup, painless permadeath graveyard migration, and sub-millisecond vector retrieval.</p>
+            </div>
+          </div>
+        </div>
+
+        <!-- SVG Schema Topology Diagram -->
+        <div class="diagram-container">
+          <svg class="responsive-svg" viewBox="0 0 940 460" xmlns="http://www.w3.org/2000/svg">
+            <defs>
+              <linearGradient id="dbGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+                <stop offset="0%" stop-color="#1e293b" />
+                <stop offset="100%" stop-color="#0f172a" />
+              </linearGradient>
+              <linearGradient id="vecGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+                <stop offset="0%" stop-color="#3b0764" />
+                <stop offset="100%" stop-color="#1a022e" />
+              </linearGradient>
+            </defs>
+
+            <!-- Relational Tables Boundary -->
+            <rect x="30" y="30" width="560" height="400" rx="10" fill="#0c1829" stroke="#1e3a5f" stroke-width="2" />
+            <text x="50" y="60" fill="#38bdf8" font-size="14" font-weight="700" font-family="monospace">RELATIONAL SCHEMA (SQLite 3.45+)</text>
+            <text x="50" y="80" fill="#64748b" font-size="11" font-family="sans-serif">ACID Relational Storage | WAL Mode Enabled</text>
+
+            <!-- Table 1: episodes -->
+            <rect x="50" y="100" width="240" height="145" rx="6" fill="#132338" stroke="#00d2ff" stroke-width="1.5" />
+            <text x="65" y="125" fill="#00d2ff" font-size="12" font-weight="700" font-family="monospace">episodes</text>
+            <text x="65" y="145" fill="#cbd5e1" font-size="10" font-family="monospace">&bull; id: INTEGER PRIMARY KEY</text>
+            <text x="65" y="165" fill="#cbd5e1" font-size="10" font-family="monospace">&bull; tick: INTEGER NOT NULL</text>
+            <text x="65" y="185" fill="#cbd5e1" font-size="10" font-family="monospace">&bull; summary: TEXT NOT NULL</text>
+            <text x="65" y="205" fill="#cbd5e1" font-size="10" font-family="monospace">&bull; emotion_tag: TEXT</text>
+            <text x="65" y="225" fill="#cbd5e1" font-size="10" font-family="monospace">&bull; location_x, y, z: REAL</text>
+
+            <!-- Table 2: relationships -->
+            <rect x="310" y="100" width="260" height="145" rx="6" fill="#132338" stroke="#10b981" stroke-width="1.5" />
+            <text x="325" y="125" fill="#34d399" font-size="12" font-weight="700" font-family="monospace">relationships</text>
+            <text x="325" y="145" fill="#cbd5e1" font-size="10" font-family="monospace">&bull; target_id: TEXT PRIMARY KEY</text>
+            <text x="325" y="165" fill="#cbd5e1" font-size="10" font-family="monospace">&bull; trust_score: REAL [-1.0..1.0]</text>
+            <text x="325" y="185" fill="#cbd5e1" font-size="10" font-family="monospace">&bull; trade_count: INTEGER</text>
+            <text x="325" y="205" fill="#cbd5e1" font-size="10" font-family="monospace">&bull; last_interaction_tick: INT</text>
+            <text x="325" y="225" fill="#cbd5e1" font-size="10" font-family="monospace">&bull; alliance_status: TEXT</text>
+
+            <!-- Table 3: barter_transactions -->
+            <rect x="50" y="265" width="240" height="145" rx="6" fill="#132338" stroke="#f59e0b" stroke-width="1.5" />
+            <text x="65" y="290" fill="#fbbf24" font-size="12" font-weight="700" font-family="monospace">barter_transactions</text>
+            <text x="65" y="310" fill="#cbd5e1" font-size="10" font-family="monospace">&bull; tx_id: TEXT PRIMARY KEY</text>
+            <text x="65" y="330" fill="#cbd5e1" font-size="10" font-family="monospace">&bull; partner_id: TEXT</text>
+            <text x="65" y="350" fill="#cbd5e1" font-size="10" font-family="monospace">&bull; item_given, count_given</text>
+            <text x="65" y="370" fill="#cbd5e1" font-size="10" font-family="monospace">&bull; item_received, count_recv</text>
+            <text x="65" y="390" fill="#cbd5e1" font-size="10" font-family="monospace">&bull; perceived_fairness: REAL</text>
+
+            <!-- Table 4: landmarks -->
+            <rect x="310" y="265" width="260" height="145" rx="6" fill="#132338" stroke="#8b5cf6" stroke-width="1.5" />
+            <text x="325" y="290" fill="#c084fc" font-size="12" font-weight="700" font-family="monospace">landmarks</text>
+            <text x="325" y="310" fill="#cbd5e1" font-size="10" font-family="monospace">&bull; landmark_id: TEXT PRIMARY KEY</text>
+            <text x="325" y="330" fill="#cbd5e1" font-size="10" font-family="monospace">&bull; name: TEXT (LLM Toponymy)</text>
+            <text x="325" y="350" fill="#cbd5e1" font-size="10" font-family="monospace">&bull; pos_x, pos_y, pos_z: REAL</text>
+            <text x="325" y="370" fill="#cbd5e1" font-size="10" font-family="monospace">&bull; biome_type: TEXT</text>
+            <text x="325" y="390" fill="#cbd5e1" font-size="10" font-family="monospace">&bull; danger_level: REAL</text>
+
+            <!-- Vector sqlite-vec Boundary -->
+            <rect x="610" y="30" width="300" height="400" rx="10" fill="url(#vecGrad)" stroke="#8b5cf6" stroke-width="2" />
+            <text x="630" y="60" fill="#e9d5ff" font-size="14" font-weight="700" font-family="monospace">VECTOR MEMORY (sqlite-vec)</text>
+            <text x="630" y="80" fill="#c084fc" font-size="11" font-family="sans-serif">Cosine Similarity KNN Search</text>
+
+            <rect x="630" y="100" width="260" height="310" rx="6" fill="#240c38" stroke="#a855f7" stroke-width="1.5" />
+            <text x="645" y="125" fill="#d8b4fe" font-size="12" font-weight="700" font-family="monospace">vec_episodes (Virtual Table)</text>
+            <text x="645" y="145" fill="#cbd5e1" font-size="10" font-family="monospace">&bull; rowid: INTEGER (Foreign Key)</text>
+            <text x="645" y="165" fill="#cbd5e1" font-size="10" font-family="monospace">&bull; embedding: float[384]</text>
+            
+            <text x="645" y="200" fill="#a78bfa" font-size="11" font-weight="700" font-family="sans-serif">KNN Query Mechanics:</text>
+            <text x="645" y="220" fill="#cbd5e1" font-size="10" font-family="sans-serif">SELECT rowid, distance</text>
+            <text x="645" y="235" fill="#cbd5e1" font-size="10" font-family="sans-serif">FROM vec_episodes</text>
+            <text x="645" y="250" fill="#cbd5e1" font-size="10" font-family="sans-serif">WHERE embedding MATCH :query</text>
+            <text x="645" y="265" fill="#cbd5e1" font-size="10" font-family="sans-serif">ORDER BY distance LIMIT 3;</text>
+
+            <text x="645" y="300" fill="#fde047" font-size="10" font-family="monospace">Metric: Cosine Distance</text>
+            <text x="645" y="318" fill="#fde047" font-size="10" font-family="monospace">d = 1 - (u &bull; v) / (||u|| ||v||)</text>
+            <text x="645" y="345" fill="#cbd5e1" font-size="10" font-family="sans-serif">Latency: &lt; 1.5ms over 10,000 vectors</text>
+            <text x="645" y="365" fill="#a7f3d0" font-size="9" font-family="monospace">SIMD: AVX2 / AVX-512 Dot Product</text>
+
+          </svg>
+          <div class="diagram-caption">Figure 7.0: Entity-relationship topology and `sqlite-vec` virtual vector table integration.</div>
+        </div>
+
+      </div>
+    </section>
+
+    <!-- DEPTH LAYER 3: TMLI-PRO -->
+    <section class="depth-layer">
+      <div class="depth-header">
+        <div class="depth-title-group">
+          <span class="depth-indicator depth-3-tag">Level 3: Deep As-Built Implementation</span>
+          <h2>DDL Schemas, WAL PRAGMAs &amp; sqlite-vec Extension</h2>
+        </div>
+        <span style="font-family: var(--font-mono); font-size: 0.8rem; color: var(--text-muted);">TMLI-Pro Systems Engineering</span>
+      </div>
+      <div class="depth-body">
+
+        <h3>1. Database Initialization &amp; WAL PRAGMAs (`internal/db/agent_db.go`)</h3>
+        <p>
+          Every agent process initializes its database connection with strict concurrency and performance tuning:
+        </p>
+        <div class="terminal-card">
+          <div class="terminal-header">
+            <span class="dot dot-red"></span>
+            <span class="dot dot-yellow"></span>
+            <span class="dot dot-green"></span>
+            <span style="font-family: var(--font-mono); font-size: 0.75rem; color: #94a3b8; margin-left: 0.5rem;">orchestrator-go/internal/db/agent_db.go</span>
+          </div>
+          <div class="terminal-body">
+            <pre><code>func OpenAgentDB(dbPath string) (*sql.DB, error) {
+    db, err := sql.Open("sqlite3", dbPath+"?_journal_mode=WAL&amp;_synchronous=NORMAL&amp;_busy_timeout=5000")
+    if err != nil {
+        return nil, err
+    }
+    
+    // Load sqlite-vec shared extension library
+    if err := loadSqliteVecExtension(db); err != nil {
+        return nil, fmt.Errorf("failed to load sqlite-vec: %w", err)
+    }
+
+    db.SetMaxOpenConns(1) // Single writer per process
+    return db, nil
+}</code></pre>
+          </div>
+        </div>
+
+        <h3>2. Schema Definition &amp; Virtual Vector Table DDL</h3>
+        <p>
+          The schema establishes the relational backbone and vector virtual table:
+        </p>
+        <div class="terminal-card">
+          <div class="terminal-header">
+            <span class="dot dot-red"></span>
+            <span class="dot dot-yellow"></span>
+            <span class="dot dot-green"></span>
+            <span style="font-family: var(--font-mono); font-size: 0.75rem; color: #94a3b8; margin-left: 0.5rem;">orchestrator-go/internal/db/schema.sql</span>
+          </div>
+          <div class="terminal-body">
+            <pre><code>CREATE TABLE IF NOT EXISTS episodes (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    tick INTEGER NOT NULL,
+    summary TEXT NOT NULL,
+    emotion_tag TEXT,
+    location_x REAL,
+    location_y REAL,
+    location_z REAL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- sqlite-vec virtual table for 384-dimensional dense embeddings (e.g. all-MiniLM-L6-v2)
+CREATE VIRTUAL TABLE IF NOT EXISTS vec_episodes USING vec0(
+    embedding float[384] distance_metric=cosine
+);</code></pre>
+          </div>
+        </div>
+
+        <h3>3. Vector Ingestion &amp; RAG Query Pipeline (`internal/db/vector.go`)</h3>
+        <p>
+          When an episode is recorded, the embedding is computed and inserted atomically into both the relational table and the virtual vector index:
+        </p>
+        <div class="terminal-card">
+          <div class="terminal-header">
+            <span class="dot dot-red"></span>
+            <span class="dot dot-yellow"></span>
+            <span class="dot dot-green"></span>
+            <span style="font-family: var(--font-mono); font-size: 0.75rem; color: #94a3b8; margin-left: 0.5rem;">orchestrator-go/internal/db/vector.go</span>
+          </div>
+          <div class="terminal-body">
+            <pre><code>func (db *AgentDB) QuerySimilarEpisodes(ctx context.Context, queryEmbedding []float32, limit int) ([]Episode, error) {
+    query := `
+        SELECT e.id, e.tick, e.summary, e.emotion_tag, v.distance
+        FROM vec_episodes v
+        JOIN episodes e ON e.id = v.rowid
+        WHERE v.embedding MATCH ?
+        ORDER BY v.distance ASC
+        LIMIT ?;
+    `
+    rows, err := db.conn.QueryContext(ctx, query, serializeEmbedding(queryEmbedding), limit)
+    if err != nil {
+        return nil, err
+    }
+    defer rows.Close()
+    // Scan and return ranked episodic memories
+    return scanEpisodes(rows)
+}</code></pre>
+          </div>
+        </div>
+
+        <h3>4. Specification &amp; Storage Matrix</h3>
+        <div class="spec-table-wrap">
+          <table class="spec-table">
+            <thead>
+              <tr>
+                <th>Storage Component</th>
+                <th>Engine / Extension</th>
+                <th>Query Latency</th>
+                <th>Concurrency Guarantee</th>
+                <th>Filesystem Path</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><code>Relational Store</code></td>
+                <td>SQLite 3.45+ (C Engine)</td>
+                <td>&lt; 0.5 ms</td>
+                <td>ACID Transactions (WAL Mode)</td>
+                <td><code>$XDG_DATA_HOME/civquest/agents/{id}/agent.db</code></td>
+              </tr>
+              <tr>
+                <td><code>Vector Memory</code></td>
+                <td><code>sqlite-vec</code> (C / SIMD)</td>
+                <td>&lt; 1.5 ms (10k items)</td>
+                <td>Read-Uncommitted Isolation</td>
+                <td>Virtual table inside <code>agent.db</code></td>
+              </tr>
+              <tr>
+                <td><code>Clan Registry</code></td>
+                <td>Embedded SQLite</td>
+                <td>&lt; 0.8 ms</td>
+                <td>Shared Clan Lockfile</td>
+                <td><code>$XDG_DATA_HOME/civquest/clans/{clan_id}.db</code></td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+      </div>
+    </section>
+
+    <!-- Pagination Navigation -->
+    <div class="tech-pagination">
+      <a href="physical-embodiment.html" class="pagination-card">
+        <span class="pagination-sub">&larr; Previous Specification</span>
+        <span class="pagination-title">6. Embodiment &amp; Navigation</span>
+      </a>
+      <a href="index.html" class="pagination-card" style="text-align: right;">
+        <span class="pagination-sub">Systems Architecture Hub &rarr;</span>
+        <span class="pagination-title">Index &amp; Global Topology</span>
+      </a>
+    </div>
+
+  </main>
+
+  <!-- Footer & Trademark Notice -->
+  <footer>
+    <div class="footer-container">
+      <div class="disclaimer-box">
+        <strong>LEGAL & TRADEMARK DISCLAIMER:</strong><br>
+        <strong>NOT AN OFFICIAL MINECRAFT PRODUCT. NOT APPROVED BY OR ASSOCIATED WITH MOJANG OR MICROSOFT.</strong><br>
+        <em>Minecraft</em> is a registered trademark of Mojang Synergies AB / Microsoft Corporation. 
+        CivQuest is an independent, community-developed software modification and autonomous agent orchestration platform. 
+        CivQuest is not affiliated with, endorsed by, sponsored by, or associated with Mojang Synergies AB, Microsoft Corporation, 
+        or any of their subsidiaries. All references to Minecraft, related game mechanics, and block identifiers are strictly 
+        nominative references for technical compatibility and modding interoperability under applicable fair use doctrines.
+      </div>
+
+      <div class="footer-links">
+        <a href="../index.html">Overview</a>
+        <a href="../gameplay.html">Gameplay</a>
+        <a href="index.html">Systems Engineering</a>
+        <a href="https://github.com/btposey/civquest">Source Code</a>
+        <a href="https://github.com/btposey/civquest/blob/main/LICENSE">MIT License</a>
+      </div>
+
+      <p class="copyright">&copy; 2026 Brian Posey. Open source under the MIT License.</p>
+    </div>
+  </footer>
+
+</body>
+</html>

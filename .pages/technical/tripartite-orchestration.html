@@ -1,0 +1,373 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <!-- Copyright (c) 2026 Brian Posey
+       Use of this source code is governed by an MIT-style
+       license that can be found in the LICENSE file. -->
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Tripartite Neurological Latency Hierarchy — CivQuest Technical Architecture</title>
+  <meta name="description" content="Technical specification for CivQuest's 3-tier latency hierarchy: in-engine 20Hz peripheral reflexes, 5Hz tactical utility AI, and asynchronous strategic LLM deliberation.">
+  <link rel="stylesheet" href="../assets/css/style.css">
+</head>
+<body>
+
+  <!-- Alpha Status Banner -->
+  <div class="alpha-banner">
+    <span class="alpha-tag">Active Pre-Alpha</span>
+    <span>CivQuest is under active early architecture and development. <a href="https://github.com/btposey/civquest" target="_blank" rel="noopener">Track source & issues on GitHub</a></span>
+  </div>
+
+  <!-- Navigation -->
+  <header>
+    <div class="nav-container">
+      <a href="../index.html" class="logo">
+        <span class="logo-badge">civquest</span>
+        <span>CivQuest</span>
+        <span class="badge-alpha">v0.1.0</span>
+      </a>
+      <nav class="nav-links">
+        <a href="../index.html">Overview</a>
+        <a href="../gameplay.html">Gameplay</a>
+        <a href="index.html" style="color: var(--accent-cyan); font-weight: 600;">Systems Engineering</a>
+        <a href="https://github.com/btposey/civquest" class="btn-github" target="_blank" rel="noopener">
+          <svg width="18" height="18" viewBox="0 0 16 16" fill="currentColor">
+            <path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/>
+          </svg>
+          <span>GitHub</span>
+        </a>
+      </nav>
+    </div>
+  </header>
+
+  <main class="tech-container">
+    
+    <!-- Breadcrumb Navigation -->
+    <nav class="breadcrumb-nav">
+      <a href="../index.html">Overview</a>
+      <span class="breadcrumb-separator">/</span>
+      <a href="index.html">Systems Engineering Hub</a>
+      <span class="breadcrumb-separator">/</span>
+      <span class="breadcrumb-current">1. Tripartite Orchestration</span>
+    </nav>
+
+    <!-- Hero -->
+    <div class="tech-hero">
+      <div class="tech-meta-pills">
+        <span class="meta-pill pill-cyan">Architecture Invariant</span>
+        <span class="meta-pill pill-emerald">ADR-005 &amp; ADR-015</span>
+        <span class="meta-pill pill-amber">Sub-Tick Survival</span>
+        <span class="meta-pill pill-purple">Afferent Loops</span>
+      </div>
+      <h1>Tripartite Neurological<br><span>Latency Hierarchy</span></h1>
+      <p class="tech-lead">
+        Embodied agents operating in physics-driven environments face a fundamental biological dilemma: 
+        deliberative cognition takes seconds, but lethal threats arrive in milliseconds. 
+        CivQuest resolves this via a three-tier neurological latency partition separating in-engine spinal reflexes, 
+        tactical utility AI, and asynchronous strategic LLM inference.
+      </p>
+    </div>
+
+    <!-- DEPTH LAYER 1: TMLI-15 -->
+    <section class="depth-layer">
+      <div class="depth-header">
+        <div class="depth-title-group">
+          <span class="depth-indicator depth-1-tag">Level 1: Intuitive Mental Model</span>
+          <h2>Biological Analogies &amp; The Latency Dilemma</h2>
+        </div>
+        <span style="font-family: var(--font-mono); font-size: 0.8rem; color: var(--text-muted);">TMLI-15 Framing</span>
+      </div>
+      <div class="depth-body">
+        <p>
+          Consider what happens when your hand touches a glowing stovetop. You do not consciously deliberate, consult a mental dictionary, 
+          or evaluate your options. Your spinal cord triggers an involuntary muscle contraction that pulls your arm back before the pain 
+          signal has even arrived at your conscious brain. The conscious brain only realizes what happened hundreds of milliseconds later.
+        </p>
+        <p>
+          Living organisms survive dynamic, hostile worlds because their neurological control is split across distinct speed layers:
+        </p>
+        <ul>
+          <li><strong>The Spinal Cord (Sub-Conscious Reflexes):</strong> Fires in &lt;10 milliseconds. Protects the physical organism from catastrophic damage (flinching, blinking, catching balance) without waiting for brain approval.</li>
+          <li><strong>The Basal Ganglia &amp; Brainstem (Tactical Intuition):</strong> Cycles in 50–100 milliseconds. Governs continuous muscle coordination, rhythm, walking patterns, and instant fight-or-flight reactions.</li>
+          <li><strong>The Prefrontal Cortex (Deliberative Cognition):</strong> Operates over seconds or minutes. Plans long-term goals, evaluates social relationships, reads books, and negotiates treaties.</li>
+        </ul>
+        <p>
+          If an AI agent forced every action through a Large Language Model, every skeleton arrow would hit the agent before the prompt even finished tokenizing. 
+          CivQuest mirrors biological neurological hierarchies by embedding sub-tick reflexes inside the game engine, tactical utility loops in Go, and strategic deliberation in asynchronous background workers.
+        </p>
+      </div>
+    </section>
+
+    <!-- DEPTH LAYER 2: TRIC & SWIMLANE -->
+    <section class="depth-layer">
+      <div class="depth-header">
+        <div class="depth-title-group">
+          <span class="depth-indicator depth-2-tag">Level 2: Architecture &amp; Boundaries</span>
+          <h2>TRIC Unit Specifications &amp; Latency Swimlane</h2>
+        </div>
+        <span style="font-family: var(--font-mono); font-size: 0.8rem; color: var(--text-muted);">Visual TRIC Decomposition</span>
+      </div>
+      <div class="depth-body">
+
+        <!-- TRIC Unit 1 -->
+        <div class="tric-unit">
+          <div class="tric-grid">
+            <div class="tric-segment t-topic">
+              <div class="tric-label">Topic: Real-Time Latency Partitioning</div>
+              <p>Physical voxel survival requires sub-tick (&lt;50ms) reaction times, whereas large language model inference requires 500ms to 4000ms.</p>
+            </div>
+            <div class="tric-segment t-restriction">
+              <div class="tric-label">Restriction: Boundary Invariants</div>
+              <p>Layer 1A (Java) must never perform network I/O or allocate heap memory. Layer 1B (Go) must execute in &lt;5ms without token consumption. Layer 2 (LLM) must never block the kinetic movement loop.</p>
+            </div>
+            <div class="tric-segment t-illustration">
+              <div class="tric-label">Illustration: Multi-Tier Latency Swimlane</div>
+              <p>The time-ordered execution graph below demonstrates how an incoming skeleton arrow is blocked in &lt;0.1ms at Layer 1A, evaluated at Layer 1B within 200ms, and woven into long-term memory at Layer 2 over 2500ms.</p>
+            </div>
+            <div class="tric-segment t-conclusion">
+              <div class="tric-label">Conclusion: Deterministic Guarantees</div>
+              <p>Zero-token survival reflexes guarantee zero deaths from network lag or token budget starvation while preserving complex LLM dynastic behaviors.</p>
+            </div>
+          </div>
+        </div>
+
+        <!-- SVG Swimlane Diagram -->
+        <div class="diagram-container">
+          <svg class="responsive-svg" viewBox="0 0 920 440" xmlns="http://www.w3.org/2000/svg">
+            <defs>
+              <linearGradient id="swimJava" x1="0%" y1="0%" x2="100%" y2="0%">
+                <stop offset="0%" stop-color="#0f172a" />
+                <stop offset="100%" stop-color="#1e293b" />
+              </linearGradient>
+              <linearGradient id="swimGo" x1="0%" y1="0%" x2="100%" y2="0%">
+                <stop offset="0%" stop-color="#0c1829" />
+                <stop offset="100%" stop-color="#132a4a" />
+              </linearGradient>
+              <linearGradient id="swimLLM" x1="0%" y1="0%" x2="100%" y2="0%">
+                <stop offset="0%" stop-color="#190d2e" />
+                <stop offset="100%" stop-color="#2a164d" />
+              </linearGradient>
+            </defs>
+
+            <!-- Time Axis Header -->
+            <rect x="180" y="20" width="710" height="30" fill="#070a10" rx="4" />
+            <text x="200" y="40" fill="#94a3b8" font-size="11" font-family="monospace">t = 0 ms</text>
+            <text x="360" y="40" fill="#94a3b8" font-size="11" font-family="monospace">t = 50 ms (Tick 1)</text>
+            <text x="560" y="40" fill="#94a3b8" font-size="11" font-family="monospace">t = 200 ms (Frame 1)</text>
+            <text x="780" y="40" fill="#94a3b8" font-size="11" font-family="monospace">t = 2500 ms (Async)</text>
+            <line x1="200" y1="50" x2="200" y2="410" stroke="#334155" stroke-dasharray="3,3" />
+            <line x1="420" y1="50" x2="420" y2="410" stroke="#334155" stroke-dasharray="3,3" />
+            <line x1="620" y1="50" x2="620" y2="410" stroke="#334155" stroke-dasharray="3,3" />
+            <line x1="840" y1="50" x2="840" y2="410" stroke="#334155" stroke-dasharray="3,3" />
+
+            <!-- Row 1: Layer 1A (Java In-Engine Reflexes) -->
+            <rect x="20" y="65" width="150" height="95" fill="url(#swimJava)" rx="6" stroke="#00d2ff" stroke-width="1.5" />
+            <text x="35" y="95" fill="#00d2ff" font-size="12" font-weight="700" font-family="monospace">LAYER 1A: Java</text>
+            <text x="35" y="115" fill="#e2e8f0" font-size="11" font-family="sans-serif">Peripheral Reflexes</text>
+            <text x="35" y="132" fill="#94a3b8" font-size="10" font-family="monospace">20 Hz | &lt; 0.1 ms</text>
+            <text x="35" y="147" fill="#64748b" font-size="9" font-family="sans-serif">Zero IPC / JVM Direct</text>
+
+            <rect x="180" y="75" width="710" height="75" fill="#0f172a" rx="6" stroke="#1e293b" />
+            
+            <!-- Event 1: Arrow Detected & Blocked -->
+            <rect x="200" y="85" width="180" height="55" rx="6" fill="#083344" stroke="#00d2ff" stroke-width="1.5" />
+            <text x="210" y="105" fill="#38bdf8" font-size="11" font-weight="700" font-family="monospace">Arrow Trajectory Hit</text>
+            <text x="210" y="123" fill="#cbd5e1" font-size="10" font-family="sans-serif">Raise Shield (0.04 ms)</text>
+            <text x="210" y="135" fill="#22d3ee" font-size="9" font-family="monospace">&rarr; Emits ReflexNotice</text>
+
+            <!-- Row 2: Layer 1B (Go Reactive Utility Engine) -->
+            <rect x="20" y="180" width="150" height="95" fill="url(#swimGo)" rx="6" stroke="#10b981" stroke-width="1.5" />
+            <text x="35" y="210" fill="#34d399" font-size="12" font-weight="700" font-family="monospace">LAYER 1B: Go</text>
+            <text x="35" y="230" fill="#e2e8f0" font-size="11" font-family="sans-serif">Tactical Intuition</text>
+            <text x="35" y="247" fill="#94a3b8" font-size="10" font-family="monospace">5 Hz | &lt; 5.0 ms</text>
+            <text x="35" y="262" fill="#64748b" font-size="9" font-family="sans-serif">Zero Token Reflexes</text>
+
+            <rect x="180" y="190" width="710" height="75" fill="#0c1829" rx="6" stroke="#1e293b" />
+            
+            <!-- Event 2: Afferent Ingestion & HFSM Emergency Transition -->
+            <path d="M 380 120 L 450 205" stroke="#00d2ff" stroke-width="2" stroke-dasharray="4,3" marker-end="url(#arrow)" />
+            <rect x="440" y="200" width="220" height="55" rx="6" fill="#064e3b" stroke="#10b981" stroke-width="1.5" />
+            <text x="450" y="220" fill="#6ee7b7" font-size="11" font-weight="700" font-family="monospace">Receive ReflexNotice</text>
+            <text x="450" y="236" fill="#cbd5e1" font-size="10" font-family="sans-serif">Confidence &lt; 0.4 &rarr; EMERGENCY</text>
+            <text x="450" y="248" fill="#a7f3d0" font-size="9" font-family="monospace">Dispatches Flee NavigateIntent</text>
+
+            <!-- Row 3: Layer 2 (Asynchronous LLM Deliberation) -->
+            <rect x="20" y="295" width="150" height="95" fill="url(#swimLLM)" rx="6" stroke="#8b5cf6" stroke-width="1.5" />
+            <text x="35" y="325" fill="#c084fc" font-size="12" font-weight="700" font-family="monospace">LAYER 2: LLM</text>
+            <text x="35" y="345" fill="#e2e8f0" font-size="11" font-family="sans-serif">Strategic Cognition</text>
+            <text x="35" y="362" fill="#94a3b8" font-size="10" font-family="monospace">Async | 500-4000 ms</text>
+            <text x="35" y="377" fill="#64748b" font-size="9" font-family="sans-serif">Ollama / vLLM Gateway</text>
+
+            <rect x="180" y="305" width="710" height="75" fill="#140d21" rx="6" stroke="#1e293b" />
+            
+            <!-- Event 3: Chronicler Ingestion -->
+            <path d="M 660 225 L 720 320" stroke="#10b981" stroke-width="2" stroke-dasharray="4,3" />
+            <rect x="710" y="315" width="165" height="55" rx="6" fill="#3b0764" stroke="#8b5cf6" stroke-width="1.5" />
+            <text x="720" y="335" fill="#d8b4fe" font-size="11" font-weight="700" font-family="monospace">Chronicler Ledger Entry</text>
+            <text x="720" y="351" fill="#cbd5e1" font-size="10" font-family="sans-serif">Writes book chronicle &amp;</text>
+            <text x="720" y="363" fill="#e9d5ff" font-size="9" font-family="monospace">Indexes vector memory</text>
+
+          </svg>
+          <div class="diagram-caption">Figure 1.1: Event timeline across the three neurological tiers during a projectile ambush.</div>
+        </div>
+
+      </div>
+    </section>
+
+    <!-- DEPTH LAYER 3: TMLI-PRO -->
+    <section class="depth-layer">
+      <div class="depth-header">
+        <div class="depth-title-group">
+          <span class="depth-indicator depth-3-tag">Level 3: Deep As-Built Implementation</span>
+          <h2>Concrete Contracts, Memory Invariants &amp; Concurrency</h2>
+        </div>
+        <span style="font-family: var(--font-mono); font-size: 0.8rem; color: var(--text-muted);">TMLI-Pro Systems Engineering</span>
+      </div>
+      <div class="depth-body">
+
+        <h3>1. In-Engine Java Peripheral Reflexes (`AgentEntity.java`)</h3>
+        <p>
+          Layer 1A executes directly inside Minecraft's dedicated server tick (`net.neoforged.neoforge.event.tick.ServerTickEvent`). 
+          At 20 Hz, each server tick provides an absolute budget of 50.0 ms across all entities. To prevent lag spikes, 
+          CivQuest's in-engine reflexes are hard-capped at <strong>0.1 ms per agent</strong>.
+        </p>
+        <p>
+          <strong>Trajectory Intersection Algorithm:</strong> Every tick, `AgentEntity` checks for active projectile entities within a bounding sphere ($r = 12\text{ blocks}$). 
+          For each projectile $\vec{P}$ with velocity $\vec{V}$, it computes the closest point of approach ($t_{\text{cpa}}$) to the agent's bounding box:
+        </p>
+        <p style="font-family: var(--font-mono); font-size: 0.95rem; background: #070a10; padding: 0.75rem 1rem; border-radius: 6px; border: 1px solid var(--border-color);">
+          t_{\text{cpa}} = -\frac{(\vec{P}_0 - \vec{A}) \cdot \vec{V}}{|\vec{V}|^2}, \quad \text{where } \vec{A} \text{ is agent position}
+        </p>
+        <p>
+          If $0 < t_{\text{cpa}} < 0.5\text{s}$ and the impact distance is within the agent's hitbox radius, the avatar automatically raises its offhand shield (`startUsingItem(InteractionHand.OFF_HAND)`) and appends a `ReflexNotice` into the outgoing telemetry buffer.
+        </p>
+
+        <h3>2. Ascending Afferent Telemetry (`ReflexNotice`)</h3>
+        <p>
+          In biology, afferent nerves carry sensory signals from peripheral receptors upward to the central nervous system. 
+          CivQuest implements this via `ReflexNotice` messages inside the Protobuf `TelemetryFrame`:
+        </p>
+        <div class="terminal-card">
+          <div class="terminal-header">
+            <span class="dot dot-red"></span>
+            <span class="dot dot-yellow"></span>
+            <span class="dot dot-green"></span>
+            <span style="font-family: var(--font-mono); font-size: 0.75rem; color: #94a3b8; margin-left: 0.5rem;">proto/civquest/v1/civquest.proto</span>
+          </div>
+          <div class="terminal-body">
+            <pre><code>message ReflexNotice {
+  enum ReflexType {
+    REFLEX_TYPE_UNSPECIFIED = 0;
+    REFLEX_TYPE_SHIELD_RAISED = 1;
+    REFLEX_TYPE_OBSTACLE_STEP = 2;
+    REFLEX_TYPE_ITEM_VACUUMED = 3;
+    REFLEX_TYPE_FIRE_EXTINGUISHED = 4;
+  }
+  ReflexType type = 1;
+  int64 tick = 2;
+  int32 source_entity_id = 3;
+  string details = 4;
+}</code></pre>
+          </div>
+        </div>
+
+        <h3>3. Go Tactical Utility Loop (`internal/system1/evaluator.go`)</h3>
+        <p>
+          The external Go worker process runs at 5 Hz (every 200ms). When a `TelemetryFrame` is received containing a `ReflexNotice`, 
+          the utility evaluator immediately penalizes the agent's survival confidence score without waiting for higher-level timers. 
+          The confidence formula is defined as:
+        </p>
+        <p style="font-family: var(--font-mono); font-size: 0.95rem; background: #070a10; padding: 0.75rem 1rem; border-radius: 6px; border: 1px solid var(--border-color);">
+          C = \left( \frac{\text{Health}}{\text{MaxHealth}} \times 0.4 \right) + \left( M_{\text{gear}} \times 0.4 \right) - \left( N_{\text{threats}} \times 0.15 \right) - P_{\text{reflex}}
+        </p>
+        <p>
+          Where $P_{\text{reflex}} = 0.25$ if a `REFLEX_TYPE_SHIELD_RAISED` notice was ingested within the last 1.0 second. 
+          If $C &lt; 0.40$, the Hierarchical FSM immediately triggers a transition to `EMERGENCY` state, issuing an immediate reverse vector `NavigateIntent` to escape danger.
+        </p>
+
+        <h3>4. Specification &amp; Invariant Matrix</h3>
+        <div class="spec-table-wrap">
+          <table class="spec-table">
+            <thead>
+              <tr>
+                <th>Tier</th>
+                <th>Subsystem</th>
+                <th>Frequency</th>
+                <th>Latency Ceiling</th>
+                <th>Allocation Policy</th>
+                <th>Failure Behavior</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><strong>Layer 1A</strong></td>
+                <td>JVM In-Engine Reflexes</td>
+                <td>20 Hz</td>
+                <td>&lt; 0.1 ms</td>
+                <td>Zero-alloc primitive pool</td>
+                <td>Silent no-op (no crash)</td>
+              </tr>
+              <tr>
+                <td><strong>Layer 1B</strong></td>
+                <td>Go Tactical Utility AI</td>
+                <td>5 Hz</td>
+                <td>&lt; 5.0 ms</td>
+                <td>Stack allocation / SIMD</td>
+                <td>Fallback to EMERGENCY flee</td>
+              </tr>
+              <tr>
+                <td><strong>Layer 2</strong></td>
+                <td>Ollama / vLLM Gateway</td>
+                <td>Async</td>
+                <td>500 – 4000 ms</td>
+                <td>JSON heap parsing / VRAM</td>
+                <td>Timeout &rarr; Retain prior goal</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+      </div>
+    </section>
+
+    <!-- Pagination Navigation -->
+    <div class="tech-pagination">
+      <a href="index.html" class="pagination-card">
+        <span class="pagination-sub">&larr; Systems Architecture Hub</span>
+        <span class="pagination-title">Index &amp; Global Topology</span>
+      </a>
+      <a href="networked-ipc-streaming.html" class="pagination-card" style="text-align: right;">
+        <span class="pagination-sub">Next Specification &rarr;</span>
+        <span class="pagination-title">2. Networked IPC Streaming</span>
+      </a>
+    </div>
+
+  </main>
+
+  <!-- Footer & Trademark Notice -->
+  <footer>
+    <div class="footer-container">
+      <div class="disclaimer-box">
+        <strong>LEGAL & TRADEMARK DISCLAIMER:</strong><br>
+        <strong>NOT AN OFFICIAL MINECRAFT PRODUCT. NOT APPROVED BY OR ASSOCIATED WITH MOJANG OR MICROSOFT.</strong><br>
+        <em>Minecraft</em> is a registered trademark of Mojang Synergies AB / Microsoft Corporation. 
+        CivQuest is an independent, community-developed software modification and autonomous agent orchestration platform. 
+        CivQuest is not affiliated with, endorsed by, sponsored by, or associated with Mojang Synergies AB, Microsoft Corporation, 
+        or any of their subsidiaries. All references to Minecraft, related game mechanics, and block identifiers are strictly 
+        nominative references for technical compatibility and modding interoperability under applicable fair use doctrines.
+      </div>
+
+      <div class="footer-links">
+        <a href="../index.html">Overview</a>
+        <a href="../gameplay.html">Gameplay</a>
+        <a href="index.html">Systems Engineering</a>
+        <a href="https://github.com/btposey/civquest">Source Code</a>
+        <a href="https://github.com/btposey/civquest/blob/main/LICENSE">MIT License</a>
+      </div>
+
+      <p class="copyright">&copy; 2026 Brian Posey. Open source under the MIT License.</p>
+    </div>
+  </footer>
+
+</body>
+</html>

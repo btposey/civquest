@@ -227,4 +227,48 @@ public interface TelemetryFrameOrBuilder extends
    * @return The lastProcessedSequenceId.
    */
   long getLastProcessedSequenceId();
+
+  /**
+   * <pre>
+   * ADR-015 afferent telemetry for Layer 1A in-engine reflexes
+   * </pre>
+   *
+   * <code>repeated .civquest.v1.ReflexNotice reflex_notices = 15;</code>
+   */
+  java.util.List<com.civquest.mod.grpc.v1.ReflexNotice> 
+      getReflexNoticesList();
+  /**
+   * <pre>
+   * ADR-015 afferent telemetry for Layer 1A in-engine reflexes
+   * </pre>
+   *
+   * <code>repeated .civquest.v1.ReflexNotice reflex_notices = 15;</code>
+   */
+  com.civquest.mod.grpc.v1.ReflexNotice getReflexNotices(int index);
+  /**
+   * <pre>
+   * ADR-015 afferent telemetry for Layer 1A in-engine reflexes
+   * </pre>
+   *
+   * <code>repeated .civquest.v1.ReflexNotice reflex_notices = 15;</code>
+   */
+  int getReflexNoticesCount();
+  /**
+   * <pre>
+   * ADR-015 afferent telemetry for Layer 1A in-engine reflexes
+   * </pre>
+   *
+   * <code>repeated .civquest.v1.ReflexNotice reflex_notices = 15;</code>
+   */
+  java.util.List<? extends com.civquest.mod.grpc.v1.ReflexNoticeOrBuilder> 
+      getReflexNoticesOrBuilderList();
+  /**
+   * <pre>
+   * ADR-015 afferent telemetry for Layer 1A in-engine reflexes
+   * </pre>
+   *
+   * <code>repeated .civquest.v1.ReflexNotice reflex_notices = 15;</code>
+   */
+  com.civquest.mod.grpc.v1.ReflexNoticeOrBuilder getReflexNoticesOrBuilder(
+      int index);
 }

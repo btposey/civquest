@@ -32,6 +32,7 @@ private static final long serialVersionUID = 0L;
     visibleEntities_ = java.util.Collections.emptyList();
     interestingBlocks_ = java.util.Collections.emptyList();
     incomingChats_ = java.util.Collections.emptyList();
+    reflexNotices_ = java.util.Collections.emptyList();
   }
 
   public static final com.google.protobuf.Descriptors.Descriptor
@@ -433,6 +434,67 @@ private static final long serialVersionUID = 0L;
     return lastProcessedSequenceId_;
   }
 
+  public static final int REFLEX_NOTICES_FIELD_NUMBER = 15;
+  @SuppressWarnings("serial")
+  private java.util.List<com.civquest.mod.grpc.v1.ReflexNotice> reflexNotices_;
+  /**
+   * <pre>
+   * ADR-015 afferent telemetry for Layer 1A in-engine reflexes
+   * </pre>
+   *
+   * <code>repeated .civquest.v1.ReflexNotice reflex_notices = 15;</code>
+   */
+  @java.lang.Override
+  public java.util.List<com.civquest.mod.grpc.v1.ReflexNotice> getReflexNoticesList() {
+    return reflexNotices_;
+  }
+  /**
+   * <pre>
+   * ADR-015 afferent telemetry for Layer 1A in-engine reflexes
+   * </pre>
+   *
+   * <code>repeated .civquest.v1.ReflexNotice reflex_notices = 15;</code>
+   */
+  @java.lang.Override
+  public java.util.List<? extends com.civquest.mod.grpc.v1.ReflexNoticeOrBuilder> 
+      getReflexNoticesOrBuilderList() {
+    return reflexNotices_;
+  }
+  /**
+   * <pre>
+   * ADR-015 afferent telemetry for Layer 1A in-engine reflexes
+   * </pre>
+   *
+   * <code>repeated .civquest.v1.ReflexNotice reflex_notices = 15;</code>
+   */
+  @java.lang.Override
+  public int getReflexNoticesCount() {
+    return reflexNotices_.size();
+  }
+  /**
+   * <pre>
+   * ADR-015 afferent telemetry for Layer 1A in-engine reflexes
+   * </pre>
+   *
+   * <code>repeated .civquest.v1.ReflexNotice reflex_notices = 15;</code>
+   */
+  @java.lang.Override
+  public com.civquest.mod.grpc.v1.ReflexNotice getReflexNotices(int index) {
+    return reflexNotices_.get(index);
+  }
+  /**
+   * <pre>
+   * ADR-015 afferent telemetry for Layer 1A in-engine reflexes
+   * </pre>
+   *
+   * <code>repeated .civquest.v1.ReflexNotice reflex_notices = 15;</code>
+   */
+  @java.lang.Override
+  public com.civquest.mod.grpc.v1.ReflexNoticeOrBuilder getReflexNoticesOrBuilder(
+      int index) {
+    return reflexNotices_.get(index);
+  }
+
   private byte memoizedIsInitialized = -1;
   @java.lang.Override
   public final boolean isInitialized() {
@@ -488,6 +550,9 @@ private static final long serialVersionUID = 0L;
     }
     if (lastProcessedSequenceId_ != 0L) {
       output.writeInt64(14, lastProcessedSequenceId_);
+    }
+    for (int i = 0; i < reflexNotices_.size(); i++) {
+      output.writeMessage(15, reflexNotices_.get(i));
     }
     getUnknownFields().writeTo(output);
   }
@@ -553,6 +618,10 @@ private static final long serialVersionUID = 0L;
       size += com.google.protobuf.CodedOutputStream
         .computeInt64Size(14, lastProcessedSequenceId_);
     }
+    for (int i = 0; i < reflexNotices_.size(); i++) {
+      size += com.google.protobuf.CodedOutputStream
+        .computeMessageSize(15, reflexNotices_.get(i));
+    }
     size += getUnknownFields().getSerializedSize();
     memoizedSize = size;
     return size;
@@ -613,6 +682,8 @@ private static final long serialVersionUID = 0L;
     }
     if (getLastProcessedSequenceId()
         != other.getLastProcessedSequenceId()) return false;
+    if (!getReflexNoticesList()
+        .equals(other.getReflexNoticesList())) return false;
     if (!getUnknownFields().equals(other.getUnknownFields())) return false;
     return true;
   }
@@ -673,6 +744,10 @@ private static final long serialVersionUID = 0L;
     hash = (37 * hash) + LAST_PROCESSED_SEQUENCE_ID_FIELD_NUMBER;
     hash = (53 * hash) + com.google.protobuf.Internal.hashLong(
         getLastProcessedSequenceId());
+    if (getReflexNoticesCount() > 0) {
+      hash = (37 * hash) + REFLEX_NOTICES_FIELD_NUMBER;
+      hash = (53 * hash) + getReflexNoticesList().hashCode();
+    }
     hash = (29 * hash) + getUnknownFields().hashCode();
     memoizedHashCode = hash;
     return hash;
@@ -812,6 +887,7 @@ private static final long serialVersionUID = 0L;
         getFarmlandSurveyFieldBuilder();
         getCurrentLandmarkFieldBuilder();
         getDeathEventFieldBuilder();
+        getReflexNoticesFieldBuilder();
       }
     }
     @java.lang.Override
@@ -874,6 +950,13 @@ private static final long serialVersionUID = 0L;
         deathEventBuilder_ = null;
       }
       lastProcessedSequenceId_ = 0L;
+      if (reflexNoticesBuilder_ == null) {
+        reflexNotices_ = java.util.Collections.emptyList();
+      } else {
+        reflexNotices_ = null;
+        reflexNoticesBuilder_.clear();
+      }
+      bitField0_ = (bitField0_ & ~0x00004000);
       return this;
     }
 
@@ -933,6 +1016,15 @@ private static final long serialVersionUID = 0L;
         result.incomingChats_ = incomingChats_;
       } else {
         result.incomingChats_ = incomingChatsBuilder_.build();
+      }
+      if (reflexNoticesBuilder_ == null) {
+        if (((bitField0_ & 0x00004000) != 0)) {
+          reflexNotices_ = java.util.Collections.unmodifiableList(reflexNotices_);
+          bitField0_ = (bitField0_ & ~0x00004000);
+        }
+        result.reflexNotices_ = reflexNotices_;
+      } else {
+        result.reflexNotices_ = reflexNoticesBuilder_.build();
       }
     }
 
@@ -1118,6 +1210,32 @@ private static final long serialVersionUID = 0L;
       if (other.getLastProcessedSequenceId() != 0L) {
         setLastProcessedSequenceId(other.getLastProcessedSequenceId());
       }
+      if (reflexNoticesBuilder_ == null) {
+        if (!other.reflexNotices_.isEmpty()) {
+          if (reflexNotices_.isEmpty()) {
+            reflexNotices_ = other.reflexNotices_;
+            bitField0_ = (bitField0_ & ~0x00004000);
+          } else {
+            ensureReflexNoticesIsMutable();
+            reflexNotices_.addAll(other.reflexNotices_);
+          }
+          onChanged();
+        }
+      } else {
+        if (!other.reflexNotices_.isEmpty()) {
+          if (reflexNoticesBuilder_.isEmpty()) {
+            reflexNoticesBuilder_.dispose();
+            reflexNoticesBuilder_ = null;
+            reflexNotices_ = other.reflexNotices_;
+            bitField0_ = (bitField0_ & ~0x00004000);
+            reflexNoticesBuilder_ = 
+              com.google.protobuf.GeneratedMessage.alwaysUseFieldBuilders ?
+                 getReflexNoticesFieldBuilder() : null;
+          } else {
+            reflexNoticesBuilder_.addAllMessages(other.reflexNotices_);
+          }
+        }
+      }
       this.mergeUnknownFields(other.getUnknownFields());
       onChanged();
       return this;
@@ -1250,6 +1368,19 @@ private static final long serialVersionUID = 0L;
               bitField0_ |= 0x00002000;
               break;
             } // case 112
+            case 122: {
+              com.civquest.mod.grpc.v1.ReflexNotice m =
+                  input.readMessage(
+                      com.civquest.mod.grpc.v1.ReflexNotice.parser(),
+                      extensionRegistry);
+              if (reflexNoticesBuilder_ == null) {
+                ensureReflexNoticesIsMutable();
+                reflexNotices_.add(m);
+              } else {
+                reflexNoticesBuilder_.addMessage(m);
+              }
+              break;
+            } // case 122
             default: {
               if (!super.parseUnknownField(input, extensionRegistry, tag)) {
                 done = true; // was an endgroup tag
@@ -2980,6 +3111,318 @@ private static final long serialVersionUID = 0L;
       lastProcessedSequenceId_ = 0L;
       onChanged();
       return this;
+    }
+
+    private java.util.List<com.civquest.mod.grpc.v1.ReflexNotice> reflexNotices_ =
+      java.util.Collections.emptyList();
+    private void ensureReflexNoticesIsMutable() {
+      if (!((bitField0_ & 0x00004000) != 0)) {
+        reflexNotices_ = new java.util.ArrayList<com.civquest.mod.grpc.v1.ReflexNotice>(reflexNotices_);
+        bitField0_ |= 0x00004000;
+       }
+    }
+
+    private com.google.protobuf.RepeatedFieldBuilder<
+        com.civquest.mod.grpc.v1.ReflexNotice, com.civquest.mod.grpc.v1.ReflexNotice.Builder, com.civquest.mod.grpc.v1.ReflexNoticeOrBuilder> reflexNoticesBuilder_;
+
+    /**
+     * <pre>
+     * ADR-015 afferent telemetry for Layer 1A in-engine reflexes
+     * </pre>
+     *
+     * <code>repeated .civquest.v1.ReflexNotice reflex_notices = 15;</code>
+     */
+    public java.util.List<com.civquest.mod.grpc.v1.ReflexNotice> getReflexNoticesList() {
+      if (reflexNoticesBuilder_ == null) {
+        return java.util.Collections.unmodifiableList(reflexNotices_);
+      } else {
+        return reflexNoticesBuilder_.getMessageList();
+      }
+    }
+    /**
+     * <pre>
+     * ADR-015 afferent telemetry for Layer 1A in-engine reflexes
+     * </pre>
+     *
+     * <code>repeated .civquest.v1.ReflexNotice reflex_notices = 15;</code>
+     */
+    public int getReflexNoticesCount() {
+      if (reflexNoticesBuilder_ == null) {
+        return reflexNotices_.size();
+      } else {
+        return reflexNoticesBuilder_.getCount();
+      }
+    }
+    /**
+     * <pre>
+     * ADR-015 afferent telemetry for Layer 1A in-engine reflexes
+     * </pre>
+     *
+     * <code>repeated .civquest.v1.ReflexNotice reflex_notices = 15;</code>
+     */
+    public com.civquest.mod.grpc.v1.ReflexNotice getReflexNotices(int index) {
+      if (reflexNoticesBuilder_ == null) {
+        return reflexNotices_.get(index);
+      } else {
+        return reflexNoticesBuilder_.getMessage(index);
+      }
+    }
+    /**
+     * <pre>
+     * ADR-015 afferent telemetry for Layer 1A in-engine reflexes
+     * </pre>
+     *
+     * <code>repeated .civquest.v1.ReflexNotice reflex_notices = 15;</code>
+     */
+    public Builder setReflexNotices(
+        int index, com.civquest.mod.grpc.v1.ReflexNotice value) {
+      if (reflexNoticesBuilder_ == null) {
+        if (value == null) {
+          throw new NullPointerException();
+        }
+        ensureReflexNoticesIsMutable();
+        reflexNotices_.set(index, value);
+        onChanged();
+      } else {
+        reflexNoticesBuilder_.setMessage(index, value);
+      }
+      return this;
+    }
+    /**
+     * <pre>
+     * ADR-015 afferent telemetry for Layer 1A in-engine reflexes
+     * </pre>
+     *
+     * <code>repeated .civquest.v1.ReflexNotice reflex_notices = 15;</code>
+     */
+    public Builder setReflexNotices(
+        int index, com.civquest.mod.grpc.v1.ReflexNotice.Builder builderForValue) {
+      if (reflexNoticesBuilder_ == null) {
+        ensureReflexNoticesIsMutable();
+        reflexNotices_.set(index, builderForValue.build());
+        onChanged();
+      } else {
+        reflexNoticesBuilder_.setMessage(index, builderForValue.build());
+      }
+      return this;
+    }
+    /**
+     * <pre>
+     * ADR-015 afferent telemetry for Layer 1A in-engine reflexes
+     * </pre>
+     *
+     * <code>repeated .civquest.v1.ReflexNotice reflex_notices = 15;</code>
+     */
+    public Builder addReflexNotices(com.civquest.mod.grpc.v1.ReflexNotice value) {
+      if (reflexNoticesBuilder_ == null) {
+        if (value == null) {
+          throw new NullPointerException();
+        }
+        ensureReflexNoticesIsMutable();
+        reflexNotices_.add(value);
+        onChanged();
+      } else {
+        reflexNoticesBuilder_.addMessage(value);
+      }
+      return this;
+    }
+    /**
+     * <pre>
+     * ADR-015 afferent telemetry for Layer 1A in-engine reflexes
+     * </pre>
+     *
+     * <code>repeated .civquest.v1.ReflexNotice reflex_notices = 15;</code>
+     */
+    public Builder addReflexNotices(
+        int index, com.civquest.mod.grpc.v1.ReflexNotice value) {
+      if (reflexNoticesBuilder_ == null) {
+        if (value == null) {
+          throw new NullPointerException();
+        }
+        ensureReflexNoticesIsMutable();
+        reflexNotices_.add(index, value);
+        onChanged();
+      } else {
+        reflexNoticesBuilder_.addMessage(index, value);
+      }
+      return this;
+    }
+    /**
+     * <pre>
+     * ADR-015 afferent telemetry for Layer 1A in-engine reflexes
+     * </pre>
+     *
+     * <code>repeated .civquest.v1.ReflexNotice reflex_notices = 15;</code>
+     */
+    public Builder addReflexNotices(
+        com.civquest.mod.grpc.v1.ReflexNotice.Builder builderForValue) {
+      if (reflexNoticesBuilder_ == null) {
+        ensureReflexNoticesIsMutable();
+        reflexNotices_.add(builderForValue.build());
+        onChanged();
+      } else {
+        reflexNoticesBuilder_.addMessage(builderForValue.build());
+      }
+      return this;
+    }
+    /**
+     * <pre>
+     * ADR-015 afferent telemetry for Layer 1A in-engine reflexes
+     * </pre>
+     *
+     * <code>repeated .civquest.v1.ReflexNotice reflex_notices = 15;</code>
+     */
+    public Builder addReflexNotices(
+        int index, com.civquest.mod.grpc.v1.ReflexNotice.Builder builderForValue) {
+      if (reflexNoticesBuilder_ == null) {
+        ensureReflexNoticesIsMutable();
+        reflexNotices_.add(index, builderForValue.build());
+        onChanged();
+      } else {
+        reflexNoticesBuilder_.addMessage(index, builderForValue.build());
+      }
+      return this;
+    }
+    /**
+     * <pre>
+     * ADR-015 afferent telemetry for Layer 1A in-engine reflexes
+     * </pre>
+     *
+     * <code>repeated .civquest.v1.ReflexNotice reflex_notices = 15;</code>
+     */
+    public Builder addAllReflexNotices(
+        java.lang.Iterable<? extends com.civquest.mod.grpc.v1.ReflexNotice> values) {
+      if (reflexNoticesBuilder_ == null) {
+        ensureReflexNoticesIsMutable();
+        com.google.protobuf.AbstractMessageLite.Builder.addAll(
+            values, reflexNotices_);
+        onChanged();
+      } else {
+        reflexNoticesBuilder_.addAllMessages(values);
+      }
+      return this;
+    }
+    /**
+     * <pre>
+     * ADR-015 afferent telemetry for Layer 1A in-engine reflexes
+     * </pre>
+     *
+     * <code>repeated .civquest.v1.ReflexNotice reflex_notices = 15;</code>
+     */
+    public Builder clearReflexNotices() {
+      if (reflexNoticesBuilder_ == null) {
+        reflexNotices_ = java.util.Collections.emptyList();
+        bitField0_ = (bitField0_ & ~0x00004000);
+        onChanged();
+      } else {
+        reflexNoticesBuilder_.clear();
+      }
+      return this;
+    }
+    /**
+     * <pre>
+     * ADR-015 afferent telemetry for Layer 1A in-engine reflexes
+     * </pre>
+     *
+     * <code>repeated .civquest.v1.ReflexNotice reflex_notices = 15;</code>
+     */
+    public Builder removeReflexNotices(int index) {
+      if (reflexNoticesBuilder_ == null) {
+        ensureReflexNoticesIsMutable();
+        reflexNotices_.remove(index);
+        onChanged();
+      } else {
+        reflexNoticesBuilder_.remove(index);
+      }
+      return this;
+    }
+    /**
+     * <pre>
+     * ADR-015 afferent telemetry for Layer 1A in-engine reflexes
+     * </pre>
+     *
+     * <code>repeated .civquest.v1.ReflexNotice reflex_notices = 15;</code>
+     */
+    public com.civquest.mod.grpc.v1.ReflexNotice.Builder getReflexNoticesBuilder(
+        int index) {
+      return getReflexNoticesFieldBuilder().getBuilder(index);
+    }
+    /**
+     * <pre>
+     * ADR-015 afferent telemetry for Layer 1A in-engine reflexes
+     * </pre>
+     *
+     * <code>repeated .civquest.v1.ReflexNotice reflex_notices = 15;</code>
+     */
+    public com.civquest.mod.grpc.v1.ReflexNoticeOrBuilder getReflexNoticesOrBuilder(
+        int index) {
+      if (reflexNoticesBuilder_ == null) {
+        return reflexNotices_.get(index);  } else {
+        return reflexNoticesBuilder_.getMessageOrBuilder(index);
+      }
+    }
+    /**
+     * <pre>
+     * ADR-015 afferent telemetry for Layer 1A in-engine reflexes
+     * </pre>
+     *
+     * <code>repeated .civquest.v1.ReflexNotice reflex_notices = 15;</code>
+     */
+    public java.util.List<? extends com.civquest.mod.grpc.v1.ReflexNoticeOrBuilder> 
+         getReflexNoticesOrBuilderList() {
+      if (reflexNoticesBuilder_ != null) {
+        return reflexNoticesBuilder_.getMessageOrBuilderList();
+      } else {
+        return java.util.Collections.unmodifiableList(reflexNotices_);
+      }
+    }
+    /**
+     * <pre>
+     * ADR-015 afferent telemetry for Layer 1A in-engine reflexes
+     * </pre>
+     *
+     * <code>repeated .civquest.v1.ReflexNotice reflex_notices = 15;</code>
+     */
+    public com.civquest.mod.grpc.v1.ReflexNotice.Builder addReflexNoticesBuilder() {
+      return getReflexNoticesFieldBuilder().addBuilder(
+          com.civquest.mod.grpc.v1.ReflexNotice.getDefaultInstance());
+    }
+    /**
+     * <pre>
+     * ADR-015 afferent telemetry for Layer 1A in-engine reflexes
+     * </pre>
+     *
+     * <code>repeated .civquest.v1.ReflexNotice reflex_notices = 15;</code>
+     */
+    public com.civquest.mod.grpc.v1.ReflexNotice.Builder addReflexNoticesBuilder(
+        int index) {
+      return getReflexNoticesFieldBuilder().addBuilder(
+          index, com.civquest.mod.grpc.v1.ReflexNotice.getDefaultInstance());
+    }
+    /**
+     * <pre>
+     * ADR-015 afferent telemetry for Layer 1A in-engine reflexes
+     * </pre>
+     *
+     * <code>repeated .civquest.v1.ReflexNotice reflex_notices = 15;</code>
+     */
+    public java.util.List<com.civquest.mod.grpc.v1.ReflexNotice.Builder> 
+         getReflexNoticesBuilderList() {
+      return getReflexNoticesFieldBuilder().getBuilderList();
+    }
+    private com.google.protobuf.RepeatedFieldBuilder<
+        com.civquest.mod.grpc.v1.ReflexNotice, com.civquest.mod.grpc.v1.ReflexNotice.Builder, com.civquest.mod.grpc.v1.ReflexNoticeOrBuilder> 
+        getReflexNoticesFieldBuilder() {
+      if (reflexNoticesBuilder_ == null) {
+        reflexNoticesBuilder_ = new com.google.protobuf.RepeatedFieldBuilder<
+            com.civquest.mod.grpc.v1.ReflexNotice, com.civquest.mod.grpc.v1.ReflexNotice.Builder, com.civquest.mod.grpc.v1.ReflexNoticeOrBuilder>(
+                reflexNotices_,
+                ((bitField0_ & 0x00004000) != 0),
+                getParentForChildren(),
+                isClean());
+        reflexNotices_ = null;
+      }
+      return reflexNoticesBuilder_;
     }
 
     // @@protoc_insertion_point(builder_scope:civquest.v1.TelemetryFrame)

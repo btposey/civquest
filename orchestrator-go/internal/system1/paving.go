@@ -76,7 +76,10 @@ func isAlreadyPaved(blockID string) bool {
 // it emits an InteractBlockIntent with interaction_type = PAVE_ROAD_PATH.
 // If the block is already paved (dirt_path), or not paveable, no intent is emitted.
 // Cache pollution mitigation: if already paved, return nil immediately without adding new LRU entries.
-func (t *RoadPavingTracker) RecordStep(agentID string, pos civquestv1.BlockPosProto, blockID string) *civquestv1.AgentIntent {
+func (t *RoadPavingTracker) RecordStep(agentID string, pos *civquestv1.BlockPosProto, blockID string) *civquestv1.AgentIntent {
+	if pos == nil {
+		return nil
+	}
 	t.mu.Lock()
 	defer t.mu.Unlock()
 
@@ -183,11 +186,14 @@ func (t *RoadPavingTracker) EvaluatePaving(agentID string, frame *civquestv1.Tel
 	t.lastStepped = &key
 	t.mu.Unlock()
 
-	return t.RecordStep(agentID, belowPos, blockID)
+	return t.RecordStep(agentID, &belowPos, blockID)
 }
 
 // GetEntry returns inspection data for a block coordinate.
-func (t *RoadPavingTracker) GetEntry(pos civquestv1.BlockPosProto) (steps int, paved bool, found bool) {
+func (t *RoadPavingTracker) GetEntry(pos *civquestv1.BlockPosProto) (steps int, paved bool, found bool) {
+	if pos == nil {
+		return 0, false, false
+	}
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	key := BlockPosKey{X: pos.X, Y: pos.Y, Z: pos.Z}

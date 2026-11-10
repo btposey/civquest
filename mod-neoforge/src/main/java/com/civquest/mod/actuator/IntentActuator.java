@@ -68,6 +68,11 @@ public class IntentActuator {
             return;
         }
 
+        if (agent.getMotorFSM() != null) {
+            agent.getMotorFSM().handleIntent(intent, this);
+            return;
+        }
+
         switch (intent.getActionCase()) {
             case NAVIGATE -> actuateNavigate(agent, intent.getNavigate());
             case ATTACK -> actuateAttack(agent, intent.getAttack());

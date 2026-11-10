@@ -1,6 +1,9 @@
 package com.civquest.mod;
 
 import com.civquest.mod.actuator.AgentNavigator;
+import com.civquest.mod.actuator.motor.AgentMotorFSM;
+import com.civquest.mod.actuator.motor.AgentWatchdogFSM;
+import com.civquest.mod.actuator.motor.MotorState;
 import com.civquest.mod.grpc.v1.DeathEvent;
 import com.civquest.mod.grpc.v1.TelemetryFrame;
 import com.civquest.mod.sensory.SensoryFrustumCollector;
@@ -46,11 +49,14 @@ public class AgentEntity extends FakePlayer {
     private SensoryFrustumCollector sensoryCollector;
     private final AgentNavigator navigator;
     private final com.civquest.mod.actuator.BlockBreaker breaker = new com.civquest.mod.actuator.BlockBreaker(this);
+    private final AgentMotorFSM motorFSM;
+    private final AgentWatchdogFSM watchdogFSM;
     private Consumer<AgentEntity> deathListener;
     private Consumer<AgentEntity> removalListener;
     private final AtomicBoolean cleanedUp = new AtomicBoolean(false);
     private final ConcurrentLinkedQueue<com.civquest.mod.grpc.v1.ChatEvent> pendingChats = new ConcurrentLinkedQueue<>();
     private final ConcurrentLinkedQueue<com.civquest.mod.grpc.v1.TradeRequest> pendingTrades = new ConcurrentLinkedQueue<>();
+    private final ConcurrentLinkedQueue<com.civquest.mod.grpc.v1.ReflexNotice> pendingReflexNotices = new ConcurrentLinkedQueue<>();
     private long lastInventoryFullNoticeTick = -1000L;
 
     public void queueIncomingChat(com.civquest.mod.grpc.v1.ChatEvent chatEvent) {
@@ -78,11 +84,28 @@ public class AgentEntity extends FakePlayer {
         return pendingTrades.poll();
     }
 
+    public void recordReflexNotice(com.civquest.mod.grpc.v1.ReflexNotice notice) {
+        if (notice != null) {
+            pendingReflexNotices.add(notice);
+        }
+    }
+
+    public List<com.civquest.mod.grpc.v1.ReflexNotice> pollReflexNotices() {
+        List<com.civquest.mod.grpc.v1.ReflexNotice> result = new ArrayList<>();
+        com.civquest.mod.grpc.v1.ReflexNotice notice;
+        while ((notice = pendingReflexNotices.poll()) != null) {
+            result.add(notice);
+        }
+        return result;
+    }
+
     public AgentEntity(ServerLevel level, GameProfile profile, String agentId, String clanId) {
         super(level, profile);
         this.agentId = agentId;
         this.clanId = clanId;
         this.navigator = new AgentNavigator(this);
+        this.motorFSM = new AgentMotorFSM(this);
+        this.watchdogFSM = new AgentWatchdogFSM(this);
         try {
             var stepAttr = this.getAttribute(net.minecraft.world.entity.ai.attributes.Attributes.STEP_HEIGHT);
             if (stepAttr != null) {
@@ -112,11 +135,18 @@ public class AgentEntity extends FakePlayer {
         super.tick();
         if (!this.level().isClientSide) {
             try {
-                if (this.breaker.isBreaking()) {
-                    this.breaker.tick();
+                if (this.watchdogFSM != null) {
+                    this.watchdogFSM.tick();
                 }
-                if (this.navigator != null) {
-                    this.navigator.tick();
+                if (this.motorFSM != null) {
+                    this.motorFSM.tick();
+                } else {
+                    if (this.breaker.isBreaking()) {
+                        this.breaker.tick();
+                    }
+                    if (this.navigator != null) {
+                        this.navigator.tick();
+                    }
                 }
                 if (this.isAlive() && !this.isSleeping() && !this.breaker.isBreaking()
                         && (this.navigator == null || this.navigator.getNavigationState() != com.civquest.mod.grpc.v1.NavigationState.NAVIGATION_STATE_PATHING)) {
@@ -413,6 +443,14 @@ public class AgentEntity extends FakePlayer {
             this.dropAllDeathLoot(this.serverLevel(), cause);
         }
 
+        // Notify watchdog and motor state machines
+        if (this.watchdogFSM != null) {
+            this.watchdogFSM.onAgentDeath();
+        }
+        if (this.motorFSM != null) {
+            this.motorFSM.transitionTo(MotorState.IDLE, "agent_death");
+        }
+
         // Release forced chunk
         releaseForcedChunk();
 
@@ -433,6 +471,12 @@ public class AgentEntity extends FakePlayer {
     @Override
     public void remove(RemovalReason reason) {
         super.remove(reason);
+        if (this.watchdogFSM != null) {
+            this.watchdogFSM.onAgentDespawn();
+        }
+        if (this.motorFSM != null) {
+            this.motorFSM.transitionTo(MotorState.IDLE, "agent_removed");
+        }
         releaseForcedChunk();
         if (cleanedUp.compareAndSet(false, true)) {
             if (this.removalListener != null) {
@@ -530,5 +574,13 @@ public class AgentEntity extends FakePlayer {
 
     public AgentNavigator getNavigator() {
         return navigator;
+    }
+
+    public AgentMotorFSM getMotorFSM() {
+        return motorFSM;
+    }
+
+    public AgentWatchdogFSM getWatchdogFSM() {
+        return watchdogFSM;
     }
 }

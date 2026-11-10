@@ -1,0 +1,384 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <!-- Copyright (c) 2026 Brian Posey
+       Use of this source code is governed by an MIT-style
+       license that can be found in the LICENSE file. -->
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>CivQuest — Systems Engineering Architecture Hub</title>
+  <meta name="description" content="Technical documentation and systems architecture suite for CivQuest: Hierarchical State Machines, Tripartite Latency Hierarchies, IPC backpressure, and Embodied AI simulation.">
+  <link rel="stylesheet" href="../assets/css/style.css">
+</head>
+<body>
+
+  <!-- Alpha Status Banner -->
+  <div class="alpha-banner">
+    <span class="alpha-tag">Active Pre-Alpha</span>
+    <span>CivQuest is under active early architecture and development. <a href="https://github.com/btposey/civquest" target="_blank" rel="noopener">Track source & issues on GitHub</a></span>
+  </div>
+
+  <!-- Navigation -->
+  <header>
+    <div class="nav-container">
+      <a href="../index.html" class="logo">
+        <span class="logo-badge">civquest</span>
+        <span>CivQuest</span>
+        <span class="badge-alpha">v0.1.0</span>
+      </a>
+      <nav class="nav-links">
+        <a href="../index.html">Overview</a>
+        <a href="../gameplay.html">Gameplay</a>
+        <a href="index.html" style="color: var(--accent-cyan); font-weight: 600;">Systems Engineering</a>
+        <a href="https://github.com/btposey/civquest" class="btn-github" target="_blank" rel="noopener">
+          <svg width="18" height="18" viewBox="0 0 16 16" fill="currentColor">
+            <path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/>
+          </svg>
+          <span>GitHub</span>
+        </a>
+      </nav>
+    </div>
+  </header>
+
+  <main class="tech-container">
+    
+    <!-- Breadcrumb Navigation -->
+    <nav class="breadcrumb-nav">
+      <a href="../index.html">Overview</a>
+      <span class="breadcrumb-separator">/</span>
+      <span class="breadcrumb-current">Systems Engineering Hub</span>
+    </nav>
+
+    <!-- Hero -->
+    <div class="tech-hero">
+      <div class="tech-meta-pills">
+        <span class="meta-pill pill-cyan">Polyglot Architecture</span>
+        <span class="meta-pill pill-emerald">Java 21 / Go 1.23+</span>
+        <span class="meta-pill pill-purple">Embodied Simulation</span>
+        <span class="meta-pill pill-amber">TRIC Specification Suite</span>
+      </div>
+      <h1>Systems Engineering &<br><span>Architecture Suite</span></h1>
+      <p class="tech-lead">
+        A rigorous technical breakdown of the CivQuest autonomous settlement engine. 
+        Each document details concrete design decisions, mathematical formulations, bounded latency guarantees, 
+        and synchronization contracts across the polyglot runtime.
+      </p>
+    </div>
+
+    <!-- Global System Architecture Diagram -->
+    <section class="depth-layer">
+      <div class="depth-header">
+        <div class="depth-title-group">
+          <span class="depth-indicator depth-2-tag">Topology</span>
+          <h2>Global Multi-Process Architecture</h2>
+        </div>
+        <span style="font-family: var(--font-mono); font-size: 0.8rem; color: var(--text-muted);">Decoupled JVM & Go Topology</span>
+      </div>
+      <div class="depth-body">
+        <p>
+          CivQuest eliminates monolithic server bottlenecks by strictly isolating physical voxel simulation inside the Minecraft JVM from 
+          cognitive deliberation in dedicated operating system worker processes. Communication is strictly governed via Protobuf contracts 
+          over bidirectional gRPC streams.
+        </p>
+
+        <div class="diagram-container">
+          <svg class="responsive-svg" viewBox="0 0 960 480" xmlns="http://www.w3.org/2000/svg">
+            <defs>
+              <linearGradient id="jvmGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+                <stop offset="0%" stop-color="#1e293b" />
+                <stop offset="100%" stop-color="#0f172a" />
+              </linearGradient>
+              <linearGradient id="goGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+                <stop offset="0%" stop-color="#132338" />
+                <stop offset="100%" stop-color="#091524" />
+              </linearGradient>
+              <linearGradient id="extGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+                <stop offset="0%" stop-color="#261b38" />
+                <stop offset="100%" stop-color="#140d21" />
+              </linearGradient>
+              <filter id="glowCyan" x="-20%" y="-20%" width="140%" height="140%">
+                <feGaussianBlur stdDeviation="3" result="blur" />
+                <feComposite in="SourceGraphic" in2="blur" operator="over" />
+              </filter>
+            </defs>
+
+            <!-- Server JVM Boundary -->
+            <rect x="30" y="30" width="380" height="420" rx="12" fill="url(#jvmGrad)" stroke="#334155" stroke-width="2" />
+            <text x="50" y="65" fill="#f8fafc" font-size="16" font-weight="700" font-family="monospace">MINECRAFT JVM (NeoForge 21.1)</text>
+            <text x="50" y="85" fill="#64748b" font-size="12" font-family="sans-serif">Dedicated Server Tick Loop (20 Hz / 50ms)</text>
+
+            <!-- JVM Sub-components -->
+            <rect x="50" y="105" width="340" height="75" rx="8" fill="#1e293b" stroke="#00d2ff" stroke-width="1.5" />
+            <text x="65" y="130" fill="#00d2ff" font-size="13" font-weight="700" font-family="monospace">AgentEntity (FakePlayer Avatar)</text>
+            <text x="65" y="150" fill="#94a3b8" font-size="11" font-family="sans-serif">Voxel collisions, inventory, equipment, skin packets</text>
+            <text x="65" y="165" fill="#38bdf8" font-size="10" font-family="monospace">Sub-tick Reflexes: Shield raise, item pickup (&lt;0.1ms)</text>
+
+            <rect x="50" y="195" width="340" height="70" rx="8" fill="#1e293b" stroke="#3b82f6" stroke-width="1" />
+            <text x="65" y="220" fill="#60a5fa" font-size="13" font-weight="700" font-family="monospace">Baritone Pathfinding Wrapper</text>
+            <text x="65" y="240" fill="#94a3b8" font-size="11" font-family="sans-serif">Voxel A* search, parkour, dynamic replanning</text>
+
+            <rect x="50" y="280" width="340" height="75" rx="8" fill="#1e293b" stroke="#10b981" stroke-width="1.5" />
+            <text x="65" y="305" fill="#34d399" font-size="13" font-weight="700" font-family="monospace">Embedded Netty gRPC Server</text>
+            <text x="65" y="325" fill="#94a3b8" font-size="11" font-family="sans-serif">Port :50051 (TCP) / UDS Domain Sockets</text>
+            <text x="65" y="340" fill="#a7f3d0" font-size="10" font-family="monospace">Bidirectional Stream: TelemetryFrame &amp; AgentIntent</text>
+
+            <!-- IPC Stream Connectors -->
+            <path d="M 410 310 L 520 310" stroke="#00d2ff" stroke-width="3" stroke-dasharray="6,4" />
+            <polygon points="525,310 515,304 515,316" fill="#00d2ff" />
+            <polygon points="405,310 415,304 415,316" fill="#00d2ff" />
+            <rect x="425" y="275" width="90" height="24" rx="4" fill="#070a10" stroke="#00d2ff" stroke-width="1" />
+            <text x="437" y="291" fill="#00d2ff" font-size="10" font-family="monospace" font-weight="700">gRPC IPC</text>
+
+            <!-- Go Multi-Process Orchestrator -->
+            <rect x="530" y="30" width="400" height="420" rx="12" fill="url(#goGrad)" stroke="#1e3a5f" stroke-width="2" />
+            <text x="550" y="65" fill="#f8fafc" font-size="16" font-weight="700" font-family="monospace">GO ORCHESTRATOR (Go 1.23+)</text>
+            <text x="550" y="85" fill="#64748b" font-size="12" font-family="sans-serif">Supervisor (cq) &amp; Process-Isolated Agents</text>
+
+            <!-- Go Sub-components -->
+            <rect x="550" y="105" width="360" height="90" rx="8" fill="#0c1829" stroke="#10b981" stroke-width="1.5" />
+            <text x="565" y="128" fill="#34d399" font-size="13" font-weight="700" font-family="monospace">System 1: Reactive Utility Engine</text>
+            <text x="565" y="148" fill="#94a3b8" font-size="11" font-family="sans-serif">5 Hz Loop (&lt;5ms) | Zero LLM Tokens | SIMD-Accelerated</text>
+            <text x="565" y="165" fill="#94a3b8" font-size="11" font-family="sans-serif">HFSM State Graph: BOOTSTRAP, EXPLORE, SHELTER, REST</text>
+            <text x="565" y="180" fill="#38bdf8" font-size="10" font-family="monospace">Typed SlotQueue Intent Coalescing &amp; Ghost Pruning</text>
+
+            <rect x="550" y="205" width="360" height="85" rx="8" fill="#0c1829" stroke="#8b5cf6" stroke-width="1.5" />
+            <text x="565" y="228" fill="#c084fc" font-size="13" font-weight="700" font-family="monospace">System 2: Deliberative LLM Pipeline</text>
+            <text x="565" y="248" fill="#94a3b8" font-size="11" font-family="sans-serif">Async JSON-Validated Inference (Ollama / vLLM)</text>
+            <text x="565" y="265" fill="#94a3b8" font-size="11" font-family="sans-serif">Dialogue, Barter Bargaining, Architectural Blueprints</text>
+            <text x="565" y="280" fill="#e9d5ff" font-size="10" font-family="monospace">Dual-Temp Sampling (τ=0.2 actions, τ=0.8 lore)</text>
+
+            <rect x="550" y="300" width="360" height="75" rx="8" fill="#0c1829" stroke="#f59e0b" stroke-width="1.5" />
+            <text x="565" y="323" fill="#fbbf24" font-size="13" font-weight="700" font-family="monospace">Persistence Tier: SQLite + sqlite-vec</text>
+            <text x="565" y="343" fill="#94a3b8" font-size="11" font-family="sans-serif">Dedicated DB per Agent | Vector Embeddings RAG</text>
+            <text x="565" y="360" fill="#fde68a" font-size="10" font-family="monospace">WAL Mode Concurrency | Permadeath Graveyard Archival</text>
+
+            <!-- External LLM Boundary -->
+            <path d="M 730 205 L 730 160" stroke="#8b5cf6" stroke-width="2" stroke-dasharray="4,4" />
+          </svg>
+          <div class="diagram-caption">Figure 1.0: End-to-end component topology and IPC streaming boundary between Minecraft JVM and external Go harness.</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Navigation Directory Grid -->
+    <section>
+      <div class="section-header" style="text-align: left; margin-bottom: 2rem;">
+        <h2>Technical Specification Directory</h2>
+        <p>Explore dedicated deep dives detailing each major decision area of the architecture.</p>
+      </div>
+
+      <div class="toc-card-grid">
+        
+        <!-- 1. Tripartite Orchestration -->
+        <a href="tripartite-orchestration.html" class="toc-card">
+          <div>
+            <div class="toc-card-header">
+              <span class="meta-pill pill-cyan">Cognitive Latency</span>
+              <span style="font-size: 1.5rem;">⚡</span>
+            </div>
+            <div class="toc-card-title">1. Tripartite Orchestration</div>
+            <div class="toc-card-desc">
+              Three-tier neurological latency hierarchy: sub-tick in-engine reflexes (20 Hz, &lt;0.1ms), deterministic tactical utility AI (5 Hz, &lt;5ms), and asynchronous strategic LLM cognition.
+            </div>
+          </div>
+          <div class="toc-card-footer">
+            <span>Read Specification</span>
+            <span>&rarr;</span>
+          </div>
+        </a>
+
+        <!-- 2. Networked IPC & Bounded Streams -->
+        <a href="networked-ipc-streaming.html" class="toc-card">
+          <div>
+            <div class="toc-card-header">
+              <span class="meta-pill pill-blue">IPC &amp; Protocols</span>
+              <span style="font-size: 1.5rem;">🔄</span>
+            </div>
+            <div class="toc-card-title">2. Networked IPC Streaming</div>
+            <div class="toc-card-desc">
+              Netty gRPC bidirectional channels, typed SlotQueue coalescing (lossy kinematic overwrite vs. lossless FIFO block placement), drop-tail telemetry buffers, and shared-key HMAC security.
+            </div>
+          </div>
+          <div class="toc-card-footer">
+            <span>Read Specification</span>
+            <span>&rarr;</span>
+          </div>
+        </a>
+
+        <!-- 3. HFSM & Intent Pipeline -->
+        <a href="fsm-and-intent-pipeline.html" class="toc-card">
+          <div>
+            <div class="toc-card-header">
+              <span class="meta-pill pill-amber">State Guarantees</span>
+              <span style="font-size: 1.5rem;">⚙️</span>
+            </div>
+            <div class="toc-card-title">3. HFSM &amp; Intent Pipeline</div>
+            <div class="toc-card-desc">
+              Formal Hierarchical Finite State Machine eliminating chaotic priority cascades. Transition guards, entry/exit queue flushing, and inventory-gated ghost intent pruning.
+            </div>
+          </div>
+          <div class="toc-card-footer">
+            <span>Read Specification</span>
+            <span>&rarr;</span>
+          </div>
+        </a>
+
+        <!-- 4. Agent Harness & Supervisor Isolation -->
+        <a href="agent-harness-isolation.html" class="toc-card">
+          <div>
+            <div class="toc-card-header">
+              <span class="meta-pill pill-emerald">Process Isolation</span>
+              <span style="font-size: 1.5rem;">🔒</span>
+            </div>
+            <div class="toc-card-title">4. Harness &amp; Process Isolation</div>
+            <div class="toc-card-desc">
+              Process-per-agent architectural invariant. The <code>cq</code> supervisor daemon, signal traps, UNIX domain socket heartbeats, strict XDG filesystem compliance, and graveyard archival.
+            </div>
+          </div>
+          <div class="toc-card-footer">
+            <span>Read Specification</span>
+            <span>&rarr;</span>
+          </div>
+        </a>
+
+        <!-- 5. Inference & Context Assembly -->
+        <a href="inference-and-context.html" class="toc-card">
+          <div>
+            <div class="toc-card-header">
+              <span class="meta-pill pill-purple">LLM Integration</span>
+              <span style="font-size: 1.5rem;">🧠</span>
+            </div>
+            <div class="toc-card-title">5. Inference &amp; Context Assembly</div>
+            <div class="toc-card-desc">
+              Local LLM gateway integration (Ollama / vLLM), strict JSON Schema validation, dual-temperature sampling (deterministic actions vs. creative lore), and sliding token context budgeting.
+            </div>
+          </div>
+          <div class="toc-card-footer">
+            <span>Read Specification</span>
+            <span>&rarr;</span>
+          </div>
+        </a>
+
+        <!-- 6. Physical Embodiment & Navigation -->
+        <a href="physical-embodiment.html" class="toc-card">
+          <div>
+            <div class="toc-card-header">
+              <span class="meta-pill pill-cyan">Voxel Spatial</span>
+              <span style="font-size: 1.5rem;">🧱</span>
+            </div>
+            <div class="toc-card-title">6. Embodiment &amp; Navigation</div>
+            <div class="toc-card-desc">
+              Server-side FakePlayer simulation, dynamic packet skin injection without Mojang authentication, integrated Baritone A* pathfinding, and collision-free spatial quadrant construction.
+            </div>
+          </div>
+          <div class="toc-card-footer">
+            <span>Read Specification</span>
+            <span>&rarr;</span>
+          </div>
+        </a>
+
+        <!-- 7. Persistence & Vector Memory -->
+        <a href="persistence-and-memory.html" class="toc-card">
+          <div>
+            <div class="toc-card-header">
+              <span class="meta-pill pill-amber">Storage &amp; RAG</span>
+              <span style="font-size: 1.5rem;">🏛️</span>
+            </div>
+            <div class="toc-card-title">7. Persistence &amp; Vector Memory</div>
+            <div class="toc-card-desc">
+              Dedicated embedded SQLite databases per agent, sqlite-vec cosine similarity RAG, Write-Ahead Logging concurrency, episodic relationship tracking, and permanent graveyard migration.
+            </div>
+          </div>
+          <div class="toc-card-footer">
+            <span>Read Specification</span>
+            <span>&rarr;</span>
+          </div>
+        </a>
+
+      </div>
+    </section>
+
+    <!-- Architecture Metrics Matrix -->
+    <section class="depth-layer" style="margin-top: 3rem;">
+      <div class="depth-header">
+        <div class="depth-title-group">
+          <span class="depth-indicator depth-3-tag">Metrics</span>
+          <h2>Subsystem Operational Invariants</h2>
+        </div>
+      </div>
+      <div class="depth-body">
+        <div class="spec-table-wrap">
+          <table class="spec-table">
+            <thead>
+              <tr>
+                <th>Subsystem Layer</th>
+                <th>Execution Frequency</th>
+                <th>Latency Ceiling</th>
+                <th>Compute Budget</th>
+                <th>Communication Boundary</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><code>Layer 1A: Peripheral Reflexes</code></td>
+                <td>20 Hz (Server Tick)</td>
+                <td>&lt; 0.1 ms</td>
+                <td>JVM Heap / Zero Alloc</td>
+                <td>Direct In-Memory (Zero IPC)</td>
+              </tr>
+              <tr>
+                <td><code>Layer 1B: Tactical Utility AI</code></td>
+                <td>5 Hz (Frustum Loop)</td>
+                <td>&lt; 5.0 ms</td>
+                <td>Go Process / AVX2 SIMD</td>
+                <td>Bidirectional gRPC (UDS / TCP)</td>
+              </tr>
+              <tr>
+                <td><code>Layer 2: Strategic Cognition</code></td>
+                <td>Asynchronous (Event/State Gated)</td>
+                <td>500 ms – 4000 ms</td>
+                <td>Ollama / vLLM (GPU/VRAM)</td>
+                <td>HTTP / REST JSON Schema</td>
+              </tr>
+              <tr>
+                <td><code>Persistence Engine</code></td>
+                <td>Asynchronous WAL Commit</td>
+                <td>&lt; 2.0 ms per batch</td>
+                <td>Embedded SQLite + sqlite-vec</td>
+                <td>Local POSIX Filesystem ($XDG)</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+  </main>
+
+  <!-- Footer & Trademark Notice -->
+  <footer>
+    <div class="footer-container">
+      <div class="disclaimer-box">
+        <strong>LEGAL & TRADEMARK DISCLAIMER:</strong><br>
+        <strong>NOT AN OFFICIAL MINECRAFT PRODUCT. NOT APPROVED BY OR ASSOCIATED WITH MOJANG OR MICROSOFT.</strong><br>
+        <em>Minecraft</em> is a registered trademark of Mojang Synergies AB / Microsoft Corporation. 
+        CivQuest is an independent, community-developed software modification and autonomous agent orchestration platform. 
+        CivQuest is not affiliated with, endorsed by, sponsored by, or associated with Mojang Synergies AB, Microsoft Corporation, 
+        or any of their subsidiaries. All references to Minecraft, related game mechanics, and block identifiers are strictly 
+        nominative references for technical compatibility and modding interoperability under applicable fair use doctrines.
+      </div>
+
+      <div class="footer-links">
+        <a href="../index.html">Overview</a>
+        <a href="../gameplay.html">Gameplay</a>
+        <a href="index.html">Systems Engineering</a>
+        <a href="https://github.com/btposey/civquest">Source Code</a>
+        <a href="https://github.com/btposey/civquest/blob/main/LICENSE">MIT License</a>
+      </div>
+
+      <p class="copyright">&copy; 2026 Brian Posey. Open source under the MIT License.</p>
+    </div>
+  </footer>
+
+</body>
+</html>
