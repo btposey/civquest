@@ -904,3 +904,20 @@ math msub, math msup, math msubsup {
 math mfrac {
   padding: 0 0.2em;
 }
+
+/* CLI Reference Groups */
+.cli-group {
+  margin-bottom: 3rem;
+}
+
+.cli-group:last-child {
+  margin-bottom: 0;
+}
+
+/* Warning Callout */
+.callout-warning {
+  background: rgba(239, 68, 68, 0.06);
+  border: 1px solid rgba(239, 68, 68, 0.25);
+  border-left: 4px solid #ef4444;
+}
+.callout-warning .callout-title { color: #ef4444; }

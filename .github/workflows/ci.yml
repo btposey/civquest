@@ -83,11 +83,12 @@ jobs:
           SEMVER: ${{ needs.resolve-version.outputs.semver }}
           BUILD_DATE: ${{ needs.resolve-version.outputs.build_date }}
         run: |
+          VERSION="${SEMVER}-${BUILD_DATE}"
           mkdir -p dist/bin
           if [ -f "orchestrator-go/cmd/cq/main.go" ]; then
             cd orchestrator-go
-            CGO_ENABLED=1 go build -ldflags "-X main.Version=${SEMVER}-${BUILD_DATE}" -o ../dist/bin/cq ./cmd/cq
-            CGO_ENABLED=1 go build -ldflags "-X main.Version=${SEMVER}-${BUILD_DATE}" -o ../dist/bin/civquest-agent ./cmd/civquest-agent
+            CGO_ENABLED=0 go build -ldflags "-s -w -X main.Version=${VERSION}" -o ../dist/bin/cq ./cmd/cq
+            CGO_ENABLED=0 go build -ldflags "-s -w -X main.Version=${VERSION}" -o ../dist/bin/civquest-agent ./cmd/civquest-agent
             cd ..
           else
             echo "Placeholder: Binary entrypoints will compile once orchestrator-go code is scaffolded"
@@ -119,12 +120,14 @@ jobs:
           ENGINE_COMPAT: ${{ needs.resolve-version.outputs.engine_compat }}
           LOADER_VER: ${{ needs.resolve-version.outputs.loader_version }}
           SEMVER: ${{ needs.resolve-version.outputs.semver }}
+          BUILD_DATE: ${{ needs.resolve-version.outputs.build_date }}
           ARTIFACT_BASE: ${{ needs.resolve-version.outputs.artifact_base }}
         run: |
+          VERSION="${SEMVER}-${BUILD_DATE}"
           mkdir -p dist/mod
           if [ -f "mod-neoforge/build.gradle" ]; then
             chmod +x gradlew || true
-            ./gradlew :mod-neoforge:build -PgameVersion="${ENGINE_COMPAT}" -PloaderVersion="${LOADER_VER}" -PmodVersion="${SEMVER}"
+            ./gradlew :mod-neoforge:build -PgameVersion="${ENGINE_COMPAT}" -PloaderVersion="${LOADER_VER}" -PmodVersion="${VERSION}"
             cp mod-neoforge/build/libs/*.jar "dist/mod/${ARTIFACT_BASE}.jar" || true
           else
             echo "Placeholder: Gradle project will compile once mod-neoforge is scaffolded"

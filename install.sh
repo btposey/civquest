@@ -5,10 +5,144 @@ umask 0027
 # ==============================================================================
 # CivQuest Polyglot Settlement Engine - Deployment Script
 # Targets: server | agents | client | all
+#
+# Binary Mode (default): Downloads prebuilt binaries from GitHub Releases.
+#   Requires no build tools. Ideal for end users via: curl -fsSL <url> | bash
+#
+# Source Mode (fallback): Builds from local source when orchestrator-go/ and
+#   mod-neoforge/ directories are present. Requires Go 1.23+ and Java 21.
 # ==============================================================================
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "${SCRIPT_DIR}"
+
+# ------------------------------------------------------------------------------
+# Source Mode Detection & Version Resolution
+# ------------------------------------------------------------------------------
+SOURCE_MODE=false
+RELEASE_VERSION=""
+ARCH=""
+
+detect_source_mode() {
+    if [ -d "${SCRIPT_DIR}/orchestrator-go" ] && [ -d "${SCRIPT_DIR}/mod-neoforge" ]; then
+        SOURCE_MODE=true
+        log_info "Detected cloned repository — building from local source."
+    else
+        SOURCE_MODE=false
+        log_info "Binary installation mode — downloading prebuilt releases."
+    fi
+}
+
+detect_arch() {
+    local raw
+    raw="$(uname -m)"
+    case "${raw}" in
+        x86_64) ARCH="amd64" ;;
+        aarch64|arm64) ARCH="arm64" ;;
+        *) log_error "Unsupported architecture: ${raw}. Only amd64 and arm64 are supported."; exit 1 ;;
+    esac
+}
+
+resolve_version() {
+    if [ "${SOURCE_MODE}" = "true" ]; then
+        # Read version from go.mod in source mode
+        local go_mod="${SCRIPT_DIR}/orchestrator-go/go.mod"
+        if [ -f "${go_mod}" ]; then
+            # Extract the module path version or use SNAPSHOT
+            RELEASE_VERSION="0.1.0-SNAPSHOT"
+        else
+            RELEASE_VERSION="0.1.0-SNAPSHOT"
+        fi
+    else
+        # Binary mode: default to latest release, overridable via --version
+        if [ -z "${RELEASE_VERSION}" ]; then
+            RELEASE_VERSION="latest"
+        fi
+    fi
+}
+
+download_binary() {
+    local name="$1"
+    local version="$2"
+    local dest_dir="$3"
+
+    local tag="${version}"
+    if [ "${tag}" = "latest" ]; then
+        # Resolve latest release tag from GitHub API
+        tag="$(curl -fsSL "https://api.github.com/repos/btposey/civquest/releases/latest" | grep '"tag_name"' | head -1 | sed 's/.*"tag_name": "\(.*\)",/\1/')"
+        if [ -z "${tag}" ]; then
+            log_error "Failed to resolve latest release tag from GitHub."
+            exit 1
+        fi
+        # Strip leading 'v' if present
+        tag="${tag#v}"
+    fi
+
+    local archive="${name}-${tag}-linux-${ARCH}.tar.gz"
+    local url="https://github.com/btposey/civquest/releases/download/v${tag}/${archive}"
+
+    log_info "Downloading ${name} v${tag} (${ARCH})..."
+    local tmpfile
+    tmpfile="$(mktemp)"
+    if ! curl -fL --retry 3 -o "${tmpfile}" "${url}"; then
+        rm -f "${tmpfile}"
+        log_error "Failed to download ${name} from ${url}"
+        exit 1
+    fi
+
+    local tmpdir
+    tmpdir="$(mktemp -d)"
+    tar -xzf "${tmpfile}" -C "${tmpdir}" 2>/dev/null || {
+        rm -rf "${tmpfile}" "${tmpdir}"
+        log_error "Failed to extract ${archive}"
+        exit 1
+    }
+    rm -f "${tmpfile}"
+
+    # Find the binary in the extracted archive and install it
+    local binary
+    binary="$(find "${tmpdir}" -type f -name "${name}" | head -n 1)"
+    if [ -z "${binary}" ] || [ ! -f "${binary}" ]; then
+        rm -rf "${tmpdir}"
+        log_error "Binary ${name} not found in downloaded archive."
+        exit 1
+    fi
+
+    mkdir -p "${dest_dir}"
+    cp -f "${binary}" "${dest_dir}/${name}"
+    chmod +x "${dest_dir}/${name}"
+    rm -rf "${tmpdir}"
+
+    log_info "Installed ${name} v${tag} to ${dest_dir}/${name}"
+}
+
+download_mod_jar() {
+    local version="$1"
+    local dest_dir="$2"
+
+    local tag="${version}"
+    if [ "${tag}" = "latest" ]; then
+        tag="$(curl -fsSL "https://api.github.com/repos/btposey/civquest/releases/latest" | grep '"tag_name"' | head -1 | sed 's/.*"tag_name": "\(.*\)",/\1/')"
+        if [ -z "${tag}" ]; then
+            log_error "Failed to resolve latest release tag from GitHub."
+            exit 1
+        fi
+        tag="${tag#v}"
+    fi
+
+    local jar_name="civquest-mod-${tag}.jar"
+    local url="https://github.com/btposey/civquest/releases/download/v${tag}/${jar_name}"
+
+    log_info "Downloading mod JAR v${tag}..."
+    mkdir -p "${dest_dir}"
+    if ! curl -fL --retry 3 -o "${dest_dir}/${jar_name}" "${url}"; then
+        log_error "Failed to download mod JAR from ${url}"
+        exit 1
+    fi
+
+    log_info "Installed mod JAR v${tag} to ${dest_dir}/${jar_name}"
+    echo "${jar_name}"
+}
 
 # ------------------------------------------------------------------------------
 # Terminal Color & Logging Setup
@@ -62,15 +196,16 @@ ${COLOR_BOLD}Usage:${COLOR_RESET}
   $0 [options] <server|agents|client|all>
 
 ${COLOR_BOLD}Directives:${COLOR_RESET}
-  server   Builds the NeoForge mod, installs a NeoForge dedicated server, and configures EULA and runner
-  agents   Compiles Go binaries (cq, civquest-agent), registers XDG tree, and writes starter configs
-  client   Installs the NeoForge client, stages the mod, and adds a "CivQuest" Minecraft launcher profile (cq client install)
+  server   Installs the NeoForge mod and dedicated server (downloads prebuilt binary or builds from source)
+  agents   Installs Go binaries (cq, civquest-agent), registers XDG tree, and writes starter configs
+  client   Installs the NeoForge client, stages the mod, and adds a "CivQuest" Minecraft launcher profile
   all      Performs complete installation of server, agents, and client
 
 ${COLOR_BOLD}Options:${COLOR_RESET}
-  -y, --yes    Non-interactive mode (accept all default prompts)
-  -f, --force  Force overwrite of existing configuration files
-  -h, --help   Show this help message
+  -y, --yes       Non-interactive mode (accept all default prompts)
+  -f, --force     Force overwrite of existing configuration files
+  --version VER   Install specific version (binary mode only, default: latest)
+  -h, --help      Show this help message
 
 ${COLOR_BOLD}XDG Base Directory Environment Overrides:${COLOR_RESET}
   XDG_CONFIG_HOME  Base configuration path (default: ~/.config)
@@ -80,6 +215,10 @@ ${COLOR_BOLD}XDG Base Directory Environment Overrides:${COLOR_RESET}
 
 ${COLOR_BOLD}Other:${COLOR_RESET}
   CIVQUEST_OFFLINE=1  Skip downloading NeoForge and skip Minecraft launcher configuration
+
+${COLOR_BOLD}Installation Modes:${COLOR_RESET}
+  Binary Mode  Downloads prebuilt binaries from GitHub Releases (default for end users)
+  Source Mode  Builds from local source (automatic when run from a cloned repository)
 
 EOF
 }
@@ -101,6 +240,14 @@ while [ $# -gt 0 ]; do
             FORCE_OVERWRITE=true
             shift
             ;;
+        --version)
+            if [ -z "${2:-}" ]; then
+                log_error "--version requires a version argument"
+                exit 1
+            fi
+            RELEASE_VERSION="$2"
+            shift 2
+            ;;
         -h|--help)
             usage
             exit 0
@@ -121,6 +268,16 @@ while [ $# -gt 0 ]; do
             ;;
     esac
 done
+
+# ------------------------------------------------------------------------------
+# Detect Installation Mode & Architecture
+# ------------------------------------------------------------------------------
+detect_source_mode
+detect_arch
+resolve_version
+log_info "Installation Mode: ${SOURCE_MODE && echo 'Source (local build)' || echo 'Binary (GitHub Releases)'}"
+log_info "Platform: Linux ${ARCH}, Version: ${RELEASE_VERSION}"
+echo ""
 
 if [ -z "${TARGET}" ]; then
     if [ -t 0 ] && [ "${NON_INTERACTIVE}" != "true" ]; then
@@ -230,29 +387,33 @@ install_client() {
 install_server() {
     log_step "Installing CivQuest Server Domain..."
 
-    # 1. Build NeoForge mod jar
-    log_info "Building NeoForge mod with Gradle..."
-    ./gradlew :mod-neoforge:build
+    local jar_name=""
 
-    # 2. Locate built jar
-    local jar_path
-    jar_path="$(find "${SCRIPT_DIR}/mod-neoforge/build/libs" -maxdepth 1 -name "*.jar" ! -name "*-sources.jar" | head -n 1)"
-    if [ -z "${jar_path}" ] || [ ! -f "${jar_path}" ]; then
-        log_error "Mod jar could not be found in mod-neoforge/build/libs!"
-        exit 1
+    if [ "${SOURCE_MODE}" = "true" ]; then
+        # Source mode: build from local repository
+        log_info "Building NeoForge mod with Gradle..."
+        ./gradlew :mod-neoforge:build
+
+        local jar_path
+        jar_path="$(find "${SCRIPT_DIR}/mod-neoforge/build/libs" -maxdepth 1 -name "*.jar" ! -name "*-sources.jar" | head -n 1)"
+        if [ -z "${jar_path}" ] || [ ! -f "${jar_path}" ]; then
+            log_error "Mod jar could not be found in mod-neoforge/build/libs!"
+            exit 1
+        fi
+        jar_name="$(basename "${jar_path}")"
+        log_info "Found built mod jar: ${jar_name}"
+
+        mkdir -p "${CIVQUEST_SERVER_DIR}/mods"
+        log_info "Copying mod jar to ${CIVQUEST_SERVER_DIR}/mods/${jar_name}..."
+        cp -f "${jar_path}" "${CIVQUEST_SERVER_DIR}/mods/${jar_name}"
+    else
+        # Binary mode: download prebuilt mod JAR from GitHub Releases
+        mkdir -p "${CIVQUEST_SERVER_DIR}/mods"
+        jar_name="$(download_mod_jar "${RELEASE_VERSION}" "${CIVQUEST_SERVER_DIR}/mods")"
     fi
-    local jar_name
-    jar_name="$(basename "${jar_path}")"
-    log_info "Found built mod jar: ${jar_name}"
 
-    # 3. Create server directory structure
-    mkdir -p "${CIVQUEST_SERVER_DIR}/mods"
     mkdir -p "${CIVQUEST_STATE_DIR}/run"
     chmod 0700 "${CIVQUEST_STATE_DIR}/run"
-
-    # 4. Copy mod jar into mods folder
-    log_info "Copying mod jar to ${CIVQUEST_SERVER_DIR}/mods/${jar_name}..."
-    cp -f "${jar_path}" "${CIVQUEST_SERVER_DIR}/mods/${jar_name}"
 
     # 5. Write eula.txt
     log_info "Writing eula.txt..."
@@ -356,23 +517,34 @@ EOF
 }
 EOF
 
-    # 9. Build and install cq for server management if Go is available
-    if command -v go >/dev/null 2>&1; then
-        log_info "Go toolchain detected: compiling and installing cq for server management..."
-        local server_build_tmp
-        server_build_tmp="$(mktemp -d)"
-        trap 'rm -rf "${server_build_tmp:-}"' EXIT INT TERM
-        (
-            cd "${SCRIPT_DIR}/orchestrator-go"
-            go build -o "${server_build_tmp}/cq" ./cmd/cq
-        )
-        mkdir -p "${BIN_DIR}"
-        mkdir -p "${CIVQUEST_DATA_DIR}/bin"
-        cp -f "${server_build_tmp}/cq" "${BIN_DIR}/cq"
-        cp -f "${server_build_tmp}/cq" "${CIVQUEST_DATA_DIR}/bin/cq"
-        chmod +x "${BIN_DIR}/cq" "${CIVQUEST_DATA_DIR}/bin/cq"
-        rm -rf "${server_build_tmp}"
-        trap - EXIT INT TERM
+    # 9. Install cq for server management
+    if [ "${SOURCE_MODE}" = "true" ]; then
+        if command -v go >/dev/null 2>&1; then
+            log_info "Go toolchain detected: compiling and installing cq for server management..."
+            local server_build_tmp
+            server_build_tmp="$(mktemp -d)"
+            trap 'rm -rf "${server_build_tmp:-}"' EXIT INT TERM
+            (
+                cd "${SCRIPT_DIR}/orchestrator-go"
+                go build -o "${server_build_tmp}/cq" ./cmd/cq
+            )
+            mkdir -p "${BIN_DIR}"
+            mkdir -p "${CIVQUEST_DATA_DIR}/bin"
+            cp -f "${server_build_tmp}/cq" "${BIN_DIR}/cq"
+            cp -f "${server_build_tmp}/cq" "${CIVQUEST_DATA_DIR}/bin/cq"
+            chmod +x "${BIN_DIR}/cq" "${CIVQUEST_DATA_DIR}/bin/cq"
+            rm -rf "${server_build_tmp}"
+            trap - EXIT INT TERM
+        fi
+    else
+        # Binary mode: cq will be installed by install_agents(); skip here if agents not targeted
+        if [[ "${TARGET}" != "agents" && "${TARGET}" != "all" ]]; then
+            log_info "Installing cq binary for server management..."
+            download_binary "cq" "${RELEASE_VERSION}" "${BIN_DIR}"
+            mkdir -p "${CIVQUEST_DATA_DIR}/bin"
+            cp -f "${BIN_DIR}/cq" "${CIVQUEST_DATA_DIR}/bin/cq"
+            chmod +x "${CIVQUEST_DATA_DIR}/bin/cq"
+        fi
     fi
 
     log_success "Server domain installed successfully at ${CIVQUEST_SERVER_DIR}"
@@ -384,39 +556,48 @@ EOF
 install_agents() {
     log_step "Installing CivQuest Agent Domain..."
 
-    # 1. Verify Go toolchain
-    if ! command -v go >/dev/null 2>&1; then
-        log_error "Go is required to build orchestrator-go. Please install Go 1.23+."
-        exit 1
-    fi
-
-    # 2. Build Go binaries
-    log_info "Building Go orchestrator binaries (cq and civquest-agent)..."
-    local build_tmp
-    build_tmp="$(mktemp -d)"
-    trap 'rm -rf "${build_tmp:-}"' EXIT INT TERM
-    (
-        cd "${SCRIPT_DIR}/orchestrator-go"
-        go build -o "${build_tmp}/cq" ./cmd/cq
-        go build -o "${build_tmp}/civquest-agent" ./cmd/civquest-agent
-    )
-
-    # 3. Install binaries into target bin directories
     mkdir -p "${BIN_DIR}"
     mkdir -p "${CIVQUEST_DATA_DIR}/bin"
 
-    log_info "Installing binaries into ${BIN_DIR}..."
-    cp -f "${build_tmp}/cq" "${BIN_DIR}/cq"
-    cp -f "${build_tmp}/civquest-agent" "${BIN_DIR}/civquest-agent"
-    chmod +x "${BIN_DIR}/cq" "${BIN_DIR}/civquest-agent"
+    if [ "${SOURCE_MODE}" = "true" ]; then
+        # Source mode: build from local repository
+        if ! command -v go >/dev/null 2>&1; then
+            log_error "Go is required to build orchestrator-go. Please install Go 1.23+."
+            exit 1
+        fi
 
-    log_info "Installing binaries into ${CIVQUEST_DATA_DIR}/bin..."
-    cp -f "${build_tmp}/cq" "${CIVQUEST_DATA_DIR}/bin/cq"
-    cp -f "${build_tmp}/civquest-agent" "${CIVQUEST_DATA_DIR}/bin/civquest-agent"
-    chmod +x "${CIVQUEST_DATA_DIR}/bin/cq" "${CIVQUEST_DATA_DIR}/bin/civquest-agent"
+        log_info "Building Go orchestrator binaries (cq and civquest-agent)..."
+        local build_tmp
+        build_tmp="$(mktemp -d)"
+        trap 'rm -rf "${build_tmp:-}"' EXIT INT TERM
+        (
+            cd "${SCRIPT_DIR}/orchestrator-go"
+            go build -o "${build_tmp}/cq" ./cmd/cq
+            go build -o "${build_tmp}/civquest-agent" ./cmd/civquest-agent
+        )
 
-    rm -rf "${build_tmp}"
-    trap - EXIT INT TERM
+        log_info "Installing binaries into ${BIN_DIR}..."
+        cp -f "${build_tmp}/cq" "${BIN_DIR}/cq"
+        cp -f "${build_tmp}/civquest-agent" "${BIN_DIR}/civquest-agent"
+        chmod +x "${BIN_DIR}/cq" "${BIN_DIR}/civquest-agent"
+
+        log_info "Installing binaries into ${CIVQUEST_DATA_DIR}/bin..."
+        cp -f "${build_tmp}/cq" "${CIVQUEST_DATA_DIR}/bin/cq"
+        cp -f "${build_tmp}/civquest-agent" "${CIVQUEST_DATA_DIR}/bin/civquest-agent"
+        chmod +x "${CIVQUEST_DATA_DIR}/bin/cq" "${CIVQUEST_DATA_DIR}/bin/civquest-agent"
+
+        rm -rf "${build_tmp}"
+        trap - EXIT INT TERM
+    else
+        # Binary mode: download prebuilt binaries from GitHub Releases
+        log_info "Downloading prebuilt binaries (cq and civquest-agent)..."
+        download_binary "cq" "${RELEASE_VERSION}" "${BIN_DIR}"
+        download_binary "civquest-agent" "${RELEASE_VERSION}" "${BIN_DIR}"
+
+        cp -f "${BIN_DIR}/cq" "${CIVQUEST_DATA_DIR}/bin/cq"
+        cp -f "${BIN_DIR}/civquest-agent" "${CIVQUEST_DATA_DIR}/bin/civquest-agent"
+        chmod +x "${CIVQUEST_DATA_DIR}/bin/cq" "${CIVQUEST_DATA_DIR}/bin/civquest-agent"
+    fi
 
     # 4. Initialize standard XDG directories
     log_info "Initializing XDG directory skeleton..."
