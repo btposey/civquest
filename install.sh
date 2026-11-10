@@ -10,7 +10,7 @@ umask 0027
 #   Requires no build tools. Ideal for end users via: curl -fsSL <url> | bash
 #
 # Source Mode (fallback): Builds from local source when orchestrator-go/ and
-#   mod-neoforge/ directories are present. Requires Go 1.23+ and Java 21.
+#   mod-neoforge/ directories are present. Requires Go 1.25+ and Java 21.
 # ==============================================================================
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -127,7 +127,6 @@ resolve_release_tag() {
 
     echo "${tag}"
 }
-
 download_binary() {
     local name="$1"
     local version="$2"
@@ -180,7 +179,6 @@ download_binary() {
         log_warn "SHA256 sidecar not available for ${name}, skipping verification."
     fi
     rm -f "${tmpsha}"
-
     local tmpdir
     tmpdir="$(mktemp -d)"
     tar -xzf "${tmpfile}" -C "${tmpdir}" 2>/dev/null || {
@@ -261,7 +259,6 @@ download_mod_jar() {
 
     cp -f "${tmpjar}" "${dest_dir}/${jar_name}"
     rm -f "${tmpjar}"
-
     log_info "Installed mod JAR v${tag} to ${dest_dir}/${jar_name}"
     echo "${jar_name}"
 }
@@ -684,7 +681,7 @@ install_agents() {
     if [ "${SOURCE_MODE}" = "true" ]; then
         # Source mode: build from local repository
         if ! command -v go >/dev/null 2>&1; then
-            log_error "Go is required to build orchestrator-go. Please install Go 1.23+."
+            log_error "Go is required to build orchestrator-go. Please install Go 1.25+."
             exit 1
         fi
 

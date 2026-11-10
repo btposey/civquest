@@ -66,14 +66,14 @@ echo "    ✓ Java managed via SDKMAN ($(java -version 2>&1 | head -n 1))"
 echo "    ✓ Gradle wrapper standardized via ./gradlew"
 
 # ------------------------------------------------------------------------------
-# 2. Check Go (Go 1.23+ required)
+# 2. Check Go (Go 1.25+ required)
 # ------------------------------------------------------------------------------
 echo "[+] Checking Go..."
 if command -v go >/dev/null 2>&1; then
     GO_VER="$(go version | awk '{print $3}')"
     echo "    ✓ Found Go: ${GO_VER}"
 else
-    echo "    [-] Go not found! Please install Go 1.23+ from https://go.dev/dl/"
+    echo "    [-] Go not found! Please install Go 1.25+ from https://go.dev/dl/"
     exit 1
 fi
 

@@ -35,7 +35,7 @@ We adopt a **Three-Tier Testing Pyramid** grounded in native NeoForge tooling an
 - **Full Architectural Verification**: Exercises the true end-to-end pipeline: NeoForge server -> embedded Netty -> gRPC IPC -> Go orchestrator probe -> FakePlayer avatar movement in an actual voxel level.
 - **Zero Port Collisions**: Ephemeral port negotiation (`port=0`) and metadata discovery eliminate flakiness in CI and parallel local runs.
 - **Fast CI Execution**: A flat plains world generates in <2 seconds, bringing full dedicated server boot time down to ~20–30s and total test execution to <45s.
-- **KISS & Minimal Dependencies**: Uses standard JDK 21 and Go 1.23 toolchains directly without Docker, Testcontainers, or external virtualization.
+- **KISS & Minimal Dependencies**: Uses standard JDK 21 and Go 1.25 toolchains directly without Docker, Testcontainers, or external virtualization.
 
 ### Negative / Trade-offs
 - Dedicated server startup requires ~1.5–2GB of JVM memory during tests, requiring careful heap sizing (`-Xms1024m -Xmx2048m`) on 7GB GitHub Actions runners.

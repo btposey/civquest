@@ -21,7 +21,7 @@ CivQuest is an autonomous, dynastic settlement engine introducing intelligent, h
    - Engine: **Minecraft 1.21.1** powered by **NeoForge 21.1.265** (Java 21).
    - Functions: Spawns headless `AgentEntity` (`FakePlayer`) avatars; delivers dynamic agent skin packets; streams sensory frustum frames (5 Hz) over embedded Netty gRPC; delegates physical voxel pathfinding to an integrated Baritone API wrapper; preserves vanilla villages and villagers for rich inter-entity co-existence.
 2. **External Multi-Process Go Orchestrator (`orchestrator-go`)**:
-   - Engine: **Go 1.23+**.
+   - Engine: **Go 1.25+**.
    - Functions: Multi-process supervisor (`cq`) spawning dedicated OS worker processes (`civquest-agent`) per agent.
    - **System 1 (Reactive Utility AI Engine)**: Sub-$5\text{ ms}$, zero-token deterministic loop handling combat reflexes, fight-or-flight confidence scoring, hunger, road paving, and daily career state transitions.
    - **System 2 (Deliberative LLM Engine)**: Asynchronous JSON-validated inference pipelines connected to local gateways (Ollama/vLLM) for dialogue, barter trade, Chronicler book writing, landmark toponymy, and Architect quadrant construction.
@@ -105,6 +105,6 @@ All issues use the prefix `cq-` (e.g., `cq-1`, `cq-epic-infra`).
 ## 6. Development & Tooling Guidelines
 
 - **Java Development**: Use OpenJDK 21. Build via Gradle (`./gradlew build`). Ensure clean compilation with NeoForge 21.1.265.
-- **Go Development**: Use Go 1.23+. Format code with `gofmt` and verify tests with `go test ./...`.
+- **Go Development**: Use Go 1.25+. Format code with `gofmt` and verify tests with `go test ./...`.
 - **Protocol Buffers**: Regenerate stubs when modifying `proto/civquest/v1/civquest.proto` using `buf` or `protoc`.
 - **Non-Interactive Commands**: Always use `-f` and `-y` flags for file and shell operations (`rm -rf`, `cp -f`, etc.) to prevent blocking.
