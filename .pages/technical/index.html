@@ -55,7 +55,7 @@
         <span class="meta-pill pill-cyan">Polyglot Architecture</span>
         <span class="meta-pill pill-emerald">Java 21 / Go 1.23+</span>
         <span class="meta-pill pill-purple">Embodied Simulation</span>
-        <span class="meta-pill pill-amber">TRIC Specification Suite</span>
+        <span class="meta-pill pill-blue">Systems Engineering</span>
       </div>
       <h1>Systems Engineering &<br><span>Architecture Suite</span></h1>
       <p class="tech-lead">
@@ -66,21 +66,15 @@
     </div>
 
     <!-- Global System Architecture Diagram -->
-    <section class="depth-layer">
-      <div class="depth-header">
-        <div class="depth-title-group">
-          <span class="depth-indicator depth-2-tag">Topology</span>
-          <h2>Global Multi-Process Architecture</h2>
-        </div>
-        <span style="font-family: var(--font-mono); font-size: 0.8rem; color: var(--text-muted);">Decoupled JVM & Go Topology</span>
-      </div>
-      <div class="depth-body">
-        <p>
-          CivQuest eliminates monolithic server bottlenecks by strictly isolating physical voxel simulation inside the Minecraft JVM from 
-          cognitive deliberation in dedicated operating system worker processes. Communication is strictly governed via Protobuf contracts 
-          over bidirectional gRPC streams.
-        </p>
+    <section class="tech-section">
+      <h2>Global Multi-Process Architecture</h2>
+      <p>
+        CivQuest eliminates monolithic server bottlenecks by strictly isolating physical voxel simulation inside the Minecraft JVM from 
+        cognitive deliberation in dedicated operating system worker processes. Communication is strictly governed via Protobuf contracts 
+        over bidirectional gRPC streams.
+      </p>
 
+      <figure class="diagram-figure">
         <div class="diagram-container">
           <svg class="responsive-svg" viewBox="0 0 960 480" xmlns="http://www.w3.org/2000/svg">
             <defs>
@@ -155,17 +149,15 @@
             <!-- External LLM Boundary -->
             <path d="M 730 205 L 730 160" stroke="#8b5cf6" stroke-width="2" stroke-dasharray="4,4" />
           </svg>
-          <div class="diagram-caption">Figure 1.0: End-to-end component topology and IPC streaming boundary between Minecraft JVM and external Go harness.</div>
         </div>
-      </div>
+        <figcaption class="diagram-caption">Figure 1.0: End-to-end component topology and IPC streaming boundary between Minecraft JVM and external Go harness.</figcaption>
+      </figure>
     </section>
 
     <!-- Navigation Directory Grid -->
-    <section>
-      <div class="section-header" style="text-align: left; margin-bottom: 2rem;">
-        <h2>Technical Specification Directory</h2>
-        <p>Explore dedicated deep dives detailing each major decision area of the architecture.</p>
-      </div>
+    <section class="tech-section">
+      <h2>Technical Specification Directory</h2>
+      <p>Explore dedicated deep dives detailing each major decision area of the architecture.</p>
 
       <div class="toc-card-grid">
         
@@ -178,7 +170,7 @@
             </div>
             <div class="toc-card-title">1. Tripartite Orchestration</div>
             <div class="toc-card-desc">
-              Three-tier neurological latency hierarchy: sub-tick in-engine reflexes (20 Hz, &lt;0.1ms), deterministic tactical utility AI (5 Hz, &lt;5ms), and asynchronous strategic LLM cognition.
+              Three-tier neurological latency hierarchy: sub-tick peripheral reflexes in Java (Layer 1: Peripheral Reflex Arc, 20 Hz, &lt;0.1ms), deterministic procedural state execution in Go (Layer 2: Procedural Execution, 5 Hz, &lt;5ms), and central asynchronous strategic LLM deliberation (Layer 3: Executive Deliberation).
             </div>
           </div>
           <div class="toc-card-footer">
@@ -299,75 +291,60 @@
     </section>
 
     <!-- Architecture Metrics Matrix -->
-    <section class="depth-layer" style="margin-top: 3rem;">
-      <div class="depth-header">
-        <div class="depth-title-group">
-          <span class="depth-indicator depth-3-tag">Metrics</span>
-          <h2>Subsystem Operational Invariants</h2>
-        </div>
-      </div>
-      <div class="depth-body">
-        <div class="spec-table-wrap">
-          <table class="spec-table">
-            <thead>
-              <tr>
-                <th>Subsystem Layer</th>
-                <th>Execution Frequency</th>
-                <th>Latency Ceiling</th>
-                <th>Compute Budget</th>
-                <th>Communication Boundary</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr>
-                <td><code>Layer 1A: Peripheral Reflexes</code></td>
-                <td>20 Hz (Server Tick)</td>
-                <td>&lt; 0.1 ms</td>
-                <td>JVM Heap / Zero Alloc</td>
-                <td>Direct In-Memory (Zero IPC)</td>
-              </tr>
-              <tr>
-                <td><code>Layer 1B: Tactical Utility AI</code></td>
-                <td>5 Hz (Frustum Loop)</td>
-                <td>&lt; 5.0 ms</td>
-                <td>Go Process / AVX2 SIMD</td>
-                <td>Bidirectional gRPC (UDS / TCP)</td>
-              </tr>
-              <tr>
-                <td><code>Layer 2: Strategic Cognition</code></td>
-                <td>Asynchronous (Event/State Gated)</td>
-                <td>500 ms – 4000 ms</td>
-                <td>Ollama / vLLM (GPU/VRAM)</td>
-                <td>HTTP / REST JSON Schema</td>
-              </tr>
-              <tr>
-                <td><code>Persistence Engine</code></td>
-                <td>Asynchronous WAL Commit</td>
-                <td>&lt; 2.0 ms per batch</td>
-                <td>Embedded SQLite + sqlite-vec</td>
-                <td>Local POSIX Filesystem ($XDG)</td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
+    <section class="tech-section">
+      <h2>Subsystem Operational Invariants</h2>
+      <p>Hard operational ceilings and resource budgets enforced across the multi-process boundary.</p>
+
+      <div class="spec-table-wrap">
+        <table class="spec-table">
+          <thead>
+            <tr>
+              <th>Subsystem Layer</th>
+              <th>Execution Frequency</th>
+              <th>Latency Ceiling</th>
+              <th>Compute Budget</th>
+              <th>Communication Boundary</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><code>Layer 1: Peripheral Reflex Arc</code> (System 1 Periphery)</td>
+              <td>20 Hz (Server Tick)</td>
+              <td>&lt; 0.1 ms</td>
+              <td>JVM Heap / Zero Alloc</td>
+              <td>Direct In-Memory (Zero IPC)</td>
+            </tr>
+            <tr>
+              <td><code>Layer 2: Procedural Execution</code> (System 1 Center)</td>
+              <td>5 Hz (Frustum Loop)</td>
+              <td>&lt; 5.0 ms</td>
+              <td>Go Process / AVX2 SIMD</td>
+              <td>Bidirectional gRPC (UDS / TCP)</td>
+            </tr>
+            <tr>
+              <td><code>Layer 3: Executive Deliberation</code> (System 2 Center)</td>
+              <td>Asynchronous (Event/State Gated)</td>
+              <td>500 ms – 4000 ms</td>
+              <td>Ollama / vLLM (GPU/VRAM)</td>
+              <td>HTTP / REST JSON Schema</td>
+            </tr>
+            <tr>
+              <td><code>Persistence Engine</code></td>
+              <td>Asynchronous WAL Commit</td>
+              <td>&lt; 2.0 ms per batch</td>
+              <td>Embedded SQLite + sqlite-vec</td>
+              <td>Local POSIX Filesystem ($XDG)</td>
+            </tr>
+          </tbody>
+        </table>
       </div>
     </section>
 
   </main>
 
-  <!-- Footer & Trademark Notice -->
+  <!-- Footer -->
   <footer>
     <div class="footer-container">
-      <div class="disclaimer-box">
-        <strong>LEGAL & TRADEMARK DISCLAIMER:</strong><br>
-        <strong>NOT AN OFFICIAL MINECRAFT PRODUCT. NOT APPROVED BY OR ASSOCIATED WITH MOJANG OR MICROSOFT.</strong><br>
-        <em>Minecraft</em> is a registered trademark of Mojang Synergies AB / Microsoft Corporation. 
-        CivQuest is an independent, community-developed software modification and autonomous agent orchestration platform. 
-        CivQuest is not affiliated with, endorsed by, sponsored by, or associated with Mojang Synergies AB, Microsoft Corporation, 
-        or any of their subsidiaries. All references to Minecraft, related game mechanics, and block identifiers are strictly 
-        nominative references for technical compatibility and modding interoperability under applicable fair use doctrines.
-      </div>
-
       <div class="footer-links">
         <a href="../index.html">Overview</a>
         <a href="../gameplay.html">Gameplay</a>
