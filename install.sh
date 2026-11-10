@@ -10,7 +10,7 @@ umask 0027
 #   Requires no build tools. Ideal for end users via: curl -fsSL <url> | bash
 #
 # Source Mode (fallback): Builds from local source when orchestrator-go/ and
-#   mod-neoforge/ directories are present. Requires Go 1.23+ and Java 21.
+#   mod-neoforge/ directories are present. Requires Go 1.25+ and Java 21.
 # ==============================================================================
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -681,7 +681,7 @@ install_agents() {
     if [ "${SOURCE_MODE}" = "true" ]; then
         # Source mode: build from local repository
         if ! command -v go >/dev/null 2>&1; then
-            log_error "Go is required to build orchestrator-go. Please install Go 1.23+."
+            log_error "Go is required to build orchestrator-go. Please install Go 1.25+."
             exit 1
         fi
 

@@ -4,6 +4,6 @@
   "target_loader_version": "21.1.265",
   "engine_compatibility": "1.21.1",
   "java_version": "21",
-  "go_version": "1.23",
+  "go_version": "1.25",
   "channel": "lts"
 }

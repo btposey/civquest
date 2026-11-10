@@ -5,7 +5,7 @@
 [![CI](https://github.com/btposey/civquest/actions/workflows/ci.yml/badge.svg)](https://github.com/btposey/civquest/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Platform: NeoForge](https://img.shields.io/badge/Loader-NeoForge%2021.1+-green.svg)](https://neoforged.net/)
-[![Go: 1.23+](https://img.shields.io/badge/Go-1.23+-00ADD8.svg)](https://go.dev/)
+[![Go: 1.25+](https://img.shields.io/badge/Go-1.25+-00ADD8.svg)](https://go.dev/)
 
 ---
 
@@ -19,7 +19,7 @@
 
 ## Overview
 
-CivQuest is an open-source Minecraft modification (**NeoForge 21.1+ / Java 21**) coupled with an external multi-process orchestrator (**Go 1.23+**). The project enables autonomous, process-isolated agent entities within Minecraft worlds, communicating across an embedded gRPC telemetry and control stream.
+CivQuest is an open-source Minecraft modification (**NeoForge 21.1+ / Java 21**) coupled with an external multi-process orchestrator (**Go 1.25+**). The project enables autonomous, process-isolated agent entities within Minecraft worlds, communicating across an embedded gRPC telemetry and control stream.
 
 This document serves as the developer guide for configuring a local workspace, building subsystems, executing tests, and contributing code. End-user documentation, gameplay guides, and system showcases are hosted on the [project showcase pages](https://btposey.github.io/civquest/).
 
@@ -30,7 +30,7 @@ This document serves as the developer guide for configuring a local workspace, b
 Ensure the following dependencies are installed or managed via the automated setup script:
 
 - **Java JDK 21** (e.g., Eclipse Temurin 21)
-- **Go 1.23+**
+- **Go 1.25+**
 - **Protocol Buffers Compiler (`protoc` 28+)** & **Buf CLI**
 - **SQLite 3** with `sqlite-vec` extension library
 - **Beads (`bd`)** for issue and backlog management
@@ -59,7 +59,7 @@ Verify tool availability across your environment:
 
 ```bash
 java -version    # Must report Java 21
-go version       # Must report Go 1.23+
+go version       # Must report Go 1.25+
 protoc --version # Protobuf compiler
 buf --version    # Buf CLI
 bd version       # Beads issue tracker

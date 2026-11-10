@@ -15,7 +15,7 @@ Maintaining these components across separate repositories would introduce synchr
 We adopt a unified polyglot monorepo layout:
 - `proto/`: Master `.proto` files defining gRPC services and messages.
 - `mod-neoforge/`: Java 21 Gradle project for the NeoForge mod.
-- `orchestrator-go/`: Go 1.23+ workspace for the supervisor daemon (`cq`) and agent worker binary (`civquest-agent`).
+- `orchestrator-go/`: Go 1.25+ workspace for the supervisor daemon (`cq`) and agent worker binary (`civquest-agent`).
 - `configs/`: Default configuration templates and blueprint schema definitions.
 - `doc/`: Architectural Decision Records (`doc/adr/`) and progressive discovery guides (`doc/ai/`).
 
