@@ -55,7 +55,7 @@
     <div class="tech-hero">
       <div class="tech-meta-pills">
         <span class="meta-pill pill-emerald">Process-Per-Agent</span>
-        <span class="meta-pill pill-cyan">ADR-004 &amp; ADR-008</span>
+        <span class="meta-pill pill-cyan">POSIX Signals &amp; Traps</span>
         <span class="meta-pill pill-purple">Supervisor Daemon (cq)</span>
         <span class="meta-pill pill-amber">XDG Compliance</span>
       </div>
@@ -67,16 +67,12 @@
       </p>
     </div>
 
-    <!-- DEPTH LAYER 1: TMLI-15 -->
-    <section class="depth-layer">
-      <div class="depth-header">
-        <div class="depth-title-group">
-          <span class="depth-indicator depth-1-tag">Level 1: Intuitive Mental Model</span>
-          <h2>Independent Office Cubicles vs. Shared Keyboards</h2>
-        </div>
-        <span style="font-family: var(--font-mono); font-size: 0.8rem; color: var(--text-muted);">TMLI-15 Framing</span>
-      </div>
-      <div class="depth-body">
+    <!-- Article Content -->
+    <article class="tech-article">
+
+      <!-- Section 1 -->
+      <section class="tech-section">
+        <h2>Independent OS Processes vs. Shared-Memory Concurrency</h2>
         <p>
           Imagine managing ten office workers. If you force all ten workers to type on a single shared keyboard and write on the same sheet of paper, 
           when Worker #4 accidentally trips over the power cord or spills coffee, work across the entire company halts immediately and everything is corrupted.
@@ -90,135 +86,106 @@
           When an agent suffers permanent death in the game, the supervisor treats it like a real passing: their final historical chronicle is 
           written, their database is locked and archived into the <strong>Graveyard Directory</strong>, and their process exits cleanly with code 0.
         </p>
-      </div>
-    </section>
+      </section>
 
-    <!-- DEPTH LAYER 2: TRIC & PROCESS TOPOLOGY -->
-    <section class="depth-layer">
-      <div class="depth-header">
-        <div class="depth-title-group">
-          <span class="depth-indicator depth-2-tag">Level 2: Architecture &amp; Boundaries</span>
-          <h2>TRIC Unit Specifications &amp; Supervisor Process Tree</h2>
-        </div>
-        <span style="font-family: var(--font-mono); font-size: 0.8rem; color: var(--text-muted);">Visual TRIC Decomposition</span>
-      </div>
-      <div class="depth-body">
-
-        <!-- TRIC Unit 1 -->
-        <div class="tric-unit">
-          <div class="tric-grid">
-            <div class="tric-segment t-topic">
-              <div class="tric-label">Topic: Fault-Isolated Process Model</div>
-              <p>Multi-agent runtime supervision preventing cascading memory corruption and thread deadlocks.</p>
-            </div>
-            <div class="tric-segment t-restriction">
-              <div class="tric-label">Restriction: Process Boundary Invariants</div>
-              <p>No Go process may spawn goroutines representing more than one agent identity. All inter-agent communication must traverse external IPC channels. Filesystem paths must strictly comply with XDG standards.</p>
-            </div>
-            <div class="tric-segment t-illustration">
-              <div class="tric-label">Illustration: Supervisor &amp; Child Process Tree</div>
-              <p>The diagram below depicts the `cq` supervisor daemon managing isolated agent child processes, their dedicated SQLite databases, and the graveyard archive.</p>
-            </div>
-            <div class="tric-segment t-conclusion">
-              <div class="tric-label">Conclusion: Blast-Radius Containment</div>
-              <p>Ensures 100% server uptime even under experimental LLM agent workloads or sudden process panics.</p>
-            </div>
-          </div>
-        </div>
-
-        <!-- SVG Process Tree Diagram -->
-        <div class="diagram-container">
-          <svg class="responsive-svg" viewBox="0 0 940 460" xmlns="http://www.w3.org/2000/svg">
-            <defs>
-              <linearGradient id="supGrad" x1="0%" y1="0%" x2="100%" y2="100%">
-                <stop offset="0%" stop-color="#1e1b4b" />
-                <stop offset="100%" stop-color="#0f0e26" />
-              </linearGradient>
-              <linearGradient id="agentGrad" x1="0%" y1="0%" x2="100%" y2="100%">
-                <stop offset="0%" stop-color="#064e3b" />
-                <stop offset="100%" stop-color="#022c22" />
-              </linearGradient>
-              <linearGradient id="graveGrad" x1="0%" y1="0%" x2="100%" y2="100%">
-                <stop offset="0%" stop-color="#3b0764" />
-                <stop offset="100%" stop-color="#1a022e" />
-              </linearGradient>
-            </defs>
-
-            <!-- Supervisor Daemon (cq) -->
-            <rect x="330" y="25" width="280" height="90" rx="10" fill="url(#supGrad)" stroke="#8b5cf6" stroke-width="2" />
-            <text x="470" y="55" fill="#c084fc" font-size="14" font-weight="700" font-family="monospace" text-anchor="middle">SUPERVISOR DAEMON (cq)</text>
-            <text x="470" y="75" fill="#cbd5e1" font-size="11" font-family="sans-serif" text-anchor="middle">Process Lifecycle, Telemetry &amp; REST API</text>
-            <text x="470" y="95" fill="#a78bfa" font-size="10" font-family="monospace" text-anchor="middle">PID: 10420 | Socket: /tmp/civquest.sock</text>
-
-            <!-- Tree Connectors -->
-            <path d="M 470 115 L 470 160" stroke="#8b5cf6" stroke-width="2" />
-            <path d="M 170 160 L 770 160" stroke="#8b5cf6" stroke-width="2" />
-            <path d="M 170 160 L 170 195" stroke="#8b5cf6" stroke-width="2" marker-end="url(#arrow)" />
-            <path d="M 470 160 L 470 195" stroke="#8b5cf6" stroke-width="2" marker-end="url(#arrow)" />
-            <path d="M 770 160 L 770 195" stroke="#8b5cf6" stroke-width="2" marker-end="url(#arrow)" />
-
-            <!-- Agent Process 1: Able -->
-            <rect x="50" y="195" width="240" height="135" rx="8" fill="url(#agentGrad)" stroke="#10b981" stroke-width="1.5" />
-            <text x="65" y="220" fill="#34d399" font-size="12" font-weight="700" font-family="monospace">Agent: Able (Farmer)</text>
-            <text x="65" y="240" fill="#cbd5e1" font-size="10" font-family="sans-serif">OS Process PID: 18492</text>
-            <text x="65" y="260" fill="#a7f3d0" font-size="9" font-family="monospace">DB: $XDG_DATA/agents/able.db</text>
-            <text x="65" y="278" fill="#a7f3d0" font-size="9" font-family="monospace">UDS: $XDG_STATE/able.sock</text>
-            <text x="65" y="305" fill="#6ee7b7" font-size="10" font-family="sans-serif">Status: <strong>ACTIVE_RUNNING</strong></text>
-
-            <!-- Agent Process 2: Baker -->
-            <rect x="350" y="195" width="240" height="135" rx="8" fill="url(#agentGrad)" stroke="#10b981" stroke-width="1.5" />
-            <text x="365" y="220" fill="#34d399" font-size="12" font-weight="700" font-family="monospace">Agent: Baker (Architect)</text>
-            <text x="365" y="240" fill="#cbd5e1" font-size="10" font-family="sans-serif">OS Process PID: 18493</text>
-            <text x="365" y="260" fill="#a7f3d0" font-size="9" font-family="monospace">DB: $XDG_DATA/agents/baker.db</text>
-            <text x="365" y="278" fill="#a7f3d0" font-size="9" font-family="monospace">UDS: $XDG_STATE/baker.sock</text>
-            <text x="365" y="305" fill="#6ee7b7" font-size="10" font-family="sans-serif">Status: <strong>ACTIVE_RUNNING</strong></text>
-
-            <!-- Agent Process 3: Charlie (Deceased) -->
-            <rect x="650" y="195" width="240" height="135" rx="8" fill="url(#graveGrad)" stroke="#f43f5e" stroke-width="1.5" />
-            <text x="665" y="220" fill="#fda4af" font-size="12" font-weight="700" font-family="monospace">Agent: Charlie (Miner)</text>
-            <text x="665" y="240" fill="#cbd5e1" font-size="10" font-family="sans-serif">Status: <strong>PERMADEATH (Exited 0)</strong></text>
-            <text x="665" y="260" fill="#fecdd3" font-size="9" font-family="monospace">Memorial Chronicle Committed</text>
-            <text x="665" y="278" fill="#fecdd3" font-size="9" font-family="monospace">Archive: $XDG_DATA/graveyard/</text>
-            <text x="665" y="305" fill="#f43f5e" font-size="10" font-family="sans-serif">Cause: Creeper Ambush (Y=-24)</text>
-
-            <!-- XDG Base Directory Footer Container -->
-            <rect x="50" y="355" width="840" height="85" rx="8" fill="#070a10" stroke="#334155" stroke-width="1" />
-            <text x="70" y="380" fill="#38bdf8" font-size="11" font-weight="700" font-family="monospace">XDG BASE DIRECTORY SPECIFICATION COMPLIANCE</text>
-            <text x="70" y="400" fill="#94a3b8" font-size="10" font-family="sans-serif">&bull; <strong>$XDG_CONFIG_HOME/civquest/</strong> : Global cluster configs, clan rosters, YAML seeds</text>
-            <text x="70" y="418" fill="#94a3b8" font-size="10" font-family="sans-serif">&bull; <strong>$XDG_DATA_HOME/civquest/</strong> : SQLite databases (<code>agent.db</code>), <code>graveyard/</code> memorial archives</text>
-            <text x="70" y="434" fill="#94a3b8" font-size="10" font-family="sans-serif">&bull; <strong>$XDG_STATE_HOME/civquest/</strong> : Live telemetry logs, runtime locks (<code>agent.pid</code>), UNIX sockets</text>
-
-          </svg>
-          <div class="diagram-caption">Figure 4.0: The `cq` process supervisor tree, isolated agent worker processes, and the XDG storage filesystem hierarchy.</div>
-        </div>
-
-      </div>
-    </section>
-
-    <!-- DEPTH LAYER 3: TMLI-PRO -->
-    <section class="depth-layer">
-      <div class="depth-header">
-        <div class="depth-title-group">
-          <span class="depth-indicator depth-3-tag">Level 3: Deep As-Built Implementation</span>
-          <h2>Supervisor Lifecycle, Signal Handling &amp; Graveyard Archival</h2>
-        </div>
-        <span style="font-family: var(--font-mono); font-size: 0.8rem; color: var(--text-muted);">TMLI-Pro Systems Engineering</span>
-      </div>
-      <div class="depth-body">
-
-        <h3>1. The `cq` Supervisor Daemon (`cmd/cq/`)</h3>
+      <!-- Section 2 -->
+      <section class="tech-section">
+        <h2>Fault-Isolated Process Supervision &amp; Process Tree Architecture</h2>
         <p>
-          The supervisor binary acts as an init system for autonomous settlers. It manages agent worker subprocesses via POSIX process groups:
+          The multi-process architecture guarantees clean blast-radius containment. The <code>cq</code> supervisor daemon monitors worker health, aggregates cluster telemetry, and coordinates process spawning and shutdown.
         </p>
-        <div class="terminal-card">
-          <div class="terminal-header">
-            <span class="dot dot-red"></span>
-            <span class="dot dot-yellow"></span>
-            <span class="dot dot-green"></span>
-            <span style="font-family: var(--font-mono); font-size: 0.75rem; color: #94a3b8; margin-left: 0.5rem;">orchestrator-go/internal/launcher/launcher.go</span>
+
+        <div class="callout callout-invariant">
+          <div class="callout-title">Process Boundary Invariants</div>
+          <p><strong>Thread Isolation:</strong> No Go process may spawn goroutines representing more than one agent identity. Multi-agent thread loops within a single process are strictly prohibited.</p>
+          <p><strong>IPC Boundary:</strong> All inter-agent data flow must traverse external network or socket IPC channels.</p>
+          <p><strong>Filesystem Compliance:</strong> Hardcoded paths are strictly forbidden. All state, data, and configuration paths must resolve via standard XDG Base Directory environment variables.</p>
+        </div>
+
+        <figure class="diagram-figure">
+          <div class="diagram-container">
+            <svg class="responsive-svg" viewBox="0 0 940 460" xmlns="http://www.w3.org/2000/svg">
+              <defs>
+                <linearGradient id="supGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+                  <stop offset="0%" stop-color="#1e1b4b" />
+                  <stop offset="100%" stop-color="#0f0e26" />
+                </linearGradient>
+                <linearGradient id="agentGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+                  <stop offset="0%" stop-color="#064e3b" />
+                  <stop offset="100%" stop-color="#022c22" />
+                </linearGradient>
+                <linearGradient id="graveGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+                  <stop offset="0%" stop-color="#3b0764" />
+                  <stop offset="100%" stop-color="#1a022e" />
+                </linearGradient>
+              </defs>
+
+              <!-- Supervisor Daemon (cq) -->
+              <rect x="330" y="25" width="280" height="90" rx="10" fill="url(#supGrad)" stroke="#8b5cf6" stroke-width="2" />
+              <text x="470" y="55" fill="#c084fc" font-size="14" font-weight="700" font-family="monospace" text-anchor="middle">SUPERVISOR DAEMON (cq)</text>
+              <text x="470" y="75" fill="#cbd5e1" font-size="11" font-family="sans-serif" text-anchor="middle">Process Lifecycle, Telemetry &amp; REST API</text>
+              <text x="470" y="95" fill="#a78bfa" font-size="10" font-family="monospace" text-anchor="middle">PID: 10420 | Socket: /tmp/civquest.sock</text>
+
+              <!-- Tree Connectors -->
+              <path d="M 470 115 L 470 160" stroke="#8b5cf6" stroke-width="2" />
+              <path d="M 170 160 L 770 160" stroke="#8b5cf6" stroke-width="2" />
+              <path d="M 170 160 L 170 195" stroke="#8b5cf6" stroke-width="2" />
+              <path d="M 470 160 L 470 195" stroke="#8b5cf6" stroke-width="2" />
+              <path d="M 770 160 L 770 195" stroke="#8b5cf6" stroke-width="2" />
+
+              <!-- Agent Process 1: Able -->
+              <rect x="50" y="195" width="240" height="135" rx="8" fill="url(#agentGrad)" stroke="#10b981" stroke-width="1.5" />
+              <text x="65" y="220" fill="#34d399" font-size="12" font-weight="700" font-family="monospace">Agent: Able (Farmer)</text>
+              <text x="65" y="240" fill="#cbd5e1" font-size="10" font-family="sans-serif">OS Process PID: 18492</text>
+              <text x="65" y="260" fill="#a7f3d0" font-size="9" font-family="monospace">DB: $XDG_DATA/agents/able.db</text>
+              <text x="65" y="278" fill="#a7f3d0" font-size="9" font-family="monospace">UDS: $XDG_STATE/able.sock</text>
+              <text x="65" y="305" fill="#6ee7b7" font-size="10" font-family="sans-serif" font-weight="700">Status: ACTIVE_RUNNING</text>
+
+              <!-- Agent Process 2: Baker -->
+              <rect x="350" y="195" width="240" height="135" rx="8" fill="url(#agentGrad)" stroke="#10b981" stroke-width="1.5" />
+              <text x="365" y="220" fill="#34d399" font-size="12" font-weight="700" font-family="monospace">Agent: Baker (Architect)</text>
+              <text x="365" y="240" fill="#cbd5e1" font-size="10" font-family="sans-serif">OS Process PID: 18493</text>
+              <text x="365" y="260" fill="#a7f3d0" font-size="9" font-family="monospace">DB: $XDG_DATA/agents/baker.db</text>
+              <text x="365" y="278" fill="#a7f3d0" font-size="9" font-family="monospace">UDS: $XDG_STATE/baker.sock</text>
+              <text x="365" y="305" fill="#6ee7b7" font-size="10" font-family="sans-serif" font-weight="700">Status: ACTIVE_RUNNING</text>
+
+              <!-- Agent Process 3: Charlie (Deceased) -->
+              <rect x="650" y="195" width="240" height="135" rx="8" fill="url(#graveGrad)" stroke="#f43f5e" stroke-width="1.5" />
+              <text x="665" y="220" fill="#fda4af" font-size="12" font-weight="700" font-family="monospace">Agent: Charlie (Miner)</text>
+              <text x="665" y="240" fill="#cbd5e1" font-size="10" font-family="sans-serif" font-weight="700">Status: PERMADEATH (Exited 0)</text>
+              <text x="665" y="260" fill="#fecdd3" font-size="9" font-family="monospace">Memorial Chronicle Committed</text>
+              <text x="665" y="278" fill="#fecdd3" font-size="9" font-family="monospace">Archive: $XDG_DATA/graveyard/</text>
+              <text x="665" y="305" fill="#f43f5e" font-size="10" font-family="sans-serif">Cause: Creeper Ambush (Y=-24)</text>
+
+              <!-- XDG Base Directory Footer Container -->
+              <rect x="50" y="355" width="840" height="85" rx="8" fill="#070a10" stroke="#334155" stroke-width="1" />
+              <text x="70" y="380" fill="#38bdf8" font-size="11" font-weight="700" font-family="monospace">XDG BASE DIRECTORY SPECIFICATION COMPLIANCE</text>
+              <text x="70" y="400" fill="#94a3b8" font-size="10" font-family="sans-serif">&bull; $XDG_CONFIG_HOME/civquest/ : Global cluster configs, clan rosters, YAML seeds</text>
+              <text x="70" y="418" fill="#94a3b8" font-size="10" font-family="sans-serif">&bull; $XDG_DATA_HOME/civquest/ : SQLite databases (agent.db), graveyard/ memorial archives</text>
+              <text x="70" y="434" fill="#94a3b8" font-size="10" font-family="sans-serif">&bull; $XDG_STATE_HOME/civquest/ : Live telemetry logs, runtime locks (agent.pid), UNIX sockets</text>
+
+            </svg>
           </div>
-          <div class="terminal-body">
-            <pre><code>func (l *Launcher) SpawnAgentProcess(ctx context.Context, agentID string) (*exec.Cmd, error) {
+          <figcaption class="diagram-caption">Figure 4.0: The `cq` process supervisor tree, isolated agent worker processes, and the XDG storage filesystem hierarchy.</figcaption>
+        </figure>
+
+        <div class="callout callout-guarantee">
+          <div class="callout-title">Blast-Radius Containment Guarantee</div>
+          <p>By enforcing process-level isolation, sudden panics, memory leaks, or unhandled exceptions in experimental LLM agent loops remain strictly contained, ensuring 100% continuous uptime for the game server and surviving settlers.</p>
+        </div>
+      </section>
+
+      <!-- Section 3 -->
+      <section class="tech-section">
+        <h2>Supervisor Lifecycle, Signal Traps &amp; Graveyard Archival</h2>
+
+        <h3>1. The <code>cq</code> Supervisor Daemon (<code>cmd/cq/</code>)</h3>
+        <p>
+          The supervisor binary acts as an init system for autonomous settlers. It manages agent worker subprocesses via isolated POSIX process groups:
+        </p>
+
+        <div class="code-block">
+func (l *Launcher) SpawnAgentProcess(ctx context.Context, agentID string) (*exec.Cmd, error) {
     cmd := exec.CommandContext(ctx, "civquest-agent",
         "--agent-id", agentID,
         "--grpc-addr", l.config.GRPCAddr,
@@ -230,24 +197,17 @@
         return nil, fmt.Errorf("failed to spawn agent %s: %w", agentID, err)
     }
     return cmd, nil
-}</code></pre>
-          </div>
+}
         </div>
 
         <h3>2. Graceful Shutdown &amp; Signal Traps</h3>
         <p>
-          When the game server stops or `cq agent stop` is executed, the agent process intercepts `SIGTERM` and `SIGINT` signals. 
+          When the game server stops or <code>cq agent stop</code> is executed, the agent process intercepts <code>SIGTERM</code> and <code>SIGINT</code> signals. 
           It flushes the SQLite Write-Ahead Log (WAL), disconnects the gRPC channel, unlinks the UNIX domain socket, and terminates cleanly:
         </p>
-        <div class="terminal-card">
-          <div class="terminal-header">
-            <span class="dot dot-red"></span>
-            <span class="dot dot-yellow"></span>
-            <span class="dot dot-green"></span>
-            <span style="font-family: var(--font-mono); font-size: 0.75rem; color: #94a3b8; margin-left: 0.5rem;">orchestrator-go/cmd/civquest-agent/main.go</span>
-          </div>
-          <div class="terminal-body">
-            <pre><code>sigChan := make(chan os.Signal, 1)
+
+        <div class="code-block">
+sigChan := make(chan os.Signal, 1)
 signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
 
 go func() {
@@ -257,27 +217,26 @@ go func() {
     db.Close()
     os.Remove(socketPath)
     os.Exit(0)
-}()</code></pre>
-          </div>
+}()
         </div>
 
-        <h3>3. Permadeath Graveyard Protocol (ADR-008)</h3>
+        <h3>3. Permadeath Graveyard Protocol</h3>
         <p>
-          When an agent's avatar is slain in Minecraft, the game server emits a fatal `DeathEvent` frame. 
+          When an agent's avatar is slain in Minecraft, the game server emits a fatal <code>DeathEvent</code> frame. 
           The agent process immediately executes the graveyard migration sequence:
         </p>
         <ol>
-          <li><strong>Memorial Inscription:</strong> Executes `system2.WriteEpitaph()` to commit the agent's life summary into the SQLite ledger.</li>
-          <li><strong>Database Checkpoint:</strong> Forces a `PRAGMA wal_checkpoint(TRUNCATE)` to collapse all WAL frames into the main database file.</li>
+          <li><strong>Memorial Inscription:</strong> Executes <code>system2.WriteEpitaph()</code> to commit the agent's life summary into the SQLite ledger.</li>
+          <li><strong>Database Checkpoint:</strong> Forces a <code>PRAGMA wal_checkpoint(TRUNCATE)</code> to collapse all WAL frames into the main database file.</li>
           <li><strong>Filesystem Archival:</strong> Atomically renames the agent's active data folder:
-            <p style="font-family: var(--font-mono); font-size: 0.88rem; background: #070a10; padding: 0.5rem 0.75rem; border-radius: 4px; border: 1px solid var(--border-color); margin: 0.5rem 0;">
-              $XDG_DATA_HOME/civquest/agents/{id}/ &rarr; $XDG_DATA_HOME/civquest/graveyard/{id}_{timestamp}/
-            </p>
+            <div class="code-block" style="margin: 0.5rem 0;">
+$XDG_DATA_HOME/civquest/agents/{id}/ &rarr; $XDG_DATA_HOME/civquest/graveyard/{id}_{timestamp}/
+            </div>
           </li>
           <li><strong>Process Exit:</strong> Unregisters from the supervisor daemon and terminates with exit code 0 (preventing automatic restart).</li>
         </ol>
 
-        <h3>4. Specification &amp; XDG Path Matrix</h3>
+        <h3>4. Directory Specification &amp; XDG Path Matrix</h3>
         <div class="spec-table-wrap">
           <table class="spec-table">
             <thead>
@@ -317,8 +276,31 @@ go func() {
           </table>
         </div>
 
-      </div>
-    </section>
+      </section>
+
+      <!-- Footnotes & Provenance Section -->
+      <section class="footnotes-section">
+        <div class="footnotes-title">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253" />
+          </svg>
+          <span>Footnotes &amp; Conceptual Provenance</span>
+        </div>
+        <ol class="footnotes-list">
+          <li id="fn1">
+            <strong>Process-per-Entity Actor Model &amp; Fault Isolation:</strong> 
+            Carl Hewitt's Actor model and the Erlang/OTP "Let It Crash" philosophy demonstrate that strong failure containment and dynamic recovery in concurrent agent systems require strict process-level memory isolation rather than shared-state multithreading. 
+            See: Armstrong, J. (2007). <em>Programming Erlang: Software for a Concurrent World</em>. Pragmatic Bookshelf; Hewitt, C., Bishop, P., &amp; Steiger, R. (1973). <em>A universal modular ACTOR formalism for artificial intelligence</em>. IJCAI'73.
+          </li>
+          <li id="fn2">
+            <strong>XDG Base Directory Specification:</strong> 
+            Standards-compliant separation of user-specific configuration, persistent application data, and transient runtime state ensures clean multi-tenant isolation, automated backup compatibility, and deterministic sandbox mounting. 
+            See: freedesktop.org XDG Base Directory Specification (v0.8).
+          </li>
+        </ol>
+      </section>
+
+    </article>
 
     <!-- Pagination Navigation -->
     <div class="tech-pagination">
@@ -334,19 +316,9 @@ go func() {
 
   </main>
 
-  <!-- Footer & Trademark Notice -->
+  <!-- Footer -->
   <footer>
     <div class="footer-container">
-      <div class="disclaimer-box">
-        <strong>LEGAL & TRADEMARK DISCLAIMER:</strong><br>
-        <strong>NOT AN OFFICIAL MINECRAFT PRODUCT. NOT APPROVED BY OR ASSOCIATED WITH MOJANG OR MICROSOFT.</strong><br>
-        <em>Minecraft</em> is a registered trademark of Mojang Synergies AB / Microsoft Corporation. 
-        CivQuest is an independent, community-developed software modification and autonomous agent orchestration platform. 
-        CivQuest is not affiliated with, endorsed by, sponsored by, or associated with Mojang Synergies AB, Microsoft Corporation, 
-        or any of their subsidiaries. All references to Minecraft, related game mechanics, and block identifiers are strictly 
-        nominative references for technical compatibility and modding interoperability under applicable fair use doctrines.
-      </div>
-
       <div class="footer-links">
         <a href="../index.html">Overview</a>
         <a href="../gameplay.html">Gameplay</a>

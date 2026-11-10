@@ -407,13 +407,13 @@ footer {
 }
 
 /* ==========================================================================
-   Technical Documentation Suite & TRIC Architecture Styles
+   Technical Documentation Suite & Systems Engineering Styles
    ========================================================================== */
 
 .tech-container {
-  max-width: 1150px;
+  max-width: 960px;
   margin: 0 auto;
-  padding: 2.5rem 2rem 5rem;
+  padding: 2.5rem 1.5rem 6rem;
 }
 
 .breadcrumb-nav {
@@ -446,9 +446,9 @@ footer {
 }
 
 .tech-hero {
-  margin-bottom: 3.5rem;
+  margin-bottom: 3rem;
   border-bottom: 1px solid var(--border-color);
-  padding-bottom: 2.5rem;
+  padding-bottom: 2.25rem;
 }
 
 .tech-meta-pills {
@@ -475,7 +475,7 @@ footer {
 .pill-blue { background: rgba(58, 123, 213, 0.12); color: #60a5fa; border: 1px solid rgba(58, 123, 213, 0.3); }
 
 .tech-hero h1 {
-  font-size: 2.8rem;
+  font-size: 2.6rem;
   font-weight: 800;
   line-height: 1.2;
   margin-bottom: 1rem;
@@ -489,150 +489,142 @@ footer {
 }
 
 .tech-lead {
-  font-size: 1.2rem;
+  font-size: 1.15rem;
   color: var(--text-muted);
-  line-height: 1.7;
-  max-width: 950px;
+  line-height: 1.75;
 }
 
-/* Progressive Depth Layers */
-.depth-layer {
+/* Article Prose and Structural Sections */
+.tech-article {
   margin-bottom: 4rem;
-  background-color: var(--bg-secondary);
-  border: 1px solid var(--border-color);
-  border-radius: 14px;
-  overflow: hidden;
-  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.25);
 }
 
-.depth-header {
-  padding: 1.25rem 2rem;
-  background-color: #0d131f;
-  border-bottom: 1px solid var(--border-color);
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 1rem;
+.tech-section {
+  margin-bottom: 3.5rem;
 }
 
-.depth-title-group {
-  display: flex;
-  align-items: center;
-  gap: 0.75rem;
-}
-
-.depth-indicator {
-  font-family: var(--font-mono);
-  font-size: 0.75rem;
-  font-weight: 800;
-  padding: 0.25rem 0.6rem;
-  border-radius: 4px;
-  letter-spacing: 0.05em;
-  text-transform: uppercase;
-}
-
-.depth-1-tag { background: rgba(16, 185, 129, 0.2); color: var(--accent-emerald); border: 1px solid var(--accent-emerald); }
-.depth-2-tag { background: rgba(0, 210, 255, 0.2); color: var(--accent-cyan); border: 1px solid var(--accent-cyan); }
-.depth-3-tag { background: rgba(139, 92, 246, 0.2); color: var(--accent-purple); border: 1px solid var(--accent-purple); }
-
-.depth-header h2 {
-  font-size: 1.35rem;
+.tech-section h2 {
+  font-size: 1.6rem;
   font-weight: 700;
   color: #fff;
+  margin: 2.75rem 0 1.25rem;
+  padding-bottom: 0.5rem;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  letter-spacing: -0.01em;
 }
 
-.depth-body {
-  padding: 2.25rem 2rem;
+.tech-section h2:first-child {
+  margin-top: 0;
 }
 
-.depth-body p {
+.tech-section h3 {
+  font-size: 1.25rem;
+  font-weight: 600;
+  color: var(--accent-cyan);
+  margin: 2rem 0 0.75rem;
+}
+
+.tech-section h4 {
+  font-size: 1.05rem;
+  font-weight: 600;
+  color: #e2e8f0;
+  margin: 1.5rem 0 0.5rem;
+}
+
+.tech-section p {
   color: #cbd5e1;
   font-size: 1.05rem;
-  line-height: 1.75;
+  line-height: 1.8;
   margin-bottom: 1.25rem;
 }
 
-.depth-body p:last-child {
+.tech-section p:last-child {
   margin-bottom: 0;
 }
 
-.depth-body h3 {
-  font-size: 1.3rem;
-  margin: 1.75rem 0 0.75rem;
-  color: #fff;
-}
-
-.depth-body h4 {
-  font-size: 1.1rem;
-  margin: 1.25rem 0 0.5rem;
-  color: var(--accent-cyan);
-}
-
-.depth-body ul, .depth-body ol {
+.tech-section ul, .tech-section ol {
   margin: 0.75rem 0 1.5rem 1.5rem;
   color: #cbd5e1;
+  font-size: 1.02rem;
 }
 
-.depth-body li {
+.tech-section li {
   margin-bottom: 0.5rem;
-  line-height: 1.6;
+  line-height: 1.7;
 }
 
-/* TRIC Units Styling */
-.tric-unit {
+/* Callout & Invariant Boxes */
+.callout {
+  border-radius: 8px;
+  padding: 1.25rem 1.5rem;
+  margin: 1.75rem 0;
   background-color: var(--bg-card);
   border: 1px solid var(--border-color);
-  border-radius: 10px;
-  padding: 1.75rem;
-  margin: 2rem 0;
 }
 
-.tric-grid {
-  display: grid;
-  grid-template-columns: 1fr;
-  gap: 1.25rem;
+.callout p {
+  font-size: 0.98rem;
+  line-height: 1.7;
+  color: #cbd5e1;
+  margin-bottom: 0.75rem;
 }
 
-.tric-segment {
-  border-left: 3px solid var(--accent-cyan);
-  padding-left: 1.25rem;
+.callout p:last-child {
+  margin-bottom: 0;
 }
 
-.tric-segment.t-topic { border-color: var(--accent-cyan); }
-.tric-segment.t-restriction { border-color: var(--accent-amber); }
-.tric-segment.t-illustration { border-color: var(--accent-emerald); }
-.tric-segment.t-conclusion { border-color: var(--accent-purple); }
-
-.tric-label {
+.callout-title {
   font-family: var(--font-mono);
-  font-size: 0.72rem;
+  font-size: 0.78rem;
   font-weight: 800;
   text-transform: uppercase;
-  letter-spacing: 0.08em;
-  margin-bottom: 0.35rem;
+  letter-spacing: 0.06em;
+  margin-bottom: 0.6rem;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
 }
 
-.t-topic .tric-label { color: var(--accent-cyan); }
-.t-restriction .tric-label { color: var(--accent-amber); }
-.t-illustration .tric-label { color: var(--accent-emerald); }
-.t-conclusion .tric-label { color: var(--accent-purple); }
+.callout-invariant {
+  background: rgba(245, 158, 11, 0.04);
+  border: 1px solid rgba(245, 158, 11, 0.25);
+  border-left: 4px solid var(--accent-amber);
+}
+.callout-invariant .callout-title { color: var(--accent-amber); }
 
-/* SVG Diagram Containers */
+.callout-guarantee {
+  background: rgba(16, 185, 129, 0.04);
+  border: 1px solid rgba(16, 185, 129, 0.25);
+  border-left: 4px solid var(--accent-emerald);
+}
+.callout-guarantee .callout-title { color: var(--accent-emerald); }
+
+.callout-info {
+  background: rgba(0, 210, 255, 0.04);
+  border: 1px solid rgba(0, 210, 255, 0.25);
+  border-left: 4px solid var(--accent-cyan);
+}
+.callout-info .callout-title { color: var(--accent-cyan); }
+
+/* Diagram Figures */
+.diagram-figure {
+  margin: 2.5rem 0;
+}
+
 .diagram-container {
   background-color: #070a10;
   border: 1px solid var(--border-color);
   border-radius: 12px;
   padding: 1.5rem;
-  margin: 2rem 0;
   overflow-x: auto;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.35);
 }
 
 .diagram-caption {
   font-size: 0.85rem;
   color: var(--text-muted);
   text-align: center;
-  margin-top: 1rem;
+  margin-top: 0.85rem;
   font-family: var(--font-mono);
 }
 
@@ -642,6 +634,20 @@ footer {
   min-width: 600px;
   display: block;
   margin: 0 auto;
+}
+
+/* Code Blocks */
+.code-block {
+  background-color: #070b12;
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  padding: 1.25rem 1.5rem;
+  overflow-x: auto;
+  font-family: var(--font-mono);
+  font-size: 0.88rem;
+  line-height: 1.6;
+  color: #e2e8f0;
+  margin: 1.5rem 0;
 }
 
 /* Spec Tables */
@@ -792,4 +798,55 @@ footer {
   font-size: 0.85rem;
   font-weight: 600;
   color: var(--accent-cyan);
+}
+
+/* Footnotes & References */
+.footnotes-section {
+  margin-top: 3.5rem;
+  padding-top: 2rem;
+  border-top: 1px solid var(--border-color);
+}
+
+.footnotes-title {
+  font-size: 1.15rem;
+  font-weight: 700;
+  color: #fff;
+  margin-bottom: 1.25rem;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.footnotes-list {
+  padding-left: 1.25rem;
+  color: var(--text-muted);
+  font-size: 0.88rem;
+  line-height: 1.6;
+}
+
+.footnotes-list li {
+  margin-bottom: 0.85rem;
+}
+
+.footnotes-list li strong {
+  color: #cbd5e1;
+}
+
+.footnote-ref {
+  color: var(--accent-cyan);
+  text-decoration: none;
+  font-weight: 600;
+  font-size: 0.8rem;
+  padding: 0 0.15rem;
+  vertical-align: super;
+}
+
+.footnote-ref:hover {
+  text-decoration: underline;
+}
+
+.footnote-backref {
+  color: var(--accent-cyan);
+  text-decoration: none;
+  margin-left: 0.35rem;
 }

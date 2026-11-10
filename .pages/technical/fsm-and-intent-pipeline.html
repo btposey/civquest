@@ -67,21 +67,17 @@
       </p>
     </div>
 
-    <!-- DEPTH LAYER 1: TMLI-15 -->
-    <section class="depth-layer">
-      <div class="depth-header">
-        <div class="depth-title-group">
-          <span class="depth-indicator depth-1-tag">Level 1: Intuitive Mental Model</span>
-          <h2>Sleeping Mid-Combat &amp; Firing Empty Guns</h2>
-        </div>
-        <span style="font-family: var(--font-mono); font-size: 0.8rem; color: var(--text-muted);">TMLI-15 Framing</span>
-      </div>
-      <div class="depth-body">
+    <!-- Article Content -->
+    <article class="tech-article">
+
+      <!-- Section 1 -->
+      <section class="tech-section">
+        <h2>Eliminating Behavioral Race Conditions &amp; Ghost Actions</h2>
         <p>
           Imagine an autonomous robot designed to explore an island. If you program it with a list of independent rules—like 
           <em>"If it's night, go to sleep"</em> and <em>"If a predator attacks, run away"</em>—what happens when a predator attacks at 9:01 PM? 
           Without a structured state machine, the clock rule might override the combat rule, causing the robot to lie down and take a nap 
-          while actively being eaten alive.
+          while actively being attacked.
         </p>
         <p>
           A formal State Machine acts like an air traffic controller. You cannot transition from <strong>Fleeing Combat</strong> to 
@@ -89,162 +85,125 @@
           and the agent must be inside an enclosed shelter).
         </p>
         <p>
-          Furthermore, consider <em>"Ghost Intents"</em>: if an agent panics and screams <em>"Raise Shield!"</em> fifty times per second across the network, 
+          Furthermore, consider <em>"Ghost Intents"</em>: if an agent panics and streams <em>"Raise Shield!"</em> fifty times per second across the network, 
           but their backpack contains no shield, the game engine wastes CPU processing empty commands while network buffers fill with garbage. 
           CivQuest validates physical prerequisites before emitting intents, ensuring every packet sent across the wire produces real physical effects.
         </p>
-      </div>
-    </section>
+      </section>
 
-    <!-- DEPTH LAYER 2: TRIC & STATE GRAPH -->
-    <section class="depth-layer">
-      <div class="depth-header">
-        <div class="depth-title-group">
-          <span class="depth-indicator depth-2-tag">Level 2: Architecture &amp; Boundaries</span>
-          <h2>TRIC Unit Specifications &amp; HFSM State Graph</h2>
+      <!-- Section 2 -->
+      <section class="tech-section">
+        <h2>Formal State Integrity &amp; Invariant Transition Guards</h2>
+        <p>
+          State machines in high-frequency embodied loops must prevent illegal transitions and race conditions between competing tactical goals. 
+          CivQuest structures agent behavior as a deterministic Hierarchical Finite State Machine with explicit entry and exit actions.
+        </p>
+
+        <div class="callout callout-invariant">
+          <div class="callout-title">State Guard Invariants</div>
+          <p><strong>Transition Validation:</strong> Every state transition must evaluate a boolean guard condition. Unchecked transitions are strictly forbidden.</p>
+          <p><strong>Emergency Queue Flushing:</strong> Transitioning into <code>EMERGENCY</code> must immediately flush all non-combat navigation and action queues.</p>
+          <p><strong>Rest Invariant:</strong> <code>REST</code> is strictly unreachable while <code>ThreatCount &gt; 0</code> or <code>SurvivalConfidence &lt; 0.70</code>.</p>
         </div>
-        <span style="font-family: var(--font-mono); font-size: 0.8rem; color: var(--text-muted);">Visual TRIC Decomposition</span>
-      </div>
-      <div class="depth-body">
 
-        <!-- TRIC Unit 1 -->
-        <div class="tric-unit">
-          <div class="tric-grid">
-            <div class="tric-segment t-topic">
-              <div class="tric-label">Topic: Formal State Integrity &amp; Guards</div>
-              <p>State machines in high-frequency embodied loops must prevent illegal transitions and race conditions between competing tactical goals.</p>
-            </div>
-            <div class="tric-segment t-restriction">
-              <div class="tric-label">Restriction: Invariant Transition Guards</div>
-              <p>Every transition must evaluate a boolean guard. Entering `EMERGENCY` must immediately flush all non-combat navigation and action queues. `REST` is unreachable while `ThreatCount > 0`.</p>
-            </div>
-            <div class="tric-segment t-illustration">
-              <div class="tric-label">Illustration: HFSM State Transition Graph</div>
-              <p>The state diagram below models the primary lifecycle states, guard conditions, and automatic stuck-state recovery transitions.</p>
-            </div>
-            <div class="tric-segment t-conclusion">
-              <div class="tric-label">Conclusion: Deterministic Behavior</div>
-              <p>Completely eliminates erratic behavior switching, mid-combat sleeping bugs, and navigation goal thrashing.</p>
-            </div>
+        <figure class="diagram-figure">
+          <div class="diagram-container">
+            <svg class="responsive-svg" viewBox="0 0 940 480" xmlns="http://www.w3.org/2000/svg">
+              <defs>
+                <linearGradient id="nodeBlue" x1="0%" y1="0%" x2="100%" y2="100%">
+                  <stop offset="0%" stop-color="#1e293b" />
+                  <stop offset="100%" stop-color="#0f172a" />
+                </linearGradient>
+                <linearGradient id="nodeRed" x1="0%" y1="0%" x2="100%" y2="100%">
+                  <stop offset="0%" stop-color="#450a0a" />
+                  <stop offset="100%" stop-color="#1c0404" />
+                </linearGradient>
+                <linearGradient id="nodeGreen" x1="0%" y1="0%" x2="100%" y2="100%">
+                  <stop offset="0%" stop-color="#064e3b" />
+                  <stop offset="100%" stop-color="#022c22" />
+                </linearGradient>
+              </defs>
+
+              <!-- State 1: BOOTSTRAP -->
+              <rect x="50" y="200" width="160" height="80" rx="10" fill="url(#nodeBlue)" stroke="#38bdf8" stroke-width="2" />
+              <text x="130" y="235" fill="#38bdf8" font-size="14" font-weight="700" font-family="monospace" text-anchor="middle">BOOTSTRAP</text>
+              <text x="130" y="255" fill="#94a3b8" font-size="10" font-family="sans-serif" text-anchor="middle">Verify Kit &amp; Sync DB</text>
+
+              <!-- State 2: EXPLORE -->
+              <rect x="360" y="80" width="180" height="90" rx="10" fill="url(#nodeGreen)" stroke="#10b981" stroke-width="2" />
+              <text x="450" y="115" fill="#34d399" font-size="14" font-weight="700" font-family="monospace" text-anchor="middle">EXPLORE</text>
+              <text x="450" y="135" fill="#cbd5e1" font-size="10" font-family="sans-serif" text-anchor="middle">Voxel Scans, Foraging,</text>
+              <text x="450" y="150" fill="#94a3b8" font-size="10" font-family="sans-serif" text-anchor="middle">Road Paving &amp; Trades</text>
+
+              <!-- State 3: EMERGENCY (Panic / Combat) -->
+              <rect x="360" y="320" width="180" height="90" rx="10" fill="url(#nodeRed)" stroke="#ef4444" stroke-width="2" />
+              <text x="450" y="355" fill="#f87171" font-size="14" font-weight="700" font-family="monospace" text-anchor="middle">EMERGENCY</text>
+              <text x="450" y="375" fill="#fca5a5" font-size="10" font-family="sans-serif" text-anchor="middle">Hostile Kiting, Shield Block,</text>
+              <text x="450" y="390" fill="#f87171" font-size="9" font-family="monospace" text-anchor="middle">Flush Non-Combat Queues</text>
+
+              <!-- State 4: SHELTER -->
+              <rect x="700" y="80" width="180" height="90" rx="10" fill="url(#nodeBlue)" stroke="#f59e0b" stroke-width="2" />
+              <text x="790" y="115" fill="#fbbf24" font-size="14" font-weight="700" font-family="monospace" text-anchor="middle">SHELTER</text>
+              <text x="790" y="135" fill="#cbd5e1" font-size="10" font-family="sans-serif" text-anchor="middle">Find / Build Shelter,</text>
+              <text x="790" y="150" fill="#94a3b8" font-size="10" font-family="sans-serif" text-anchor="middle">Wall Placement &amp; Torch</text>
+
+              <!-- State 5: REST -->
+              <rect x="700" y="320" width="180" height="90" rx="10" fill="url(#nodeBlue)" stroke="#8b5cf6" stroke-width="2" />
+              <text x="790" y="355" fill="#c084fc" font-size="14" font-weight="700" font-family="monospace" text-anchor="middle">REST</text>
+              <text x="790" y="375" fill="#cbd5e1" font-size="10" font-family="sans-serif" text-anchor="middle">Bed Occupation, Hunger</text>
+              <text x="790" y="390" fill="#94a3b8" font-size="10" font-family="sans-serif" text-anchor="middle">Recovery, Dream Log</text>
+
+              <!-- Transitions & Arrows -->
+              <!-- Bootstrap -> Explore -->
+              <path d="M 210 220 L 360 140" stroke="#00d2ff" stroke-width="2" />
+              <text x="245" y="170" fill="#38bdf8" font-size="10" font-family="monospace">HasKit &amp; Day</text>
+
+              <!-- Explore -> Emergency -->
+              <path d="M 430 170 L 430 320" stroke="#f87171" stroke-width="2" />
+              <text x="315" y="250" fill="#f87171" font-size="10" font-family="monospace">Threats | LowHP</text>
+
+              <!-- Emergency -> Explore -->
+              <path d="M 470 320 L 470 170" stroke="#34d399" stroke-width="2" />
+              <text x="480" y="250" fill="#34d399" font-size="10" font-family="monospace">ThreatsCleared &amp; HP>70%</text>
+
+              <!-- Explore -> Shelter -->
+              <path d="M 540 110 L 700 110" stroke="#00d2ff" stroke-width="2" />
+              <text x="560" y="100" fill="#fbbf24" font-size="10" font-family="monospace">Dusk &amp; NoShelter</text>
+
+              <!-- Shelter -> Rest -->
+              <path d="M 790 170 L 790 320" stroke="#00d2ff" stroke-width="2" />
+              <text x="800" y="250" fill="#c084fc" font-size="10" font-family="monospace">BedFound &amp; Safe</text>
+
+              <!-- Rest -> Bootstrap / Explore (Dawn) -->
+              <path d="M 700 380 L 210 260" stroke="#34d399" stroke-width="2" stroke-dasharray="6,3" />
+              <text x="430" y="440" fill="#34d399" font-size="10" font-family="monospace">Dawn &amp; FullHP &rarr; Awake</text>
+
+              <!-- Shelter -> Emergency -->
+              <path d="M 700 150 L 540 330" stroke="#f87171" stroke-width="1.5" stroke-dasharray="4,4" />
+
+            </svg>
           </div>
+          <figcaption class="diagram-caption">Figure 3.0: Formal Hierarchical Finite State Machine graph with transition guards and emergency interrupts.</figcaption>
+        </figure>
+
+        <div class="callout callout-guarantee">
+          <div class="callout-title">Behavioral Stability Guarantee</div>
+          <p>By enforcing transition guards and entry/exit queue purging, the HFSM guarantees deterministic state progression, eliminating navigation goal thrashing and mid-combat sleeping bugs.</p>
         </div>
+      </section>
 
-        <!-- SVG State Transition Graph -->
-        <div class="diagram-container">
-          <svg class="responsive-svg" viewBox="0 0 940 480" xmlns="http://www.w3.org/2000/svg">
-            <defs>
-              <linearGradient id="nodeBlue" x1="0%" y1="0%" x2="100%" y2="100%">
-                <stop offset="0%" stop-color="#1e293b" />
-                <stop offset="100%" stop-color="#0f172a" />
-              </linearGradient>
-              <linearGradient id="nodeRed" x1="0%" y1="0%" x2="100%" y2="100%">
-                <stop offset="0%" stop-color="#450a0a" />
-                <stop offset="100%" stop-color="#1c0404" />
-              </linearGradient>
-              <linearGradient id="nodeGreen" x1="0%" y1="0%" x2="100%" y2="100%">
-                <stop offset="0%" stop-color="#064e3b" />
-                <stop offset="100%" stop-color="#022c22" />
-              </linearGradient>
-              <marker id="arrow" viewBox="0 0 10 10" refX="6" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
-                <path d="M 0 0 L 10 5 L 0 10 z" fill="#00d2ff" />
-              </marker>
-              <marker id="arrowRed" viewBox="0 0 10 10" refX="6" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
-                <path d="M 0 0 L 10 5 L 0 10 z" fill="#f87171" />
-              </marker>
-              <marker id="arrowGreen" viewBox="0 0 10 10" refX="6" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
-                <path d="M 0 0 L 10 5 L 0 10 z" fill="#34d399" />
-              </marker>
-            </defs>
+      <!-- Section 3 -->
+      <section class="tech-section">
+        <h2>Implementation Structures, Ghost Intent Pruning &amp; Stuck Recovery</h2>
 
-            <!-- State 1: BOOTSTRAP -->
-            <rect x="50" y="200" width="160" height="80" rx="10" fill="url(#nodeBlue)" stroke="#38bdf8" stroke-width="2" />
-            <text x="130" y="235" fill="#38bdf8" font-size="14" font-weight="700" font-family="monospace" text-anchor="middle">BOOTSTRAP</text>
-            <text x="130" y="255" fill="#94a3b8" font-size="10" font-family="sans-serif" text-anchor="middle">Verify Kit &amp; Sync DB</text>
-
-            <!-- State 2: EXPLORE -->
-            <rect x="360" y="80" width="180" height="90" rx="10" fill="url(#nodeGreen)" stroke="#10b981" stroke-width="2" />
-            <text x="450" y="115" fill="#34d399" font-size="14" font-weight="700" font-family="monospace" text-anchor="middle">EXPLORE</text>
-            <text x="450" y="135" fill="#cbd5e1" font-size="10" font-family="sans-serif" text-anchor="middle">Voxel Scans, Foraging,</text>
-            <text x="450" y="150" fill="#94a3b8" font-size="10" font-family="sans-serif" text-anchor="middle">Road Paving &amp; Trades</text>
-
-            <!-- State 3: EMERGENCY (Panic / Combat) -->
-            <rect x="360" y="320" width="180" height="90" rx="10" fill="url(#nodeRed)" stroke="#ef4444" stroke-width="2" />
-            <text x="450" y="355" fill="#f87171" font-size="14" font-weight="700" font-family="monospace" text-anchor="middle">EMERGENCY</text>
-            <text x="450" y="375" fill="#fca5a5" font-size="10" font-family="sans-serif" text-anchor="middle">Hostile Kiting, Shield Block,</text>
-            <text x="450" y="390" fill="#f87171" font-size="9" font-family="monospace" text-anchor="middle">Flush Non-Combat Queues</text>
-
-            <!-- State 4: SHELTER -->
-            <rect x="700" y="80" width="180" height="90" rx="10" fill="url(#nodeBlue)" stroke="#f59e0b" stroke-width="2" />
-            <text x="790" y="115" fill="#fbbf24" font-size="14" font-weight="700" font-family="monospace" text-anchor="middle">SHELTER</text>
-            <text x="790" y="135" fill="#cbd5e1" font-size="10" font-family="sans-serif" text-anchor="middle">Find / Build Shelter,</text>
-            <text x="790" y="150" fill="#94a3b8" font-size="10" font-family="sans-serif" text-anchor="middle">Wall Placement &amp; Torch</text>
-
-            <!-- State 5: REST -->
-            <rect x="700" y="320" width="180" height="90" rx="10" fill="url(#nodeBlue)" stroke="#8b5cf6" stroke-width="2" />
-            <text x="790" y="355" fill="#c084fc" font-size="14" font-weight="700" font-family="monospace" text-anchor="middle">REST</text>
-            <text x="790" y="375" fill="#cbd5e1" font-size="10" font-family="sans-serif" text-anchor="middle">Bed Occupation, Hunger</text>
-            <text x="790" y="390" fill="#94a3b8" font-size="10" font-family="sans-serif" text-anchor="middle">Recovery, Dream Log</text>
-
-            <!-- Transitions & Arrows -->
-            <!-- Bootstrap -> Explore -->
-            <path d="M 210 220 L 360 140" stroke="#00d2ff" stroke-width="2" marker-end="url(#arrow)" />
-            <text x="245" y="170" fill="#38bdf8" font-size="10" font-family="monospace">HasKit &amp; Day</text>
-
-            <!-- Explore -> Emergency -->
-            <path d="M 430 170 L 430 320" stroke="#f87171" stroke-width="2" marker-end="url(#arrowRed)" />
-            <text x="315" y="250" fill="#f87171" font-size="10" font-family="monospace">Threats | LowHP</text>
-
-            <!-- Emergency -> Explore -->
-            <path d="M 470 320 L 470 170" stroke="#34d399" stroke-width="2" marker-end="url(#arrowGreen)" />
-            <text x="480" y="250" fill="#34d399" font-size="10" font-family="monospace">ThreatsCleared &amp; HP>70%</text>
-
-            <!-- Explore -> Shelter -->
-            <path d="M 540 110 L 700 110" stroke="#00d2ff" stroke-width="2" marker-end="url(#arrow)" />
-            <text x="560" y="100" fill="#fbbf24" font-size="10" font-family="monospace">Dusk &amp; NoShelter</text>
-
-            <!-- Shelter -> Rest -->
-            <path d="M 790 170 L 790 320" stroke="#00d2ff" stroke-width="2" marker-end="url(#arrow)" />
-            <text x="800" y="250" fill="#c084fc" font-size="10" font-family="monospace">BedFound &amp; Safe</text>
-
-            <!-- Rest -> Bootstrap / Explore (Dawn) -->
-            <path d="M 700 380 L 210 260" stroke="#34d399" stroke-width="2" stroke-dasharray="6,3" marker-end="url(#arrowGreen)" />
-            <text x="430" y="440" fill="#34d399" font-size="10" font-family="monospace">Dawn &amp; FullHP &rarr; Awake</text>
-
-            <!-- Shelter -> Emergency -->
-            <path d="M 700 150 L 540 330" stroke="#f87171" stroke-width="1.5" stroke-dasharray="4,4" marker-end="url(#arrowRed)" />
-
-          </svg>
-          <div class="diagram-caption">Figure 3.0: Formal Hierarchical Finite State Machine graph with transition guards and emergency interrupts.</div>
-        </div>
-
-      </div>
-    </section>
-
-    <!-- DEPTH LAYER 3: TMLI-PRO -->
-    <section class="depth-layer">
-      <div class="depth-header">
-        <div class="depth-title-group">
-          <span class="depth-indicator depth-3-tag">Level 3: Deep As-Built Implementation</span>
-          <h2>State Structures, Inventory Pruning &amp; Stuck Recovery</h2>
-        </div>
-        <span style="font-family: var(--font-mono); font-size: 0.8rem; color: var(--text-muted);">TMLI-Pro Systems Engineering</span>
-      </div>
-      <div class="depth-body">
-
-        <h3>1. The HFSM Go Data Structure (`internal/system1/fsm.go`)</h3>
+        <h3>1. The HFSM Go Data Structure (<code>internal/system1/fsm.go</code>)</h3>
         <p>
           The state machine is implemented as an explicit transition table where state nodes define entry hooks, tick evaluators, 
           and exit cleanup actions:
         </p>
-        <div class="terminal-card">
-          <div class="terminal-header">
-            <span class="dot dot-red"></span>
-            <span class="dot dot-yellow"></span>
-            <span class="dot dot-green"></span>
-            <span style="font-family: var(--font-mono); font-size: 0.75rem; color: #94a3b8; margin-left: 0.5rem;">orchestrator-go/internal/system1/fsm.go</span>
-          </div>
-          <div class="terminal-body">
-            <pre><code>type StateType string
+
+        <div class="code-block">
+type StateType string
 
 const (
     StateBootstrap StateType = "BOOTSTRAP"
@@ -266,24 +225,17 @@ type TransitionRule struct {
     TargetState StateType
     Guard       func(ctx *ExecutionContext) bool
     Priority    int
-}</code></pre>
-          </div>
+}
         </div>
 
         <h3>2. Ghost Intent Elimination &amp; Inventory Pre-flight Guards</h3>
         <p>
-          Prior to emitting intents across gRPC, `confidence.go` and `evaluator.go` inspect the agent's cached inventory snapshot. 
-          If the agent has no shield in their inventory or offhand slot, `RaiseShield` is strictly forced to `false`:
+          Prior to emitting intents across gRPC, <code>confidence.go</code> and <code>evaluator.go</code> inspect the agent's cached inventory snapshot. 
+          If the agent has no shield in their inventory or offhand slot, <code>RaiseShield</code> is strictly forced to <code>false</code>:
         </p>
-        <div class="terminal-card">
-          <div class="terminal-header">
-            <span class="dot dot-red"></span>
-            <span class="dot dot-yellow"></span>
-            <span class="dot dot-green"></span>
-            <span style="font-family: var(--font-mono); font-size: 0.75rem; color: #94a3b8; margin-left: 0.5rem;">orchestrator-go/internal/system1/confidence.go</span>
-          </div>
-          <div class="terminal-body">
-            <pre><code>func (e *Evaluator) EvaluateCombatReflexes(ctx *ExecutionContext) *civquestv1.AttackIntent {
+
+        <div class="code-block">
+func (e *Evaluator) EvaluateCombatReflexes(ctx *ExecutionContext) *civquestv1.AttackIntent {
     intent := &civquestv1.AttackIntent{
         TargetEntityId: ctx.Threats[0].EntityId,
         Flee:           ctx.SurvivalConfidence &lt; 0.40,
@@ -297,20 +249,19 @@ type TransitionRule struct {
     }
 
     return intent
-}</code></pre>
-          </div>
+}
         </div>
 
         <h3>3. Stuck-State Detection &amp; Fallback Recovery</h3>
         <p>
-          When an agent is executing a pathing intent in `StateExplore` or `StateShelter`, voxel obstructions or unreachable blocks can cause 
+          When an agent is executing a pathing intent in <code>StateExplore</code> or <code>StateShelter</code>, voxel obstructions or unreachable blocks can cause 
           the avatar to freeze in place. The harness tracks spatial progress over time:
         </p>
-        <p style="font-family: var(--font-mono); font-size: 0.95rem; background: #070a10; padding: 0.75rem 1rem; border-radius: 6px; border: 1px solid var(--border-color);">
-          \text{Stuck Condition: } \quad \sum_{i=0}^{N} |\vec{P}_{t} - \vec{P}_{t-1}| &lt; 0.5\text{ blocks} \quad \text{for } N \ge 10\text{ ticks (2.0s)}
-        </p>
+        <div class="code-block">
+Stuck Condition: Sum(|P_t - P_{t-1}|) &lt; 0.5 blocks for N &gt;= 10 ticks (2.0s)
+        </div>
         <p>
-          Upon detecting a stuck state, the HFSM fires the `OnExit` hook, clears the current Baritone navigation target, 
+          Upon detecting a stuck state, the HFSM fires the <code>OnExit</code> hook, clears the current Baritone navigation target, 
           emits a small lateral jump intent, and selects a fallback exploration vector offset by $+90^\circ$.
         </p>
 
@@ -366,8 +317,31 @@ type TransitionRule struct {
           </table>
         </div>
 
-      </div>
-    </section>
+      </section>
+
+      <!-- Footnotes & Provenance Section -->
+      <section class="footnotes-section">
+        <div class="footnotes-title">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253" />
+          </svg>
+          <span>Footnotes &amp; Conceptual Provenance</span>
+        </div>
+        <ol class="footnotes-list">
+          <li id="fn1">
+            <strong>Hierarchical Statecharts and Guard Formalism:</strong> 
+            David Harel's statechart formalism introduced hierarchy, orthogonality, and entry/exit action semantics to classical Mealy/Moore finite state machines, preventing exponential state explosion in complex reactive systems. 
+            See: Harel, D. (1987). <em>Statecharts: a visual formalism for complex systems</em>. Science of Computer Programming, 8(3), 231–274.
+          </li>
+          <li id="fn2">
+            <strong>Behavior Trees vs. Hierarchical FSMs in Autonomous Robotics:</strong> 
+            While Behavior Trees offer modular composability, formal HFSMs with explicit boolean guards guarantee deterministic state invariants and instantaneous priority preemption under acute survival emergencies. 
+            See: Colledanchise, M., &amp; Ögren, P. (2018). <em>Behavior Trees in Robotics and AI: An Introduction</em>. CRC Press.
+          </li>
+        </ol>
+      </section>
+
+    </article>
 
     <!-- Pagination Navigation -->
     <div class="tech-pagination">
@@ -383,19 +357,9 @@ type TransitionRule struct {
 
   </main>
 
-  <!-- Footer & Trademark Notice -->
+  <!-- Footer -->
   <footer>
     <div class="footer-container">
-      <div class="disclaimer-box">
-        <strong>LEGAL & TRADEMARK DISCLAIMER:</strong><br>
-        <strong>NOT AN OFFICIAL MINECRAFT PRODUCT. NOT APPROVED BY OR ASSOCIATED WITH MOJANG OR MICROSOFT.</strong><br>
-        <em>Minecraft</em> is a registered trademark of Mojang Synergies AB / Microsoft Corporation. 
-        CivQuest is an independent, community-developed software modification and autonomous agent orchestration platform. 
-        CivQuest is not affiliated with, endorsed by, sponsored by, or associated with Mojang Synergies AB, Microsoft Corporation, 
-        or any of their subsidiaries. All references to Minecraft, related game mechanics, and block identifiers are strictly 
-        nominative references for technical compatibility and modding interoperability under applicable fair use doctrines.
-      </div>
-
       <div class="footer-links">
         <a href="../index.html">Overview</a>
         <a href="../gameplay.html">Gameplay</a>
