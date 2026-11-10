@@ -205,11 +205,12 @@ jobs:
         run: |
           VERSION="${SEMVER}-nightly-${BUILD_DATE}"
 
-          # Remove existing 'latest' release if it exists (to avoid duplicate assets)
-          gh release delete latest --cleanup-tag --yes 2>/dev/null || true
+          # Remove existing 'nightly' release if it exists (to avoid duplicate assets)
+          # Note: --cleanup-tag is intentionally omitted to preserve the git annotation tag
+          gh release delete nightly --yes 2>/dev/null || true
 
-          # Create new release tagged 'latest'
-          gh release create latest \
+          # Create new release tagged 'nightly' (isolated from semver releases)
+          gh release create nightly \
             --title "Nightly Build ${VERSION}" \
             --prerelease \
             --notes-file dist/release-body.md \

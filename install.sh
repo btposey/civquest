@@ -61,6 +61,73 @@ resolve_version() {
     fi
 }
 
+resolve_release_tag() {
+    # Resolve a release tag from GitHub API with retry and rate-limit handling.
+    # Uses the "nightly" tag for nightly builds to avoid conflicts with semver releases.
+    local cache_file="${CIVQUEST_STATE_DIR:-}/release-cache.json"
+    local cached_tag=""
+    local cache_age=0
+
+    # Try to read from cache (TTL: 10 minutes)
+    if [ -f "${cache_file}" ]; then
+        cached_tag="$(jq -r '.tag // empty' "${cache_file}" 2>/dev/null || true)"
+        cache_age=$(( $(date +%s) - $(stat -c %Y "${cache_file}" 2>/dev/null || echo 0) ))
+    fi
+
+    if [ -n "${cached_tag}" ] && [ "${cache_age}" -lt 600 ]; then
+        log_info "Using cached release tag: ${cached_tag}"
+        echo "${cached_tag}"
+        return 0
+    fi
+
+    # Fetch from GitHub API with retry and backoff
+    local tag=""
+    local attempt=0
+    local max_attempts=3
+    while [ "${attempt}" -lt "${max_attempts}" ]; do
+        attempt=$((attempt + 1))
+        tag="$(curl -fsSL \
+            -H "User-Agent: CivQuest-Installer" \
+            "https://api.github.com/repos/btposey/civquest/releases/tags/nightly" \
+            2>/dev/null | grep '"tag_name"' | head -1 | sed 's/.*"tag_name": "\(.*\)",/\1/' || true)"
+
+        if [ -n "${tag}" ]; then
+            break
+        fi
+
+        # Check if rate-limited (403 with X-RateLimit-Remaining: 0)
+        local rate_status
+        rate_status="$(curl -sI \
+            -H "User-Agent: CivQuest-Installer" \
+            "https://api.github.com/repos/btposey/civquest/releases/tags/nightly" \
+            2>/dev/null | grep -i 'x-ratelimit-remaining' | head -1 || true)"
+
+        if echo "${rate_status}" | grep -q '0$'; then
+            local wait_time=$((attempt * 30))
+            log_warn "GitHub API rate limited. Retrying in ${wait_time}s (attempt ${attempt}/${max_attempts})..."
+            sleep "${wait_time}"
+        else
+            log_warn "Failed to fetch release tag. Retrying in ${attempt}s (attempt ${attempt}/${max_attempts})..."
+            sleep "${attempt}"
+        fi
+    done
+
+    if [ -z "${tag}" ]; then
+        log_error "Failed to resolve release tag from GitHub after ${max_attempts} attempts."
+        log_error "The GitHub API may be rate-limited or the nightly release may not exist yet."
+        log_error "Try again later or use --version to specify a version explicitly."
+        exit 1
+    fi
+
+    # Cache the result
+    if [ -n "${CIVQUEST_STATE_DIR:-}" ]; then
+        mkdir -p "${CIVQUEST_STATE_DIR}"
+        echo "{\"tag\":\"${tag}\",\"cached_at\":$(date +%s)}" > "${cache_file}" 2>/dev/null || true
+    fi
+
+    echo "${tag}"
+}
+
 download_binary() {
     local name="$1"
     local version="$2"
@@ -68,27 +135,51 @@ download_binary() {
 
     local tag="${version}"
     if [ "${tag}" = "latest" ]; then
-        # Resolve latest release tag from GitHub API
-        tag="$(curl -fsSL "https://api.github.com/repos/btposey/civquest/releases/latest" | grep '"tag_name"' | head -1 | sed 's/.*"tag_name": "\(.*\)",/\1/')"
-        if [ -z "${tag}" ]; then
-            log_error "Failed to resolve latest release tag from GitHub."
-            exit 1
-        fi
+        tag="$(resolve_release_tag)"
         # Strip leading 'v' if present
         tag="${tag#v}"
     fi
 
     local archive="${name}-${tag}-linux-${ARCH}.tar.gz"
+    local sha_file="${archive}.sha256"
     local url="https://github.com/btposey/civquest/releases/download/v${tag}/${archive}"
+    local sha_url="https://github.com/btposey/civquest/releases/download/v${tag}/${sha_file}"
 
     log_info "Downloading ${name} v${tag} (${ARCH})..."
     local tmpfile
     tmpfile="$(mktemp)"
-    if ! curl -fL --retry 3 -o "${tmpfile}" "${url}"; then
+    if ! curl -fL --retry 3 \
+        -H "User-Agent: CivQuest-Installer" \
+        -o "${tmpfile}" "${url}"; then
         rm -f "${tmpfile}"
         log_error "Failed to download ${name} from ${url}"
         exit 1
     fi
+
+    # Verify SHA256 checksum if sidecar file is available
+    local tmpsha
+    tmpsha="$(mktemp)"
+    if curl -fL --retry 3 \
+        -H "User-Agent: CivQuest-Installer" \
+        -s -o "${tmpsha}" "${sha_url}" 2>/dev/null; then
+        log_info "Verifying SHA256 checksum for ${name}..."
+        local expected_sha
+        expected_sha="$(cat "${tmpsha}" | awk '{print $1}')"
+        local actual_sha
+        actual_sha="$(sha256sum "${tmpfile}" | awk '{print $1}')"
+        if [ "${expected_sha}" != "${actual_sha}" ]; then
+            rm -f "${tmpfile}" "${tmpsha}"
+            log_error "SHA256 checksum mismatch for ${name}!"
+            log_error "  Expected: ${expected_sha}"
+            log_error "  Actual:   ${actual_sha}"
+            log_error "The downloaded file may be corrupted or tampered with."
+            exit 1
+        fi
+        log_info "SHA256 checksum verified."
+    else
+        log_warn "SHA256 sidecar not available for ${name}, skipping verification."
+    fi
+    rm -f "${tmpsha}"
 
     local tmpdir
     tmpdir="$(mktemp -d)"
@@ -122,23 +213,54 @@ download_mod_jar() {
 
     local tag="${version}"
     if [ "${tag}" = "latest" ]; then
-        tag="$(curl -fsSL "https://api.github.com/repos/btposey/civquest/releases/latest" | grep '"tag_name"' | head -1 | sed 's/.*"tag_name": "\(.*\)",/\1/')"
-        if [ -z "${tag}" ]; then
-            log_error "Failed to resolve latest release tag from GitHub."
-            exit 1
-        fi
+        tag="$(resolve_release_tag)"
+        # Strip leading 'v' if present
         tag="${tag#v}"
     fi
 
     local jar_name="civquest-mod-${tag}.jar"
+    local sha_name="${jar_name}.sha256"
     local url="https://github.com/btposey/civquest/releases/download/v${tag}/${jar_name}"
+    local sha_url="https://github.com/btposey/civquest/releases/download/v${tag}/${sha_name}"
 
     log_info "Downloading mod JAR v${tag}..."
     mkdir -p "${dest_dir}"
-    if ! curl -fL --retry 3 -o "${dest_dir}/${jar_name}" "${url}"; then
+    local tmpjar
+    tmpjar="$(mktemp)"
+    if ! curl -fL --retry 3 \
+        -H "User-Agent: CivQuest-Installer" \
+        -o "${tmpjar}" "${url}"; then
+        rm -f "${tmpjar}"
         log_error "Failed to download mod JAR from ${url}"
         exit 1
     fi
+
+    # Verify SHA256 checksum if sidecar file is available
+    local tmpsha
+    tmpsha="$(mktemp)"
+    if curl -fL --retry 3 \
+        -H "User-Agent: CivQuest-Installer" \
+        -s -o "${tmpsha}" "${sha_url}" 2>/dev/null; then
+        log_info "Verifying SHA256 checksum for mod JAR..."
+        local expected_sha
+        expected_sha="$(cat "${tmpsha}" | awk '{print $1}')"
+        local actual_sha
+        actual_sha="$(sha256sum "${tmpjar}" | awk '{print $1}')"
+        if [ "${expected_sha}" != "${actual_sha}" ]; then
+            rm -f "${tmpjar}" "${tmpsha}"
+            log_error "SHA256 checksum mismatch for mod JAR!"
+            log_error "  Expected: ${expected_sha}"
+            log_error "  Actual:   ${actual_sha}"
+            exit 1
+        fi
+        log_info "SHA256 checksum verified."
+    else
+        log_warn "SHA256 sidecar not available for mod JAR, skipping verification."
+    fi
+    rm -f "${tmpsha}"
+
+    cp -f "${tmpjar}" "${dest_dir}/${jar_name}"
+    rm -f "${tmpjar}"
 
     log_info "Installed mod JAR v${tag} to ${dest_dir}/${jar_name}"
     echo "${jar_name}"
