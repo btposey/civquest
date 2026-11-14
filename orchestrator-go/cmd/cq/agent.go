@@ -10,6 +10,7 @@ import (
 	"image/color"
 	"image/png"
 	"io"
+	"net"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -22,6 +23,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/btposey/civquest/orchestrator-go/internal/agent"
 	"github.com/btposey/civquest/orchestrator-go/internal/domain"
 	"github.com/btposey/civquest/orchestrator-go/internal/launcher"
 	civquestv1 "github.com/btposey/civquest/orchestrator-go/internal/proto/v1"
@@ -145,6 +147,25 @@ func newAgentStatusCmd() *cobra.Command {
 				}
 			}
 
+			var sockResp *agent.SocketStatusResponse
+			if isActive {
+				conn, err := net.DialTimeout("unix", sockPath, 200*time.Millisecond)
+				if err == nil {
+					_ = conn.SetDeadline(time.Now().Add(200 * time.Millisecond))
+					scanner := bufio.NewScanner(conn)
+					if scanner.Scan() {
+						var parsed agent.SocketStatusResponse
+						if err := json.Unmarshal(scanner.Bytes(), &parsed); err == nil {
+							sockResp = &parsed
+							if parsed.PID > 0 && pid == 0 {
+								pid = parsed.PID
+							}
+						}
+					}
+					_ = conn.Close()
+				}
+			}
+
 			if flagJSON {
 				resp := map[string]any{
 					"identity":     agentCfg,
@@ -152,6 +173,10 @@ func newAgentStatusCmd() *cobra.Command {
 					"pid":          pid,
 					"watchdog_pid": watchdogPID,
 					"socket_path":  sockPath,
+				}
+				if sockResp != nil {
+					resp["telemetry"] = sockResp
+					resp["socket_status"] = sockResp
 				}
 				data, err := json.MarshalIndent(resp, "", "  ")
 				if err != nil {
@@ -187,6 +212,36 @@ func newAgentStatusCmd() *cobra.Command {
 				fmt.Fprintf(out, "Watchdog:        Active (PID %d)\n", watchdogPID)
 			}
 			fmt.Fprintf(out, "Socket:          %s\n", sockPath)
+
+			if sockResp != nil {
+				fmt.Fprintf(out, "Uptime:          %.1fs\n", sockResp.UptimeSeconds)
+				fmt.Fprintf(out, "Memory RSS:      %.2f MB\n", sockResp.MemoryRSSMB)
+				fmt.Fprintf(out, "Health:          %.1f\n", sockResp.Health)
+				fmt.Fprintf(out, "Food Level:      %d / 20\n", sockResp.FoodLevel)
+				fmt.Fprintf(out, "Navigation:      %s\n", sockResp.NavigationState)
+				if sockResp.Position != nil {
+					fmt.Fprintf(out, "Position:        (%.1f, %.1f, %.1f)\n", sockResp.Position.X, sockResp.Position.Y, sockResp.Position.Z)
+				} else {
+					fmt.Fprintln(out, "Position:        Unknown")
+				}
+				if sockResp.NavigationDestination != nil {
+					fmt.Fprintf(out, "Nav Destination: (%.1f, %.1f, %.1f)\n", sockResp.NavigationDestination.X, sockResp.NavigationDestination.Y, sockResp.NavigationDestination.Z)
+				} else {
+					fmt.Fprintln(out, "Nav Destination: None (Idle)")
+				}
+				fmt.Fprintf(out, "Frame Latency:   %.2f ms\n", sockResp.FrameLatencyMs)
+				if sockResp.ActiveLLMRequests > 0 {
+					fmt.Fprintf(out, "Active LLM Reqs: %d\n", sockResp.ActiveLLMRequests)
+				}
+				if sockResp.UtilityScores != nil {
+					fmt.Fprintln(out, "System 1 Utility Scores:")
+					fmt.Fprintf(out, "  • Hunger:        %.2f\n", sockResp.UtilityScores.Hunger)
+					fmt.Fprintf(out, "  • Threat:        %.2f\n", sockResp.UtilityScores.Threat)
+					fmt.Fprintf(out, "  • Confidence:    %.2f\n", sockResp.UtilityScores.Confidence)
+					fmt.Fprintf(out, "  • Exploration:   %.2f\n", sockResp.UtilityScores.Exploration)
+					fmt.Fprintf(out, "  • Sleep Need:    %.2f\n", sockResp.UtilityScores.SleepNeed)
+				}
+			}
 			fmt.Fprintln(out, "Personality Traits:")
 			fmt.Fprintf(out, "  • Bravery:         %.2f\n", agentCfg.Traits.Bravery)
 			fmt.Fprintf(out, "  • Industriousness: %.2f\n", agentCfg.Traits.Industriousness)
