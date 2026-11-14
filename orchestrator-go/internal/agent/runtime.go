@@ -11,6 +11,8 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -71,18 +73,34 @@ type SocketPosition struct {
 	Z float64 `json:"z"`
 }
 
+// System1UtilityScores represents real-time System 1 reactive utility and drive scores.
+type System1UtilityScores struct {
+	Food        float64 `json:"food"`
+	Hunger      float64 `json:"hunger"`
+	Threat      float64 `json:"threat"`
+	Confidence  float64 `json:"confidence"`
+	Exploration float64 `json:"exploration"`
+	SleepNeed   float64 `json:"sleep_need"`
+}
+
 // SocketStatusResponse represents the JSON payload served over the per-agent UNIX domain socket.
 type SocketStatusResponse struct {
-	Agent           string          `json:"agent"`
-	Clan            string          `json:"clan"`
-	Status          string          `json:"status"`
-	PID             int             `json:"pid"`
-	WorldTick       int64           `json:"world_tick"`
-	Health          float32         `json:"health"`
-	FoodLevel       int32           `json:"food_level"`
-	Position        *SocketPosition `json:"position,omitempty"`
-	NavigationState string          `json:"navigation_state"`
-	UptimeSeconds   float64         `json:"uptime_seconds"`
+	Agent                 string                `json:"agent"`
+	Clan                  string                `json:"clan"`
+	Status                string                `json:"status"`
+	PID                   int                   `json:"pid"`
+	WorldTick             int64                 `json:"world_tick"`
+	Health                float32               `json:"health"`
+	FoodLevel             int32                 `json:"food_level"`
+	Position              *SocketPosition       `json:"position,omitempty"`
+	NavigationState       string                `json:"navigation_state"`
+	NavigationDestination *SocketPosition       `json:"navigation_destination,omitempty"`
+	UptimeSeconds         float64               `json:"uptime_seconds"`
+	MemoryRSS             uint64                `json:"memory_rss"`
+	MemoryRSSMB           float64               `json:"memory_rss_mb"`
+	FrameLatencyMs        float64               `json:"frame_latency_ms"`
+	ActiveLLMRequests     int32                 `json:"active_llm_requests"`
+	UtilityScores         *System1UtilityScores `json:"utility_scores,omitempty"`
 }
 
 // AgentRuntime manages the isolated OS-process lifecycle for an individual agent.
@@ -110,6 +128,11 @@ type AgentRuntime struct {
 	socketWg   sync.WaitGroup
 	pid        int
 	startTime  time.Time
+
+	// Diagnostics Telemetry & Metrics
+	navDestination     *SocketPosition
+	frameLatencyMicros atomic.Int64
+	activeLLMRequests  atomic.Int32
 
 	// State and synchronization
 	mu                 sync.RWMutex
@@ -616,6 +639,150 @@ func (r *AgentRuntime) UptimeSeconds() float64 {
 	return time.Since(r.startTime).Seconds()
 }
 
+// SetNavigationDestination updates the current Baritone navigation destination target.
+func (r *AgentRuntime) SetNavigationDestination(dest *SocketPosition) {
+	r.mu.Lock()
+	r.navDestination = dest
+	r.mu.Unlock()
+}
+
+// NavigationDestination returns the current Baritone navigation destination target, if any.
+func (r *AgentRuntime) NavigationDestination() *SocketPosition {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	if r.navDestination == nil {
+		return nil
+	}
+	cp := *r.navDestination
+	return &cp
+}
+
+// SetFrameLatency sets the gRPC frame latency in milliseconds.
+func (r *AgentRuntime) SetFrameLatency(ms float64) {
+	r.frameLatencyMicros.Store(int64(ms * 1000.0))
+}
+
+// FrameLatency returns the latest gRPC frame latency in milliseconds.
+func (r *AgentRuntime) FrameLatency() float64 {
+	return float64(r.frameLatencyMicros.Load()) / 1000.0
+}
+
+// ActiveLLMRequests returns the number of currently active System 2 LLM requests.
+func (r *AgentRuntime) ActiveLLMRequests() int32 {
+	count := r.activeLLMRequests.Load()
+	if count < 0 {
+		return 0
+	}
+	return count
+}
+
+// IncrementActiveLLM increments the active System 2 LLM request counter.
+func (r *AgentRuntime) IncrementActiveLLM() int32 {
+	return r.activeLLMRequests.Add(1)
+}
+
+// DecrementActiveLLM decrements the active System 2 LLM request counter.
+func (r *AgentRuntime) DecrementActiveLLM() int32 {
+	return r.activeLLMRequests.Add(-1)
+}
+
+// CurrentUtilityScores evaluates the current System 1 utility scores synchronously in <0.1ms.
+func (r *AgentRuntime) CurrentUtilityScores() *System1UtilityScores {
+	r.mu.RLock()
+	frame := r.latestFrame
+	cfg := r.identityConfig
+	r.mu.RUnlock()
+
+	bravery := 0.5
+	curiosity := 0.5
+	if cfg != nil {
+		bravery = cfg.Traits.Bravery
+		curiosity = cfg.Traits.Curiosity
+	}
+
+	scores := &System1UtilityScores{
+		Food:        20.0,
+		Hunger:      0.0,
+		Threat:      0.0,
+		Confidence:  1.0,
+		Exploration: curiosity,
+		SleepNeed:   0.0,
+	}
+
+	if frame == nil || frame.Status == nil {
+		return scores
+	}
+
+	// Food and Hunger
+	foodLevel := float64(frame.Status.FoodLevel)
+	scores.Food = foodLevel
+	if foodLevel <= 6 {
+		scores.Hunger = 1.0
+	} else {
+		scores.Hunger = math.Round(((20.0-foodLevel)/14.0)*100.0) / 100.0
+		if scores.Hunger < 0 {
+			scores.Hunger = 0
+		}
+	}
+
+	// Threat and Confidence
+	_, conf, hostiles := system1.AssessImmediateThreats(frame, bravery)
+	scores.Confidence = math.Round(conf*100.0) / 100.0
+	if len(hostiles) > 0 {
+		var totalThreat float64
+		for _, e := range frame.VisibleEntities {
+			if e != nil && system1.IsHostile(e) {
+				totalThreat += system1.MobThreat(e.EntityType)
+			}
+		}
+		scores.Threat = totalThreat
+	} else if frame.LastDamageTaken != nil {
+		scores.Threat = system1.ThreatDefault
+	}
+
+	// Sleep Need
+	tod := ((frame.TimeOfDay % 24000) + 24000) % 24000
+	if frame.Status.IsSleeping {
+		scores.SleepNeed = 1.0
+	} else if frame.Weather == civquestv1.Weather_WEATHER_THUNDER {
+		scores.SleepNeed = 0.90
+	} else if tod >= 13000 && tod < 23500 {
+		scores.SleepNeed = 0.90
+	} else if tod >= 11000 && tod < 13000 {
+		scores.SleepNeed = math.Round((0.50+float64(tod-11000)/2000.0*0.40)*100.0) / 100.0
+	} else {
+		scores.SleepNeed = math.Round((float64(tod)/24000.0*0.40)*100.0) / 100.0
+	}
+
+	// Exploration
+	if tod >= 1000 && tod < 11000 {
+		scores.Exploration = math.Round((curiosity*0.8+0.2)*100.0) / 100.0
+	} else {
+		scores.Exploration = math.Round((curiosity*0.4)*100.0) / 100.0
+	}
+
+	return scores
+}
+
+// ReadProcessMemoryRSS returns the current resident set size (RSS) in bytes.
+// It inspects /proc/self/statm on Linux with fallback to Go runtime.MemStats.
+func ReadProcessMemoryRSS() uint64 {
+	if data, err := os.ReadFile("/proc/self/statm"); err == nil {
+		fields := strings.Fields(string(data))
+		if len(fields) >= 2 {
+			if pages, err := strconv.ParseUint(fields[1], 10, 64); err == nil && pages > 0 {
+				return pages * uint64(os.Getpagesize())
+			}
+		}
+	}
+	var ms runtime.MemStats
+	runtime.ReadMemStats(&ms)
+	if ms.Sys > 0 {
+		return ms.Sys
+	}
+	return ms.Alloc
+}
+
 // QueueIntent enqueues an AgentIntent into the outbound SlotQueue.
 // If the intent's SequenceId is <= 0, it is automatically assigned via atomic increment.
 // If the intent's AgentId is blank, it defaults to the runtime's AgentID.
@@ -643,6 +810,16 @@ func (r *AgentRuntime) QueueIntent(intent *civquestv1.AgentIntent) error {
 	}
 	if intent.SequenceId <= 0 {
 		intent.SequenceId = r.sequenceID.Add(1)
+	}
+
+	if nav := intent.GetNavigate(); nav != nil && nav.Target != nil {
+		r.mu.Lock()
+		r.navDestination = &SocketPosition{
+			X: nav.Target.X,
+			Y: nav.Target.Y,
+			Z: nav.Target.Z,
+		}
+		r.mu.Unlock()
 	}
 
 	r.slotQueue.Put(false, intent)
@@ -707,6 +884,16 @@ func (r *AgentRuntime) QueuePriorityIntent(intent *civquestv1.AgentIntent) error
 	}
 	if intent.SequenceId <= 0 {
 		intent.SequenceId = r.sequenceID.Add(1)
+	}
+
+	if nav := intent.GetNavigate(); nav != nil && nav.Target != nil {
+		r.mu.Lock()
+		r.navDestination = &SocketPosition{
+			X: nav.Target.X,
+			Y: nav.Target.Y,
+			Z: nav.Target.Z,
+		}
+		r.mu.Unlock()
 	}
 
 	r.slotQueue.Put(true, intent)
@@ -975,10 +1162,12 @@ func (r *AgentRuntime) recvLoop(ctx context.Context, stream civquestv1.CivQuestB
 		default:
 		}
 
+		recvStart := time.Now()
 		frame, err := stream.Recv()
 		if err != nil {
 			return err
 		}
+		r.frameLatencyMicros.Store(time.Since(recvStart).Microseconds())
 
 		r.processFrame(frame)
 
@@ -1014,6 +1203,9 @@ func (r *AgentRuntime) HandleTelemetryFrame(frame *civquestv1.TelemetryFrame) {
 	r.mu.Lock()
 	r.latestFrame = frame
 	r.lastProcessedSeqID = frame.LastProcessedSequenceId
+	if frame.Status != nil && frame.Status.NavigationState == civquestv1.NavigationState_NAVIGATION_STATE_ARRIVED {
+		r.navDestination = nil
+	}
 
 	if frame.DeathEvent != nil {
 		r.isDead = true
@@ -1238,6 +1430,9 @@ func (r *AgentRuntime) dispatchDialogue(frame *civquestv1.TelemetryFrame) {
 				return
 			}
 
+			r.activeLLMRequests.Add(1)
+			defer r.activeLLMRequests.Add(-1)
+
 			var chatVitals *system2.DialogueVitals
 			if vitals != nil {
 				vCopy := *vitals
@@ -1408,6 +1603,9 @@ func (r *AgentRuntime) dispatchDialogue(frame *civquestv1.TelemetryFrame) {
 				default:
 				}
 
+				r.activeLLMRequests.Add(1)
+				defer r.activeLLMRequests.Add(-1)
+
 				req := system2.TradeDialogueRequest{
 					PlayerEntityID: trade.PlayerEntityId,
 					PlayerUUID:     trade.PlayerUuid,
@@ -1525,6 +1723,9 @@ func (r *AgentRuntime) dispatchChronicler(frame *civquestv1.TelemetryFrame) {
 		reqCtx, cancel := context.WithTimeout(ctx, 45*time.Second)
 		defer cancel()
 
+		r.activeLLMRequests.Add(1)
+		defer r.activeLLMRequests.Add(-1)
+
 		req := system2.ChronicleRequest{
 			AgentID:              r.agentID,
 			ClanID:               clanID,
@@ -1571,6 +1772,9 @@ func (r *AgentRuntime) TriggerToponymy(ctx context.Context, req system2.ToponymR
 	if toponymySvc == nil {
 		return nil, errors.New("toponymy service not configured")
 	}
+
+	r.activeLLMRequests.Add(1)
+	defer r.activeLLMRequests.Add(-1)
 
 	if req.AgentID == "" {
 		req.AgentID = agentID
@@ -1710,6 +1914,9 @@ func (r *AgentRuntime) dispatchToponymy(frame *civquestv1.TelemetryFrame) {
 		if biome == "" {
 			biome = "frontier"
 		}
+
+		r.activeLLMRequests.Add(1)
+		defer r.activeLLMRequests.Add(-1)
 
 		req := system2.ToponymRequest{
 			AgentID:  agentID,
@@ -2501,19 +2708,39 @@ func (r *AgentRuntime) handleSocketConn(conn net.Conn) {
 			}
 		}
 	}
+	var navDest *SocketPosition
+	if r.navDestination != nil {
+		navDest = &SocketPosition{
+			X: r.navDestination.X,
+			Y: r.navDestination.Y,
+			Z: r.navDestination.Z,
+		}
+	}
 	r.mu.RUnlock()
 
+	rssBytes := ReadProcessMemoryRSS()
+	rssMB := math.Round((float64(rssBytes)/(1024.0*1024.0))*100.0) / 100.0
+	scores := r.CurrentUtilityScores()
+	latencyMs := r.FrameLatency()
+	activeLLM := r.ActiveLLMRequests()
+
 	resp := SocketStatusResponse{
-		Agent:           r.agentID,
-		Clan:            r.clanID,
-		Status:          statusSnapshot,
-		PID:             r.pid,
-		WorldTick:       worldTick,
-		Health:          health,
-		FoodLevel:       foodLevel,
-		Position:        pos,
-		NavigationState: navState,
-		UptimeSeconds:   r.UptimeSeconds(),
+		Agent:                 r.agentID,
+		Clan:                  r.clanID,
+		Status:                statusSnapshot,
+		PID:                   r.pid,
+		WorldTick:             worldTick,
+		Health:                health,
+		FoodLevel:             foodLevel,
+		Position:              pos,
+		NavigationState:       navState,
+		NavigationDestination: navDest,
+		UptimeSeconds:         r.UptimeSeconds(),
+		MemoryRSS:             rssBytes,
+		MemoryRSSMB:           rssMB,
+		FrameLatencyMs:        latencyMs,
+		ActiveLLMRequests:     activeLLM,
+		UtilityScores:         scores,
 	}
 
 	data, err := json.Marshal(resp)

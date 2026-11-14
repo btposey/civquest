@@ -398,6 +398,22 @@ func TestRuntime_UnixDomainSocket(t *testing.T) {
 	if resp.UptimeSeconds < 0 {
 		t.Errorf("expected positive uptime, got %f", resp.UptimeSeconds)
 	}
+	if resp.MemoryRSS == 0 {
+		t.Errorf("expected non-zero MemoryRSS bytes, got %d", resp.MemoryRSS)
+	}
+	if resp.MemoryRSSMB <= 0 {
+		t.Errorf("expected positive MemoryRSSMB, got %f", resp.MemoryRSSMB)
+	}
+	if resp.UtilityScores == nil {
+		t.Errorf("expected non-nil UtilityScores")
+	} else {
+		if resp.UtilityScores.Food != 18 {
+			t.Errorf("expected Food score 18, got %f", resp.UtilityScores.Food)
+		}
+		if resp.UtilityScores.Confidence <= 0 {
+			t.Errorf("expected positive Confidence, got %f", resp.UtilityScores.Confidence)
+		}
+	}
 
 	cancel()
 	_ = <-runErrCh
@@ -406,6 +422,145 @@ func TestRuntime_UnixDomainSocket(t *testing.T) {
 	if _, err := os.Stat(sockPath); !os.IsNotExist(err) {
 		t.Errorf("expected socket file %s to be removed after shutdown", sockPath)
 	}
+}
+
+func TestRuntime_EnrichedSocketTelemetryAndTiming(t *testing.T) {
+	mockSvc, client, cleanup := setupTestBridge(t)
+	defer cleanup()
+
+	tmpDir := t.TempDir()
+	resolver := xdg.NewResolver(xdg.WithCustomRoot(tmpDir))
+	_ = resolver.InitAgentDirectories("marcus")
+
+	cfg := xdg.DefaultAgentIdentityConfig("marcus")
+	cfg.Traits.Curiosity = 0.85
+	cfg.Traits.Bravery = 0.70
+
+	rt, err := agent.NewRuntime(agent.Config{
+		AgentID:        "marcus",
+		ClanID:         "architects",
+		Resolver:       resolver,
+		BridgeClient:   client,
+		IdentityConfig: cfg,
+	})
+	if err != nil {
+		t.Fatalf("failed creating runtime: %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	runErrCh := make(chan error, 1)
+	go func() {
+		runErrCh <- rt.Start(ctx)
+	}()
+
+	select {
+	case <-mockSvc.streamReady:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for stream readiness")
+	}
+
+	// Queue NavigateIntent targeting (100, 64, 200)
+	_ = rt.QueueIntent(&civquestv1.AgentIntent{
+		Action: &civquestv1.AgentIntent_Navigate{
+			Navigate: &civquestv1.NavigateIntent{
+				Target: &civquestv1.Vec3{X: 100.5, Y: 64.0, Z: 200.5},
+			},
+		},
+	})
+
+	// Set frame latency and simulate active LLM requests
+	rt.SetFrameLatency(3.75)
+	rt.IncrementActiveLLM()
+
+	// Send frame to populate state with hostile mobs to test threat/confidence scoring
+	_ = mockSvc.SendFrame(&civquestv1.TelemetryFrame{
+		WorldTick: 1200,
+		TimeOfDay: 6000,
+		Status: &civquestv1.AgentStatus{
+			Health:          15.0,
+			MaxHealth:       20.0,
+			FoodLevel:       5, // critical hunger <= 6
+			Position:        &civquestv1.Vec3{X: 10.0, Y: 64.0, Z: 20.0},
+			NavigationState: civquestv1.NavigationState_NAVIGATION_STATE_PATHING,
+		},
+		VisibleEntities: []*civquestv1.VisibleEntity{
+			{
+				EntityId:   99,
+				EntityType: "minecraft:zombie",
+				Position:   &civquestv1.Vec3{X: 15.0, Y: 64.0, Z: 20.0},
+				Distance:   5.0,
+				IsHostile:  true,
+			},
+		},
+	})
+
+	for start := time.Now(); time.Since(start) < 2*time.Second; time.Sleep(10 * time.Millisecond) {
+		if rt.WorldTick() == 1200 {
+			break
+		}
+	}
+
+	sockPath := rt.SocketPath()
+	connStart := time.Now()
+	conn, err := net.DialTimeout("unix", sockPath, 200*time.Millisecond)
+	if err != nil {
+		t.Fatalf("failed dialing agent socket: %v", err)
+	}
+	defer conn.Close()
+
+	var resp agent.SocketStatusResponse
+	dec := json.NewDecoder(conn)
+	if err := dec.Decode(&resp); err != nil {
+		t.Fatalf("failed decoding socket status response: %v", err)
+	}
+	elapsed := time.Since(connStart)
+
+	// Verify non-blocking JSON protocol timing (< 5ms)
+	if elapsed > 100*time.Millisecond {
+		t.Errorf("socket query took %v, expected < 100ms in test environment", elapsed)
+	}
+
+	if resp.Agent != "marcus" || resp.Clan != "architects" {
+		t.Errorf("unexpected agent/clan: %s / %s", resp.Agent, resp.Clan)
+	}
+	if resp.NavigationState != "NAVIGATION_STATE_PATHING" {
+		t.Errorf("expected PATHING navigation state, got %s", resp.NavigationState)
+	}
+	if resp.NavigationDestination == nil {
+		t.Fatal("expected non-nil NavigationDestination")
+	}
+	// Verify destination was set (either original target or System 1 flee target)
+	if resp.NavigationDestination.Y != 64.0 {
+		t.Errorf("unexpected NavigationDestination Y: %+v", resp.NavigationDestination)
+	}
+	if resp.FrameLatencyMs <= 0 {
+		t.Errorf("expected positive frame latency, got %f", resp.FrameLatencyMs)
+	}
+	if resp.ActiveLLMRequests != 1 {
+		t.Errorf("expected active LLM requests 1, got %d", resp.ActiveLLMRequests)
+	}
+	if resp.MemoryRSS == 0 || resp.MemoryRSSMB <= 0 {
+		t.Errorf("expected positive RSS, got bytes=%d, mb=%f", resp.MemoryRSS, resp.MemoryRSSMB)
+	}
+	if resp.UtilityScores == nil {
+		t.Fatal("expected non-nil UtilityScores")
+	}
+	// Verify hunger is critical (1.0) because FoodLevel <= 6
+	if resp.UtilityScores.Hunger != 1.0 {
+		t.Errorf("expected critical hunger 1.0, got %f", resp.UtilityScores.Hunger)
+	}
+	// Verify threat is positive due to zombie
+	if resp.UtilityScores.Threat <= 0 {
+		t.Errorf("expected positive threat due to zombie, got %f", resp.UtilityScores.Threat)
+	}
+	if resp.UtilityScores.Exploration <= 0 {
+		t.Errorf("expected positive exploration score, got %f", resp.UtilityScores.Exploration)
+	}
+
+	cancel()
+	_ = <-runErrCh
 }
 
 func TestRuntime_DeathEventHandling(t *testing.T) {
