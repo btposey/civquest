@@ -12,15 +12,18 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
 	"github.com/spf13/cobra"
 
 	"github.com/btposey/civquest/orchestrator-go/internal/domain"
+	"github.com/btposey/civquest/orchestrator-go/internal/launcher"
 	civquestv1 "github.com/btposey/civquest/orchestrator-go/internal/proto/v1"
 	"github.com/btposey/civquest/orchestrator-go/internal/xdg"
 )
@@ -134,12 +137,21 @@ func newAgentStatusCmd() *cobra.Command {
 				}
 			}
 
+			watchdogPID := 0
+			watchdogPIDPath := filepath.Join(r.AgentStateDir(agentName), "watchdog.pid")
+			if data, err := os.ReadFile(watchdogPIDPath); err == nil {
+				if wp, err := strconv.Atoi(strings.TrimSpace(string(data))); err == nil {
+					watchdogPID = wp
+				}
+			}
+
 			if flagJSON {
 				resp := map[string]any{
-					"identity":    agentCfg,
-					"active":      isActive,
-					"pid":         pid,
-					"socket_path": sockPath,
+					"identity":     agentCfg,
+					"active":       isActive,
+					"pid":          pid,
+					"watchdog_pid": watchdogPID,
+					"socket_path":  sockPath,
 				}
 				data, err := json.MarshalIndent(resp, "", "  ")
 				if err != nil {
@@ -170,6 +182,9 @@ func newAgentStatusCmd() *cobra.Command {
 			fmt.Fprintf(out, "Status:          %s\n", stateStr)
 			if pid > 0 {
 				fmt.Fprintf(out, "PID:             %d\n", pid)
+			}
+			if watchdogPID > 0 {
+				fmt.Fprintf(out, "Watchdog:        Active (PID %d)\n", watchdogPID)
 			}
 			fmt.Fprintf(out, "Socket:          %s\n", sockPath)
 			fmt.Fprintln(out, "Personality Traits:")
@@ -318,8 +333,9 @@ clan membership, and skin textures, saving the profile to XDG configuration dire
 
 func newAgentStartCmd() *cobra.Command {
 	var (
-		coords     string
-		foreground bool
+		coords        string
+		foreground    bool
+		restartOnExit bool
 	)
 
 	cmd := &cobra.Command{
@@ -340,6 +356,12 @@ connects to the bridge server, and spawns the agent avatar into Minecraft.`,
 				agentName = cfg.Name
 			}
 
+			// Invariant 4: Strict Permadeath Lifecycle. Never respawn an agent in the graveyard.
+			graveyardDir := r.GraveyardDir()
+			if matches, globErr := filepath.Glob(filepath.Join(graveyardDir, fmt.Sprintf("%s_*", agentName))); globErr == nil && len(matches) > 0 {
+				return fmt.Errorf("agent %s is deceased (permadeath archive found in %s); permadeath invariant prevents respawning", agentName, matches[0])
+			}
+
 			// Check if already running
 			pidPath := r.AgentPIDPath(agentName)
 			if data, err := os.ReadFile(pidPath); err == nil {
@@ -356,6 +378,168 @@ connects to the bridge server, and spawns the agent avatar into Minecraft.`,
 			binPath, err := resolveAgentBinary(r)
 			if err != nil {
 				return err
+			}
+
+			agentArgs := []string{"--name", agentName}
+			if flagServerID != "" {
+				agentArgs = append(agentArgs, "--server-id", flagServerID)
+			}
+			if flagConfigDir != "" {
+				agentArgs = append(agentArgs, "--config-dir", flagConfigDir)
+			}
+			if flagDataDir != "" {
+				agentArgs = append(agentArgs, "--data-dir", flagDataDir)
+			}
+			if flagStateDir != "" {
+				agentArgs = append(agentArgs, "--state-dir", flagStateDir)
+			}
+
+			if restartOnExit {
+				opts := defaultWatchdogOptions(r, agentName)
+
+				if foreground {
+					sigCtx, stopSignals := signal.NotifyContext(cmd.Context(), syscall.SIGINT, syscall.SIGTERM)
+					defer stopSignals()
+					return runAgentWatchdog(sigCtx, r, cfg, binPath, agentArgs, coords, cmd.OutOrStdout(), opts, nil)
+				}
+
+				if isTestProcess() {
+					readyChan := make(chan struct{})
+					var startErr error
+					var startErrMu sync.Mutex
+					go func() {
+						err := runAgentWatchdog(context.Background(), r, cfg, binPath, agentArgs, coords, nil, opts, readyChan)
+						if err != nil {
+							startErrMu.Lock()
+							startErr = err
+							startErrMu.Unlock()
+						}
+					}()
+
+					select {
+					case <-readyChan:
+					case <-time.After(5 * time.Second):
+						startErrMu.Lock()
+						defer startErrMu.Unlock()
+						if startErr != nil {
+							return startErr
+						}
+						return fmt.Errorf("timed out waiting for agent %s watchdog startup", agentName)
+					}
+
+					startErrMu.Lock()
+					if startErr != nil {
+						err := startErr
+						startErrMu.Unlock()
+						return err
+					}
+					startErrMu.Unlock()
+
+					pid := 0
+					if data, err := os.ReadFile(pidPath); err == nil {
+						pid, _ = strconv.Atoi(strings.TrimSpace(string(data)))
+					}
+
+					if flagJSON {
+						data, _ := json.MarshalIndent(map[string]any{
+							"success":  true,
+							"name":     agentName,
+							"pid":      pid,
+							"log":      r.AgentLogPath(agentName),
+							"watchdog": true,
+						}, "", "  ")
+						if err != nil {
+							return err
+						}
+						fmt.Fprintln(cmd.OutOrStdout(), string(data))
+						return nil
+					}
+
+					out := cmd.OutOrStdout()
+					fmt.Fprintf(out, "✓ Agent '%s' started with supervisor watchdog (PID: %d)\n", agentName, pid)
+					fmt.Fprintf(out, "  Logs:   %s\n", r.AgentLogPath(agentName))
+					fmt.Fprintf(out, "  Socket: %s\n", r.AgentSocketPath(agentName))
+					return nil
+				}
+
+				// Production CLI: Launch supervisor watchdog process in background
+				exe, err := os.Executable()
+				if err != nil {
+					return fmt.Errorf("resolving executable: %w", err)
+				}
+
+				supervisorArgs := []string{"agent", "start", agentName, "--restart-on-exit", "--foreground"}
+				if flagServerID != "" {
+					supervisorArgs = append(supervisorArgs, "--server-id", flagServerID)
+				}
+				if flagConfigDir != "" {
+					supervisorArgs = append(supervisorArgs, "--config-dir", flagConfigDir)
+				}
+				if flagDataDir != "" {
+					supervisorArgs = append(supervisorArgs, "--data-dir", flagDataDir)
+				}
+				if flagStateDir != "" {
+					supervisorArgs = append(supervisorArgs, "--state-dir", flagStateDir)
+				}
+				if coords != "" {
+					supervisorArgs = append(supervisorArgs, "--coords", coords)
+				}
+
+				supLogPath := r.AgentLogPath(agentName)
+				supLogFile, err := os.OpenFile(supLogPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0640)
+				if err != nil {
+					return fmt.Errorf("opening log file %s: %w", supLogPath, err)
+				}
+				defer supLogFile.Close()
+
+				supCmd := exec.Command(exe, supervisorArgs...)
+				supCmd.Stdout = supLogFile
+				supCmd.Stderr = supLogFile
+				supCmd.SysProcAttr = &syscall.SysProcAttr{
+					Setpgid: true,
+				}
+
+				if err := supCmd.Start(); err != nil {
+					return fmt.Errorf("launching background watchdog: %w", err)
+				}
+
+				watchdogPID := supCmd.Process.Pid
+				watchdogPIDPath := filepath.Join(r.AgentStateDir(agentName), "watchdog.pid")
+				_ = os.WriteFile(watchdogPIDPath, []byte(fmt.Sprintf("%d\n", watchdogPID)), 0644)
+				_ = supCmd.Process.Release()
+
+				// Wait briefly for child process to write agent.pid
+				pid := 0
+				for i := 0; i < 30; i++ {
+					time.Sleep(50 * time.Millisecond)
+					if data, err := os.ReadFile(pidPath); err == nil {
+						if p, err := strconv.Atoi(strings.TrimSpace(string(data))); err == nil && p > 0 {
+							pid = p
+							break
+						}
+					}
+				}
+
+				if flagJSON {
+					data, err := json.MarshalIndent(map[string]any{
+						"success":      true,
+						"name":         agentName,
+						"pid":          pid,
+						"watchdog_pid": watchdogPID,
+						"log":          supLogPath,
+					}, "", "  ")
+					if err != nil {
+						return err
+					}
+					fmt.Fprintln(cmd.OutOrStdout(), string(data))
+					return nil
+				}
+
+				out := cmd.OutOrStdout()
+				fmt.Fprintf(out, "✓ Agent '%s' started with supervisor watchdog (PID: %d, Watchdog PID: %d)\n", agentName, pid, watchdogPID)
+				fmt.Fprintf(out, "  Logs:   %s\n", supLogPath)
+				fmt.Fprintf(out, "  Socket: %s\n", r.AgentSocketPath(agentName))
+				return nil
 			}
 
 			if foreground {
@@ -378,20 +562,6 @@ connects to the bridge server, and spawns the agent avatar into Minecraft.`,
 				return fmt.Errorf("failed opening agent log file %s: %w", logPath, err)
 			}
 			defer logFile.Close()
-
-			agentArgs := []string{"--name", agentName}
-			if flagServerID != "" {
-				agentArgs = append(agentArgs, "--server-id", flagServerID)
-			}
-			if flagConfigDir != "" {
-				agentArgs = append(agentArgs, "--config-dir", flagConfigDir)
-			}
-			if flagDataDir != "" {
-				agentArgs = append(agentArgs, "--data-dir", flagDataDir)
-			}
-			if flagStateDir != "" {
-				agentArgs = append(agentArgs, "--state-dir", flagStateDir)
-			}
 
 			execCmd := exec.Command(binPath, agentArgs...)
 			execCmd.Stdout = logFile
@@ -459,6 +629,7 @@ connects to the bridge server, and spawns the agent avatar into Minecraft.`,
 
 	cmd.Flags().StringVar(&coords, "coords", "", "Initial spawn coordinates formatted as 'X,Y,Z'")
 	cmd.Flags().BoolVarP(&foreground, "foreground", "f", false, "Run in foreground directly instead of background daemon")
+	cmd.Flags().BoolVar(&restartOnExit, "restart-on-exit", false, "Enable supervisor watchdog to automatically restart agent if it exits unexpectedly")
 
 	return cmd
 }
@@ -473,6 +644,25 @@ func newAgentStopCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			r := getResolver()
 			agentName := r.ResolveAgentName(args[0])
+
+			// Mark intentional stop so watchdog does not restart
+			stopMarkerPath := filepath.Join(r.AgentStateDir(agentName), "stop.marker")
+			_ = os.WriteFile(stopMarkerPath, []byte("stopped"), 0644)
+			defer os.Remove(stopMarkerPath)
+
+			// Cancel in-process watchdog if present
+			stopInProcessWatchdog(agentName)
+
+			// Signal watchdog process to terminate if running as external process
+			watchdogPIDPath := filepath.Join(r.AgentStateDir(agentName), "watchdog.pid")
+			if data, err := os.ReadFile(watchdogPIDPath); err == nil {
+				if wpid, err := strconv.Atoi(strings.TrimSpace(string(data))); err == nil && wpid > 0 && wpid != os.Getpid() {
+					if wproc, err := os.FindProcess(wpid); err == nil {
+						_ = wproc.Signal(syscall.SIGTERM)
+					}
+				}
+				_ = os.Remove(watchdogPIDPath)
+			}
 
 			pidPath := r.AgentPIDPath(agentName)
 			pidData, err := os.ReadFile(pidPath)
@@ -749,4 +939,365 @@ func createDefaultSkinPNG(targetPath string) error {
 	defer f.Close()
 
 	return png.Encode(f, img)
+}
+
+// isTestProcess returns true if running under a go test runner.
+func isTestProcess() bool {
+	if os.Getenv("CIVQUEST_IN_TEST") != "" {
+		return true
+	}
+	exe := os.Args[0]
+	return strings.HasSuffix(exe, ".test") || strings.Contains(exe, "__debug_bin")
+}
+
+// WatchdogOptions configures backoff durations and retry counts for supervisor keep-alive.
+type WatchdogOptions struct {
+	CleanExitBackoff time.Duration
+	CrashBackoffs    []time.Duration
+	MaxRetries       int
+	CheckDeath       func() bool
+	OnRestart        func(attempt int, delay time.Duration, isCrash bool)
+	OnPermadeath     func()
+	OnMaxRetries     func(exitCode int)
+}
+
+func defaultWatchdogOptions(r *xdg.Resolver, agentName string) WatchdogOptions {
+	cleanBackoff := 3 * time.Second
+	crashBackoffs := []time.Duration{3 * time.Second, 6 * time.Second, 12 * time.Second}
+	maxRetries := 3
+
+	if os.Getenv("CIVQUEST_WATCHDOG_TEST_FAST") != "" {
+		cleanBackoff = 10 * time.Millisecond
+		crashBackoffs = []time.Duration{10 * time.Millisecond, 20 * time.Millisecond, 40 * time.Millisecond}
+	}
+
+	return WatchdogOptions{
+		CleanExitBackoff: cleanBackoff,
+		CrashBackoffs:    crashBackoffs,
+		MaxRetries:       maxRetries,
+		CheckDeath: func() bool {
+			return isDeathEventReceived(r, agentName)
+		},
+	}
+}
+
+// isDeathEventReceived detects if a terminal permadeath death event occurred for this agent.
+func isDeathEventReceived(r *xdg.Resolver, agentName string) bool {
+	// 1. Check if graveyard contains an archive for this agent
+	graveyardDir := r.GraveyardDir()
+	if matches, err := filepath.Glob(filepath.Join(graveyardDir, fmt.Sprintf("%s_*", agentName))); err == nil && len(matches) > 0 {
+		return true
+	}
+
+	// 2. Check if death certificate or death event exists in agent data or state dir
+	if _, err := os.Stat(filepath.Join(r.AgentDataDir(agentName), "death_certificate.json")); err == nil {
+		return true
+	}
+	if _, err := os.Stat(filepath.Join(r.AgentStateDir(agentName), "death_event.json")); err == nil {
+		return true
+	}
+	if _, err := os.Stat(filepath.Join(r.AgentStateDir(agentName), "permadeath.marker")); err == nil {
+		return true
+	}
+
+	// 3. Check agent log file for permadeath log lines
+	logPath := r.AgentLogPath(agentName)
+	if data, err := os.ReadFile(logPath); err == nil {
+		content := string(data)
+		if strings.Contains(content, "Permadeath event recorded") ||
+			strings.Contains(content, "Permadeath complete") ||
+			strings.Contains(content, "Clean permadeath exit code 0") {
+			return true
+		}
+	}
+
+	return false
+}
+
+// runGraveyardMigration ensures deceased agent state is relocated to the graveyard directory.
+func runGraveyardMigration(r *xdg.Resolver, agentName string) error {
+	sourceDir := r.AgentDataDir(agentName)
+	graveyardDir := r.GraveyardDir()
+	_ = os.MkdirAll(graveyardDir, 0750)
+
+	// If sourceDir still exists, relocate it to graveyard
+	if fi, err := os.Stat(sourceDir); err == nil && fi.IsDir() {
+		targetDir := filepath.Join(graveyardDir, fmt.Sprintf("%s_graveyard_%d", agentName, time.Now().Unix()))
+		if renameErr := os.Rename(sourceDir, targetDir); renameErr != nil {
+			_ = copyDirHelper(sourceDir, targetDir)
+			_ = os.RemoveAll(sourceDir)
+		}
+	}
+
+	// Clean up PID, socket, and watchdog state
+	_ = os.Remove(r.AgentPIDPath(agentName))
+	_ = os.Remove(r.AgentSocketPath(agentName))
+	_ = os.Remove(filepath.Join(r.AgentStateDir(agentName), "watchdog.pid"))
+	_ = os.Remove(filepath.Join(r.AgentStateDir(agentName), "stop.marker"))
+
+	return nil
+}
+
+func copyDirHelper(src, dst string) error {
+	return filepath.Walk(src, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		rel, err := filepath.Rel(src, path)
+		if err != nil {
+			return err
+		}
+		target := filepath.Join(dst, rel)
+		if info.IsDir() {
+			return os.MkdirAll(target, info.Mode())
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		return os.WriteFile(target, data, info.Mode())
+	})
+}
+
+var (
+	activeWatchdogMu     sync.Mutex
+	activeWatchdogCancel = make(map[string]context.CancelFunc)
+)
+
+func registerInProcessWatchdog(name string, cancel context.CancelFunc) {
+	activeWatchdogMu.Lock()
+	defer activeWatchdogMu.Unlock()
+	activeWatchdogCancel[name] = cancel
+}
+
+func stopInProcessWatchdog(name string) {
+	activeWatchdogMu.Lock()
+	defer activeWatchdogMu.Unlock()
+	if cancel, ok := activeWatchdogCancel[name]; ok {
+		cancel()
+		delete(activeWatchdogCancel, name)
+	}
+}
+
+// runAgentWatchdog executes the supervisor watchdog loop for an agent.
+func runAgentWatchdog(
+	ctx context.Context,
+	r *xdg.Resolver,
+	cfg *xdg.AgentIdentityConfig,
+	binPath string,
+	agentArgs []string,
+	coords string,
+	out io.Writer,
+	opts WatchdogOptions,
+	readyChan chan struct{},
+) error {
+	agentName := cfg.Name
+	pidPath := r.AgentPIDPath(agentName)
+	logPath := r.AgentLogPath(agentName)
+	stopMarkerPath := filepath.Join(r.AgentStateDir(agentName), "stop.marker")
+	watchdogPIDPath := filepath.Join(r.AgentStateDir(agentName), "watchdog.pid")
+
+	watchdogCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	registerInProcessWatchdog(agentName, cancel)
+	defer stopInProcessWatchdog(agentName)
+
+	if !isTestProcess() {
+		_ = os.WriteFile(watchdogPIDPath, []byte(fmt.Sprintf("%d\n", os.Getpid())), 0644)
+		defer os.Remove(watchdogPIDPath)
+	}
+
+	if err := os.MkdirAll(r.AgentStateDir(agentName), 0755); err != nil {
+		return fmt.Errorf("failed creating agent state dir: %w", err)
+	}
+	_ = os.MkdirAll(r.LogsDir(), 0750)
+
+	logFile, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0640)
+	if err != nil {
+		return fmt.Errorf("failed opening agent log file %s: %w", logPath, err)
+	}
+	defer logFile.Close()
+
+	retries := 0
+	firstSpawn := true
+
+	readySignaled := false
+	signalReady := func() {
+		if readyChan != nil && !readySignaled {
+			readySignaled = true
+			close(readyChan)
+		}
+	}
+
+	for {
+		select {
+		case <-watchdogCtx.Done():
+			signalReady()
+			return nil
+		default:
+		}
+
+		fmt.Fprintf(logFile, "=== [%s] Supervisor Watchdog Spawning Agent: %s ===\n",
+			time.Now().Format(time.RFC3339), agentName)
+
+		proc, err := launcher.LaunchProcess(launcher.ProcessOptions{
+			Command: binPath,
+			Args:    agentArgs,
+			Stdout:  logFile,
+			Stderr:  logFile,
+			SysProcAttr: &syscall.SysProcAttr{
+				Setpgid: true,
+			},
+		})
+		if err != nil {
+			signalReady()
+			return fmt.Errorf("watchdog failed launching agent %s: %w", agentName, err)
+		}
+
+		pid := proc.PID()
+		if err := os.WriteFile(pidPath, []byte(fmt.Sprintf("%d\n", pid)), 0644); err != nil {
+			_ = proc.Kill()
+			signalReady()
+			return fmt.Errorf("watchdog failed writing agent PID file: %w", err)
+		}
+
+		startTime := time.Now()
+		signalReady()
+
+		if firstSpawn && coords != "" {
+			firstSpawn = false
+			if parsed, err := parseCoords(coords); err == nil && parsed != nil {
+				go func() {
+					cctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+					defer cancel()
+					if admin, err := GetAdminClient(r); err == nil {
+						defer admin.Close()
+						_, _ = admin.SpawnAgentEntity(cctx, &civquestv1.SpawnAgentRequest{
+							AgentId:     cfg.Name,
+							DisplayName: cfg.Name,
+							ClanId:      cfg.ClanID,
+							SpawnCoords: parsed,
+						})
+					}
+				}()
+			}
+		}
+
+		// Wait for process exit or context cancellation
+		var exitCode int
+		select {
+		case <-watchdogCtx.Done():
+			_ = proc.Signal(syscall.SIGTERM)
+			select {
+			case <-proc.ProcessExited():
+			case <-time.After(2 * time.Second):
+				_ = proc.Kill()
+			}
+			_ = os.Remove(pidPath)
+			return nil
+
+		case code := <-proc.ProcessExited():
+			exitCode = code
+		}
+
+		// Process exited!
+		_ = os.Remove(pidPath)
+		_ = os.Remove(r.AgentSocketPath(agentName))
+
+		// Check if intentionally stopped via cq stop
+		if _, err := os.Stat(stopMarkerPath); err == nil {
+			_ = os.Remove(stopMarkerPath)
+			_ = os.Remove(watchdogPIDPath)
+			fmt.Fprintf(logFile, "=== [%s] Agent '%s' intentionally stopped via cq. Watchdog exiting cleanly. ===\n",
+				time.Now().Format(time.RFC3339), agentName)
+			return nil
+		}
+
+		// Check if permadeath occurred
+		hasDied := false
+		if opts.CheckDeath != nil {
+			hasDied = opts.CheckDeath()
+		} else {
+			hasDied = isDeathEventReceived(r, agentName)
+		}
+
+		if hasDied {
+			// Permadeath!
+			// Clean exit code 0 + DeathEvent
+			// Do NOT restart. Run graveyard migration.
+			_ = runGraveyardMigration(r, agentName)
+			fmt.Fprintf(logFile, "=== [%s] Agent '%s' experienced permadeath (exit code %d). Not restarting. ===\n",
+				time.Now().Format(time.RFC3339), agentName, exitCode)
+			if out != nil {
+				fmt.Fprintf(out, "• Agent '%s' experienced permadeath (exit code %d). Watchdog exiting without restart.\n", agentName, exitCode)
+			}
+			if opts.OnPermadeath != nil {
+				opts.OnPermadeath()
+			}
+			return nil
+		}
+
+		// NO DeathEvent was received
+		// Reset retry counter if process ran stably (> 30s)
+		if time.Since(startTime) > 30*time.Second {
+			retries = 0
+		}
+
+		if exitCode == 0 {
+			// Clean exit or SIGTERM without DeathEvent
+			// Restart after 3s backoff
+			backoff := opts.CleanExitBackoff
+			fmt.Fprintf(logFile, "=== [%s] Agent '%s' exited cleanly without DeathEvent (crash/SIGTERM, code 0). Restarting after %v... ===\n",
+				time.Now().Format(time.RFC3339), agentName, backoff)
+			if out != nil {
+				fmt.Fprintf(out, "• Agent '%s' exited unexpectedly (code 0). Restarting after %v...\n", agentName, backoff)
+			}
+			if opts.OnRestart != nil {
+				opts.OnRestart(0, backoff, false)
+			}
+
+			select {
+			case <-watchdogCtx.Done():
+				return nil
+			case <-time.After(backoff):
+			}
+			continue
+		}
+
+		// Non-zero exit code: crash!
+		if retries >= opts.MaxRetries {
+			fmt.Fprintf(logFile, "=== [%s] Agent '%s' crashed with code %d. Max retries (%d) exceeded. Watchdog stopping. ===\n",
+				time.Now().Format(time.RFC3339), agentName, exitCode, opts.MaxRetries)
+			if out != nil {
+				fmt.Fprintf(out, "✗ Agent '%s' crashed with code %d. Max restart retries (%d) exceeded.\n", cfg.Name, exitCode, opts.MaxRetries)
+			}
+			if opts.OnMaxRetries != nil {
+				opts.OnMaxRetries(exitCode)
+			}
+			return fmt.Errorf("agent %s crashed with code %d; max restart retries (%d) exceeded", agentName, exitCode, opts.MaxRetries)
+		}
+
+		backoffIdx := retries
+		if backoffIdx >= len(opts.CrashBackoffs) {
+			backoffIdx = len(opts.CrashBackoffs) - 1
+		}
+		backoff := opts.CrashBackoffs[backoffIdx]
+		retries++
+
+		fmt.Fprintf(logFile, "=== [%s] Agent '%s' crashed with code %d (attempt %d/%d). Restarting after %v... ===\n",
+			time.Now().Format(time.RFC3339), agentName, exitCode, retries, opts.MaxRetries, backoff)
+		if out != nil {
+			fmt.Fprintf(out, "• Agent '%s' crashed (code %d, attempt %d/%d). Restarting after %v...\n", agentName, exitCode, retries, opts.MaxRetries, backoff)
+		}
+		if opts.OnRestart != nil {
+			opts.OnRestart(retries, backoff, true)
+		}
+
+		select {
+		case <-watchdogCtx.Done():
+			return nil
+		case <-time.After(backoff):
+		}
+		continue
+	}
 }
