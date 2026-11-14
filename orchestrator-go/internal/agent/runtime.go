@@ -100,8 +100,8 @@ type AgentRuntime struct {
 	connector      StreamConnector
 
 	// Intent sequence numbering and outbound queue
-	sequenceID  atomic.Int64
-	intentQueue chan *civquestv1.AgentIntent
+	sequenceID atomic.Int64
+	slotQueue  *SlotQueue
 
 	// Diagnostics & Socket
 	socketPath string
@@ -265,7 +265,7 @@ func NewRuntime(cfg Config) (*AgentRuntime, error) {
 		companionService:  companionService,
 		landmarksDB:       cfg.LandmarksDB,
 		debugLogger:       debugLog,
-		intentQueue:       make(chan *civquestv1.AgentIntent, queueSize),
+		slotQueue:         NewSlotQueue(),
 		socketPath:        sockPath,
 		pid:               os.Getpid(),
 		startTime:         time.Now().UTC(),
@@ -616,9 +616,10 @@ func (r *AgentRuntime) UptimeSeconds() float64 {
 	return time.Since(r.startTime).Seconds()
 }
 
-// QueueIntent enqueues an AgentIntent into the outbound queue.
+// QueueIntent enqueues an AgentIntent into the outbound SlotQueue.
 // If the intent's SequenceId is <= 0, it is automatically assigned via atomic increment.
 // If the intent's AgentId is blank, it defaults to the runtime's AgentID.
+// Typed slot intents coalesce with overwrite semantics, eliminating backpressure.
 func (r *AgentRuntime) QueueIntent(intent *civquestv1.AgentIntent) error {
 	if intent == nil {
 		return ErrNilIntent
@@ -644,20 +645,14 @@ func (r *AgentRuntime) QueueIntent(intent *civquestv1.AgentIntent) error {
 		intent.SequenceId = r.sequenceID.Add(1)
 	}
 
-	select {
-	case r.intentQueue <- intent:
-		if r.debugLogger != nil {
-			r.debugLogger.Emit(r.WorldTick(), "INTENT_OUT", intentActionName(intent), map[string]any{
-				"sequence_id": intent.SequenceId,
-				"action":      intentActionName(intent),
-			})
-		}
-		return nil
-	case <-r.done:
-		return ErrRuntimeStopped
-	default:
-		return ErrQueueFull
+	r.slotQueue.Put(false, intent)
+	if r.debugLogger != nil {
+		r.debugLogger.Emit(r.WorldTick(), "INTENT_OUT", intentActionName(intent), map[string]any{
+			"sequence_id": intent.SequenceId,
+			"action":      intentActionName(intent),
+		})
 	}
+	return nil
 }
 
 // EnqueueIntent is an alias for QueueIntent.
@@ -665,14 +660,30 @@ func (r *AgentRuntime) EnqueueIntent(intent *civquestv1.AgentIntent) error {
 	return r.QueueIntent(intent)
 }
 
-// IntentQueue returns the read-only outbound intent channel for inspection by test harnesses.
-func (r *AgentRuntime) IntentQueue() <-chan *civquestv1.AgentIntent {
-	return r.intentQueue
+// SlotQueue returns the outbound SlotQueue.
+func (r *AgentRuntime) SlotQueue() *SlotQueue {
+	return r.slotQueue
 }
 
-// QueuePriorityIntent enqueues a critical reflex intent into the outbound queue.
-// If the queue is full, it evicts the oldest intent from the front of the channel,
-// logging a warning with the dropped intent type, ensuring combat and panic reflexes are never dropped.
+// DrainIntents drains all pending intents from the SlotQueue.
+func (r *AgentRuntime) DrainIntents() []*civquestv1.AgentIntent {
+	return r.slotQueue.Drain()
+}
+
+// IntentQueue returns a channel containing all currently pending intents drained from the SlotQueue.
+// Kept for backward compatibility with test harnesses and evaluators.
+func (r *AgentRuntime) IntentQueue() <-chan *civquestv1.AgentIntent {
+	intents := r.slotQueue.Drain()
+	ch := make(chan *civquestv1.AgentIntent, len(intents))
+	for _, in := range intents {
+		ch <- in
+	}
+	return ch
+}
+
+// QueuePriorityIntent enqueues a critical reflex intent into the outbound SlotQueue with high priority.
+// Priority intents are drained before normal intents. If a pending intent of the same slot type
+// exists, it is overwritten while preserving priority dispatch ordering.
 func (r *AgentRuntime) QueuePriorityIntent(intent *civquestv1.AgentIntent) error {
 	if intent == nil {
 		return ErrNilIntent
@@ -698,30 +709,15 @@ func (r *AgentRuntime) QueuePriorityIntent(intent *civquestv1.AgentIntent) error
 		intent.SequenceId = r.sequenceID.Add(1)
 	}
 
-	for {
-		select {
-		case <-r.done:
-			return ErrRuntimeStopped
-		case r.intentQueue <- intent:
-			if r.debugLogger != nil {
-				r.debugLogger.Emit(r.WorldTick(), "INTENT_OUT", intentActionName(intent), map[string]any{
-					"sequence_id": intent.SequenceId,
-					"action":      intentActionName(intent),
-					"priority":    true,
-				})
-			}
-			return nil
-		default:
-		}
-
-		// Queue is full: evict front intent to prioritize reflex
-		select {
-		case dropped := <-r.intentQueue:
-			log.Printf("[WARN] agent %s: intent queue full, evicted older intent %s (seq %d) for priority reflex %s",
-				r.agentID, intentActionName(dropped), dropped.SequenceId, intentActionName(intent))
-		default:
-		}
+	r.slotQueue.Put(true, intent)
+	if r.debugLogger != nil {
+		r.debugLogger.Emit(r.WorldTick(), "INTENT_OUT", intentActionName(intent), map[string]any{
+			"sequence_id": intent.SequenceId,
+			"action":      intentActionName(intent),
+			"priority":    true,
+		})
 	}
+	return nil
 }
 
 func intentActionName(intent *civquestv1.AgentIntent) string {
@@ -887,12 +883,66 @@ func (r *AgentRuntime) Stop() {
 	})
 }
 
-// sendLoop reads queued AgentIntents and writes them to the gRPC stream.
+// sendLoop reads queued AgentIntents from SlotQueue and writes them to the gRPC stream.
+// Coalesced slot intents (attacks, navigation, items, crafting, interactions) are dispatched
+// immediately with priority ordering. Ordered PlaceBlockIntents bypass the slot queue and are
+// dispatched through a 4-tick rate limiter to preserve spatial construction sequencing.
 func (r *AgentRuntime) sendLoop(ctx context.Context, cancel context.CancelFunc, stream civquestv1.CivQuestBridgeService_ConnectAgentClient, errCh chan<- error) {
 	var sendErr error
 	defer func() {
 		errCh <- sendErr
 	}()
+
+	ticker := time.NewTicker(10 * time.Millisecond)
+	defer ticker.Stop()
+
+	var lastPlaceBlockTick int64 = -100
+	var lastPlaceBlockTime time.Time
+	const placeBlockRateLimitTicks = 4
+	const placeBlockRateLimitDuration = 200 * time.Millisecond
+
+	dispatch := func() bool {
+		// 1. Drain and immediately dispatch all coalesced slot intents (priority-first)
+		slotIntents := r.slotQueue.DrainSlots()
+		for _, in := range slotIntents {
+			if err := stream.Send(in); err != nil {
+				sendErr = err
+				cancel()
+				return false
+			}
+		}
+
+		// 2. Dispatch ordered PlaceBlockIntents through the 4-tick rate limiter
+		if r.slotQueue.PlaceBlockCount() > 0 {
+			curTick := r.WorldTick()
+			now := time.Now()
+			canDispatch := false
+			if curTick > 0 && lastPlaceBlockTick >= 0 {
+				if curTick-lastPlaceBlockTick >= placeBlockRateLimitTicks {
+					canDispatch = true
+				}
+			} else if !lastPlaceBlockTime.IsZero() {
+				if now.Sub(lastPlaceBlockTime) >= placeBlockRateLimitDuration {
+					canDispatch = true
+				}
+			} else {
+				canDispatch = true
+			}
+
+			if canDispatch {
+				if pbIntent := r.slotQueue.PopPlaceBlock(); pbIntent != nil {
+					if err := stream.Send(pbIntent); err != nil {
+						sendErr = err
+						cancel()
+						return false
+					}
+					lastPlaceBlockTick = curTick
+					lastPlaceBlockTime = now
+				}
+			}
+		}
+		return true
+	}
 
 	for {
 		select {
@@ -900,14 +950,15 @@ func (r *AgentRuntime) sendLoop(ctx context.Context, cancel context.CancelFunc, 
 			return
 		case <-r.done:
 			return
-		case intent, ok := <-r.intentQueue:
-			if !ok {
+		case <-r.slotQueue.Ready():
+			if !dispatch() {
 				return
 			}
-			if err := stream.Send(intent); err != nil {
-				sendErr = err
-				cancel()
-				return
+		case <-ticker.C:
+			if r.slotQueue.HasPending() {
+				if !dispatch() {
+					return
+				}
 			}
 		}
 	}
