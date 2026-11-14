@@ -4,7 +4,9 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"syscall"
 	"testing"
+	"time"
 )
 
 func TestUpsertProfilePreservesOthersAndIsIdempotent(t *testing.T) {
@@ -80,5 +82,111 @@ func TestHasNeoForgeClient(t *testing.T) {
 	_ = os.WriteFile(filepath.Join(d, "neoforge-21.1.265.json"), []byte("{}"), 0o644)
 	if !HasNeoForgeClient(mc, "21.1.265") {
 		t.Error("expected true")
+	}
+}
+
+func TestManagedProcess_ProcessExited_CleanExit(t *testing.T) {
+	proc, err := LaunchCommand("bash", "-c", "exit 0")
+	if err != nil {
+		t.Fatalf("failed launching command: %v", err)
+	}
+
+	if proc.PID() <= 0 {
+		t.Errorf("expected positive PID, got %d", proc.PID())
+	}
+
+	select {
+	case code := <-proc.ProcessExited():
+		if code != 0 {
+			t.Errorf("expected exit code 0, got %d", code)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("timed out waiting for process exit channel")
+	}
+
+	if proc.ExitCode() != 0 {
+		t.Errorf("expected ExitCode() = 0, got %d", proc.ExitCode())
+	}
+	if proc.IsRunning() {
+		t.Error("expected IsRunning() to be false")
+	}
+}
+
+func TestManagedProcess_ProcessExited_Crash(t *testing.T) {
+	proc, err := LaunchCommand("bash", "-c", "exit 42")
+	if err != nil {
+		t.Fatalf("failed launching command: %v", err)
+	}
+
+	select {
+	case code := <-proc.ProcessExited():
+		if code != 42 {
+			t.Errorf("expected exit code 42, got %d", code)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("timed out waiting for process exit channel")
+	}
+
+	if proc.ExitCode() != 42 {
+		t.Errorf("expected ExitCode() = 42, got %d", proc.ExitCode())
+	}
+}
+
+func TestManagedProcess_Signal_And_Kill(t *testing.T) {
+	proc, err := LaunchCommand("sleep", "10")
+	if err != nil {
+		t.Fatalf("failed launching sleep: %v", err)
+	}
+
+	if !proc.IsRunning() {
+		t.Error("expected process to be running")
+	}
+
+	if err := proc.Signal(syscall.SIGTERM); err != nil {
+		t.Fatalf("failed signaling process: %v", err)
+	}
+
+	select {
+	case code := <-proc.ProcessExited():
+		if code == 0 {
+			t.Errorf("expected non-zero exit code on SIGTERM, got %d", code)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("timed out waiting for process exit channel after SIGTERM")
+	}
+}
+
+func TestManagedProcess_LaunchProcess_Options(t *testing.T) {
+	dir := t.TempDir()
+	opts := ProcessOptions{
+		Command: "bash",
+		Args:    []string{"-c", "pwd"},
+		Dir:     dir,
+	}
+
+	proc, err := LaunchProcess(opts)
+	if err != nil {
+		t.Fatalf("failed LaunchProcess: %v", err)
+	}
+
+	code := <-proc.ProcessExited()
+	if code != 0 {
+		t.Errorf("expected exit code 0, got %d", code)
+	}
+}
+
+func TestDefaultWatchdogConfig(t *testing.T) {
+	cfg := DefaultWatchdogConfig()
+	if cfg.CleanExitBackoff != 3*time.Second {
+		t.Errorf("expected 3s clean exit backoff, got %v", cfg.CleanExitBackoff)
+	}
+	if len(cfg.CrashBackoffs) != 3 {
+		t.Fatalf("expected 3 crash backoff steps, got %d", len(cfg.CrashBackoffs))
+	}
+	if cfg.CrashBackoffs[0] != 3*time.Second || cfg.CrashBackoffs[1] != 6*time.Second || cfg.CrashBackoffs[2] != 12*time.Second {
+		t.Errorf("expected [3s, 6s, 12s] crash backoffs, got %v", cfg.CrashBackoffs)
+	}
+	if cfg.MaxRetries != 3 {
+		t.Errorf("expected MaxRetries = 3, got %d", cfg.MaxRetries)
 	}
 }
