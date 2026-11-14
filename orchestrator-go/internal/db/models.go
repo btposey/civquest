@@ -214,3 +214,34 @@ type SharecroppingContract struct {
 	CreatedTick        int64   `json:"created_tick"`
 	ExpiresTick        int64   `json:"expires_tick"`
 }
+
+// Rumor represents an aggregated intelligence report, hazard warning, resource discovery, or settler lore.
+// Stored in rumors.db in the rumors table.
+type Rumor struct {
+	RumorID         string    `json:"rumor_id"`
+	Category        string    `json:"category"` // 'HAZARD', 'DISCOVERY', 'RESOURCE', 'TRADE', 'LORE', 'GOSSIP'
+	Content         string    `json:"content"`
+	SourceAgentID   string    `json:"source_agent_id"`
+	SourceAgentName string    `json:"source_agent_name,omitempty"`
+	LocationX       float64   `json:"location_x"`
+	LocationY       float64   `json:"location_y"`
+	LocationZ       float64   `json:"location_z"`
+	LocationName    string    `json:"location_name,omitempty"`
+	Credibility     float64   `json:"credibility"` // [0.0 - 1.0]
+	SpreadCount     int       `json:"spread_count"`
+	OriginTick      int64     `json:"origin_tick"`
+	CreatedTick     int64     `json:"created_tick"`
+	ExpiresTick     int64     `json:"expires_tick"` // 0 = permanent/indefinite
+	CreatedAt       time.Time `json:"created_at,omitempty"`
+}
+
+// RumorDiffusionRecord tracks an instance of a rumor diffused from a speaker agent to a listener agent.
+// Stored in rumors.db in the rumor_diffusion table.
+type RumorDiffusionRecord struct {
+	ID              int64     `json:"id,omitempty"`
+	RumorID         string    `json:"rumor_id"`
+	SpeakerAgentID  string    `json:"speaker_agent_id"`
+	ListenerAgentID string    `json:"listener_agent_id"`
+	WorldTick       int64     `json:"world_tick"`
+	CreatedAt       time.Time `json:"created_at,omitempty"`
+}

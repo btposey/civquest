@@ -1099,3 +1099,43 @@ func (c *CivicRegistryDB) FindZoneAtByTypeContext(ctx context.Context, x, y, z i
 	}
 	return &zone, nil
 }
+
+// ListZonesByType returns all functional zones matching the specified zoneType.
+func (c *CivicRegistryDB) ListZonesByType(zoneType string) ([]*FunctionalZone, error) {
+	return c.ListZonesByTypeContext(context.Background(), zoneType)
+}
+
+// ListZonesByTypeContext returns all functional zones matching the specified zoneType with context.
+func (c *CivicRegistryDB) ListZonesByTypeContext(ctx context.Context, zoneType string) ([]*FunctionalZone, error) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	if c.isClosed {
+		return nil, ErrClosed
+	}
+
+	query := `
+		SELECT zone_id, zone_type, min_x, min_y, min_z, max_x, max_y, max_z,
+		       owner_agent_id, name, created_tick
+		FROM functional_zones
+		WHERE zone_type = ?
+		ORDER BY created_tick ASC, zone_id ASC;
+	`
+	rows, err := c.db.QueryContext(ctx, query, zoneType)
+	if err != nil {
+		return nil, fmt.Errorf("listing functional zones by type: %w", err)
+	}
+	defer rows.Close()
+
+	var zones []*FunctionalZone
+	for rows.Next() {
+		var z FunctionalZone
+		if err := rows.Scan(
+			&z.ZoneID, &z.ZoneType, &z.MinX, &z.MinY, &z.MinZ, &z.MaxX, &z.MaxY, &z.MaxZ,
+			&z.OwnerAgentID, &z.Name, &z.CreatedTick,
+		); err != nil {
+			return nil, fmt.Errorf("scanning zone row: %w", err)
+		}
+		zones = append(zones, &z)
+	}
+	return zones, rows.Err()
+}
