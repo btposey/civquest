@@ -2,6 +2,7 @@ package com.civquest.mod;
 
 import com.civquest.mod.client.driver.ClientDriverInit;
 import com.civquest.mod.gametest.AgentGameTest;
+import com.civquest.mod.worldgen.CivQuestStructures;
 import com.mojang.brigadier.CommandDispatcher;
 import com.mojang.brigadier.arguments.StringArgumentType;
 import com.mojang.brigadier.builder.LiteralArgumentBuilder;
@@ -45,7 +46,7 @@ public class CivQuestMod {
     private CivQuestBridgeServer bridgeServer;
 
     public CivQuestMod(IEventBus modEventBus) {
-        LOGGER.info("CivQuest mod initializing");
+        LOGGER.info("CivQuest mod initializing (registered starter camp structure: {})", CivQuestStructures.PIONEER_CAMPFIRE_ID);
         modEventBus.addListener(this::onRegisterGameTests);
         modEventBus.addListener(this::onRegisterPayloadHandlers);
 
