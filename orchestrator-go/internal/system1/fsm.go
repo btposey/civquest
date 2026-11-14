@@ -43,6 +43,9 @@ type FSMContext struct {
 	PavingTracker  *RoadPavingTracker
 	StuckTicks     int64
 	TimeInState    int64
+	HasShield      bool
+	HasWeapon      bool
+	WeaponSlot     int32
 }
 
 // HostilesPresent checks if any hostile mobs are within perception range.
@@ -538,12 +541,22 @@ func (h *EmergencyStateHandler) OnTick(ctx *FSMContext) []FSMIntent {
 		bravery = ctx.Config.Traits.Bravery
 	}
 
+	hasShield := ctx.HasShield
+	hasWeapon := ctx.HasWeapon
+	weaponSlot := ctx.WeaponSlot
+	if !hasShield && !hasWeapon && ctx.Frame != nil && ctx.Frame.Status != nil && len(ctx.Frame.Status.Inventory) > 0 {
+		hasShield, hasWeapon, weaponSlot = ScanInventoryCombatItems(ctx.Frame.Status.Inventory)
+	}
+
 	rCtx := ReflexContext{
-		AgentID:   ctx.AgentID,
-		Bravery:   bravery,
-		SafeNodes: ctx.SafeNodes,
-		Frame:     ctx.Frame,
-		CanEat:    ctx.CanEat,
+		AgentID:    ctx.AgentID,
+		Bravery:    bravery,
+		SafeNodes:  ctx.SafeNodes,
+		Frame:      ctx.Frame,
+		CanEat:     ctx.CanEat,
+		HasShield:  hasShield,
+		HasWeapon:  hasWeapon,
+		WeaponSlot: weaponSlot,
 	}
 
 	combatResult := EvaluateReflexes(rCtx)

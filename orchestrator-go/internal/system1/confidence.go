@@ -509,11 +509,47 @@ func ensureFinite(target, fallback *civquestv1.Vec3) *civquestv1.Vec3 {
 
 // ReflexContext encapsulates sensory and environmental state for System 1 evaluation.
 type ReflexContext struct {
-	AgentID   string
-	Bravery   float64
-	SafeNodes []db.MapNode
-	Frame     *civquestv1.TelemetryFrame
-	CanEat    bool
+	AgentID    string
+	Bravery    float64
+	SafeNodes  []db.MapNode
+	Frame      *civquestv1.TelemetryFrame
+	CanEat     bool
+	HasShield  bool
+	HasWeapon  bool
+	WeaponSlot int32
+}
+
+// ScanInventoryCombatItems scans inventory items and returns whether a shield exists,
+// whether a weapon exists, and the best weapon slot (-1 if no weapon).
+func ScanInventoryCombatItems(inventory []*civquestv1.ItemStackProto) (hasShield bool, hasWeapon bool, weaponSlot int32) {
+	weaponSlot = -1
+	bestScore := -1.0
+	for _, item := range inventory {
+		if item == nil || item.Count <= 0 {
+			continue
+		}
+		if IsShield(item.ItemId) {
+			hasShield = true
+		}
+		id := strings.ToLower(strings.TrimSpace(item.ItemId))
+		if idx := strings.Index(id, ":"); idx != -1 {
+			id = id[idx+1:]
+		}
+		score := weaponScore(id)
+		if score > 0 || strings.Contains(id, "sword") || strings.Contains(id, "axe") ||
+			strings.Contains(id, "trident") || strings.Contains(id, "mace") {
+			hasWeapon = true
+			effectiveScore := score
+			if item.Slot >= 0 && item.Slot <= 8 {
+				effectiveScore += 0.05 // prefer hotbar weapon
+			}
+			if effectiveScore > bestScore {
+				bestScore = effectiveScore
+				weaponSlot = item.Slot
+			}
+		}
+	}
+	return hasShield, hasWeapon, weaponSlot
 }
 
 // ReflexResult encapsulates the deterministic output and queued intents from System 1 evaluation.
@@ -638,18 +674,60 @@ func EvaluateReflexes(ctx ReflexContext) ReflexResult {
 		fleeTarget := ComputeFleeTarget(selfPos, hostiles, DefaultFleeDistance, ctx.SafeNodes)
 		res.FleeTarget = fleeTarget
 
-		// 1. Raise shield and flee immediately
+		// 1. Raise shield (if present in inventory) and flee immediately
 		attackIntent := &civquestv1.AgentIntent{
 			AgentId: ctx.AgentID,
 			Action: &civquestv1.AgentIntent_Attack{
 				Attack: &civquestv1.AttackIntent{
 					TargetEntityId:  targetID,
-					RaiseShield:     true,
+					RaiseShield:     ctx.HasShield,
 					FleeImmediately: true,
 				},
 			},
 		}
 		res.Intents = append(res.Intents, attackIntent)
+
+		// Tactical counter-attack if hostile mob is within melee reach (<= 2.5 blocks) and agent has a weapon
+		if ctx.HasWeapon {
+			var meleeTarget *civquestv1.VisibleEntity
+			if priorityHostile != nil {
+				dist := float64(priorityHostile.Distance)
+				if dist <= 0 && priorityHostile.Position != nil && selfPos != nil {
+					dist = math.Hypot(priorityHostile.Position.X-selfPos.X, priorityHostile.Position.Z-selfPos.Z)
+				}
+				if dist <= 2.5 {
+					meleeTarget = priorityHostile
+				}
+			}
+			if meleeTarget == nil {
+				for _, h := range hostiles {
+					if h == nil {
+						continue
+					}
+					dist := float64(h.Distance)
+					if dist <= 0 && h.Position != nil && selfPos != nil {
+						dist = math.Hypot(h.Position.X-selfPos.X, h.Position.Z-selfPos.Z)
+					}
+					if dist <= 2.5 {
+						meleeTarget = h
+						break
+					}
+				}
+			}
+			if meleeTarget != nil {
+				counterAttackIntent := &civquestv1.AgentIntent{
+					AgentId: ctx.AgentID,
+					Action: &civquestv1.AgentIntent_Attack{
+						Attack: &civquestv1.AttackIntent{
+							TargetEntityId:  meleeTarget.EntityId,
+							RaiseShield:     ctx.HasShield,
+							FleeImmediately: false,
+						},
+					},
+				}
+				res.Intents = append(res.Intents, counterAttackIntent)
+			}
+		}
 
 		// 2. Navigate away from threat
 		navIntent := &civquestv1.AgentIntent{

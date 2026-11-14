@@ -2204,6 +2204,12 @@ func (r *AgentRuntime) evaluateSystem1Reflexes(frame *civquestv1.TelemetryFrame)
 		r.mu.Unlock()
 	}
 
+	var hasShield, hasWeapon bool
+	var weaponSlot int32 = -1
+	if frame.Status != nil && len(frame.Status.Inventory) > 0 {
+		hasShield, hasWeapon, weaponSlot = system1.ScanInventoryCombatItems(frame.Status.Inventory)
+	}
+
 	ctx := &system1.FSMContext{
 		AgentID:        r.agentID,
 		Frame:          frame,
@@ -2213,6 +2219,9 @@ func (r *AgentRuntime) evaluateSystem1Reflexes(frame *civquestv1.TelemetryFrame)
 		CanEat:         canEat,
 		LastEatingTick: r.lastEatingTick,
 		PavingTracker:  r.pavingTracker,
+		HasShield:      hasShield,
+		HasWeapon:      hasWeapon,
+		WeaponSlot:     weaponSlot,
 	}
 
 	// Execute formal HFSM tick
