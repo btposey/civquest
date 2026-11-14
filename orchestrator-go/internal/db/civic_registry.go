@@ -73,6 +73,7 @@ const (
 	ZoneTypePasture     = "PASTURE"
 	ZoneTypeLibrary     = "LIBRARY"
 	ZoneTypeCemetery    = "CEMETERY"
+	ZoneTypeMarket      = "MARKET"
 )
 
 // IsValidZoneType checks whether zoneType is a recognized functional zone type.
@@ -81,7 +82,7 @@ func IsValidZoneType(zoneType string) bool {
 	case ZoneTypeGranary, ZoneTypeResidential, ZoneTypeHousing,
 		ZoneTypeWorkshop, ZoneTypeFarm, ZoneTypeFarmland,
 		ZoneTypeTavern, ZoneTypeDefense, ZoneTypePasture,
-		ZoneTypeLibrary, ZoneTypeCemetery:
+		ZoneTypeLibrary, ZoneTypeCemetery, ZoneTypeMarket:
 		return true
 	default:
 		return false
@@ -836,6 +837,16 @@ func (c *CivicRegistryDB) ListProjectsContext(ctx context.Context) ([]*Construct
 // RegisterZone registers a spatial functional zone.
 func (c *CivicRegistryDB) RegisterZone(z *FunctionalZone) error {
 	return c.RegisterZoneContext(context.Background(), z)
+}
+
+// RegisterFunctionalZone registers a spatial functional zone (alias for RegisterZone).
+func (c *CivicRegistryDB) RegisterFunctionalZone(z *FunctionalZone) error {
+	return c.RegisterZoneContext(context.Background(), z)
+}
+
+// RegisterFunctionalZoneContext registers a spatial functional zone with context (alias for RegisterZoneContext).
+func (c *CivicRegistryDB) RegisterFunctionalZoneContext(ctx context.Context, z *FunctionalZone) error {
+	return c.RegisterZoneContext(ctx, z)
 }
 
 // RegisterZoneContext registers a spatial functional zone with context.
