@@ -144,6 +144,23 @@ func (d *DiplomacyDB) migrate(ctx context.Context) error {
 	);
 
 	CREATE INDEX IF NOT EXISTS idx_clan_affinities_status ON clan_affinities(status);
+
+	CREATE TABLE IF NOT EXISTS caravan_logs (
+		expedition_id TEXT PRIMARY KEY,
+		leader_agent_id TEXT NOT NULL,
+		source_clan_id TEXT NOT NULL DEFAULT '',
+		target_clan_id TEXT NOT NULL,
+		status TEXT NOT NULL,
+		cargo_items_json TEXT NOT NULL DEFAULT '[]',
+		goods_exchanged_json TEXT NOT NULL DEFAULT '[]',
+		affinity_delta REAL NOT NULL DEFAULT 0.0,
+		departure_tick INTEGER NOT NULL DEFAULT 0,
+		return_tick INTEGER NOT NULL DEFAULT 0,
+		created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+	);
+
+	CREATE INDEX IF NOT EXISTS idx_caravan_logs_clan ON caravan_logs(target_clan_id);
+	CREATE INDEX IF NOT EXISTS idx_caravan_logs_status ON caravan_logs(status);
 	`
 	_, err := d.db.ExecContext(ctx, schema)
 	return err
@@ -478,4 +495,273 @@ func (d *DiplomacyDB) ListAffinitiesContext(ctx context.Context) ([]*ClanAffinit
 		affinities = append(affinities, &a)
 	}
 	return affinities, rows.Err()
+}
+
+// RecordCaravanTrade records trade volume and updates affinity delta atomically after a caravan expedition.
+func (d *DiplomacyDB) RecordCaravanTrade(targetClanID string, volume int, affinityDelta float64, worldTick int64) error {
+	return d.RecordCaravanTradeContext(context.Background(), targetClanID, volume, affinityDelta, worldTick)
+}
+
+// RecordCaravanTradeContext records trade volume and updates affinity delta atomically with context.
+func (d *DiplomacyDB) RecordCaravanTradeContext(ctx context.Context, targetClanID string, volume int, affinityDelta float64, worldTick int64) error {
+	if targetClanID == "" {
+		return errors.New("target_clan_id cannot be empty")
+	}
+	if volume < 0 {
+		return errors.New("trade volume must be non-negative")
+	}
+	if math.IsNaN(affinityDelta) || math.IsInf(affinityDelta, 0) {
+		return errors.New("affinity delta must be a finite number")
+	}
+
+	d.writeMu.Lock()
+	defer d.writeMu.Unlock()
+
+	d.mu.RLock()
+	if d.isClosed {
+		d.mu.RUnlock()
+		return ErrClosed
+	}
+	d.mu.RUnlock()
+
+	tx, err := d.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("beginning record caravan trade tx: %w", err)
+	}
+	defer tx.Rollback()
+
+	var currentScore float64
+	var currentStatus, currentTreaty string
+	var currentVolume int
+	err = tx.QueryRowContext(ctx, `SELECT affinity_score, status, active_treaty, trade_volume FROM clan_affinities WHERE target_clan_id = ?;`, targetClanID).Scan(&currentScore, &currentStatus, &currentTreaty, &currentVolume)
+	if errors.Is(err, sql.ErrNoRows) {
+		currentScore = 0.0
+		currentStatus = DiplomacyStatusNeutral
+		currentTreaty = TreatyNone
+		currentVolume = 0
+	} else if err != nil {
+		return fmt.Errorf("querying current affinity for caravan trade: %w", err)
+	}
+
+	newScore := currentScore + affinityDelta
+	if newScore > 100.0 {
+		newScore = 100.0
+	} else if newScore < -100.0 {
+		newScore = -100.0
+	}
+	newStatus := ComputeAffinityStatus(newScore)
+	if currentStatus == DiplomacyStatusWar {
+		hasActiveTreaty := currentTreaty != "" && currentTreaty != TreatyNone
+		if newScore < 0.0 && !hasActiveTreaty {
+			newStatus = DiplomacyStatusWar
+		}
+	}
+	newVolume := currentVolume + volume
+
+	upsertQuery := `
+		INSERT INTO clan_affinities (target_clan_id, affinity_score, status, trade_volume, active_treaty, treaty_expiry_tick, last_updated_tick)
+		VALUES (?, ?, ?, ?, 'NONE', 0, ?)
+		ON CONFLICT(target_clan_id) DO UPDATE SET
+			affinity_score = excluded.affinity_score,
+			status = excluded.status,
+			trade_volume = excluded.trade_volume,
+			last_updated_tick = excluded.last_updated_tick;
+	`
+	if _, err := tx.ExecContext(ctx, upsertQuery, targetClanID, newScore, newStatus, newVolume, worldTick); err != nil {
+		return fmt.Errorf("upserting caravan trade: %w", err)
+	}
+
+	return tx.Commit()
+}
+
+// LogExpedition records a new caravan expedition entry in caravan_logs.
+func (d *DiplomacyDB) LogExpedition(entry *CaravanLogEntry) error {
+	return d.LogExpeditionContext(context.Background(), entry)
+}
+
+// LogExpeditionContext records a new caravan expedition entry in caravan_logs with context.
+func (d *DiplomacyDB) LogExpeditionContext(ctx context.Context, entry *CaravanLogEntry) error {
+	if entry == nil {
+		return errors.New("caravan log entry cannot be nil")
+	}
+	if entry.ExpeditionID == "" {
+		return errors.New("expedition_id cannot be empty")
+	}
+	if entry.TargetClanID == "" {
+		return errors.New("target_clan_id cannot be empty")
+	}
+
+	d.writeMu.Lock()
+	defer d.writeMu.Unlock()
+
+	d.mu.RLock()
+	if d.isClosed {
+		d.mu.RUnlock()
+		return ErrClosed
+	}
+	d.mu.RUnlock()
+
+	query := `
+		INSERT INTO caravan_logs (expedition_id, leader_agent_id, source_clan_id, target_clan_id, status, cargo_items_json, goods_exchanged_json, affinity_delta, departure_tick, return_tick, created_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE(NULLIF(?, ''), CURRENT_TIMESTAMP))
+		ON CONFLICT(expedition_id) DO UPDATE SET
+			status = excluded.status,
+			cargo_items_json = excluded.cargo_items_json,
+			goods_exchanged_json = excluded.goods_exchanged_json,
+			affinity_delta = excluded.affinity_delta,
+			departure_tick = excluded.departure_tick,
+			return_tick = excluded.return_tick;
+	`
+	createdStr := ""
+	if !entry.CreatedAt.IsZero() {
+		createdStr = entry.CreatedAt.UTC().Format("2006-01-02 15:04:05")
+	}
+	_, err := d.db.ExecContext(ctx, query,
+		entry.ExpeditionID,
+		entry.LeaderAgentID,
+		entry.SourceClanID,
+		entry.TargetClanID,
+		entry.Status,
+		entry.CargoItemsJSON,
+		entry.GoodsExchangedJSON,
+		entry.AffinityDelta,
+		entry.DepartureTick,
+		entry.ReturnTick,
+		createdStr,
+	)
+	if err != nil {
+		return fmt.Errorf("inserting caravan log: %w", err)
+	}
+	return nil
+}
+
+// UpdateExpeditionLog updates the status and outcome of an existing caravan log entry.
+func (d *DiplomacyDB) UpdateExpeditionLog(expeditionID string, status string, returnTick int64, goodsExchangedJSON string, affinityDelta float64) error {
+	return d.UpdateExpeditionLogContext(context.Background(), expeditionID, status, returnTick, goodsExchangedJSON, affinityDelta)
+}
+
+// UpdateExpeditionLogContext updates the status and outcome of an existing caravan log entry with context.
+func (d *DiplomacyDB) UpdateExpeditionLogContext(ctx context.Context, expeditionID string, status string, returnTick int64, goodsExchangedJSON string, affinityDelta float64) error {
+	if expeditionID == "" {
+		return errors.New("expedition_id cannot be empty")
+	}
+
+	d.writeMu.Lock()
+	defer d.writeMu.Unlock()
+
+	d.mu.RLock()
+	if d.isClosed {
+		d.mu.RUnlock()
+		return ErrClosed
+	}
+	d.mu.RUnlock()
+
+	query := `
+		UPDATE caravan_logs SET
+			status = ?,
+			return_tick = ?,
+			goods_exchanged_json = ?,
+			affinity_delta = ?
+		WHERE expedition_id = ?;
+	`
+	res, err := d.db.ExecContext(ctx, query, status, returnTick, goodsExchangedJSON, affinityDelta, expeditionID)
+	if err != nil {
+		return fmt.Errorf("updating caravan log: %w", err)
+	}
+	rows, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("checking affected rows in caravan log: %w", err)
+	}
+	if rows == 0 {
+		return fmt.Errorf("caravan log not found: %s", expeditionID)
+	}
+	return nil
+}
+
+// GetExpeditionLog retrieves a caravan log entry by ID. Returns nil, nil if not found.
+func (d *DiplomacyDB) GetExpeditionLog(expeditionID string) (*CaravanLogEntry, error) {
+	return d.GetExpeditionLogContext(context.Background(), expeditionID)
+}
+
+// GetExpeditionLogContext retrieves a caravan log entry by ID with context.
+func (d *DiplomacyDB) GetExpeditionLogContext(ctx context.Context, expeditionID string) (*CaravanLogEntry, error) {
+	if expeditionID == "" {
+		return nil, errors.New("expedition_id cannot be empty")
+	}
+
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+	if d.isClosed {
+		return nil, ErrClosed
+	}
+
+	query := `
+		SELECT expedition_id, leader_agent_id, source_clan_id, target_clan_id, status, cargo_items_json, goods_exchanged_json, affinity_delta, departure_tick, return_tick, created_at
+		FROM caravan_logs
+		WHERE expedition_id = ?;
+	`
+	var e CaravanLogEntry
+	var createdStr string
+	err := d.db.QueryRowContext(ctx, query, expeditionID).Scan(
+		&e.ExpeditionID, &e.LeaderAgentID, &e.SourceClanID, &e.TargetClanID,
+		&e.Status, &e.CargoItemsJSON, &e.GoodsExchangedJSON, &e.AffinityDelta,
+		&e.DepartureTick, &e.ReturnTick, &createdStr,
+	)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("querying caravan log: %w", err)
+	}
+	if createdStr != "" {
+		if t, err := time.Parse("2006-01-02 15:04:05", createdStr); err == nil {
+			e.CreatedAt = t
+		}
+	}
+	return &e, nil
+}
+
+// ListExpeditionLogs returns all caravan expedition logs ordered by departure_tick DESC.
+func (d *DiplomacyDB) ListExpeditionLogs() ([]*CaravanLogEntry, error) {
+	return d.ListExpeditionLogsContext(context.Background())
+}
+
+// ListExpeditionLogsContext returns all caravan expedition logs with context.
+func (d *DiplomacyDB) ListExpeditionLogsContext(ctx context.Context) ([]*CaravanLogEntry, error) {
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+	if d.isClosed {
+		return nil, ErrClosed
+	}
+
+	query := `
+		SELECT expedition_id, leader_agent_id, source_clan_id, target_clan_id, status, cargo_items_json, goods_exchanged_json, affinity_delta, departure_tick, return_tick, created_at
+		FROM caravan_logs
+		ORDER BY departure_tick DESC, expedition_id ASC;
+	`
+	rows, err := d.db.QueryContext(ctx, query)
+	if err != nil {
+		return nil, fmt.Errorf("listing caravan logs: %w", err)
+	}
+	defer rows.Close()
+
+	var logs []*CaravanLogEntry
+	for rows.Next() {
+		var e CaravanLogEntry
+		var createdStr string
+		if err := rows.Scan(
+			&e.ExpeditionID, &e.LeaderAgentID, &e.SourceClanID, &e.TargetClanID,
+			&e.Status, &e.CargoItemsJSON, &e.GoodsExchangedJSON, &e.AffinityDelta,
+			&e.DepartureTick, &e.ReturnTick, &createdStr,
+		); err != nil {
+			return nil, fmt.Errorf("scanning caravan log row: %w", err)
+		}
+		if createdStr != "" {
+			if t, err := time.Parse("2006-01-02 15:04:05", createdStr); err == nil {
+				e.CreatedAt = t
+			}
+		}
+		logs = append(logs, &e)
+	}
+	return logs, rows.Err()
 }
