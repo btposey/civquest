@@ -18,18 +18,23 @@ import (
 
 // Project status constants.
 const (
-	ProjectStatusPlanned    = "PLANNED"
-	ProjectStatusInProgress = "IN_PROGRESS"
-	ProjectStatusCompleted  = "COMPLETED"
-	ProjectStatusHalted     = "HALTED"
-	ProjectStatusAbandoned  = "ABANDONED"
+	ProjectStatusPlanned     = "PLANNED"
+	ProjectStatusSurveying   = "SURVEYING"
+	ProjectStatusAwaitingBOM = "AWAITING_BOM"
+	ProjectStatusClearing    = "CLEARING"
+	ProjectStatusBuilding    = "BUILDING"
+	ProjectStatusInProgress  = "IN_PROGRESS"
+	ProjectStatusCompleted   = "COMPLETED"
+	ProjectStatusHalted      = "HALTED"
+	ProjectStatusAbandoned   = "ABANDONED"
 )
 
 // IsValidProjectStatus checks whether status is a valid project status.
 func IsValidProjectStatus(status string) bool {
 	switch status {
-	case ProjectStatusPlanned, ProjectStatusInProgress, ProjectStatusCompleted,
-		ProjectStatusHalted, ProjectStatusAbandoned:
+	case ProjectStatusPlanned, ProjectStatusSurveying, ProjectStatusAwaitingBOM,
+		ProjectStatusClearing, ProjectStatusBuilding, ProjectStatusInProgress,
+		ProjectStatusCompleted, ProjectStatusHalted, ProjectStatusAbandoned:
 		return true
 	default:
 		return false
@@ -698,6 +703,45 @@ func (c *CivicRegistryDB) UpdateProjectStatusContext(ctx context.Context, projec
 	res, err := c.db.ExecContext(ctx, query, status, worldTick, projectID)
 	if err != nil {
 		return fmt.Errorf("updating project status: %w", err)
+	}
+	rows, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("reading rows affected: %w", err)
+	}
+	if rows == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// UpdateProjectMaterialsReserved updates the materials reserved JSON of a project.
+func (c *CivicRegistryDB) UpdateProjectMaterialsReserved(projectID string, materialsReservedJSON string, worldTick int64) error {
+	return c.UpdateProjectMaterialsReservedContext(context.Background(), projectID, materialsReservedJSON, worldTick)
+}
+
+// UpdateProjectMaterialsReservedContext updates the materials reserved JSON of a project with context.
+func (c *CivicRegistryDB) UpdateProjectMaterialsReservedContext(ctx context.Context, projectID string, materialsReservedJSON string, worldTick int64) error {
+	if projectID == "" {
+		return errors.New("project_id cannot be empty")
+	}
+	if materialsReservedJSON == "" {
+		materialsReservedJSON = "{}"
+	}
+
+	c.writeMu.Lock()
+	defer c.writeMu.Unlock()
+
+	c.mu.RLock()
+	if c.isClosed {
+		c.mu.RUnlock()
+		return ErrClosed
+	}
+	c.mu.RUnlock()
+
+	query := `UPDATE construction_projects SET materials_reserved_json = ?, updated_tick = ? WHERE project_id = ?;`
+	res, err := c.db.ExecContext(ctx, query, materialsReservedJSON, worldTick, projectID)
+	if err != nil {
+		return fmt.Errorf("updating project materials reserved: %w", err)
 	}
 	rows, err := res.RowsAffected()
 	if err != nil {
