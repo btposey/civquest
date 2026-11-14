@@ -276,3 +276,20 @@ func (b *Blueprint) SaveYAML(path string) error {
 
 	return nil
 }
+
+// ToVoxelMatrix converts the blueprint into an explicit 3D VoxelMatrix.
+func (b *Blueprint) ToVoxelMatrix() (*VoxelMatrix, error) {
+	return FromBlueprint(b)
+}
+
+// FromVoxelMatrix repopulates the blueprint from a 3D VoxelMatrix.
+func (b *Blueprint) FromVoxelMatrix(vm *VoxelMatrix) {
+	if vm == nil {
+		return
+	}
+	newBp := vm.ToBlueprint(b.Name, b.Type, b.Style, b.Author)
+	b.Dimensions = newBp.Dimensions
+	b.Palette = newBp.Palette
+	b.Layers = newBp.Layers
+	b.Blocks = nil
+}
