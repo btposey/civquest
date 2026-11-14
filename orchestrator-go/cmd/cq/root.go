@@ -61,8 +61,9 @@ func getResolver() *xdg.Resolver {
 // NewRootCmd initializes and returns the top-level cq Cobra command.
 func NewRootCmd() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "cq",
-		Short: "CivQuest Settlement Engine CLI & Supervisor",
+		Use:     "cq",
+		Aliases: []string{"civctl"},
+		Short:   "CivQuest Settlement Engine CLI & Supervisor",
 		Long: `cq is the management interface and process supervisor for CivQuest.
 It provides control over the NeoForge server, autonomous agents,
 clans, blueprints, and system health.`,
@@ -94,6 +95,7 @@ clans, blueprints, and system health.`,
 	cmd.AddCommand(newBlueprintCmd())
 	cmd.AddCommand(newGatewayCmd())
 	cmd.AddCommand(newClientCmd())
+	cmd.AddCommand(newDaemonCmd())
 
 	return cmd
 }
