@@ -142,17 +142,29 @@ func (c *GlobalConfig) Validate() error {
 
 // ==================== AGENT IDENTITY CONFIG ====================
 
+// AgentLineageConfig records genealogical heritage and dynastic ancestry per ADR-008.
+type AgentLineageConfig struct {
+	Generation int      `yaml:"generation,omitempty"`
+	Parents    []string `yaml:"parents,omitempty"`
+	Mother     string   `yaml:"mother,omitempty"`
+	Father     string   `yaml:"father,omitempty"`
+	BirthTick  int64    `yaml:"birth_tick,omitempty"`
+}
+
 // AgentIdentityConfig holds the identity, personality, voice, and skin configuration for an agent.
 type AgentIdentityConfig struct {
-	Name           string           `yaml:"name"`
-	UUID           string           `yaml:"uuid"`
-	ClanID         string           `yaml:"clan_id"`
-	Profession     string           `yaml:"profession"`
-	SecondaryHobby string           `yaml:"secondary_hobby,omitempty"`
-	SystemPrompt   string           `yaml:"system_prompt,omitempty"`
-	Voice          AgentVoiceConfig `yaml:"voice,omitempty"`
-	Traits         AgentTraits      `yaml:"traits"`
-	Skin           AgentSkinConfig  `yaml:"skin"`
+	Name           string             `yaml:"name"`
+	UUID           string             `yaml:"uuid"`
+	ClanID         string             `yaml:"clan_id"`
+	Profession     string             `yaml:"profession"`
+	SecondaryHobby string             `yaml:"secondary_hobby,omitempty"`
+	SystemPrompt   string             `yaml:"system_prompt,omitempty"`
+	Voice          AgentVoiceConfig   `yaml:"voice,omitempty"`
+	Traits         AgentTraits        `yaml:"traits"`
+	Skin           AgentSkinConfig    `yaml:"skin"`
+	IsChild        bool               `yaml:"is_child,omitempty"`
+	Generation     int                `yaml:"generation,omitempty"`
+	Lineage        AgentLineageConfig `yaml:"lineage,omitempty"`
 }
 
 // AgentVoiceConfig defines individualized speech cadence, diction, quirks, and persona parameters
@@ -328,6 +340,7 @@ func DefaultAgentIdentityConfig(name string) *AgentIdentityConfig {
 		Profession:     "UNASSIGNED",
 		SecondaryHobby: "NONE",
 		SystemPrompt:   "",
+		Generation:     1,
 		Traits: AgentTraits{
 			Bravery:         0.5,
 			Industriousness: 0.5,
@@ -356,6 +369,12 @@ func (c *AgentIdentityConfig) Validate() error {
 		if !uuidRegex.MatchString(c.UUID) {
 			return fmt.Errorf("%w: %q does not match canonical UUID format", ErrInvalidUUID, c.UUID)
 		}
+	}
+	if c.Generation < 0 {
+		return fmt.Errorf("generation cannot be negative: %d", c.Generation)
+	}
+	if c.Generation == 0 {
+		c.Generation = 1
 	}
 	if err := c.Traits.Validate(); err != nil {
 		return fmt.Errorf("traits validation failed for agent %q: %w", c.Name, err)
@@ -588,6 +607,10 @@ func (r *Resolver) LoadAgentConfig(agentName string) (*AgentIdentityConfig, erro
 	directPath := r.AgentConfigPath(canonical)
 	if _, err := os.Stat(directPath); err == nil {
 		return LoadAgentConfig(directPath)
+	}
+	identityPath := filepath.Join(r.AgentsConfigDir(), canonical, "identity.yaml")
+	if _, err := os.Stat(identityPath); err == nil {
+		return LoadAgentConfig(identityPath)
 	}
 	// Fallback: scan AgentsConfigDir case-insensitively for the YAML file
 	if entries, err := os.ReadDir(r.AgentsConfigDir()); err == nil {

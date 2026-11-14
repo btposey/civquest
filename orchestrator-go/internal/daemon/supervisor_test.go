@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/btposey/civquest/orchestrator-go/internal/db"
 	"github.com/btposey/civquest/orchestrator-go/internal/xdg"
 )
 
@@ -450,5 +451,153 @@ exit 0
 		if a.Name == "mortal" && a.Running {
 			t.Errorf("permadeath invariant violation: deceased agent was started or restarted")
 		}
+	}
+}
+
+func TestSupervisor_DynasticReproductionIntegration(t *testing.T) {
+	tmpDir := t.TempDir()
+	r := xdg.NewResolver(xdg.WithCustomRoot(tmpDir))
+
+	mockScriptPath := filepath.Join(tmpDir, "bin", "civquest-agent")
+	mockScriptContent := `#!/usr/bin/env bash
+echo "Agent $2 starting"
+sleep 10
+`
+	writeMockScript(t, mockScriptPath, mockScriptContent)
+
+	cfg := DefaultSupervisorConfig(r)
+	cfg.AgentBinPath = mockScriptPath
+	cfg.ClanID = "pioneers"
+	cfg.HealthCheckInterval = 100 * time.Millisecond
+	cfg.EnableReproduction = true
+	cfg.ReproductionCheckInterval = 500 * time.Millisecond
+	cfg.MaxActiveAgents = 16
+	cfg.MinFoodSurplusDays = 7
+	cfg.DailyFoodPerAgent = 3
+
+	sup, err := NewDaemonSupervisor(cfg)
+	if err != nil {
+		t.Fatalf("failed creating supervisor: %v", err)
+	}
+
+	if sup.ReproductionGovernor() == nil {
+		t.Fatalf("expected non-nil ReproductionGovernor")
+	}
+
+	ctx := context.Background()
+
+	// Seed Parents
+	setupMockAgent(t, r, "father", "pioneers")
+	setupMockAgent(t, r, "mother", "pioneers")
+
+	// Set up relationship databases for father and mother
+	dbF, err := r.LoadAgentConfig("father")
+	if err != nil {
+		t.Fatalf("loading father: %v", err)
+	}
+	dbM, err := r.LoadAgentConfig("mother")
+	if err != nil {
+		t.Fatalf("loading mother: %v", err)
+	}
+	dbF.UUID = "00000000-0000-0000-0000-000000000001"
+	dbM.UUID = "00000000-0000-0000-0000-000000000002"
+	_ = r.SaveAgentConfig(dbF)
+	_ = r.SaveAgentConfig(dbM)
+
+	// Open agent DBs and record mutual marriage
+	agentDBFather, err := db.OpenAgentDBForAgent(r, "father")
+	if err != nil {
+		t.Fatalf("opening father DB: %v", err)
+	}
+	_ = agentDBFather.UpsertRelationship(ctx, db.Relationship{
+		EntityUUID:       dbM.UUID,
+		EntityName:       "mother",
+		EntityType:       "AGENT",
+		DispositionScore: 85.0,
+		KinshipRole:      "SPOUSE",
+	})
+	_ = agentDBFather.Close()
+
+	agentDBMother, err := db.OpenAgentDBForAgent(r, "mother")
+	if err != nil {
+		t.Fatalf("opening mother DB: %v", err)
+	}
+	_ = agentDBMother.UpsertRelationship(ctx, db.Relationship{
+		EntityUUID:       dbF.UUID,
+		EntityName:       "father",
+		EntityType:       "AGENT",
+		DispositionScore: 90.0,
+		KinshipRole:      "SPOUSE",
+	})
+	_ = agentDBMother.Close()
+
+	// 1. Direct reproduction evaluation test via supervisor before civic setup:
+	res, err := sup.EvaluateReproduction(ctx, "pioneers")
+	if err != nil {
+		t.Fatalf("EvaluateReproduction error: %v", err)
+	}
+	if res.Success {
+		t.Errorf("expected reproduction to fail before granary/housing setup")
+	}
+
+	// 2. Setup granary food and residential zone
+	civicDB, err := db.OpenCivicRegistryDBForClan(r, "pioneers")
+	if err != nil {
+		t.Fatalf("opening civic DB: %v", err)
+	}
+	_ = civicDB.AddGranaryStockContext(ctx, "minecraft:bread", 100, 100)
+	_ = civicDB.RegisterZoneContext(ctx, &db.FunctionalZone{
+		ZoneID:       "zone_cabin_1",
+		ZoneType:     db.ZoneTypeResidential,
+		MinX:         0,
+		MinY:         64,
+		MinZ:         0,
+		MaxX:         10,
+		MaxY:         70,
+		MaxZ:         10,
+		OwnerAgentID: "",
+		Name:         "Homestead 1",
+	})
+	_ = civicDB.Close()
+
+	// 3. Evaluate reproduction again via supervisor: should succeed!
+	resSuccess, err := sup.EvaluateReproduction(ctx, "pioneers")
+	if err != nil {
+		t.Fatalf("EvaluateReproduction error: %v", err)
+	}
+	if !resSuccess.Success {
+		t.Fatalf("expected reproduction to succeed, got reason: %s", resSuccess.CheckResult.Reason)
+	}
+	if resSuccess.ChildID == "" {
+		t.Fatalf("expected child ID")
+	}
+	if resSuccess.Generation != 2 {
+		t.Errorf("child generation = %d, want 2", resSuccess.Generation)
+	}
+
+	// 4. Verify child process was started via supervisor
+	if !resSuccess.ProcessStarted {
+		t.Errorf("expected child process to be started by supervisor")
+	}
+	defer func() {
+		_ = sup.StopAgent(resSuccess.ChildID)
+	}()
+
+	st, err := sup.Status()
+	if err != nil {
+		t.Fatalf("getting status: %v", err)
+	}
+	foundChild := false
+	for _, a := range st.ManagedAgents {
+		if a.Name == resSuccess.ChildID {
+			foundChild = true
+			if a.PID <= 0 {
+				t.Errorf("child agent PID was invalid: %d", a.PID)
+			}
+			break
+		}
+	}
+	if !foundChild {
+		t.Errorf("child %s not found in supervisor managed agents", resSuccess.ChildID)
 	}
 }

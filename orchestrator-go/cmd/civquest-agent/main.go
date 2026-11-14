@@ -303,10 +303,16 @@ func run(parentCtx context.Context, args []string, stdout, stderr io.Writer, r *
 	}
 
 	// Spawn the agent avatar in the Minecraft world
+	var skinBytes []byte
+	if cfg.Skin.TexturePath != "" {
+		skinBytes, _ = os.ReadFile(cfg.Skin.TexturePath)
+	}
 	spawnResp, err := bridgeClient.SpawnAgentEntity(parentCtx, &civquestv1.SpawnAgentRequest{
-		AgentId:     cfg.Name,
-		DisplayName: cfg.Name,
-		ClanId:      cfg.ClanID,
+		AgentId:      cfg.Name,
+		DisplayName:  cfg.Name,
+		ClanId:       cfg.ClanID,
+		IsChild:      cfg.IsChild,
+		SkinPngBytes: skinBytes,
 	})
 	if err != nil {
 		if parentCtx.Err() != nil {

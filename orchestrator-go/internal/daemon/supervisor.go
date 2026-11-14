@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/btposey/civquest/orchestrator-go/internal/domain"
+	"github.com/btposey/civquest/orchestrator-go/internal/governor"
 	"github.com/btposey/civquest/orchestrator-go/internal/xdg"
 )
 
@@ -203,9 +204,15 @@ type SupervisorConfig struct {
 	CleanExitBackoff    time.Duration
 	CrashBackoff        time.Duration
 	ShutdownTimeout     time.Duration
-	Out                 io.Writer
-	ErrOut              io.Writer
-	CheckDeath          func(agentName string) bool
+	Out                       io.Writer
+	ErrOut                    io.Writer
+	CheckDeath                func(agentName string) bool
+	EnableReproduction        bool
+	ReproductionCheckInterval time.Duration
+	ReproductionGovernor      *governor.ReproductionGovernor
+	MaxActiveAgents           int
+	MinFoodSurplusDays        int
+	DailyFoodPerAgent         int
 }
 
 // DefaultSupervisorConfig returns standard supervisor configuration defaults.
@@ -214,15 +221,17 @@ func DefaultSupervisorConfig(r *xdg.Resolver) SupervisorConfig {
 		r = xdg.DefaultResolver()
 	}
 	return SupervisorConfig{
-		Resolver:            r,
-		HealthCheckInterval: 2 * time.Second,
-		RestartOnCrash:      true,
-		MaxRestarts:         5,
-		CleanExitBackoff:    500 * time.Millisecond,
-		CrashBackoff:        1 * time.Second,
-		ShutdownTimeout:     5 * time.Second,
-		Out:                 os.Stdout,
-		ErrOut:              os.Stderr,
+		Resolver:                  r,
+		HealthCheckInterval:       2 * time.Second,
+		RestartOnCrash:            true,
+		MaxRestarts:               5,
+		CleanExitBackoff:          500 * time.Millisecond,
+		CrashBackoff:              1 * time.Second,
+		ShutdownTimeout:           5 * time.Second,
+		Out:                       os.Stdout,
+		ErrOut:                    os.Stderr,
+		EnableReproduction:        true,
+		ReproductionCheckInterval: 1 * time.Minute,
 	}
 }
 
@@ -251,18 +260,19 @@ type AgentWorker struct {
 // DaemonSupervisor orchestrates the lifecycle, health monitoring, and structured logging
 // of process-isolated autonomous agent workers.
 type DaemonSupervisor struct {
-	resolver  *xdg.Resolver
-	config    SupervisorConfig
-	mu        sync.RWMutex
-	logMu     sync.Mutex
-	workers   map[string]*AgentWorker
-	pid       int
-	startTime time.Time
-	ctx       context.Context
-	cancel    context.CancelFunc
-	done      chan struct{}
-	stopped   bool
-	readyChan chan struct{}
+	resolver             *xdg.Resolver
+	config               SupervisorConfig
+	mu                   sync.RWMutex
+	logMu                sync.Mutex
+	workers              map[string]*AgentWorker
+	pid                  int
+	startTime            time.Time
+	ctx                  context.Context
+	cancel               context.CancelFunc
+	done                 chan struct{}
+	stopped              bool
+	readyChan            chan struct{}
+	reproductionGovernor *governor.ReproductionGovernor
 }
 
 // NewDaemonSupervisor creates a new supervisor instance.
@@ -286,13 +296,35 @@ func NewDaemonSupervisor(cfg SupervisorConfig) (*DaemonSupervisor, error) {
 		cfg.ErrOut = io.Discard
 	}
 
-	return &DaemonSupervisor{
+	sup := &DaemonSupervisor{
 		resolver:  cfg.Resolver,
 		config:    cfg,
 		workers:   make(map[string]*AgentWorker),
 		done:      make(chan struct{}),
 		readyChan: make(chan struct{}),
-	}, nil
+	}
+
+	if cfg.EnableReproduction {
+		reproGov := cfg.ReproductionGovernor
+		if reproGov == nil {
+			var err error
+			reproGov, err = governor.NewReproductionGovernor(governor.ReproductionGovernorConfig{
+				Resolver:           cfg.Resolver,
+				MaxActiveAgents:    cfg.MaxActiveAgents,
+				MinFoodSurplusDays: cfg.MinFoodSurplusDays,
+				DailyFoodPerAgent:  cfg.DailyFoodPerAgent,
+				ClanID:             cfg.ClanID,
+			})
+			if err != nil {
+				return nil, fmt.Errorf("initializing reproduction governor: %w", err)
+			}
+		}
+		reproGov.SetLauncher(sup)
+		reproGov.SetActiveAgentsProvider(sup.ActiveAgentCount)
+		sup.reproductionGovernor = reproGov
+	}
+
+	return sup, nil
 }
 
 // Ready returns a channel that is closed once the supervisor has initialized, cleaned stale files,
@@ -435,6 +467,15 @@ func (s *DaemonSupervisor) Run(ctx context.Context) error {
 	ticker := time.NewTicker(s.config.HealthCheckInterval)
 	defer ticker.Stop()
 
+	// Dynastic reproduction governor ticker loop
+	var reproTicker *time.Ticker
+	var reproChan <-chan time.Time
+	if s.config.EnableReproduction && s.config.ReproductionCheckInterval > 0 {
+		reproTicker = time.NewTicker(s.config.ReproductionCheckInterval)
+		defer reproTicker.Stop()
+		reproChan = reproTicker.C
+	}
+
 	for {
 		select {
 		case <-s.ctx.Done():
@@ -446,6 +487,9 @@ func (s *DaemonSupervisor) Run(ctx context.Context) error {
 
 		case <-ticker.C:
 			s.healthCheck()
+
+		case <-reproChan:
+			s.evaluateReproduction()
 		}
 	}
 }
@@ -905,6 +949,62 @@ func (s *DaemonSupervisor) Status() (*DaemonStatus, error) {
 	}
 
 	return status, nil
+}
+
+// ActiveAgentCount returns the number of actively running managed agents.
+func (s *DaemonSupervisor) ActiveAgentCount() int {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	count := 0
+	for _, w := range s.workers {
+		w.mu.RLock()
+		if w.Running {
+			count++
+		}
+		w.mu.RUnlock()
+	}
+	return count
+}
+
+// ReproductionGovernor returns the underlying ReproductionGovernor instance, or nil if disabled.
+func (s *DaemonSupervisor) ReproductionGovernor() *governor.ReproductionGovernor {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.reproductionGovernor
+}
+
+// EvaluateReproduction immediately evaluates and triggers dynastic reproduction for clanID.
+func (s *DaemonSupervisor) EvaluateReproduction(ctx context.Context, clanID string) (*governor.ReproductionResult, error) {
+	s.mu.RLock()
+	gov := s.reproductionGovernor
+	s.mu.RUnlock()
+
+	if gov == nil {
+		return nil, errors.New("reproduction governor is not enabled")
+	}
+	return gov.Trigger(ctx, clanID)
+}
+
+func (s *DaemonSupervisor) evaluateReproduction() {
+	s.mu.RLock()
+	gov := s.reproductionGovernor
+	s.mu.RUnlock()
+
+	if gov == nil {
+		return
+	}
+
+	results, err := gov.Tick(s.ctx)
+	if err != nil {
+		s.logSupervisorEvent("Reproduction governor evaluation error: %v", err)
+		return
+	}
+	for _, res := range results {
+		if res != nil && res.Success {
+			s.logSupervisorEvent("Dynastic reproduction succeeded: Child '%s' (Generation %d) born to %s & %s in clan %s",
+				res.ChildID, res.Generation, res.ParentA, res.ParentB, s.config.ClanID)
+		}
+	}
 }
 
 func resolveAgentBinary(r *xdg.Resolver, explicitPath string) (string, error) {
