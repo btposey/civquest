@@ -245,3 +245,19 @@ type RumorDiffusionRecord struct {
 	WorldTick       int64     `json:"world_tick"`
 	CreatedAt       time.Time `json:"created_at,omitempty"`
 }
+
+// CaravanLogEntry records an inter-clan trade expedition, participants, cargo, and outcome.
+// Stored in diplomacy.db in the caravan_logs table.
+type CaravanLogEntry struct {
+	ExpeditionID       string    `json:"expedition_id"`
+	LeaderAgentID      string    `json:"leader_agent_id"`
+	SourceClanID       string    `json:"source_clan_id"`
+	TargetClanID       string    `json:"target_clan_id"`
+	Status             string    `json:"status"` // 'PLANNED', 'FORMING', 'IN_TRANSIT', 'TRADING', 'RETURNING', 'COMPLETED', 'ABORTED'
+	CargoItemsJSON     string    `json:"cargo_items_json"`
+	GoodsExchangedJSON string    `json:"goods_exchanged_json"`
+	AffinityDelta      float64   `json:"affinity_delta"`
+	DepartureTick      int64     `json:"departure_tick"`
+	ReturnTick         int64     `json:"return_tick"`
+	CreatedAt          time.Time `json:"created_at,omitempty"`
+}

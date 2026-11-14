@@ -408,3 +408,74 @@ func TestDiplomacyDB_Remediations(t *testing.T) {
 		t.Errorf("expected score -60.0 and SUSPICIOUS status, got %+v", aff2)
 	}
 }
+
+func TestDiplomacyDB_CaravanLogsAndTrade(t *testing.T) {
+	tempDir := t.TempDir()
+	dbPath := filepath.Join(tempDir, "diplomacy_caravan.db")
+	diploDB, err := OpenDiplomacyDB(dbPath, "clan_caravan_test")
+	if err != nil {
+		t.Fatalf("failed to open diplomacy db: %v", err)
+	}
+	defer diploDB.Close()
+
+	ctx := context.Background()
+
+	// 1. Log an expedition
+	entry := &CaravanLogEntry{
+		ExpeditionID:       "exp-001",
+		LeaderAgentID:      "agent_caravan_master",
+		SourceClanID:       "clan_caravan_test",
+		TargetClanID:       "clan_iron_haven",
+		Status:             "FORMING",
+		CargoItemsJSON:     `[{"item_id":"minecraft:bread","count":64}]`,
+		GoodsExchangedJSON: `[]`,
+		AffinityDelta:      0.0,
+		DepartureTick:      1000,
+	}
+	if err := diploDB.LogExpedition(entry); err != nil {
+		t.Fatalf("LogExpedition failed: %v", err)
+	}
+
+	// 2. Retrieve expedition log
+	got, err := diploDB.GetExpeditionLog("exp-001")
+	if err != nil {
+		t.Fatalf("GetExpeditionLog failed: %v", err)
+	}
+	if got == nil || got.LeaderAgentID != "agent_caravan_master" || got.Status != "FORMING" {
+		t.Fatalf("unexpected expedition log: %+v", got)
+	}
+
+	// 3. Update expedition log
+	if err := diploDB.UpdateExpeditionLog("exp-001", "COMPLETED", 25000, `[{"item_id":"minecraft:emerald","count":10}]`, 15.0); err != nil {
+		t.Fatalf("UpdateExpeditionLog failed: %v", err)
+	}
+
+	updated, err := diploDB.GetExpeditionLog("exp-001")
+	if err != nil {
+		t.Fatalf("GetExpeditionLog after update failed: %v", err)
+	}
+	if updated.Status != "COMPLETED" || updated.ReturnTick != 25000 || updated.AffinityDelta != 15.0 {
+		t.Fatalf("unexpected updated log: %+v", updated)
+	}
+
+	// 4. Record Caravan Trade
+	if err := diploDB.RecordCaravanTradeContext(ctx, "clan_iron_haven", 64, 15.0, 25000); err != nil {
+		t.Fatalf("RecordCaravanTrade failed: %v", err)
+	}
+	aff, err := diploDB.GetAffinity("clan_iron_haven")
+	if err != nil {
+		t.Fatalf("GetAffinity failed: %v", err)
+	}
+	if aff == nil || aff.AffinityScore != 15.0 || aff.TradeVolume != 64 {
+		t.Fatalf("unexpected affinity after trade: %+v", aff)
+	}
+
+	// 5. List logs
+	logs, err := diploDB.ListExpeditionLogs()
+	if err != nil {
+		t.Fatalf("ListExpeditionLogs failed: %v", err)
+	}
+	if len(logs) != 1 || logs[0].ExpeditionID != "exp-001" {
+		t.Fatalf("unexpected logs list: %+v", logs)
+	}
+}

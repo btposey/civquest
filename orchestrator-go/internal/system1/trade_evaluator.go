@@ -151,6 +151,13 @@ func DefaultTradeValuations(profession string) map[string]db.TradeValuation {
 				mult = 1.4
 				rationale = "blacksmith metallurgy priority"
 			}
+		case "CARAVAN_MASTER", "MERCHANT", "TRADER":
+			if itemID == "minecraft:emerald" || itemID == "minecraft:gold_ingot" || itemID == "minecraft:lead" ||
+				itemID == "minecraft:chest" || itemID == "minecraft:saddle" || strings.Contains(itemID, "compass") ||
+				strings.Contains(itemID, "map") || itemID == "minecraft:bread" {
+				mult = 1.5
+				rationale = "caravan master trade logistics and pack transit priority"
+			}
 		}
 
 		table[itemID] = db.TradeValuation{
