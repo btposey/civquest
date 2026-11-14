@@ -26,7 +26,7 @@ func TestClanStorage_LifecycleAndIntegration(t *testing.T) {
 		t.Errorf("expected clan ID %s, got %s", clanID, storage.ClanID())
 	}
 
-	// Verify all 5 database files exist on disk
+	// Verify all 6 database files exist on disk
 	clanDir := resolver.ClanDataDir(clanID)
 	expectedFiles := []string{
 		"civic_registry.db",
@@ -34,6 +34,7 @@ func TestClanStorage_LifecycleAndIntegration(t *testing.T) {
 		"diplomacy.db",
 		"landmarks.db",
 		"contracts.db",
+		"rumors.db",
 	}
 
 	for _, fname := range expectedFiles {
@@ -115,6 +116,22 @@ func TestClanStorage_LifecycleAndIntegration(t *testing.T) {
 		t.Errorf("GetContract failed: %v", err)
 	}
 
+	// Rumors
+	if err := storage.Rumors.AddRumor(context.Background(), &Rumor{
+		RumorID:       "rumor-test-clan",
+		Category:      RumorCategoryHazard,
+		Content:       "Cave spider nest sighted near mineshaft",
+		SourceAgentID: "agent-miner-1",
+		OriginTick:    500,
+		CreatedTick:   550,
+	}); err != nil {
+		t.Errorf("AddRumor failed: %v", err)
+	}
+	rum, err := storage.Rumors.GetRumor(context.Background(), "rumor-test-clan")
+	if err != nil || rum == nil {
+		t.Errorf("GetRumor failed: %v", err)
+	}
+
 	// 2. Test Close() idempotency
 	if err := storage.Close(); err != nil {
 		t.Fatalf("first Close() failed: %v", err)
@@ -138,6 +155,9 @@ func TestClanStorage_LifecycleAndIntegration(t *testing.T) {
 	}
 	if _, err := storage.Contracts.GetContract("cnt-1"); !errors.Is(err, ErrClosed) {
 		t.Errorf("expected ErrClosed on closed Contracts, got %v", err)
+	}
+	if _, err := storage.Rumors.GetRumor(context.Background(), "rumor-test-clan"); !errors.Is(err, ErrClosed) {
+		t.Errorf("expected ErrClosed on closed Rumors, got %v", err)
 	}
 }
 

@@ -9,7 +9,7 @@ import (
 )
 
 // ClanStorage bundles all SQLite databases belonging to a specific clan:
-// civic_registry.db, reputation.db, diplomacy.db, landmarks.db, and contracts.db.
+// civic_registry.db, reputation.db, diplomacy.db, landmarks.db, contracts.db, and rumors.db.
 type ClanStorage struct {
 	mu            sync.Mutex
 	clanID        string
@@ -19,9 +19,10 @@ type ClanStorage struct {
 	Diplomacy     *DiplomacyDB
 	Landmarks     *LandmarksDB
 	Contracts     *ContractsDB
+	Rumors        *RumorsDB
 }
 
-// OpenClanStorage initializes directories and opens all 5 clan SQLite databases.
+// OpenClanStorage initializes directories and opens all 6 clan SQLite databases.
 // If any database fails to open or migrate, any previously opened databases are
 // immediately closed to prevent descriptor leaks.
 func OpenClanStorage(resolver *xdg.Resolver, clanID string) (*ClanStorage, error) {
@@ -80,6 +81,13 @@ func OpenClanStorage(resolver *xdg.Resolver, clanID string) (*ClanStorage, error
 	}
 	storage.Contracts = contracts
 
+	// 6. Rumors DB
+	rumors, err := OpenRumorsDBForClan(resolver, clanID)
+	if err != nil {
+		return cleanup(fmt.Errorf("opening rumors DB: %w", err))
+	}
+	storage.Rumors = rumors
+
 	return storage, nil
 }
 
@@ -123,6 +131,11 @@ func (c *ClanStorage) Close() error {
 	if c.Contracts != nil {
 		if err := c.Contracts.Close(); err != nil {
 			errs = append(errs, fmt.Errorf("closing contracts.db: %w", err))
+		}
+	}
+	if c.Rumors != nil {
+		if err := c.Rumors.Close(); err != nil {
+			errs = append(errs, fmt.Errorf("closing rumors.db: %w", err))
 		}
 	}
 
