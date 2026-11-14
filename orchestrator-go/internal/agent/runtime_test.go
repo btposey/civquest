@@ -504,9 +504,17 @@ func TestRuntime_QueueValidation(t *testing.T) {
 		t.Errorf("expected ErrNilIntent, got %v", err)
 	}
 
-	// 2. Enqueue up to capacity
-	i1 := &civquestv1.AgentIntent{}
-	i2 := &civquestv1.AgentIntent{}
+	// 2. Enqueue intents and verify typed coalescing overwrite semantics
+	i1 := &civquestv1.AgentIntent{
+		Action: &civquestv1.AgentIntent_Navigate{
+			Navigate: &civquestv1.NavigateIntent{Target: &civquestv1.Vec3{X: 1, Y: 1, Z: 1}},
+		},
+	}
+	i2 := &civquestv1.AgentIntent{
+		Action: &civquestv1.AgentIntent_Navigate{
+			Navigate: &civquestv1.NavigateIntent{Target: &civquestv1.Vec3{X: 2, Y: 2, Z: 2}},
+		},
+	}
 	if err := rt.QueueIntent(i1); err != nil {
 		t.Fatalf("failed enqueueing i1: %v", err)
 	}
@@ -514,10 +522,9 @@ func TestRuntime_QueueValidation(t *testing.T) {
 		t.Fatalf("failed enqueueing i2: %v", err)
 	}
 
-	// 3. Queue full
-	i3 := &civquestv1.AgentIntent{}
-	if err := rt.QueueIntent(i3); err != agent.ErrQueueFull {
-		t.Errorf("expected ErrQueueFull, got %v", err)
+	// SlotQueue coalesces i2 over i1 in the navigate slot without ErrQueueFull backpressure
+	if rt.SlotQueue().SlotCount() != 1 {
+		t.Errorf("expected 1 coalesced slot, got %d", rt.SlotQueue().SlotCount())
 	}
 
 	// Verify sequence auto-increment
@@ -1209,18 +1216,19 @@ func TestRuntime_QueuePriorityIntent_Eviction(t *testing.T) {
 		AgentID:         "priority_agent",
 		ClanID:          "pioneers",
 		Resolver:        resolver,
-		IntentQueueSize: 2, // Small queue to force eviction
+		IntentQueueSize: 2,
 	})
 	if err != nil {
 		t.Fatalf("failed creating runtime: %v", err)
 	}
 
-	// 1. Fill queue to capacity with routine intents
+	// 1. Enqueue routine navigate intent
 	r1 := &civquestv1.AgentIntent{
 		Action: &civquestv1.AgentIntent_Navigate{
 			Navigate: &civquestv1.NavigateIntent{Target: &civquestv1.Vec3{X: 1, Y: 1, Z: 1}},
 		},
 	}
+	// 2. Enqueue newer routine navigate intent (overwrites r1 in navigate slot)
 	r2 := &civquestv1.AgentIntent{
 		Action: &civquestv1.AgentIntent_Navigate{
 			Navigate: &civquestv1.NavigateIntent{Target: &civquestv1.Vec3{X: 2, Y: 2, Z: 2}},
@@ -1233,24 +1241,31 @@ func TestRuntime_QueuePriorityIntent_Eviction(t *testing.T) {
 		t.Fatalf("failed queueing r2: %v", err)
 	}
 
-	// 2. Normal QueueIntent now fails with ErrQueueFull
-	r3 := &civquestv1.AgentIntent{
-		Action: &civquestv1.AgentIntent_Navigate{
-			Navigate: &civquestv1.NavigateIntent{Target: &civquestv1.Vec3{X: 3, Y: 3, Z: 3}},
-		},
-	}
-	if err := rt.QueueIntent(r3); err != agent.ErrQueueFull {
-		t.Fatalf("expected ErrQueueFull on full queue, got %v", err)
+	// At this point only r2 is pending in the navigate slot
+	if rt.SlotQueue().SlotCount() != 1 {
+		t.Fatalf("expected 1 slot occupied, got %d", rt.SlotQueue().SlotCount())
 	}
 
-	// 3. QueuePriorityIntent must evict r1 (head-of-line) and successfully enqueue reflex intent
+	// 3. QueuePriorityIntent enqueues a reflex attack intent with priority=true
 	reflexIntent := &civquestv1.AgentIntent{
 		Action: &civquestv1.AgentIntent_Attack{
 			Attack: &civquestv1.AttackIntent{TargetEntityId: 99, RaiseShield: true, FleeImmediately: true},
 		},
 	}
 	if err := rt.QueuePriorityIntent(reflexIntent); err != nil {
-		t.Fatalf("QueuePriorityIntent failed on full queue: %v", err)
+		t.Fatalf("QueuePriorityIntent failed: %v", err)
+	}
+
+	// 4. Drain should yield priority reflex attack FIRST, then overwritten navigate r2
+	drained := rt.DrainIntents()
+	if len(drained) != 2 {
+		t.Fatalf("expected 2 drained intents, got %d", len(drained))
+	}
+	if drained[0].GetAttack() == nil || drained[0].GetAttack().TargetEntityId != 99 {
+		t.Errorf("expected priority attack intent first, got %+v", drained[0].Action)
+	}
+	if drained[1].GetNavigate() == nil || drained[1].GetNavigate().Target.X != 2 {
+		t.Errorf("expected latest navigate r2 second, got %+v", drained[1].Action)
 	}
 }
 
