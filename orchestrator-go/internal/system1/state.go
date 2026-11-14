@@ -58,6 +58,8 @@ type AgentState struct {
 	lastShelterPlaceTick   int64
 	lastShelterTimeoutTick int64
 	shelterBlocksPlaced    int
+	ShelterBuildPhase      int
+	ShelterBuildIndex      int
 	lastHarvestTick        int64
 	lastCraftTick          int64
 	PavingTracker          *RoadPavingTracker
@@ -446,3 +448,44 @@ func (s *AgentState) SetShelterBlocksPlaced(count int) {
 	defer s.mu.Unlock()
 	s.shelterBlocksPlaced = count
 }
+
+// GetShelterBuildPhase returns the active construction phase for the emergency shelter / frontier cabin.
+func (s *AgentState) GetShelterBuildPhase() int {
+	if s == nil {
+		return 0
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.ShelterBuildPhase
+}
+
+// SetShelterBuildPhase safely updates the active construction phase for the frontier cabin.
+func (s *AgentState) SetShelterBuildPhase(phase int) {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.ShelterBuildPhase = phase
+}
+
+// GetShelterBuildIndex returns the current block index within the frontier cabin construction sequence.
+func (s *AgentState) GetShelterBuildIndex() int {
+	if s == nil {
+		return 0
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.ShelterBuildIndex
+}
+
+// SetShelterBuildIndex safely updates the block index within the frontier cabin construction sequence.
+func (s *AgentState) SetShelterBuildIndex(idx int) {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.ShelterBuildIndex = idx
+}
+

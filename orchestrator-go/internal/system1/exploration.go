@@ -5,6 +5,7 @@ import (
 	"math"
 	"strings"
 
+	"github.com/btposey/civquest/orchestrator-go/internal/blueprints"
 	"github.com/btposey/civquest/orchestrator-go/internal/db"
 	civquestv1 "github.com/btposey/civquest/orchestrator-go/internal/proto/v1"
 	"github.com/btposey/civquest/orchestrator-go/internal/xdg"
@@ -308,7 +309,7 @@ func EvaluateGoals(frame *civquestv1.TelemetryFrame, cfg *xdg.AgentIdentityConfi
 			immediate = "SLEEPING: Resting safely until dawn"
 		} else if state != nil && state.GetAssignedBed() != nil {
 			immediate = "SEEK_BED_SHELTER: Return to assigned bed and sleep through the night"
-		} else if inv.buildingBlockCount > 0 && (state == nil || state.GetShelterBlocksPlaced() < len(shelterWallOffsets)) {
+		} else if inv.buildingBlockCount > 0 && (state == nil || state.GetShelterBuildIndex() < len(blueprints.FrontierCabinBlueprint())) {
 			immediate = "BUILD_SHELTER: Construct protective night shelter and light source from carried blocks"
 		} else {
 			immediate = "ESTABLISH_OUTPOST: Secure and light forward outpost shelter for the night"
@@ -426,19 +427,6 @@ func HasSurvivalKit(inventory []*civquestv1.ItemStackProto) bool {
 	return inv.hasAxe && (inv.hasSword || inv.hasWeapon) && inv.hasLight
 }
 
-// shelterWallOffsets defines the 4 cardinal shelter wall positions around the outpost center,
-// ordered strictly bottom-up (dy=0 first, then dy=1, per ADR-010).
-var shelterWallOffsets = [][3]int32{
-	{1, 0, 0},
-	{-1, 0, 0},
-	{0, 0, 1},
-	{0, 0, -1},
-	{1, 1, 0},
-	{-1, 1, 0},
-	{0, 1, 1},
-	{0, 1, -1},
-}
-
 func findObstructingBlockToDig(frame *civquestv1.TelemetryFrame, pos *civquestv1.Vec3) *civquestv1.VisibleBlock {
 	if frame == nil || pos == nil {
 		return nil
@@ -545,6 +533,8 @@ func EvaluateExploration(agentID string, frame *civquestv1.TelemetryFrame, cfg *
 	isThunder := frame.Weather == civquestv1.Weather_WEATHER_THUNDER
 	if !isDuskOrNight && !isThunder {
 		state.shelterBlocksPlaced = 0
+		state.ShelterBuildPhase = 0
+		state.ShelterBuildIndex = 0
 	}
 
 	// 1. Immediate terrain/hill unsticking or tool-aware dig-out when navigation reports NAVIGATION_STATE_STUCK
@@ -824,26 +814,36 @@ func evaluateDuskNightOutpostShelterLocked(
 		}
 	}
 
-	// 3. Progressively build bottom-up protective shelter walls (dy=0 first, then dy=1, per ADR-010)
-	if inv.buildingBlockCount > 0 && inv.placeableBlockID != "" && state.shelterBlocksPlaced < len(shelterWallOffsets) && canPlace {
-		if state.ShelterPos == nil {
-			state.ShelterPos = &civquestv1.BlockPosProto{X: cx, Y: cy, Z: cz}
-		}
-		off := shelterWallOffsets[state.shelterBlocksPlaced]
-		state.shelterBlocksPlaced++
+	// 3. Progressively build bottom-up 5x5 Frontier Cabin structure per ADR-010
+	if state.ShelterPos == nil {
+		state.ShelterPos = &civquestv1.BlockPosProto{X: cx, Y: cy, Z: cz}
+	}
+	centerVec := &civquestv1.Vec3{
+		X: float64(state.ShelterPos.X),
+		Y: float64(state.ShelterPos.Y),
+		Z: float64(state.ShelterPos.Z),
+	}
+	cabinIntents := blueprints.FrontierCabinIntents(centerVec)
+
+	if inv.buildingBlockCount > 0 && state.ShelterBuildIndex < len(cabinIntents) && canPlace {
+		target := cabinIntents[state.ShelterBuildIndex]
+		state.ShelterBuildPhase = blueprints.CabinBlockPhase(state.ShelterBuildIndex)
+		state.ShelterBuildIndex++
+		state.shelterBlocksPlaced = state.ShelterBuildIndex
 		state.lastShelterPlaceTick = frame.WorldTick
-		wallPos := &civquestv1.BlockPosProto{
-			X: state.ShelterPos.X + off[0],
-			Y: state.ShelterPos.Y + off[1],
-			Z: state.ShelterPos.Z + off[2],
+
+		blockID := target.GetBlockStateString()
+		if blockID == "" {
+			blockID = inv.placeableBlockID
 		}
+
 		return &civquestv1.AgentIntent{
 			AgentId: agentID,
 			Action: &civquestv1.AgentIntent_InteractBlock{
 				InteractBlock: &civquestv1.InteractBlockIntent{
-					Pos:             wallPos,
+					Pos:             target.GetTargetVoxel(),
 					InteractionType: civquestv1.InteractBlockIntent_PLACE_BLOCK,
-					BlockOrItemId:   inv.placeableBlockID,
+					BlockOrItemId:   blockID,
 				},
 			},
 		}
