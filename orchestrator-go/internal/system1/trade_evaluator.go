@@ -146,6 +146,21 @@ func DefaultTradeValuations(profession string) map[string]db.TradeValuation {
 				mult = 1.4
 				rationale = "farmer agricultural priority"
 			}
+		case "VINTNER":
+			if strings.Contains(itemID, "grape") || strings.Contains(itemID, "wine") || strings.Contains(itemID, "bottle") {
+				mult = 1.6
+				rationale = "vintner viticultural and fermentation priority"
+			}
+		case "RANCHER":
+			if strings.Contains(itemID, "wheat") || strings.Contains(itemID, "lead") || strings.Contains(itemID, "saddle") || itemID == "minecraft:leather" {
+				mult = 1.5
+				rationale = "rancher pastoral and livestock priority"
+			}
+		case "CHEF":
+			if strings.Contains(itemID, "cooked_") || strings.Contains(itemID, "stew") || strings.Contains(itemID, "pie") || strings.Contains(itemID, "bread") || strings.Contains(itemID, "bowl") {
+				mult = 1.5
+				rationale = "chef culinary and recipe creation priority"
+			}
 		case "BLACKSMITH", "WEAPONSMITH", "ARMORER":
 			if strings.Contains(itemID, "ingot") || itemID == "minecraft:coal" || itemID == "minecraft:diamond" {
 				mult = 1.4

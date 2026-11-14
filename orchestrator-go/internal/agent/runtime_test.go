@@ -2756,3 +2756,170 @@ func TestRuntime_System2_ToponymyLandmarkNamingAndSignpost(t *testing.T) {
 	cancel()
 	_ = <-runErrCh
 }
+
+func TestRuntime_AgrarianSharecroppingAndSpecialization(t *testing.T) {
+	mockSvc, bridgeClient, cleanupBridge := setupPermadeathMockBridge(t)
+	defer cleanupBridge()
+
+	tempDir := t.TempDir()
+	agentID := "agrarian_agent"
+	clanID := "pioneers"
+
+	resolver := xdg.NewResolver(xdg.WithCustomRoot(tempDir))
+	_ = resolver.InitAgentDirectories(agentID)
+
+	agentDB, err := db.OpenAgentDBForAgent(resolver, agentID)
+	if err != nil {
+		t.Fatalf("failed to open agent db: %v", err)
+	}
+	defer agentDB.Close()
+
+	contractsDB, err := db.OpenContractsDBForClan(resolver, clanID)
+	if err != nil {
+		t.Fatalf("failed to open contracts db: %v", err)
+	}
+	defer contractsDB.Close()
+
+	agentCfg := xdg.DefaultAgentIdentityConfig(agentID)
+	agentCfg.Profession = "SETTLER"
+	agentCfg.ClanID = clanID
+
+	rt, err := agent.NewRuntime(agent.Config{
+		AgentID:        agentID,
+		ClanID:         clanID,
+		Resolver:       resolver,
+		AgentDB:        agentDB,
+		ContractsDB:    contractsDB,
+		BridgeClient:   bridgeClient,
+		IdentityConfig: agentCfg,
+	})
+	if err != nil {
+		t.Fatalf("failed to initialize runtime: %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	runErrCh := make(chan error, 1)
+	go func() {
+		runErrCh <- rt.Start(ctx)
+	}()
+
+	select {
+	case <-mockSvc.streamReady:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for stream readiness")
+	}
+
+	// Drain handshake intent
+	select {
+	case <-mockSvc.intentCh:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for handshake intent")
+	}
+
+	// 1. Telemetry Frame with wild grapes in inventory -> triggers specialization into VINTNER
+	grapeFrame := &civquestv1.TelemetryFrame{
+		WorldTick: 1000,
+		Status: &civquestv1.AgentStatus{
+			AgentId: agentID,
+			Health:  20.0,
+			Inventory: []*civquestv1.ItemStackProto{
+				{ItemId: "vinery:red_grape", Count: 5},
+			},
+		},
+		InterestingBlocks: []*civquestv1.VisibleBlock{
+			{BlockId: "vinery:grape_bush"},
+		},
+	}
+	if err := mockSvc.SendFrame(grapeFrame); err != nil {
+		t.Fatalf("failed sending grape frame: %v", err)
+	}
+
+	time.Sleep(100 * time.Millisecond)
+	if rt.Profession() != "VINTNER" {
+		t.Errorf("expected profession VINTNER, got %s", rt.Profession())
+	}
+	if rt.SecondaryHobby() != "VITICULTURIST" {
+		t.Errorf("expected hobby VITICULTURIST, got %s", rt.SecondaryHobby())
+	}
+
+	// 2. Farmland survey telemetry frame -> triggers proposal chat
+	surveyFrame := &civquestv1.TelemetryFrame{
+		WorldTick: 1500,
+		FarmlandSurvey: &civquestv1.FarmlandSurveyEvent{
+			Bounds: &civquestv1.BoundingBoxProto{
+				Min: &civquestv1.BlockPosProto{X: 10, Y: 64, Z: 10},
+				Max: &civquestv1.BlockPosProto{X: 20, Y: 64, Z: 20},
+			},
+			PrimaryCropId:       "minecraft:wheat",
+			MatureCropCount:     10,
+			TotalFarmlandBlocks: 16,
+			InferredOwnerUuid:   "player-steve-uuid",
+		},
+	}
+	if err := mockSvc.SendFrame(surveyFrame); err != nil {
+		t.Fatalf("failed sending survey frame: %v", err)
+	}
+
+	// Await proposal chat intent
+	select {
+	case intent := <-mockSvc.intentCh:
+		chatIntent := intent.GetChat()
+		if chatIntent == nil {
+			t.Fatalf("expected chat intent for proposal, got %+v", intent)
+		}
+		if !strings.Contains(chatIntent.Message, "50/50") {
+			t.Errorf("expected proposal chat to mention 50/50, got %q", chatIntent.Message)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("timed out waiting for proposal chat intent")
+	}
+
+	// 3. Player replies in chat: "Deal, let's do it!"
+	acceptFrame := &civquestv1.TelemetryFrame{
+		WorldTick: 1550,
+		IncomingChats: []*civquestv1.ChatEvent{
+			{
+				SenderUuid: "player-steve-uuid",
+				SenderName: "Steve",
+				Message:    "Deal, let's do it!",
+				Distance:   3.0,
+			},
+		},
+	}
+	if err := mockSvc.SendFrame(acceptFrame); err != nil {
+		t.Fatalf("failed sending accept frame: %v", err)
+	}
+
+	// Await confirmation chat intent
+	select {
+	case intent := <-mockSvc.intentCh:
+		chatIntent := intent.GetChat()
+		if chatIntent == nil {
+			t.Fatalf("expected chat intent for confirmation, got %+v", intent)
+		}
+		if !strings.Contains(chatIntent.Message, "50%") {
+			t.Errorf("expected confirmation chat to mention 50%%, got %q", chatIntent.Message)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("timed out waiting for confirmation chat intent")
+	}
+
+	// 4. Verify contract stored in contracts.db with 50/50 split
+	contracts, err := contractsDB.ListContractsForPlayer("player-steve-uuid")
+	if err != nil {
+		t.Fatalf("failed to query contracts: %v", err)
+	}
+	if len(contracts) != 1 {
+		t.Fatalf("expected 1 contract for Steve, got %d", len(contracts))
+	}
+	c := contracts[0]
+	if c.SplitPlayerPercent != 50.0 || c.SplitClanPercent != 50.0 {
+		t.Errorf("expected 50/50 split, got %f / %f", c.SplitPlayerPercent, c.SplitClanPercent)
+	}
+
+	rt.Stop()
+	cancel()
+	_ = <-runErrCh
+}

@@ -211,6 +211,12 @@ func (c *AgentIdentityConfig) EffectiveVoice() AgentVoiceConfig {
 		switch strings.ToUpper(strings.TrimSpace(c.Profession)) {
 		case "FARMER":
 			v.Diction = "earthy agrarian vernacular rich with weather, soil, and harvest idioms"
+		case "VINTNER":
+			v.Diction = "refined viticultural speech seasoned with grape varieties, fermentation, and vineyard lore"
+		case "RANCHER":
+			v.Diction = "steady livestock vernacular referencing herds, pastures, breeding, and husbandry"
+		case "CHEF":
+			v.Diction = "aromatic culinary phrasing celebrating hearty stews, spices, savory roasts, and hearthcraft"
 		case "BLACKSMITH", "WEAPONSMITH", "ARMORER":
 			v.Diction = "blunt artisan speech seasoned with forge, iron, and anvil metaphors"
 		case "CHRONICLER", "HISTORIAN":

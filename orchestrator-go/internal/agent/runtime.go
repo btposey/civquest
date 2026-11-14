@@ -22,6 +22,7 @@ import (
 	"github.com/btposey/civquest/orchestrator-go/internal/db"
 	"github.com/btposey/civquest/orchestrator-go/internal/memory"
 	civquestv1 "github.com/btposey/civquest/orchestrator-go/internal/proto/v1"
+	"github.com/btposey/civquest/orchestrator-go/internal/roles/agrarian"
 	"github.com/btposey/civquest/orchestrator-go/internal/system1"
 	"github.com/btposey/civquest/orchestrator-go/internal/system2"
 	"github.com/btposey/civquest/orchestrator-go/internal/xdg"
@@ -64,6 +65,8 @@ type Config struct {
 	ToponymyService   *system2.ToponymyService
 	CompanionService  *system2.CompanionService
 	LandmarksDB       *db.LandmarksDB
+	ContractsDB       *db.ContractsDB
+	SharecroppingEngine *agrarian.SharecroppingEngine
 }
 
 // SocketPosition represents 3D coordinates in the diagnostic socket payload.
@@ -167,6 +170,8 @@ type AgentRuntime struct {
 	toponymyService      *system2.ToponymyService
 	companionService     *system2.CompanionService
 	landmarksDB          *db.LandmarksDB
+	contractsDB          *db.ContractsDB
+	sharecroppingEngine  *agrarian.SharecroppingEngine
 	lastChronicleAttempt time.Time
 	lastChronicleTick    int64
 	lastToponymyAttempt  time.Time
@@ -287,6 +292,16 @@ func NewRuntime(cfg Config) (*AgentRuntime, error) {
 		toponymyService:   cfg.ToponymyService,
 		companionService:  companionService,
 		landmarksDB:       cfg.LandmarksDB,
+		contractsDB:       cfg.ContractsDB,
+		sharecroppingEngine: func() *agrarian.SharecroppingEngine {
+			if cfg.SharecroppingEngine != nil {
+				return cfg.SharecroppingEngine
+			}
+			if cfg.ContractsDB != nil {
+				return agrarian.NewSharecroppingEngine(agentID, clanID, cfg.ContractsDB)
+			}
+			return nil
+		}(),
 		debugLogger:       debugLog,
 		slotQueue:         NewSlotQueue(),
 		socketPath:        sockPath,
@@ -385,7 +400,33 @@ func (r *AgentRuntime) BridgeClient() *bridge.Client {
 
 // IdentityConfig returns the loaded identity YAML profile.
 func (r *AgentRuntime) IdentityConfig() *xdg.AgentIdentityConfig {
-	return r.identityConfig
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	if r.identityConfig == nil {
+		return nil
+	}
+	cp := *r.identityConfig
+	return &cp
+}
+
+// Profession returns the agent's current primary profession.
+func (r *AgentRuntime) Profession() string {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	if r.identityConfig == nil {
+		return ""
+	}
+	return r.identityConfig.Profession
+}
+
+// SecondaryHobby returns the agent's current secondary hobby.
+func (r *AgentRuntime) SecondaryHobby() string {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	if r.identityConfig == nil {
+		return ""
+	}
+	return r.identityConfig.SecondaryHobby
 }
 
 // SetDialogueService assigns the System 2 deliberative dialogue service.
@@ -1313,6 +1354,9 @@ func (r *AgentRuntime) HandleTelemetryFrame(frame *civquestv1.TelemetryFrame) {
 
 	// Dispatch System 2 Toponymy naming for exploratory landmarks (non-blocking)
 	r.dispatchToponymy(frame)
+
+	// Dispatch Agrarian specialization and farmland sharecropping routines (non-blocking)
+	r.dispatchAgrarian(frame)
 }
 
 // dispatchDialogue asynchronously processes incoming chat messages and pending trade requests
@@ -1416,6 +1460,28 @@ func (r *AgentRuntime) dispatchDialogue(frame *civquestv1.TelemetryFrame) {
 							Action: &civquestv1.AgentIntent_Chat{
 								Chat: &civquestv1.SendChatIntent{
 									Message:       cmdRes.ReplyText,
+									TargetChannel: civquestv1.ChatChannel_CHAT_CHANNEL_LOCAL,
+								},
+							},
+						})
+					}
+					return
+				}
+			}
+
+			// 2. Check for sharecropping tenancy negotiation reply
+			r.mu.RLock()
+			cropEng := r.sharecroppingEngine
+			r.mu.RUnlock()
+			if cropEng != nil {
+				if contract, reply, err := cropEng.ProcessChatNegotiation(ctx, c, worldTick); err == nil && contract != nil {
+					log.Printf("[civquest-agent] Sharecropping contract %s concluded with %s", contract.ContractID, c.SenderName)
+					if reply != "" && !r.IsDead() && ctx.Err() == nil {
+						_ = r.QueueIntent(&civquestv1.AgentIntent{
+							AgentId: r.agentID,
+							Action: &civquestv1.AgentIntent_Chat{
+								Chat: &civquestv1.SendChatIntent{
+									Message:       reply,
 									TargetChannel: civquestv1.ChatChannel_CHAT_CHANNEL_LOCAL,
 								},
 							},
@@ -1958,6 +2024,92 @@ func (r *AgentRuntime) dispatchToponymy(frame *civquestv1.TelemetryFrame) {
 			}
 		}
 	}()
+}
+
+// dispatchAgrarian evaluates emergent specialization from gathered ingredients and handles farmland survey events.
+func (r *AgentRuntime) dispatchAgrarian(frame *civquestv1.TelemetryFrame) {
+	if frame == nil {
+		return
+	}
+
+	r.mu.RLock()
+	isDead := r.isDead
+	cropEng := r.sharecroppingEngine
+	agentDB := r.agentDB
+	ctx := r.ctx
+	identity := r.identityConfig
+	r.mu.RUnlock()
+
+	if isDead {
+		return
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	// 1. Emergent Specialization evaluation
+	if identity != nil && agrarian.IsTransitionableProfession(identity.Profession) {
+		specCtx := agrarian.SpecializationContext{
+			AgentID:           r.agentID,
+			CurrentProfession: identity.Profession,
+			WorldTick:         frame.WorldTick,
+		}
+		if frame.Status != nil && frame.Status.Inventory != nil {
+			specCtx.Inventory = frame.Status.Inventory
+		}
+		if len(frame.InterestingBlocks) > 0 {
+			specCtx.InterestingBlocks = frame.InterestingBlocks
+		}
+		if len(frame.VisibleEntities) > 0 {
+			specCtx.NearbyEntities = frame.VisibleEntities
+		}
+
+		if res, ok := agrarian.EvaluateSpecialization(specCtx); ok && res.Eligible {
+			r.mu.Lock()
+			err := agrarian.ApplySpecialization(r.identityConfig, res)
+			r.mu.Unlock()
+			if err == nil {
+				log.Printf("[civquest-agent] Agent %s experienced vocational awakening: %s -> %s (%s)",
+					r.agentID, res.CurrentProfession, res.TargetProfession, res.TriggerReason)
+				_ = agrarian.RecordSpecializationMemory(ctx, agentDB, r.agentID, res, frame.WorldTick)
+			}
+		}
+	}
+
+	// 2. Farmland Survey Event detection
+	if frame.FarmlandSurvey != nil && cropEng != nil && frame.FarmlandSurvey.Bounds != nil && frame.FarmlandSurvey.Bounds.Min != nil {
+		chestPos := &civquestv1.BlockPosProto{
+			X: frame.FarmlandSurvey.Bounds.Min.X,
+			Y: frame.FarmlandSurvey.Bounds.Min.Y + 1,
+			Z: frame.FarmlandSurvey.Bounds.Min.Z,
+		}
+		if proposal, err := cropEng.HandleSurveyEvent(ctx, frame.FarmlandSurvey, chestPos, frame.WorldTick); err == nil && proposal != nil {
+			log.Printf("[civquest-agent] Discovered cultivated farmland of %s, proposing sharecropping", proposal.PlayerUUID)
+			_ = r.QueueIntent(&civquestv1.AgentIntent{
+				AgentId: r.agentID,
+				Action: &civquestv1.AgentIntent_Chat{
+					Chat: &civquestv1.SendChatIntent{
+						Message:       proposal.SpokenOffer,
+						TargetChannel: civquestv1.ChatChannel_CHAT_CHANNEL_LOCAL,
+					},
+				},
+			})
+		}
+	}
+}
+
+// ContractsDB returns the handle to the clan contracts database.
+func (r *AgentRuntime) ContractsDB() *db.ContractsDB {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.contractsDB
+}
+
+// SharecroppingEngine returns the agrarian sharecropping engine if configured.
+func (r *AgentRuntime) SharecroppingEngine() *agrarian.SharecroppingEngine {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.sharecroppingEngine
 }
 
 // loadSafeNodes pre-loads topological nodes with SafetyScore >= 0.7 from map_graph.db into in-memory cache.
