@@ -4,6 +4,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/btposey/civquest/orchestrator-go/internal/blueprints"
 	"github.com/btposey/civquest/orchestrator-go/internal/db"
 	civquestv1 "github.com/btposey/civquest/orchestrator-go/internal/proto/v1"
 	"github.com/btposey/civquest/orchestrator-go/internal/xdg"
@@ -184,7 +185,8 @@ func (c *FSMContext) IsShelterComplete() bool {
 	if c == nil || c.State == nil {
 		return false
 	}
-	return c.State.GetShelterBlocksPlaced() >= len(shelterWallOffsets)
+	return c.State.GetShelterBuildIndex() >= blueprints.CabinTotalBlocks ||
+		c.State.GetShelterBlocksPlaced() >= blueprints.CabinTotalBlocks
 }
 
 // IsShelterOnCooldown checks if shelter construction is on backoff cooldown after a stuck timeout.

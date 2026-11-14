@@ -4,6 +4,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/btposey/civquest/orchestrator-go/internal/blueprints"
 	civquestv1 "github.com/btposey/civquest/orchestrator-go/internal/proto/v1"
 	"github.com/btposey/civquest/orchestrator-go/internal/xdg"
 )
@@ -88,7 +89,7 @@ func TestFSM_StateTransitions(t *testing.T) {
 	// 5. Shelter complete at night -> transitions to REST
 	ctx.Frame.WorldTick = 130
 	ctx.Frame.TimeOfDay = 14000
-	state.SetShelterBlocksPlaced(len(shelterWallOffsets))
+	state.SetShelterBlocksPlaced(blueprints.CabinTotalBlocks)
 
 	res = fsm.Tick(ctx)
 	if res.State != StateRest {
