@@ -174,10 +174,11 @@ func TestEvaluateReflexes_PanicActionSequence(t *testing.T) {
 	}
 
 	ctx := ReflexContext{
-		AgentID: "agent_1",
-		Bravery: 0.5,
-		Frame:   frame,
-		CanEat:  true,
+		AgentID:   "agent_1",
+		Bravery:   0.5,
+		Frame:     frame,
+		CanEat:    true,
+		HasShield: true,
 	}
 
 	res := EvaluateReflexes(ctx)
@@ -640,5 +641,220 @@ func BenchmarkEvaluateReflexes(b *testing.B) {
 	// Hard architectural limit: must complete in <2ms
 	if avgPerOp > 2*time.Millisecond {
 		b.Fatalf("benchmark failed: average latency %v exceeds 2ms budget", avgPerOp)
+	}
+}
+
+func TestNoShieldRaiseWithoutShield(t *testing.T) {
+	frame := &civquestv1.TelemetryFrame{
+		WorldTick: 100,
+		Status: &civquestv1.AgentStatus{
+			Health:    5.0,
+			MaxHealth: 20.0,
+			FoodLevel: 10,
+			Position:  &civquestv1.Vec3{X: 100, Y: 64, Z: 100},
+			Inventory: []*civquestv1.ItemStackProto{
+				{ItemId: "minecraft:apple", Count: 3, Slot: 1},
+			},
+		},
+		VisibleEntities: []*civquestv1.VisibleEntity{
+			{
+				EntityId:   10,
+				EntityType: "minecraft:zombie",
+				Distance:   6.0,
+				IsHostile:  true,
+				Position:   &civquestv1.Vec3{X: 106, Y: 64, Z: 100},
+			},
+		},
+	}
+
+	ctx := ReflexContext{
+		AgentID:   "agent_no_shield",
+		Bravery:   0.5,
+		Frame:     frame,
+		CanEat:    false,
+		HasShield: false,
+	}
+
+	res := EvaluateReflexes(ctx)
+	if !res.Evaluated || !res.IsPanic {
+		t.Fatalf("expected panic evaluation, got evaluated=%v, isPanic=%v", res.Evaluated, res.IsPanic)
+	}
+
+	foundAttack := false
+	for _, intent := range res.Intents {
+		if att := intent.GetAttack(); att != nil {
+			foundAttack = true
+			if att.RaiseShield {
+				t.Fatalf("expected AttackIntent.RaiseShield=false when HasShield=false, got true: %+v", att)
+			}
+		}
+	}
+	if !foundAttack {
+		t.Fatal("expected at least one AttackIntent emitted in flee mode")
+	}
+}
+
+func TestShieldRaisedWhenShieldPresent(t *testing.T) {
+	frame := &civquestv1.TelemetryFrame{
+		WorldTick: 100,
+		Status: &civquestv1.AgentStatus{
+			Health:    5.0,
+			MaxHealth: 20.0,
+			FoodLevel: 10,
+			Position:  &civquestv1.Vec3{X: 100, Y: 64, Z: 100},
+			Inventory: []*civquestv1.ItemStackProto{
+				{ItemId: "minecraft:shield", Count: 1, Slot: 40},
+			},
+		},
+		VisibleEntities: []*civquestv1.VisibleEntity{
+			{
+				EntityId:   10,
+				EntityType: "minecraft:zombie",
+				Distance:   6.0,
+				IsHostile:  true,
+				Position:   &civquestv1.Vec3{X: 106, Y: 64, Z: 100},
+			},
+		},
+	}
+
+	ctx := ReflexContext{
+		AgentID:   "agent_with_shield",
+		Bravery:   0.5,
+		Frame:     frame,
+		CanEat:    false,
+		HasShield: true,
+	}
+
+	res := EvaluateReflexes(ctx)
+	if !res.Evaluated || !res.IsPanic {
+		t.Fatalf("expected panic evaluation, got evaluated=%v, isPanic=%v", res.Evaluated, res.IsPanic)
+	}
+
+	foundFleeAttack := false
+	for _, intent := range res.Intents {
+		if att := intent.GetAttack(); att != nil {
+			if att.FleeImmediately {
+				foundFleeAttack = true
+				if !att.RaiseShield {
+					t.Fatalf("expected AttackIntent.RaiseShield=true when HasShield=true, got false: %+v", att)
+				}
+			}
+		}
+	}
+	if !foundFleeAttack {
+		t.Fatal("expected flee AttackIntent emitted")
+	}
+}
+
+func TestCounterAttackWhenInMeleeRange(t *testing.T) {
+	frame := &civquestv1.TelemetryFrame{
+		WorldTick: 100,
+		Status: &civquestv1.AgentStatus{
+			Health:    5.0,
+			MaxHealth: 20.0,
+			FoodLevel: 10,
+			Position:  &civquestv1.Vec3{X: 100, Y: 64, Z: 100},
+			Inventory: []*civquestv1.ItemStackProto{
+				{ItemId: "minecraft:diamond_sword", Count: 1, Slot: 0},
+				{ItemId: "minecraft:shield", Count: 1, Slot: 40},
+			},
+		},
+		VisibleEntities: []*civquestv1.VisibleEntity{
+			{
+				EntityId:   42,
+				EntityType: "minecraft:zombie",
+				Distance:   2.0, // within 2.5 blocks
+				IsHostile:  true,
+				Position:   &civquestv1.Vec3{X: 101.5, Y: 64, Z: 100},
+			},
+		},
+	}
+
+	ctx := ReflexContext{
+		AgentID:    "agent_counter",
+		Bravery:    0.5,
+		Frame:      frame,
+		CanEat:     false,
+		HasShield:  true,
+		HasWeapon:  true,
+		WeaponSlot: 0,
+	}
+
+	res := EvaluateReflexes(ctx)
+	if !res.Evaluated || !res.IsPanic {
+		t.Fatalf("expected panic evaluation, got evaluated=%v, isPanic=%v", res.Evaluated, res.IsPanic)
+	}
+
+	var counterAttack *civquestv1.AttackIntent
+	var fleeAttack *civquestv1.AttackIntent
+	var navIntent *civquestv1.NavigateIntent
+
+	for _, intent := range res.Intents {
+		if att := intent.GetAttack(); att != nil {
+			if !att.FleeImmediately {
+				counterAttack = att
+			} else {
+				fleeAttack = att
+			}
+		}
+		if nav := intent.GetNavigate(); nav != nil {
+			navIntent = nav
+		}
+	}
+
+	if fleeAttack == nil {
+		t.Fatal("expected flee AttackIntent with FleeImmediately=true")
+	}
+	if !fleeAttack.RaiseShield {
+		t.Errorf("expected flee AttackIntent to raise shield")
+	}
+
+	if counterAttack == nil {
+		t.Fatal("expected counter-attack AttackIntent with FleeImmediately=false")
+	}
+	if counterAttack.TargetEntityId != 42 {
+		t.Errorf("expected counter-attack target to be 42, got %d", counterAttack.TargetEntityId)
+	}
+	if counterAttack.FleeImmediately {
+		t.Errorf("expected counter-attack FleeImmediately=false, got true")
+	}
+	if !counterAttack.RaiseShield {
+		t.Errorf("expected counter-attack RaiseShield=true when HasShield=true")
+	}
+
+	if navIntent == nil {
+		t.Fatal("expected flee NavigateIntent to be emitted")
+	}
+}
+
+func TestScanInventoryCombatItems(t *testing.T) {
+	inv := []*civquestv1.ItemStackProto{
+		{ItemId: "minecraft:bread", Count: 10, Slot: 5},
+		{ItemId: "minecraft:iron_sword", Count: 1, Slot: 2},
+		{ItemId: "minecraft:shield", Count: 1, Slot: 40},
+	}
+	hasShield, hasWeapon, weaponSlot := ScanInventoryCombatItems(inv)
+	if !hasShield {
+		t.Errorf("expected hasShield=true")
+	}
+	if !hasWeapon {
+		t.Errorf("expected hasWeapon=true")
+	}
+	if weaponSlot != 2 {
+		t.Errorf("expected weaponSlot=2, got %d", weaponSlot)
+	}
+
+	emptyInv := []*civquestv1.ItemStackProto{
+		{ItemId: "minecraft:dirt", Count: 64, Slot: 0},
+	}
+	hasShield, hasWeapon, weaponSlot = ScanInventoryCombatItems(emptyInv)
+	if hasShield {
+		t.Errorf("expected hasShield=false")
+	}
+	if hasWeapon {
+		t.Errorf("expected hasWeapon=false")
+	}
+	if weaponSlot != -1 {
+		t.Errorf("expected weaponSlot=-1, got %d", weaponSlot)
 	}
 }

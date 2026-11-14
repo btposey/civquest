@@ -948,6 +948,7 @@ func TestRuntime_System1_PanicCombatReflexes(t *testing.T) {
 			Position:  &civquestv1.Vec3{X: 100, Y: 64, Z: 100},
 			Inventory: []*civquestv1.ItemStackProto{
 				{ItemId: "minecraft:steak", Count: 4, Slot: 2},
+				{ItemId: "minecraft:shield", Count: 1, Slot: 40},
 			},
 		},
 		VisibleEntities: []*civquestv1.VisibleEntity{
@@ -1545,6 +1546,9 @@ func TestRuntime_AsynchronousDialogueDispatch(t *testing.T) {
 			Position:  &civquestv1.Vec3{X: 100, Y: 64, Z: 100},
 			Health:    20.0,
 			FoodLevel: 20,
+			Inventory: []*civquestv1.ItemStackProto{
+				{ItemId: "minecraft:shield", Count: 1, Slot: 40},
+			},
 		},
 		VisibleEntities: []*civquestv1.VisibleEntity{
 			{
@@ -1609,6 +1613,9 @@ func TestRuntime_AsynchronousDialogueDispatch(t *testing.T) {
 			Position:  &civquestv1.Vec3{X: 100, Y: 64, Z: 100},
 			Health:    20.0,
 			FoodLevel: 20,
+			Inventory: []*civquestv1.ItemStackProto{
+				{ItemId: "minecraft:shield", Count: 1, Slot: 40},
+			},
 		},
 		PendingTrade: &civquestv1.TradeRequest{
 			PlayerEntityId: 42,
