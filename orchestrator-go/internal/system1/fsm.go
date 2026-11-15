@@ -197,6 +197,22 @@ func (c *FSMContext) IsShelterOnCooldown() bool {
 	return c.State.IsShelterOnCooldown(c.Frame.WorldTick)
 }
 
+// IsBootstrapOnCooldown checks if bootstrap retry is on backoff cooldown after a timeout.
+func (c *FSMContext) IsBootstrapOnCooldown() bool {
+	if c == nil || c.State == nil || c.Frame == nil {
+		return false
+	}
+	return c.State.IsBootstrapOnCooldown(c.Frame.WorldTick)
+}
+
+// IsEstablishingNewSettlement returns true if the agent is founding a new settlement node.
+func (c *FSMContext) IsEstablishingNewSettlement() bool {
+	if c == nil || c.State == nil {
+		return false
+	}
+	return c.State.IsEstablishingNewSettlement()
+}
+
 // IsSleeping checks if agent status reports sleeping.
 func (c *FSMContext) IsSleeping() bool {
 	if c == nil || c.Frame == nil || c.Frame.Status == nil {
@@ -315,14 +331,8 @@ func defaultTransitionRules() []TransitionRule {
 		{
 			FromState:   StateBootstrap,
 			ToState:     StateExplore,
-			Condition:   func(c *FSMContext) bool { return c.HasSurvivalKit() },
+			Condition:   func(c *FSMContext) bool { return c.HasSurvivalKit() && !c.IsEstablishingNewSettlement() },
 			Description: "Survival kit acquired (axe, sword, light); advancing to exploration",
-		},
-		{
-			FromState:   StateBootstrap,
-			ToState:     StateExplore,
-			Condition:   func(c *FSMContext) bool { return c.IsStuckInState(1200) },
-			Description: "Bootstrap timber gathering timed out; falling back to explore wider area",
 		},
 
 		// Priority 4: Transitions from EXPLORE
@@ -337,6 +347,12 @@ func defaultTransitionRules() []TransitionRule {
 			ToState:     StateShelter,
 			Condition:   func(c *FSMContext) bool { return c.IsDuskOrNight() && !c.HasAssignedBed() && !c.IsShelterOnCooldown() },
 			Description: "Dusk/night approaching with no bed; constructing outpost shelter",
+		},
+		{
+			FromState:   StateExplore,
+			ToState:     StateBootstrap,
+			Condition:   func(c *FSMContext) bool { return c.IsEstablishingNewSettlement() },
+			Description: "Founding new settlement node; restarting local bootstrap cycle",
 		},
 		{
 			FromState:   StateExplore,
@@ -389,7 +405,7 @@ func defaultTransitionRules() []TransitionRule {
 		{
 			FromState:   StateRest,
 			ToState:     StateShelter,
-			Condition:   func(c *FSMContext) bool { return c.IsDuskOrNight() && !c.HasAssignedBed() && !c.IsSleeping() },
+			Condition:   func(c *FSMContext) bool { return c.IsDuskOrNight() && !c.IsShelterComplete() && !c.HasAssignedBed() && !c.IsSleeping() },
 			Description: "Rest interrupted and no bed available; seeking outpost shelter",
 		},
 	}
@@ -441,8 +457,8 @@ func (h *BootstrapStateHandler) OnTick(ctx *FSMContext) []FSMIntent {
 
 	// Bootstrap timber and tool crafting (only if not busy with incoming chats/trade)
 	if len(ctx.Frame.IncomingChats) == 0 && ctx.Frame.PendingTrade == nil {
-		if exploreIntent := EvaluateExploration(ctx.AgentID, ctx.Frame, ctx.Config, ctx.State); exploreIntent != nil {
-			intents = append(intents, FSMIntent{Intent: exploreIntent, Priority: false})
+		if bootstrapIntent := EvaluateBootstrapGoals(ctx.AgentID, ctx.Frame, ctx.Config, ctx.State); bootstrapIntent != nil {
+			intents = append(intents, FSMIntent{Intent: bootstrapIntent, Priority: false})
 		}
 	}
 
@@ -532,9 +548,9 @@ func (h *ShelterStateHandler) OnTick(ctx *FSMContext) []FSMIntent {
 		}
 	}
 
-	// Shelter building and campfire placement via exploration reflexes (only if not busy with chat/trade)
+	// Shelter building and campfire placement (only if not busy with chat/trade)
 	if len(ctx.Frame.IncomingChats) == 0 && ctx.Frame.PendingTrade == nil {
-		if shelterIntent := EvaluateExploration(ctx.AgentID, ctx.Frame, ctx.Config, ctx.State); shelterIntent != nil {
+		if shelterIntent := EvaluateShelterGoals(ctx.AgentID, ctx.Frame, ctx.Config, ctx.State); shelterIntent != nil {
 			intents = append(intents, FSMIntent{Intent: shelterIntent, Priority: false})
 		}
 	}

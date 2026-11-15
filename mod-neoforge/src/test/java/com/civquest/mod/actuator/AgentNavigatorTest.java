@@ -8,6 +8,7 @@ import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.phys.Vec3;
 import net.minecraft.world.phys.shapes.Shapes;
+import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
@@ -19,6 +20,15 @@ import static org.mockito.ArgumentMatchers.anyFloat;
 import static org.mockito.Mockito.*;
 
 public class AgentNavigatorTest {
+
+    @BeforeAll
+    static void initMinecraft() {
+        try {
+            net.minecraft.SharedConstants.tryDetectVersion();
+            net.minecraft.server.Bootstrap.bootStrap();
+        } catch (Throwable ignored) {
+        }
+    }
 
     @Test
     @DisplayName("AgentNavigator triggers proactive 0.42 jump impulse on 1-block step-up")
@@ -293,6 +303,48 @@ public class AgentNavigatorTest {
 
         assertEquals(NavigationState.NAVIGATION_STATE_STUCK, navigator.getNavigationState());
         assertTrue(navigator.isStuck());
+    }
+
+    @Test
+    @DisplayName("AgentNavigator engages sneaking, zeroes forward velocity, suppresses jump impulse, and reports STUCK on 4+ block drop-off")
+    void testCliffEdgeDropAvoidanceAndSneaking() {
+        AgentEntity agent = mock(AgentEntity.class);
+        Level level = mock(Level.class);
+        when(agent.level()).thenReturn(level);
+        when(agent.position()).thenReturn(new Vec3(0.0, 64.0, 0.0));
+        when(agent.getDeltaMovement()).thenReturn(Vec3.ZERO);
+        when(agent.onGround()).thenReturn(true);
+        when(agent.getYRot()).thenReturn(0.0f); // Facing South (+Z)
+        when(level.hasChunkAt(any(BlockPos.class))).thenReturn(true);
+
+        BlockState airBlock = mock(BlockState.class);
+        when(airBlock.isAir()).thenReturn(true);
+        when(airBlock.getCollisionShape(any(), any())).thenReturn(Shapes.empty());
+
+        // Cliff ahead: all blocks at and below probe location down to y=60 are air
+        when(level.getBlockState(any(BlockPos.class))).thenReturn(airBlock);
+
+        AtomicReference<Vec3> appliedDelta = new AtomicReference<>(Vec3.ZERO);
+        doAnswer(inv -> {
+            appliedDelta.set(inv.getArgument(0));
+            return null;
+        }).when(agent).setDeltaMovement(any(Vec3.class));
+
+        AgentNavigator navigator = new AgentNavigator(agent);
+        // Direct navigation toward (0, 66, 10) with dy > 0.5 (would jump into air if unprotected)
+        navigator.navigate(0.0, 66.0, 10.0, 1.0f, false, false, false, 1);
+        navigator.tick();
+
+        assertNotNull(appliedDelta.get());
+        assertEquals(0.0, Math.hypot(appliedDelta.get().x, appliedDelta.get().z), 1e-6,
+                "Forward velocity toward cliff edge must be 0");
+        assertTrue(appliedDelta.get().y < 0.42, "Jump impulse into mid-air must be suppressed");
+        verify(agent, atLeastOnce()).setShiftKeyDown(true);
+        assertEquals(NavigationState.NAVIGATION_STATE_STUCK, navigator.getNavigationState(),
+                "NavigationState must be STUCK when facing 4+ block drop-off");
+        assertEquals(NavigationState.NAVIGATION_STATE_STUCK, navigator.getReportedNavigationState(),
+                "Reported navigation state must be STUCK when facing 4+ block drop-off");
+        assertTrue(navigator.isStuck(), "navigator.isStuck() must return true at cliff edge");
     }
 
     @Test

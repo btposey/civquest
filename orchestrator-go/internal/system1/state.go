@@ -57,6 +57,8 @@ type AgentState struct {
 	lastSleepAttemptTick   int64
 	lastShelterPlaceTick   int64
 	lastShelterTimeoutTick int64
+	lastBootstrapTimeoutTick int64
+	establishingNewSettlement bool
 	shelterBlocksPlaced    int
 	ShelterBuildPhase      int
 	ShelterBuildIndex      int
@@ -446,6 +448,59 @@ func (s *AgentState) IsShelterOnCooldown(currentTick int64) bool {
 		return false
 	}
 	return (currentTick - s.lastShelterTimeoutTick) < 600
+}
+
+// GetLastBootstrapTimeoutTick safely returns the world tick of a bootstrap fallback timeout.
+func (s *AgentState) GetLastBootstrapTimeoutTick() int64 {
+	if s == nil {
+		return 0
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.lastBootstrapTimeoutTick
+}
+
+// SetLastBootstrapTimeoutTick safely records the world tick of a bootstrap fallback timeout.
+func (s *AgentState) SetLastBootstrapTimeoutTick(tick int64) {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.lastBootstrapTimeoutTick = tick
+}
+
+// IsBootstrapOnCooldown returns true if bootstrap retry is on backoff cooldown after a timeout.
+func (s *AgentState) IsBootstrapOnCooldown(currentTick int64) bool {
+	if s == nil {
+		return false
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if s.lastBootstrapTimeoutTick <= 0 {
+		return false
+	}
+	return (currentTick - s.lastBootstrapTimeoutTick) < 600
+}
+
+// IsEstablishingNewSettlement returns true if the agent is founding a new settlement node.
+func (s *AgentState) IsEstablishingNewSettlement() bool {
+	if s == nil {
+		return false
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.establishingNewSettlement
+}
+
+// SetEstablishingNewSettlement sets the flag indicating the agent is founding a new settlement node.
+func (s *AgentState) SetEstablishingNewSettlement(establishing bool) {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.establishingNewSettlement = establishing
 }
 
 // GetLastHarvestTick safely returns the tick of the last block harvesting event.

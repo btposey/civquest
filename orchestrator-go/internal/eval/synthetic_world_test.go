@@ -19,8 +19,12 @@ func TestSyntheticWorld_ResetInvariant_PerformanceUnder5ms(t *testing.T) {
 	elapsed := time.Since(start)
 
 	t.Logf("Constructed complete SyntheticStartingWorld layout in %v (total blocks: %d)", elapsed, len(world1.Blocks))
-	if elapsed >= 5*time.Millisecond {
-		t.Fatalf("PERFORMANCE VIOLATION: World constructor took %v (must execute in < 5ms)", elapsed)
+	maxDuration := 5 * time.Millisecond
+	if raceDetectorEnabled {
+		maxDuration = 25 * time.Millisecond
+	}
+	if elapsed >= maxDuration {
+		t.Fatalf("PERFORMANCE VIOLATION: World constructor took %v (must execute in < %v)", elapsed, maxDuration)
 	}
 
 	// 1. Reset Invariant & Zero State Bleed-through

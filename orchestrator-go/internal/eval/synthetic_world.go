@@ -40,7 +40,7 @@ type SyntheticStartingWorld struct {
 // with zero disk state bleed-through and guaranteed <5ms construction latency.
 func NewSyntheticStartingWorld() *SyntheticStartingWorld {
 	world := &SyntheticStartingWorld{
-		Blocks:       make(map[BlockPosKey]string, 6000),
+		Blocks:       make(map[BlockPosKey]string, 12000),
 		BlockStates:  make(map[BlockPosKey]string, 200),
 		AssignedBeds: make(map[string]*civquestv1.BlockPosProto),
 		Workstations: make(map[string]*civquestv1.BlockPosProto),

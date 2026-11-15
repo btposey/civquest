@@ -167,6 +167,7 @@ public class AgentNavigator {
         this.lastPosition = getPosition();
         this.path = new java.util.ArrayList<>();
         this.enclosed = false;
+        this.cliffDetected = false;
         this.lastPlanTick = Long.MIN_VALUE;
         this.pillarBaseY = Integer.MIN_VALUE;
         syncRotationFromAgent();
@@ -307,6 +308,7 @@ public class AgentNavigator {
     private long lastPlanTick = Long.MIN_VALUE;
     private java.util.List<LocalPathPlanner.Cell> path = new java.util.ArrayList<>();
     private boolean enclosed = false;
+    private boolean cliffDetected = false;
     private final java.util.Map<Long, Long> failedCells = new java.util.HashMap<>();
     private int pillarBaseY = Integer.MIN_VALUE;
     private long lastDigTick = Long.MIN_VALUE;
@@ -323,6 +325,10 @@ public class AgentNavigator {
         return enclosed;
     }
 
+    public boolean isCliffDetected() {
+        return cliffDetected;
+    }
+
     public float getHeadYaw() {
         return headYaw;
     }
@@ -335,9 +341,9 @@ public class AgentNavigator {
         return pitch;
     }
 
-    /** State reported to telemetry: enclosed agents count as STUCK so reflexes like paving are suppressed. */
+    /** State reported to telemetry: enclosed agents or cliff-edge blocked agents count as STUCK so reflexes like paving are suppressed. */
     public NavigationState getReportedNavigationState() {
-        if (enclosed && navigationState == NavigationState.NAVIGATION_STATE_PATHING) {
+        if ((enclosed || cliffDetected) && navigationState == NavigationState.NAVIGATION_STATE_PATHING) {
             return NavigationState.NAVIGATION_STATE_STUCK;
         }
         return navigationState;
@@ -501,16 +507,52 @@ public class AgentNavigator {
             this.agent.setSprinting(sprintNow);
         }
 
-        // Jump logic
+        // Jump logic and cliff edge drop avoidance
         boolean stepUpOneBlock = waypointHigher;
-        if (level != null && path.isEmpty() && this.agent != null) {
-            // Fallback direct movement: probe ahead for a 1-block ledge
+        boolean cliffAhead = false;
+        if (level != null && path.isEmpty()) {
             double rad = Math.toRadians(headYaw);
             double fx = -Math.sin(rad);
             double fz = Math.cos(rad);
-            BlockPos aheadFeet = BlockPos.containing(currentPos.x + fx * 0.75, currentPos.y + 0.1, currentPos.z + fz * 0.75);
-            stepUpOneBlock = isBlockSolid(level, aheadFeet) && !isBlockSolid(level, aheadFeet.above())
-                    && !isBlockSolid(level, aheadFeet.above(2));
+            double probeX = currentPos.x + fx * 0.75;
+            double probeZ = currentPos.z + fz * 0.75;
+
+            // Probe ahead for a vertical drop-off (scan ground column at currentPos.x + fx*0.75,
+            // currentPos.z + fz*0.75 down to currentPos.y - 4).
+            // If no solid block within 3 blocks down (drop >= 4 blocks)
+            boolean solidGroundFound = false;
+            int startY = Mth.floor(currentPos.y + 0.1);
+            int minY = Mth.floor(currentPos.y - 4.0);
+            for (int py = startY; py >= minY; py--) {
+                BlockPos probePos = BlockPos.containing(probeX, py, probeZ);
+                if (isBlockSolid(level, probePos)) {
+                    solidGroundFound = true;
+                    break;
+                }
+            }
+            if (!solidGroundFound) {
+                cliffAhead = true;
+            }
+
+            if (!cliffAhead && this.agent != null) {
+                // Fallback direct movement: probe ahead for a 1-block ledge
+                BlockPos aheadFeet = BlockPos.containing(probeX, currentPos.y + 0.1, probeZ);
+                stepUpOneBlock = isBlockSolid(level, aheadFeet) && !isBlockSolid(level, aheadFeet.above())
+                        && !isBlockSolid(level, aheadFeet.above(2));
+            }
+        }
+
+        if (cliffAhead) {
+            this.cliffDetected = true;
+            this.navigationState = NavigationState.NAVIGATION_STATE_STUCK;
+            if (this.agent != null) {
+                this.agent.setShiftKeyDown(true);
+            }
+        } else if (this.cliffDetected) {
+            this.cliffDetected = false;
+            if (this.agent != null) {
+                this.agent.setShiftKeyDown(false);
+            }
         }
 
         // Speed with smooth acceleration; slow down while still turning toward the heading
@@ -518,17 +560,17 @@ public class AgentNavigator {
         double mult = Math.max(0.5, Math.min(1.5, this.speedMultiplier));
         double moveSpeed = baseSpeed * mult;
 
-        // Arrival easing: when on the final approach leg without intermediate waypoints,
-        // decelerate smoothly into the arrival zone to prevent overshoot.
-        if (path.isEmpty() && horizontalDist < 2.0) {
+        if (cliffAhead) {
+            moveSpeed = 0.0;
+        } else if (path.isEmpty() && horizontalDist < 2.0) {
             moveSpeed *= Math.max(0.25, horizontalDist / 2.0);
         }
 
         double absYawDiff = Math.abs(yawDiff);
-        // Forward throttle: gentle easing in the forward hemisphere, zero throttle when heading error > 90 deg.
+        // Forward throttle: gentle easing in the forward hemisphere, zero throttle when heading error > 90 deg or cliff detected.
         // When target is behind the agent (> 90 deg), align is 0.0 so the agent pivots in place
         // rather than entering a perpetual fixed-wing orbiting circle.
-        double align = absYawDiff <= 90.0 ? Math.max(0.15, Math.cos(Math.toRadians(absYawDiff))) : 0.0;
+        double align = (absYawDiff <= 90.0 && !cliffAhead) ? Math.max(0.15, Math.cos(Math.toRadians(absYawDiff))) : 0.0;
 
         double headRad = Math.toRadians(headYaw);
         double tvx = -Math.sin(headRad) * moveSpeed * align;
@@ -546,11 +588,16 @@ public class AgentNavigator {
         velX += ddvx;
         velZ += ddvz;
 
+        if (cliffAhead) {
+            velX = 0.0;
+            velZ = 0.0;
+        }
+
         double vy = 0.0;
         if (this.agent != null) {
             vy = this.agent.getDeltaMovement().y;
             if (this.agent.onGround()) {
-                if (stepUpOneBlock || (this.agent.horizontalCollision && path.isEmpty()) || (dy > 0.5 && path.isEmpty())) {
+                if (!cliffAhead && (stepUpOneBlock || (this.agent.horizontalCollision && path.isEmpty()) || (dy > 0.5 && path.isEmpty()))) {
                     vy = 0.42; // Jump impulse
                 } else {
                     vy = Math.max(-0.0784, vy);
@@ -626,6 +673,10 @@ public class AgentNavigator {
         this.velX = 0.0;
         this.velZ = 0.0;
         this.enclosed = false;
+        if (this.cliffDetected && this.agent != null) {
+            this.agent.setShiftKeyDown(false);
+        }
+        this.cliffDetected = false;
         if (this.agent != null) {
             this.agent.setDeltaMovement(0.0, this.agent.getDeltaMovement().y, 0.0);
             this.agent.setSprinting(false);
@@ -789,6 +840,10 @@ public class AgentNavigator {
         this.stuckTicks = 0;
         this.baritoneInactivityTicks = 0;
         this.enclosed = false;
+        if (this.cliffDetected && this.agent != null) {
+            this.agent.setShiftKeyDown(false);
+        }
+        this.cliffDetected = false;
         this.velX = 0.0;
         this.velZ = 0.0;
         if (this.agent != null) {
@@ -868,7 +923,7 @@ public class AgentNavigator {
     }
 
     public boolean isStuck() {
-        return navigationState == NavigationState.NAVIGATION_STATE_STUCK;
+        return getReportedNavigationState() == NavigationState.NAVIGATION_STATE_STUCK;
     }
 
     public boolean isIdle() {

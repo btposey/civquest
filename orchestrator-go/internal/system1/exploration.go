@@ -642,6 +642,109 @@ func EvaluateExploration(agentID string, frame *civquestv1.TelemetryFrame, cfg *
 	return evaluateGeneralExplorationLocked(agentID, frame, pos, state, cfg)
 }
 
+// EvaluateBootstrapGoals directly executes bootstrap timber harvesting, basic tool crafting,
+// and local scouting for timber stands while maintaining the agent in StateBootstrap.
+func EvaluateBootstrapGoals(
+	agentID string,
+	frame *civquestv1.TelemetryFrame,
+	cfg *xdg.AgentIdentityConfig,
+	state *AgentState,
+) *civquestv1.AgentIntent {
+	if frame == nil || frame.Status == nil || frame.Status.Position == nil || state == nil {
+		return nil
+	}
+	if frame.Status.IsSleeping {
+		return nil
+	}
+
+	pos := frame.Status.Position
+	state.mu.Lock()
+	defer state.mu.Unlock()
+
+	state.telemetryFramesSeen++
+	if state.homeOrigin == nil {
+		originCopy := &civquestv1.Vec3{X: pos.X, Y: pos.Y, Z: pos.Z}
+		state.homeOrigin = originCopy
+		state.currentOutpost = originCopy
+		if len(state.outposts) == 0 {
+			state.outposts = append(state.outposts, originCopy)
+		}
+	}
+	if state.currentOutpost == nil {
+		state.currentOutpost = &civquestv1.Vec3{X: state.homeOrigin.X, Y: state.homeOrigin.Y, Z: state.homeOrigin.Z}
+	}
+	if state.lastExploreTick == 0 {
+		state.lastExploreTick = frame.WorldTick
+	}
+
+	navState := frame.Status.NavigationState
+
+	// 1. Unsticking if STUCK
+	if navState == civquestv1.NavigationState_NAVIGATION_STATE_STUCK {
+		if obstruct := findObstructingBlockToDig(frame, pos); obstruct != nil {
+			if state.lastHarvestTick == 0 || frame.WorldTick < state.lastHarvestTick || frame.WorldTick-state.lastHarvestTick >= 20 {
+				state.lastHarvestTick = frame.WorldTick
+				return &civquestv1.AgentIntent{
+					AgentId: agentID,
+					Action: &civquestv1.AgentIntent_InteractBlock{
+						InteractBlock: &civquestv1.InteractBlockIntent{
+							Pos:             obstruct.Pos,
+							InteractionType: civquestv1.InteractBlockIntent_HARVEST_BREAK,
+							BlockOrItemId:   obstruct.BlockId,
+						},
+					},
+				}
+			}
+		}
+	}
+
+	// 2. Direct bootstrap timber gathering & tool crafting
+	if bootstrapIntent := evaluateBootstrapGoalsLocked(agentID, frame, pos, navState, state); bootstrapIntent != nil {
+		return bootstrapIntent
+	}
+
+	// 3. If no immediate trees or crafting table in frustum, scout locally for timber stands
+	return evaluateGeneralExplorationLocked(agentID, frame, pos, state, cfg)
+}
+
+// EvaluateShelterGoals directly executes dusk/night forward outpost shelter construction and placement.
+func EvaluateShelterGoals(
+	agentID string,
+	frame *civquestv1.TelemetryFrame,
+	cfg *xdg.AgentIdentityConfig,
+	state *AgentState,
+) *civquestv1.AgentIntent {
+	if frame == nil || frame.Status == nil || frame.Status.Position == nil || state == nil {
+		return nil
+	}
+	if frame.Status.IsSleeping {
+		return nil
+	}
+
+	pos := frame.Status.Position
+	state.mu.Lock()
+	defer state.mu.Unlock()
+
+	state.telemetryFramesSeen++
+	if state.homeOrigin == nil {
+		originCopy := &civquestv1.Vec3{X: pos.X, Y: pos.Y, Z: pos.Z}
+		state.homeOrigin = originCopy
+		state.currentOutpost = originCopy
+		if len(state.outposts) == 0 {
+			state.outposts = append(state.outposts, originCopy)
+		}
+	}
+	if state.currentOutpost == nil {
+		state.currentOutpost = &civquestv1.Vec3{X: state.homeOrigin.X, Y: state.homeOrigin.Y, Z: state.homeOrigin.Z}
+	}
+	if state.lastExploreTick == 0 {
+		state.lastExploreTick = frame.WorldTick
+	}
+
+	navState := frame.Status.NavigationState
+	return evaluateDuskNightOutpostShelterLocked(agentID, frame, pos, navState, state)
+}
+
 // EvaluateGeneralExploration computes sector-locked radial frontier scouting waypoints.
 // Explorer agents commit to an outward sector azimuth and chain progressive radial legs
 // (e.g., 48m -> 96m -> 144m -> 192m+) outward into the frontier, eliminating 3-second angular oscillation.
@@ -757,8 +860,16 @@ func evaluateGeneralExplorationLocked(
 
 	// 3. Determine new waypoint
 	if arrived {
-		// Advance to next radial leg along the SAME sector azimuth
-		state.frontierRadialLeg++
+		if !isExplorer && state.frontierRadialLeg >= 2 {
+			// Non-explorers rotate azimuth after legs to patrol a perimeter polygon rather than oscillating in 1D
+			newAz := math.Atan2(math.Sin(state.frontierAzimuthRad+math.Pi/4), math.Cos(state.frontierAzimuthRad+math.Pi/4))
+			state.frontierAzimuthRad = newAz
+			state.lastHeadingRad = state.frontierAzimuthRad
+			state.frontierRadialLeg = 0
+		} else {
+			// Advance to next radial leg along the SAME sector azimuth
+			state.frontierRadialLeg++
+		}
 		state.exploreStepIndex++
 	} else if stuck || timedOut {
 		// Rotate to a new sector azimuth and reset to leg 0
@@ -792,7 +903,7 @@ func evaluateGeneralExplorationLocked(
 	if isExplorer {
 		legDist = float64(state.frontierRadialLeg+1) * legStep
 	} else {
-		legDist = 12.0 + float64(state.frontierRadialLeg%3)*legStep
+		legDist = 12.0 + float64(state.frontierRadialLeg)*legStep
 	}
 
 	targetX := origin.X + math.Cos(state.frontierAzimuthRad)*legDist

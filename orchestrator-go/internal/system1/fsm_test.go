@@ -403,3 +403,127 @@ func TestFSM_ConcurrentSafety(t *testing.T) {
 	}
 	wg.Wait()
 }
+
+func TestFSM_RestDoesNotTransitionToShelterWhenComplete(t *testing.T) {
+	fsm := NewAgentFSM(StateRest, nil)
+	state := NewAgentState()
+	state.SetShelterBlocksPlaced(blueprints.CabinTotalBlocks)
+
+	ctx := &FSMContext{
+		AgentID: "rest_agent",
+		State:   state,
+		Frame: &civquestv1.TelemetryFrame{
+			WorldTick: 100,
+			TimeOfDay: 16000, // Midnight
+			Status: &civquestv1.AgentStatus{
+				AgentId:    "rest_agent",
+				Health:     20.0,
+				MaxHealth:  20.0,
+				FoodLevel:  20,
+				Position:   &civquestv1.Vec3{X: 10, Y: 64, Z: 10},
+				IsSleeping: false, // Not sleeping, resting inside completed shelter
+			},
+		},
+	}
+
+	for tick := int64(100); tick < 130; tick++ {
+		ctx.Frame.WorldTick = tick
+		res := fsm.Tick(ctx)
+		if res.State != StateRest {
+			t.Fatalf("VIOLATION: FSM transitioned from %s to %s at tick %d despite shelter being complete",
+				StateRest, res.State, tick)
+		}
+	}
+
+	if fsm.CurrentState() != StateRest {
+		t.Fatalf("expected state to remain %s, got %s", StateRest, fsm.CurrentState())
+	}
+}
+
+func TestFSM_BootstrapStaysInBootstrapUntilKitCollected(t *testing.T) {
+	fsm := NewAgentFSM(StateBootstrap, nil)
+	state := NewAgentState()
+
+	ctx := &FSMContext{
+		AgentID: "bootstrap_agent",
+		State:   state,
+		Frame: &civquestv1.TelemetryFrame{
+			WorldTick: 100,
+			TimeOfDay: 3000, // Morning
+			Status: &civquestv1.AgentStatus{
+				AgentId:   "bootstrap_agent",
+				Health:    20.0,
+				MaxHealth: 20.0,
+				FoodLevel: 20,
+				Position:  &civquestv1.Vec3{X: 0, Y: 64, Z: 0},
+				Inventory: []*civquestv1.ItemStackProto{}, // Empty inventory - no survival kit
+			},
+		},
+	}
+
+	// Tick 1500 times (> 1200 ticks): must NOT prematurely evict to Explore
+	for tick := int64(100); tick <= 1600; tick += 50 {
+		ctx.Frame.WorldTick = tick
+		res := fsm.Tick(ctx)
+		if res.State != StateBootstrap {
+			t.Fatalf("VIOLATION: FSM prematurely evicted from %s to %s at tick %d before kit collected",
+				StateBootstrap, res.State, tick)
+		}
+	}
+
+	// Collect survival kit (axe, sword, torch)
+	ctx.Frame.Status.Inventory = []*civquestv1.ItemStackProto{
+		{ItemId: "minecraft:wooden_axe", Count: 1},
+		{ItemId: "minecraft:wooden_sword", Count: 1},
+		{ItemId: "minecraft:torch", Count: 4},
+	}
+	ctx.Frame.WorldTick = 1601
+	res := fsm.Tick(ctx)
+	if res.State != StateExplore {
+		t.Fatalf("expected transition to %s once kit collected, got %s", StateExplore, res.State)
+	}
+}
+
+func TestFSM_ExploreTransitionsToBootstrapWhenEstablishingNewSettlement(t *testing.T) {
+	fsm := NewAgentFSM(StateExplore, nil)
+	state := NewAgentState()
+
+	ctx := &FSMContext{
+		AgentID: "founder_agent",
+		State:   state,
+		Frame: &civquestv1.TelemetryFrame{
+			WorldTick: 500,
+			TimeOfDay: 4000, // Daylight
+			Status: &civquestv1.AgentStatus{
+				AgentId:   "founder_agent",
+				Health:    20.0,
+				MaxHealth: 20.0,
+				FoodLevel: 20,
+				Position:  &civquestv1.Vec3{X: 150, Y: 64, Z: 150},
+				Inventory: []*civquestv1.ItemStackProto{
+					{ItemId: "minecraft:iron_axe", Count: 1},
+					{ItemId: "minecraft:iron_sword", Count: 1},
+					{ItemId: "minecraft:torch", Count: 16},
+				},
+			},
+		},
+	}
+
+	// Initially exploring
+	res0 := fsm.Tick(ctx)
+	if res0.State != StateExplore {
+		t.Fatalf("expected state %s, got %s", StateExplore, res0.State)
+	}
+
+	// Arrived at new settlement site -> Flag founding of new settlement node!
+	state.SetEstablishingNewSettlement(true)
+	ctx.Frame.WorldTick = 501
+	res1 := fsm.Tick(ctx)
+	if res1.State != StateBootstrap {
+		t.Fatalf("expected transition from %s to %s when establishing new settlement, got %s",
+			StateExplore, StateBootstrap, res1.State)
+	}
+	if !res1.Transitioned {
+		t.Fatalf("expected Transitioned=true on settlement founding")
+	}
+}
