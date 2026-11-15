@@ -860,3 +860,82 @@ func TestAgentSkinTextureValidation(t *testing.T) {
 		})
 	}
 }
+
+func TestAgentIdentityConfig_EffectiveSleepSystemPrompt(t *testing.T) {
+	var nilCfg *xdg.AgentIdentityConfig
+	if nilCfg.EffectiveSleepSystemPrompt() != "" {
+		t.Errorf("expected empty string for nil config")
+	}
+
+	cfg := xdg.DefaultAgentIdentityConfig("solas")
+	if cfg.EffectiveSleepSystemPrompt() != "" {
+		t.Errorf("expected empty string by default, got %q", cfg.EffectiveSleepSystemPrompt())
+	}
+
+	// SkillPrompt only
+	cfg.SkillPrompt = "Skill prompt test"
+	if cfg.EffectiveSleepSystemPrompt() != "Skill prompt test" {
+		t.Errorf("expected 'Skill prompt test', got %q", cfg.EffectiveSleepSystemPrompt())
+	}
+
+	// SleepSystemPrompt overrides SkillPrompt
+	cfg.SleepSystemPrompt = "Sleep prompt test"
+	if cfg.EffectiveSleepSystemPrompt() != "Sleep prompt test" {
+		t.Errorf("expected 'Sleep prompt test', got %q", cfg.EffectiveSleepSystemPrompt())
+	}
+
+	// Whitespace trimming
+	cfg.SleepSystemPrompt = "  "
+	if cfg.EffectiveSleepSystemPrompt() != "Skill prompt test" {
+		t.Errorf("expected fallback to SkillPrompt when SleepSystemPrompt is whitespace, got %q", cfg.EffectiveSleepSystemPrompt())
+	}
+}
+
+func TestAgentSkill_SaveAndLoad(t *testing.T) {
+	tmpDir := t.TempDir()
+	r := xdg.NewResolver(xdg.WithCustomRoot(tmpDir))
+
+	// Setup agent config
+	cfg := xdg.DefaultAgentIdentityConfig("solas")
+	if err := r.SaveAgentConfig(cfg); err != nil {
+		t.Fatalf("failed saving agent config: %v", err)
+	}
+
+	// Initially no skill
+	if _, err := r.LoadAgentSkill("solas"); err == nil {
+		t.Errorf("expected error when loading non-existent skill, got nil")
+	}
+
+	// Save skill
+	testSkill := "You are a master architect specializing in stone fortress design."
+	if err := r.SaveAgentSkill("solas", testSkill); err != nil {
+		t.Fatalf("SaveAgentSkill failed: %v", err)
+	}
+
+	// Load skill
+	loaded, err := r.LoadAgentSkill("solas")
+	if err != nil {
+		t.Fatalf("LoadAgentSkill failed: %v", err)
+	}
+	if loaded != testSkill {
+		t.Errorf("expected %q, got %q", testSkill, loaded)
+	}
+
+	// Verify agent identity config was also synced
+	updatedCfg, err := r.LoadAgentConfig("solas")
+	if err != nil {
+		t.Fatalf("LoadAgentConfig failed: %v", err)
+	}
+	if updatedCfg.SleepSystemPrompt != testSkill {
+		t.Errorf("expected config SleepSystemPrompt %q, got %q", testSkill, updatedCfg.SleepSystemPrompt)
+	}
+	if updatedCfg.SkillPrompt != testSkill {
+		t.Errorf("expected config SkillPrompt %q, got %q", testSkill, updatedCfg.SkillPrompt)
+	}
+
+	// Verify package level helper
+	pkgPath := xdg.AgentSkillPath("solas")
+	if pkgPath == "" {
+		t.Errorf("expected non-empty AgentSkillPath")
+	}
+}

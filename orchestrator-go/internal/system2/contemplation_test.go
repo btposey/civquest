@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/btposey/civquest/orchestrator-go/internal/db"
@@ -486,5 +487,105 @@ func TestContemplate_ValidationAndSanitization(t *testing.T) {
 	}
 	if adj.MinAcceptRatio < 0.5 {
 		t.Errorf("expected min_accept_ratio >= 0.5, got %f", adj.MinAcceptRatio)
+	}
+}
+
+func TestContemplate_CustomSystemPrompt(t *testing.T) {
+	var capturedSystemPrompt string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var req system2.ChatCompletionRequest
+		_ = json.NewDecoder(r.Body).Decode(&req)
+		for _, msg := range req.Messages {
+			if msg.Role == "system" {
+				capturedSystemPrompt = msg.Content
+			}
+		}
+
+		payload, _ := json.Marshal(map[string]any{
+			"immediate_goal":    "BUILD_DEFENSE",
+			"short_term_goal":   "FORTIFY_WALLS",
+			"long_term_goal":    "IMPREGNABLE_CASTLE",
+			"reflective_memory": "Custom dreams of stone.",
+			"civic_proposals":   []string{"stone_wall"},
+			"rationale":         "Strategic directives.",
+		})
+		resp := system2.ChatCompletionResponse{
+			ID: "custom-contemplate-1",
+			Choices: []system2.ChatCompletionChoice{
+				{
+					Index: 0,
+					Message: system2.ChatMessage{
+						Role:    "assistant",
+						Content: string(payload),
+					},
+					FinishReason: "stop",
+				},
+			},
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(resp)
+	}))
+	defer server.Close()
+
+	client, err := system2.NewClient(
+		&xdg.GlobalConfig{
+			LLMGateway: xdg.LLMGatewayConfig{
+				BaseURL: server.URL + "/v1",
+				Model:   "mock-model",
+			},
+		},
+		system2.WithHTTPClient(server.Client()),
+	)
+	if err != nil {
+		t.Fatalf("failed creating client: %v", err)
+	}
+	defer client.Close()
+
+	svc := system2.NewContemplationService(client)
+
+	// 1. Profile-level custom prompt
+	customProfilePrompt := "CUSTOM_SKILL_PROMPT: You are a fortress architect dedicated to stone."
+	ledger := &system2.StrategicLedger{
+		AgentID: "solas",
+		PersonalProfile: system2.PersonalProfile{
+			AgentID:           "solas",
+			Profession:        "BUILDER",
+			ClanID:            "clan_iron",
+			SleepSystemPrompt: customProfilePrompt,
+		},
+	}
+
+	resp, err := svc.Contemplate(context.Background(), ledger)
+	if err != nil {
+		t.Fatalf("Contemplate with custom profile prompt failed: %v", err)
+	}
+	if resp.ImmediateGoal != "BUILD_DEFENSE" {
+		t.Errorf("expected BUILD_DEFENSE, got %s", resp.ImmediateGoal)
+	}
+	if !strings.Contains(capturedSystemPrompt, customProfilePrompt) {
+		t.Errorf("expected captured system prompt to contain custom prompt, got: %s", capturedSystemPrompt)
+	}
+
+	// 2. Service-level CustomSystemPrompt fallback when profile prompt is empty
+	svc.SetCustomSystemPrompt("SERVICE_LEVEL_PROMPT: Global sleep contemplation directive.")
+	ledger.PersonalProfile.SleepSystemPrompt = ""
+	_, err = svc.Contemplate(context.Background(), ledger)
+	if err != nil {
+		t.Fatalf("Contemplate with service custom prompt failed: %v", err)
+	}
+	if !strings.Contains(capturedSystemPrompt, "SERVICE_LEVEL_PROMPT: Global sleep contemplation directive.") {
+		t.Errorf("expected captured system prompt to contain service level prompt, got: %s", capturedSystemPrompt)
+	}
+
+	// 3. Fallback to default when neither is present
+	svc.SetCustomSystemPrompt("")
+	ledger.PersonalProfile.SleepSystemPrompt = ""
+	_, err = svc.Contemplate(context.Background(), ledger)
+	if err != nil {
+		t.Fatalf("Contemplate with default prompt failed: %v", err)
+	}
+	expectedDefault := system2.DefaultContemplationPrompt("solas", "BUILDER", "clan_iron")
+	if !strings.Contains(capturedSystemPrompt, expectedDefault) {
+		t.Errorf("expected captured system prompt to contain default contemplation prompt, got: %s", capturedSystemPrompt)
 	}
 }

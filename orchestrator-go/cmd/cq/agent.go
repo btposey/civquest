@@ -27,6 +27,7 @@ import (
 	"github.com/btposey/civquest/orchestrator-go/internal/domain"
 	"github.com/btposey/civquest/orchestrator-go/internal/launcher"
 	civquestv1 "github.com/btposey/civquest/orchestrator-go/internal/proto/v1"
+	"github.com/btposey/civquest/orchestrator-go/internal/system2"
 	"github.com/btposey/civquest/orchestrator-go/internal/xdg"
 )
 
@@ -45,6 +46,7 @@ of process-isolated autonomous FakePlayer agent avatars.`,
 	agentCmd.AddCommand(newAgentStopCmd())
 	agentCmd.AddCommand(newAgentStartClanCmd())
 	agentCmd.AddCommand(newAgentLogsCmd())
+	agentCmd.AddCommand(newAgentSkillCmd())
 
 	return agentCmd
 }
@@ -1378,4 +1380,365 @@ func runAgentWatchdog(
 		}
 		continue
 	}
+}
+
+func newAgentSkillCmd() *cobra.Command {
+	skillCmd := &cobra.Command{
+		Use:   "skill",
+		Short: "Import and export agent sleep-state strategic reasoning prompts",
+		Long: `Controls importing and exporting of specialized System 2 prompts
+assigned per agent (or across all agents), used exclusively during
+sleep-state strategic reasoning / nighttime contemplation.`,
+	}
+
+	skillCmd.AddCommand(newAgentSkillImportCmd())
+	skillCmd.AddCommand(newAgentSkillExportCmd())
+
+	return skillCmd
+}
+
+func parseAgentSkillArgs(args []string) (target string, filespec string, isAll bool, showHelp bool, err error) {
+	var filtered []string
+	for _, a := range args {
+		trimmed := strings.TrimSpace(a)
+		if trimmed == "--help" || trimmed == "-h" || trimmed == "help" {
+			return "", "", false, true, nil
+		}
+		if trimmed == "--json" {
+			flagJSON = true
+			continue
+		}
+		if trimmed == "-all" || trimmed == "--all" || trimmed == "-a" || trimmed == "all" {
+			isAll = true
+			continue
+		}
+		if strings.HasPrefix(trimmed, "--all=") {
+			isAll = true
+			continue
+		}
+		filtered = append(filtered, trimmed)
+	}
+
+	if isAll {
+		if len(filtered) != 1 {
+			return "", "", true, false, errors.New("usage: cq agent skill [import|export] [<name>|-all] <filespec>")
+		}
+		return "", filtered[0], true, false, nil
+	}
+
+	if len(filtered) != 2 {
+		return "", "", false, false, errors.New("usage: cq agent skill [import|export] [<name>|-all] <filespec>")
+	}
+
+	return filtered[0], filtered[1], false, false, nil
+}
+
+func newAgentSkillImportCmd() *cobra.Command {
+	var allFlag bool
+	cmd := &cobra.Command{
+		Use:   "import [<name>|-all] <filespec>",
+		Short: "Import a custom sleep-state strategic reasoning prompt from file",
+		Long: `Imports a custom system prompt from <filespec> to be used exclusively
+during sleep-state strategic contemplation.
+
+Examples:
+  cq agent skill import solas ./prompts/mason.prompt
+  cq agent skill import -all ./prompts/shared.prompt
+  cq agent skill import --all ./prompts/shared.prompt`,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if allFlag {
+				args = append([]string{"--all"}, args...)
+			}
+			target, filespec, isAll, showHelp, err := parseAgentSkillArgs(args)
+			if showHelp {
+				return cmd.Help()
+			}
+			if err != nil {
+				return err
+			}
+
+			data, err := os.ReadFile(filespec)
+			if err != nil {
+				return fmt.Errorf("failed to read skill file %s: %w", filespec, err)
+			}
+			content := strings.TrimSpace(string(data))
+			if content == "" {
+				return fmt.Errorf("skill prompt file %s is empty", filespec)
+			}
+
+			r := getResolver()
+
+			if !isAll {
+				agentName := r.ResolveAgentName(target)
+				cfg, err := r.LoadAgentConfig(agentName)
+				if err != nil {
+					return fmt.Errorf("agent %q not found or invalid in %s: %w", target, r.AgentsConfigDir(), err)
+				}
+				if cfg.Name != "" {
+					agentName = cfg.Name
+				}
+
+				if err := r.SaveAgentSkill(agentName, content); err != nil {
+					return fmt.Errorf("failed to save skill prompt for agent %q: %w", agentName, err)
+				}
+
+				if flagJSON {
+					resp := map[string]any{
+						"status":     "ok",
+						"agent":      agentName,
+						"file":       filespec,
+						"bytes":      len(content),
+						"skill_path": r.AgentSkillPath(agentName),
+					}
+					out, _ := json.MarshalIndent(resp, "", "  ")
+					fmt.Fprintln(cmd.OutOrStdout(), string(out))
+					return nil
+				}
+
+				fmt.Fprintf(cmd.OutOrStdout(), "✓ Successfully imported sleep-state strategic skill prompt for agent %q from %s (%d bytes).\n", agentName, filespec, len(content))
+				return nil
+			}
+
+			// Batch import across all configured agents
+			var agentNames []string
+			status, _ := domain.DetectAgents(r)
+			for _, a := range status.ConfiguredAgents {
+				if a.Name != "" {
+					agentNames = append(agentNames, a.Name)
+				}
+			}
+			if entries, err := os.ReadDir(r.AgentsConfigDir()); err == nil {
+				seen := make(map[string]bool)
+				for _, name := range agentNames {
+					seen[strings.ToLower(name)] = true
+				}
+				for _, entry := range entries {
+					if entry.IsDir() {
+						continue
+					}
+					ename := entry.Name()
+					if strings.HasSuffix(ename, ".yaml") || strings.HasSuffix(ename, ".yml") {
+						stem := strings.TrimSuffix(strings.TrimSuffix(ename, ".yaml"), ".yml")
+						if !seen[strings.ToLower(stem)] {
+							if cfg, err := r.LoadAgentConfig(stem); err == nil && cfg.Name != "" {
+								agentNames = append(agentNames, cfg.Name)
+								seen[strings.ToLower(cfg.Name)] = true
+								seen[strings.ToLower(stem)] = true
+							}
+						}
+					}
+				}
+			}
+
+			if len(agentNames) == 0 {
+				return fmt.Errorf("no configured agents found in %s to import skill into", r.AgentsConfigDir())
+			}
+
+			var imported []string
+			for _, name := range agentNames {
+				if err := r.SaveAgentSkill(name, content); err == nil {
+					imported = append(imported, name)
+				}
+			}
+
+			if flagJSON {
+				resp := map[string]any{
+					"status":   "ok",
+					"imported": imported,
+					"file":     filespec,
+					"bytes":    len(content),
+				}
+				out, _ := json.MarshalIndent(resp, "", "  ")
+				fmt.Fprintln(cmd.OutOrStdout(), string(out))
+				return nil
+			}
+
+			fmt.Fprintf(cmd.OutOrStdout(), "✓ Successfully imported sleep-state strategic skill prompt for %d agents from %s (%d bytes):\n", len(imported), filespec, len(content))
+			for _, name := range imported {
+				fmt.Fprintf(cmd.OutOrStdout(), "  • %s\n", name)
+			}
+			return nil
+		},
+	}
+	cmd.Flags().BoolVarP(&allFlag, "all", "a", false, "Apply to all configured agents")
+	cmd.Flags().BoolVarP(&allFlag, "all-alias", "l", false, "Alias for -all")
+	_ = cmd.Flags().MarkHidden("all-alias")
+	return cmd
+}
+
+func newAgentSkillExportCmd() *cobra.Command {
+	var allFlag bool
+	cmd := &cobra.Command{
+		Use:   "export [<name>|-all] <filespec>",
+		Short: "Export a sleep-state strategic reasoning prompt to file",
+		Long: `Exports an agent's custom sleep-state strategic prompt (or default prompt
+if none is set) to <filespec>. If -all is specified, per-agent files are exported
+into the target directory.
+
+Examples:
+  cq agent skill export solas ./prompts/solas.prompt
+  cq agent skill export solas -
+  cq agent skill export -all ./prompts/`,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if allFlag {
+				args = append([]string{"--all"}, args...)
+			}
+			target, filespec, isAll, showHelp, err := parseAgentSkillArgs(args)
+			if showHelp {
+				return cmd.Help()
+			}
+			if err != nil {
+				return err
+			}
+
+			r := getResolver()
+
+			if !isAll {
+				agentName := r.ResolveAgentName(target)
+				cfg, err := r.LoadAgentConfig(agentName)
+				if err != nil {
+					return fmt.Errorf("agent %q not found or invalid in %s: %w", target, r.AgentsConfigDir(), err)
+				}
+				if cfg.Name != "" {
+					agentName = cfg.Name
+				}
+
+				prompt, err := r.LoadAgentSkill(agentName)
+				isCustom := true
+				if err != nil || strings.TrimSpace(prompt) == "" {
+					prompt = system2.DefaultContemplationPrompt(agentName, cfg.Profession, cfg.ClanID)
+					isCustom = false
+				}
+
+				if filespec == "-" {
+					fmt.Fprint(cmd.OutOrStdout(), prompt)
+					if !strings.HasSuffix(prompt, "\n") {
+						fmt.Fprintln(cmd.OutOrStdout())
+					}
+					return nil
+				}
+
+				if err := os.MkdirAll(filepath.Dir(filespec), 0755); err != nil {
+					return fmt.Errorf("failed to create directory for %s: %w", filespec, err)
+				}
+				if err := os.WriteFile(filespec, []byte(prompt+"\n"), 0644); err != nil {
+					return fmt.Errorf("failed to write skill file %s: %w", filespec, err)
+				}
+
+				if flagJSON {
+					resp := map[string]any{
+						"status":    "ok",
+						"agent":     agentName,
+						"file":      filespec,
+						"bytes":     len(prompt),
+						"is_custom": isCustom,
+					}
+					out, _ := json.MarshalIndent(resp, "", "  ")
+					fmt.Fprintln(cmd.OutOrStdout(), string(out))
+					return nil
+				}
+
+				tag := "custom"
+				if !isCustom {
+					tag = "default"
+				}
+				fmt.Fprintf(cmd.OutOrStdout(), "✓ Successfully exported %s sleep-state strategic skill prompt for agent %q to %s (%d bytes).\n", tag, agentName, filespec, len(prompt))
+				return nil
+			}
+
+			// Batch export across all configured agents
+			var agentConfigs []*xdg.AgentIdentityConfig
+			status, _ := domain.DetectAgents(r)
+			seen := make(map[string]bool)
+			for _, a := range status.ConfiguredAgents {
+				if a.Name != "" && !seen[strings.ToLower(a.Name)] {
+					if cfg, err := r.LoadAgentConfig(a.Name); err == nil && cfg != nil {
+						agentConfigs = append(agentConfigs, cfg)
+						seen[strings.ToLower(a.Name)] = true
+					}
+				}
+			}
+			if entries, err := os.ReadDir(r.AgentsConfigDir()); err == nil {
+				for _, entry := range entries {
+					if entry.IsDir() {
+						continue
+					}
+					ename := entry.Name()
+					if strings.HasSuffix(ename, ".yaml") || strings.HasSuffix(ename, ".yml") {
+						stem := strings.TrimSuffix(strings.TrimSuffix(ename, ".yaml"), ".yml")
+						if !seen[strings.ToLower(stem)] {
+							if cfg, err := r.LoadAgentConfig(stem); err == nil && cfg != nil {
+								agentConfigs = append(agentConfigs, cfg)
+								seen[strings.ToLower(cfg.Name)] = true
+								seen[strings.ToLower(stem)] = true
+							}
+						}
+					}
+				}
+			}
+
+			if len(agentConfigs) == 0 {
+				return fmt.Errorf("no configured agents found in %s to export skills from", r.AgentsConfigDir())
+			}
+
+			targetDir := filespec
+			if err := os.MkdirAll(targetDir, 0755); err != nil {
+				return fmt.Errorf("failed to create directory %s: %w", targetDir, err)
+			}
+
+			type exportedItem struct {
+				Agent    string `json:"agent"`
+				Path     string `json:"path"`
+				Bytes    int    `json:"bytes"`
+				IsCustom bool   `json:"is_custom"`
+			}
+			var exportedList []exportedItem
+
+			for _, cfg := range agentConfigs {
+				prompt, err := r.LoadAgentSkill(cfg.Name)
+				isCustom := true
+				if err != nil || strings.TrimSpace(prompt) == "" {
+					prompt = system2.DefaultContemplationPrompt(cfg.Name, cfg.Profession, cfg.ClanID)
+					isCustom = false
+				}
+
+				outPath := filepath.Join(targetDir, fmt.Sprintf("%s.skill.md", cfg.Name))
+				if err := os.WriteFile(outPath, []byte(prompt+"\n"), 0644); err != nil {
+					return fmt.Errorf("failed to write export file %s: %w", outPath, err)
+				}
+
+				exportedList = append(exportedList, exportedItem{
+					Agent:    cfg.Name,
+					Path:     outPath,
+					Bytes:    len(prompt),
+					IsCustom: isCustom,
+				})
+			}
+
+			if flagJSON {
+				resp := map[string]any{
+					"status":    "ok",
+					"directory": targetDir,
+					"exported":  exportedList,
+				}
+				out, _ := json.MarshalIndent(resp, "", "  ")
+				fmt.Fprintln(cmd.OutOrStdout(), string(out))
+				return nil
+			}
+
+			fmt.Fprintf(cmd.OutOrStdout(), "✓ Successfully exported sleep-state strategic skill prompts for %d agents to %s:\n", len(exportedList), targetDir)
+			for _, item := range exportedList {
+				tag := "custom"
+				if !item.IsCustom {
+					tag = "default"
+				}
+				fmt.Fprintf(cmd.OutOrStdout(), "  • %-12s [%s] -> %s (%d bytes)\n", item.Agent, tag, item.Path, item.Bytes)
+			}
+			return nil
+		},
+	}
+	cmd.Flags().BoolVarP(&allFlag, "all", "a", false, "Apply to all configured agents")
+	cmd.Flags().BoolVarP(&allFlag, "all-alias", "l", false, "Alias for -all")
+	_ = cmd.Flags().MarkHidden("all-alias")
+	return cmd
 }

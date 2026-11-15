@@ -2363,6 +2363,12 @@ func (r *AgentRuntime) dispatchContemplation(frame *civquestv1.TelemetryFrame) {
 				"curiosity":       agentCfg.Traits.Curiosity,
 				"aggressiveness":  agentCfg.Traits.Aggressiveness,
 			}
+			prof.SleepSystemPrompt = agentCfg.EffectiveSleepSystemPrompt()
+		}
+		if prof.SleepSystemPrompt == "" && res != nil {
+			if skill, err := res.LoadAgentSkill(agentID); err == nil && skill != "" {
+				prof.SleepSystemPrompt = skill
+			}
 		}
 		if frame.Status != nil {
 			prof.Vitals.Health = frame.Status.Health
@@ -2532,6 +2538,12 @@ func (r *AgentRuntime) TriggerContemplation(ctx context.Context, frame *civquest
 			"sociability":     agentCfg.Traits.Sociability,
 			"curiosity":       agentCfg.Traits.Curiosity,
 			"aggressiveness":  agentCfg.Traits.Aggressiveness,
+		}
+		prof.SleepSystemPrompt = agentCfg.EffectiveSleepSystemPrompt()
+	}
+	if prof.SleepSystemPrompt == "" && r.resolver != nil {
+		if skill, err := r.resolver.LoadAgentSkill(agentID); err == nil && skill != "" {
+			prof.SleepSystemPrompt = skill
 		}
 	}
 	if frame.Status != nil {

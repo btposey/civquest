@@ -3365,6 +3365,108 @@ func TestRuntime_TriggerContemplation_Synchronous(t *testing.T) {
 	}
 }
 
+func TestRuntime_TriggerContemplation_WithCustomSkillPrompt(t *testing.T) {
+	var capturedSystemPrompt string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var req system2.ChatCompletionRequest
+		_ = json.NewDecoder(r.Body).Decode(&req)
+		for _, msg := range req.Messages {
+			if msg.Role == "system" {
+				capturedSystemPrompt = msg.Content
+			}
+		}
+
+		payload, _ := json.Marshal(system2.StrategicContemplationResponse{
+			ImmediateGoal:    "EXPAND_FORTRESS",
+			ShortTermGoal:    "MINE_COBBLESTONE",
+			LongTermGoal:     "BUILD_IMPERIAL_CITADEL",
+			ReflectiveMemory: "Visions of massive stone walls.",
+			Rationale:        "Custom skill directive.",
+		})
+		resp := system2.ChatCompletionResponse{
+			ID: "contemplate-skill-1",
+			Choices: []system2.ChatCompletionChoice{
+				{
+					Index: 0,
+					Message: system2.ChatMessage{
+						Role:    "assistant",
+						Content: string(payload),
+					},
+					FinishReason: "stop",
+				},
+			},
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(resp)
+	}))
+	defer server.Close()
+
+	tmpDir := t.TempDir()
+	r := xdg.NewResolver(xdg.WithCustomRoot(tmpDir))
+
+	agentDB, err := db.OpenAgentDB(filepath.Join(tmpDir, "agent"))
+	if err != nil {
+		t.Fatalf("OpenAgentDB failed: %v", err)
+	}
+	defer agentDB.Close()
+
+	llmClient, err := system2.NewClient(
+		&xdg.GlobalConfig{
+			LLMGateway: xdg.LLMGatewayConfig{
+				BaseURL: server.URL + "/v1",
+				Model:   "mock-contemplation-model",
+			},
+		},
+		system2.WithHTTPClient(server.Client()),
+	)
+	if err != nil {
+		t.Fatalf("NewClient failed: %v", err)
+	}
+	defer llmClient.Close()
+
+	customSkill := "CUSTOM_SKILL: Focus solely on stone architecture and grand fortifications."
+	agentCfg := xdg.DefaultAgentIdentityConfig("mason")
+	agentCfg.Profession = "BUILDER"
+	agentCfg.SleepSystemPrompt = customSkill
+	if err := r.SaveAgentConfig(agentCfg); err != nil {
+		t.Fatalf("SaveAgentConfig failed: %v", err)
+	}
+
+	rt, err := agent.NewRuntime(agent.Config{
+		AgentID:              "mason",
+		ClanID:               "clan_masons",
+		AgentDB:              agentDB,
+		IdentityConfig:       agentCfg,
+		Resolver:             r,
+		SocketPath:           filepath.Join(tmpDir, "mason.sock"),
+		ContemplationService: system2.NewContemplationService(llmClient),
+	})
+	if err != nil {
+		t.Fatalf("NewRuntime failed: %v", err)
+	}
+	defer rt.Stop()
+
+	frame := &civquestv1.TelemetryFrame{
+		WorldTick: 14500,
+		Status: &civquestv1.AgentStatus{
+			Health:    20.0,
+			FoodLevel: 20,
+			Position:  &civquestv1.Vec3{X: 0, Y: 64, Z: 0},
+		},
+	}
+
+	resp, err := rt.TriggerContemplation(context.Background(), frame)
+	if err != nil {
+		t.Fatalf("TriggerContemplation failed: %v", err)
+	}
+	if resp.ImmediateGoal != "EXPAND_FORTRESS" {
+		t.Errorf("expected ImmediateGoal EXPAND_FORTRESS, got %q", resp.ImmediateGoal)
+	}
+	if !strings.Contains(capturedSystemPrompt, customSkill) {
+		t.Errorf("expected captured system prompt to contain custom skill %q, got: %s", customSkill, capturedSystemPrompt)
+	}
+}
+
 func TestRuntime_ExplorerSectorLockedFrontierScouting(t *testing.T) {
 	mockSvc, bridgeClient, cleanupBridge := setupPermadeathMockBridge(t)
 	defer cleanupBridge()

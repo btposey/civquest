@@ -153,21 +153,23 @@ type AgentLineageConfig struct {
 
 // AgentIdentityConfig holds the identity, personality, voice, and skin configuration for an agent.
 type AgentIdentityConfig struct {
-	Name           string             `yaml:"name"`
-	UUID           string             `yaml:"uuid"`
-	ClanID         string             `yaml:"clan_id"`
-	Profession     string             `yaml:"profession"`
-	SecondaryHobby string             `yaml:"secondary_hobby,omitempty"`
-	SystemPrompt   string             `yaml:"system_prompt,omitempty"`
-	Voice          AgentVoiceConfig   `yaml:"voice,omitempty"`
-	Traits         AgentTraits        `yaml:"traits"`
-	Skin           AgentSkinConfig    `yaml:"skin"`
-	IsChild        bool               `yaml:"is_child,omitempty"`
-	Generation     int                `yaml:"generation,omitempty"`
-	Lineage        AgentLineageConfig `yaml:"lineage,omitempty"`
-	ImmediateGoal  string             `yaml:"immediate_goal,omitempty"`
-	ShortTermGoal  string             `yaml:"short_term_goal,omitempty"`
-	LongTermGoal   string             `yaml:"long_term_goal,omitempty"`
+	Name              string             `yaml:"name"`
+	UUID              string             `yaml:"uuid"`
+	ClanID            string             `yaml:"clan_id"`
+	Profession        string             `yaml:"profession"`
+	SecondaryHobby    string             `yaml:"secondary_hobby,omitempty"`
+	SystemPrompt      string             `yaml:"system_prompt,omitempty"`
+	SkillPrompt       string             `yaml:"skill_prompt,omitempty"`
+	SleepSystemPrompt string             `yaml:"sleep_system_prompt,omitempty"`
+	Voice             AgentVoiceConfig   `yaml:"voice,omitempty"`
+	Traits            AgentTraits        `yaml:"traits"`
+	Skin              AgentSkinConfig    `yaml:"skin"`
+	IsChild           bool               `yaml:"is_child,omitempty"`
+	Generation        int                `yaml:"generation,omitempty"`
+	Lineage           AgentLineageConfig `yaml:"lineage,omitempty"`
+	ImmediateGoal     string             `yaml:"immediate_goal,omitempty"`
+	ShortTermGoal     string             `yaml:"short_term_goal,omitempty"`
+	LongTermGoal      string             `yaml:"long_term_goal,omitempty"`
 }
 
 // AgentVoiceConfig defines individualized speech cadence, diction, quirks, and persona parameters
@@ -179,6 +181,21 @@ type AgentVoiceConfig struct {
 	SpeechQuirks []string `yaml:"speech_quirks,omitempty"` // e.g. ["uses farming metaphors", "addresses travelers as friend"]
 	Catchphrase  string   `yaml:"catchphrase,omitempty"`   // Optional recurring idiom or expression
 	Backstory    string   `yaml:"backstory,omitempty"`     // Short individualized origin note
+}
+
+// EffectiveSleepSystemPrompt returns the custom system prompt for sleep-state strategic reasoning,
+// checking SleepSystemPrompt and SkillPrompt in order of priority. Returns empty string if unset.
+func (c *AgentIdentityConfig) EffectiveSleepSystemPrompt() string {
+	if c == nil {
+		return ""
+	}
+	if p := strings.TrimSpace(c.SleepSystemPrompt); p != "" {
+		return p
+	}
+	if p := strings.TrimSpace(c.SkillPrompt); p != "" {
+		return p
+	}
+	return ""
 }
 
 // EffectiveVoice returns the agent's individualized AgentVoiceConfig, deterministically synthesizing
@@ -645,6 +662,75 @@ func (r *Resolver) SaveAgentConfig(cfg *AgentIdentityConfig) error {
 		return ErrNilConfig
 	}
 	return SaveAgentConfig(cfg, r.AgentConfigPath(cfg.Name))
+}
+
+// LoadAgentSkill loads the sleep-state strategic skill prompt for an agent.
+// It checks the standalone skill file (e.g. {agent_name}.skill.md) first,
+// and falls back to loading the prompt from the agent's identity configuration.
+func (r *Resolver) LoadAgentSkill(agentName string) (string, error) {
+	if err := validateIdentifier(agentName); err != nil {
+		return "", fmt.Errorf("%w: %s", ErrInvalidAgentName, err)
+	}
+	canonical := r.ResolveAgentName(agentName)
+
+	// 1. Direct skill path
+	directPath := r.AgentSkillPath(canonical)
+	if data, err := os.ReadFile(directPath); err == nil && len(strings.TrimSpace(string(data))) > 0 {
+		return strings.TrimSpace(string(data)), nil
+	}
+
+	// 2. Subdirectory skill.md (e.g. agents/{canonical}/skill.md)
+	subPath := filepath.Join(r.AgentsConfigDir(), canonical, "skill.md")
+	if data, err := os.ReadFile(subPath); err == nil && len(strings.TrimSpace(string(data))) > 0 {
+		return strings.TrimSpace(string(data)), nil
+	}
+
+	// 3. Fallback: inspect AgentIdentityConfig
+	cfg, err := r.LoadAgentConfig(canonical)
+	if err == nil && cfg != nil {
+		if prompt := cfg.EffectiveSleepSystemPrompt(); prompt != "" {
+			return prompt, nil
+		}
+	}
+
+	return "", fmt.Errorf("no skill prompt found for agent %q: %w", agentName, os.ErrNotExist)
+}
+
+// SaveAgentSkill saves a custom sleep-state strategic skill prompt for an agent to disk.
+// It writes to the standalone skill file and syncs the prompt into the agent's identity configuration.
+func (r *Resolver) SaveAgentSkill(agentName string, content string) error {
+	if err := validateIdentifier(agentName); err != nil {
+		return fmt.Errorf("%w: %s", ErrInvalidAgentName, err)
+	}
+	canonical := r.ResolveAgentName(agentName)
+	trimmedContent := strings.TrimSpace(content)
+
+	skillPath := r.AgentSkillPath(canonical)
+	if err := os.MkdirAll(filepath.Dir(skillPath), 0755); err != nil {
+		return fmt.Errorf("failed to create directory for skill %s: %w", skillPath, err)
+	}
+	if err := os.WriteFile(skillPath, []byte(trimmedContent+"\n"), 0644); err != nil {
+		return fmt.Errorf("failed to write agent skill file %s: %w", skillPath, err)
+	}
+
+	// Sync into AgentIdentityConfig if it exists
+	if cfg, err := r.LoadAgentConfig(canonical); err == nil && cfg != nil {
+		cfg.SleepSystemPrompt = trimmedContent
+		cfg.SkillPrompt = trimmedContent
+		_ = r.SaveAgentConfig(cfg)
+	}
+
+	return nil
+}
+
+// LoadAgentSkill loads the skill prompt for the named agent via the default resolver.
+func LoadAgentSkill(agentName string) (string, error) {
+	return defaultResolver.LoadAgentSkill(agentName)
+}
+
+// SaveAgentSkill saves the skill prompt for the named agent via the default resolver.
+func SaveAgentSkill(agentName string, content string) error {
+	return defaultResolver.SaveAgentSkill(agentName, content)
 }
 
 // ==================== INTERNAL I/O HELPERS ====================

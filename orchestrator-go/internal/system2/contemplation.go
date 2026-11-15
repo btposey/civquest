@@ -65,13 +65,14 @@ type PersonalVitals struct {
 
 // PersonalProfile captures the agent's identity, personality, condition, and inventory.
 type PersonalProfile struct {
-	AgentID        string             `json:"agent_id"`
-	ClanID         string             `json:"clan_id"`
-	Profession     string             `json:"profession"`
-	SecondaryHobby string             `json:"secondary_hobby,omitempty"`
-	Traits         map[string]float64 `json:"traits,omitempty"`
-	Vitals         PersonalVitals     `json:"vitals"`
-	InventoryItems []string           `json:"inventory_items"`
+	AgentID           string             `json:"agent_id"`
+	ClanID            string             `json:"clan_id"`
+	Profession        string             `json:"profession"`
+	SecondaryHobby    string             `json:"secondary_hobby,omitempty"`
+	SleepSystemPrompt string             `json:"sleep_system_prompt,omitempty"`
+	Traits            map[string]float64 `json:"traits,omitempty"`
+	Vitals            PersonalVitals     `json:"vitals"`
+	InventoryItems    []string           `json:"inventory_items"`
 }
 
 // StrategicLedger aggregates cartography, granary stock, tavern rumors, diplomacy,
@@ -331,14 +332,36 @@ func isFoodItemIdentifier(itemID string) bool {
 	return false
 }
 
+// DefaultContemplationPrompt returns the default sleep-state system prompt for an agent.
+func DefaultContemplationPrompt(agentName, profession, clanID string) string {
+	if profession == "" {
+		profession = "SETTLER"
+	}
+	if agentName == "" {
+		agentName = "Agent"
+	}
+	if clanID == "" {
+		clanID = "Settlement"
+	}
+	return fmt.Sprintf("You are the deliberative strategic mind (System 2) of %s, an autonomous %s of clan %s resting during nighttime sleep hours.\nSynthesize the agent's overnight reflection, morning priorities, and long-term settlement strategy.", agentName, profession, clanID)
+}
+
 // ContemplationService manages System 2 nighttime strategic contemplation.
 type ContemplationService struct {
-	client *Client
+	client             *Client
+	CustomSystemPrompt string
 }
 
 // NewContemplationService constructs a ContemplationService with the given LLM client.
 func NewContemplationService(client *Client) *ContemplationService {
 	return &ContemplationService{client: client}
+}
+
+// SetCustomSystemPrompt configures a custom system prompt override for strategic contemplation.
+func (s *ContemplationService) SetCustomSystemPrompt(prompt string) {
+	if s != nil {
+		s.CustomSystemPrompt = prompt
+	}
 }
 
 // Contemplate executes deliberative LLM reasoning (T=0.30) across the StrategicLedger
@@ -369,8 +392,45 @@ func (s *ContemplationService) Contemplate(ctx context.Context, ledger *Strategi
 		clanID = ledger.ClanID
 	}
 
-	sysPrompt := fmt.Sprintf(`You are the deliberative strategic mind (System 2) of %s, an autonomous %s of clan %s resting during nighttime sleep hours.
-Synthesize the agent's overnight reflection, morning priorities, and long-term settlement strategy.
+	customPrompt := strings.TrimSpace(ledger.PersonalProfile.SleepSystemPrompt)
+	if customPrompt == "" && s != nil {
+		customPrompt = strings.TrimSpace(s.CustomSystemPrompt)
+	}
+
+	var sysPrompt string
+	if customPrompt != "" {
+		base := customPrompt
+		if !strings.Contains(base, "<strategic_ledger>") {
+			base = base + "\n\n<strategic_ledger>\n" + string(ledgerJSON) + "\n</strategic_ledger>"
+		}
+		if !strings.Contains(base, "Output ONLY a valid JSON object") && !strings.Contains(base, `"immediate_goal"`) {
+			base = base + `
+
+Output ONLY a valid JSON object matching this exact schema:
+{
+  "immediate_goal": "morning priority when awakening at dawn (e.g. SCOUT_FRONTIER, PAVE_ROAD, HARVEST_CROPS, CRAFT_TOOLS)",
+  "short_term_goal": "next 1-3 days operational objective",
+  "long_term_goal": "seasonal aspirational milestone for self and clan",
+  "reflective_memory": "consolidated dream reflection or episodic synthesis from today's events, rumors, and environment to commit to memory",
+  "trade_adjustments": [
+    {
+      "item_id": "minecraft:bread",
+      "base_value": 4.0,
+      "need_multiplier": 1.5,
+      "min_accept_ratio": 0.85,
+      "rationale": "food reserve deficit requires higher valuation"
+    }
+  ],
+  "civic_proposals": [
+    "watchtower",
+    "granary"
+  ],
+  "rationale": "concise reasoning for strategic agenda"
+}`
+		}
+		sysPrompt = base
+	} else {
+		sysPrompt = fmt.Sprintf(`%s
 
 <strategic_ledger>
 %s
@@ -396,7 +456,8 @@ Output ONLY a valid JSON object matching this exact schema:
     "granary"
   ],
   "rationale": "concise reasoning for strategic agenda"
-}`, agentName, prof, clanID, string(ledgerJSON))
+}`, DefaultContemplationPrompt(agentName, prof, clanID), string(ledgerJSON))
+	}
 
 	messages := []ChatMessage{
 		{Role: "system", Content: sysPrompt},

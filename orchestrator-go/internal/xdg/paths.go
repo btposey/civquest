@@ -276,6 +276,18 @@ func (r *Resolver) AgentConfigPath(agentName string) string {
 	return filepath.Join(r.AgentsConfigDir(), fmt.Sprintf("%s.yaml", agentName))
 }
 
+// AgentSkillPath returns $XDG_CONFIG_HOME/civquest/servers/{server_id}/agents/{agent_name}.skill.md if it exists on disk,
+// falling back to $XDG_CONFIG_HOME/civquest/agents/{agent_name}.skill.md.
+func (r *Resolver) AgentSkillPath(agentName string) string {
+	if r.serverID != "" {
+		serverPath := filepath.Join(r.ServerAgentsConfigDir(), fmt.Sprintf("%s.skill.md", agentName))
+		if fi, err := os.Stat(serverPath); err == nil && !fi.IsDir() {
+			return serverPath
+		}
+	}
+	return filepath.Join(r.AgentsConfigDir(), fmt.Sprintf("%s.skill.md", agentName))
+}
+
 // BlueprintsDir returns $XDG_CONFIG_HOME/civquest/blueprints.
 func (r *Resolver) BlueprintsDir() string {
 	return filepath.Join(r.ConfigDir(), "blueprints")
@@ -756,6 +768,9 @@ func AgentsConfigDir() string { return defaultResolver.AgentsConfigDir() }
 
 // AgentConfigPath returns $XDG_CONFIG_HOME/civquest/agents/{agent_name}.yaml via the default resolver.
 func AgentConfigPath(agentName string) string { return defaultResolver.AgentConfigPath(agentName) }
+
+// AgentSkillPath returns $XDG_CONFIG_HOME/civquest/agents/{agent_name}.skill.md via the default resolver.
+func AgentSkillPath(agentName string) string { return defaultResolver.AgentSkillPath(agentName) }
 
 // BlueprintsDir returns $XDG_CONFIG_HOME/civquest/blueprints via the default resolver.
 func BlueprintsDir() string { return defaultResolver.BlueprintsDir() }
