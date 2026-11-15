@@ -606,6 +606,12 @@ func EvaluateExploration(agentID string, frame *civquestv1.TelemetryFrame, cfg *
 			// EvaluateSleep handles navigating to bed and sleeping when a bed is assigned
 			return nil
 		}
+		if state.lastShelterTimeoutTick > 0 && (frame.WorldTick-state.lastShelterTimeoutTick) < 600 {
+			if bootstrapIntent := evaluateBootstrapGoalsLocked(agentID, frame, pos, navState, state); bootstrapIntent != nil {
+				return bootstrapIntent
+			}
+			return nil
+		}
 		return evaluateDuskNightOutpostShelterLocked(agentID, frame, pos, navState, state)
 	}
 
@@ -899,8 +905,46 @@ func evaluateDuskNightOutpostShelterLocked(
 	canCraft := state.lastCraftTick == 0 || frame.WorldTick < state.lastCraftTick || frame.WorldTick-state.lastCraftTick >= 20
 	canPlace := state.lastShelterPlaceTick == 0 || frame.WorldTick < state.lastShelterPlaceTick || frame.WorldTick-state.lastShelterPlaceTick >= 20
 
-	// 1. Convert logs in inventory into oak_planks if fewer than 8 non-log building blocks are available
-	if inv.logCount >= 2 && inv.nonLogBuildingCount < 8 && canCraft {
+
+	cx := int32(math.Floor(pos.X))
+	cy := int32(math.Floor(pos.Y))
+	cz := int32(math.Floor(pos.Z))
+
+	if state.ShelterPos == nil {
+		state.ShelterPos = &civquestv1.BlockPosProto{X: cx, Y: cy, Z: cz}
+	}
+	centerVec := &civquestv1.Vec3{
+		X: float64(state.ShelterPos.X),
+		Y: float64(state.ShelterPos.Y),
+		Z: float64(state.ShelterPos.Z),
+	}
+	cabinIntents := blueprints.FrontierCabinIntents(centerVec)
+
+	// Check if all cabin blueprint blocks have been completed
+	if state.ShelterBuildIndex >= len(cabinIntents) {
+		state.shelterBlocksPlaced = len(cabinIntents)
+		distToCenter := math.Hypot(pos.X-float64(state.ShelterPos.X)-0.5, pos.Z-float64(state.ShelterPos.Z)-0.5)
+		if distToCenter > 1.5 && navState != civquestv1.NavigationState_NAVIGATION_STATE_PATHING {
+			return &civquestv1.AgentIntent{
+				AgentId: agentID,
+				Action: &civquestv1.AgentIntent_Navigate{
+					Navigate: &civquestv1.NavigateIntent{
+						Target: &civquestv1.Vec3{
+							X: float64(state.ShelterPos.X) + 0.5,
+							Y: float64(state.ShelterPos.Y),
+							Z: float64(state.ShelterPos.Z) + 0.5,
+						},
+						SpeedMultiplier:  1.0,
+						ArrivalTolerance: 1,
+					},
+				},
+			}
+		}
+		return nil
+	}
+
+	// 1. Convert logs in inventory into oak_planks if building blocks are needed
+	if inv.logCount >= 1 && (inv.nonLogBuildingCount < 16 || state.ShelterBuildIndex < len(cabinIntents)) && canCraft {
 		state.lastCraftTick = frame.WorldTick
 		return &civquestv1.AgentIntent{
 			AgentId: agentID,
@@ -910,6 +954,68 @@ func evaluateDuskNightOutpostShelterLocked(
 					BatchCount: 1,
 				},
 			},
+		}
+	}
+
+	// 2. Harvest timber when building blocks are depleted
+	if inv.buildingBlockCount == 0 && inv.logCount == 0 && state.ShelterBuildIndex < len(cabinIntents) {
+		var nearestLog *civquestv1.VisibleBlock
+		bestDistSq := math.MaxFloat64
+		for _, b := range frame.InterestingBlocks {
+			if b == nil || b.Pos == nil {
+				continue
+			}
+			id := strings.ToLower(b.BlockId)
+			if strings.HasSuffix(id, "_log") || strings.HasSuffix(id, "_wood") || strings.HasSuffix(id, "_stem") {
+				dx := float64(b.Pos.X) + 0.5 - pos.X
+				dy := float64(b.Pos.Y) + 0.5 - pos.Y
+				dz := float64(b.Pos.Z) + 0.5 - pos.Z
+				dSq := dx*dx + dy*dy + dz*dz
+				if dSq < bestDistSq {
+					bestDistSq = dSq
+					nearestLog = b
+				}
+			}
+		}
+
+		if nearestLog != nil {
+			if bestDistSq <= 20.25 { // Within 4.5 blocks melee/harvest reach
+				if state.lastHarvestTick == 0 || frame.WorldTick < state.lastHarvestTick || frame.WorldTick-state.lastHarvestTick >= 20 {
+					state.lastHarvestTick = frame.WorldTick
+					return &civquestv1.AgentIntent{
+						AgentId: agentID,
+						Action: &civquestv1.AgentIntent_InteractBlock{
+							InteractBlock: &civquestv1.InteractBlockIntent{
+								Pos:             nearestLog.Pos,
+								InteractionType: civquestv1.InteractBlockIntent_HARVEST_BREAK,
+								BlockOrItemId:   nearestLog.BlockId,
+							},
+						},
+					}
+				}
+				return nil
+			}
+
+			if navState != civquestv1.NavigationState_NAVIGATION_STATE_PATHING {
+				if state.lastExploreTick == 0 || frame.WorldTick < state.lastExploreTick || frame.WorldTick-state.lastExploreTick >= 40 {
+					state.lastExploreTick = frame.WorldTick
+					return &civquestv1.AgentIntent{
+						AgentId: agentID,
+						Action: &civquestv1.AgentIntent_Navigate{
+							Navigate: &civquestv1.NavigateIntent{
+								Target: &civquestv1.Vec3{
+									X: float64(nearestLog.Pos.X) + 0.5,
+									Y: float64(nearestLog.Pos.Y),
+									Z: float64(nearestLog.Pos.Z) + 0.5,
+								},
+								SpeedMultiplier:  1.0,
+								ArrivalTolerance: 2,
+							},
+						},
+					}
+				}
+			}
+			return nil
 		}
 	}
 
@@ -927,9 +1033,6 @@ func evaluateDuskNightOutpostShelterLocked(
 		}
 	}
 
-	cx := int32(math.Floor(pos.X))
-	cy := int32(math.Floor(pos.Y))
-	cz := int32(math.Floor(pos.Z))
 
 	if !hasNearbyLight {
 		if inv.hasLight && canPlace {
@@ -968,16 +1071,6 @@ func evaluateDuskNightOutpostShelterLocked(
 	}
 
 	// 3. Progressively build bottom-up 5x5 Frontier Cabin structure per ADR-010
-	if state.ShelterPos == nil {
-		state.ShelterPos = &civquestv1.BlockPosProto{X: cx, Y: cy, Z: cz}
-	}
-	centerVec := &civquestv1.Vec3{
-		X: float64(state.ShelterPos.X),
-		Y: float64(state.ShelterPos.Y),
-		Z: float64(state.ShelterPos.Z),
-	}
-	cabinIntents := blueprints.FrontierCabinIntents(centerVec)
-
 	if inv.buildingBlockCount > 0 && state.ShelterBuildIndex < len(cabinIntents) && canPlace {
 		target := cabinIntents[state.ShelterBuildIndex]
 
