@@ -155,6 +155,16 @@ func OpenCivicRegistryDBForClan(resolver *xdg.Resolver, clanID string) (*CivicRe
 }
 
 func (c *CivicRegistryDB) migrate(ctx context.Context) error {
+	return c.initSchema(ctx)
+}
+
+// InitSchema initializes all database tables, indices, and constraints in civic_registry.db.
+// It is idempotent and can be safely executed multiple times.
+func (c *CivicRegistryDB) InitSchema(ctx context.Context) error {
+	return c.initSchema(ctx)
+}
+
+func (c *CivicRegistryDB) initSchema(ctx context.Context) error {
 	schema := `
 	CREATE TABLE IF NOT EXISTS settlement_granary (
 		item_id TEXT PRIMARY KEY,
@@ -201,6 +211,67 @@ func (c *CivicRegistryDB) migrate(ctx context.Context) error {
 
 	CREATE INDEX IF NOT EXISTS idx_functional_zones_type ON functional_zones(zone_type);
 	CREATE INDEX IF NOT EXISTS idx_functional_zones_owner ON functional_zones(owner_agent_id);
+
+	CREATE TABLE IF NOT EXISTS clan_governance (
+		clan_id TEXT PRIMARY KEY,
+		regime_type TEXT NOT NULL,
+		leader_agent_id TEXT NOT NULL DEFAULT '',
+		leader_type TEXT NOT NULL DEFAULT 'AGENT' CHECK (leader_type IN ('AGENT', 'PLAYER')),
+		mandate_goal TEXT NOT NULL DEFAULT '',
+		legitimacy_score REAL NOT NULL DEFAULT 0.0 CHECK (legitimacy_score >= 0.0 AND legitimacy_score <= 100.0),
+		term_start_tick INTEGER NOT NULL DEFAULT 0,
+		last_election_tick INTEGER NOT NULL DEFAULT 0,
+		updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+		CHECK (regime_type IN ('DEMOCRACY', 'BENEVOLENT_MONARCHY', 'WARLORD', 'OLIGARCHY'))
+	);
+
+	CREATE TABLE IF NOT EXISTS civic_assemblies (
+		id TEXT PRIMARY KEY,
+		clan_id TEXT NOT NULL,
+		trigger_axis TEXT NOT NULL,
+		status TEXT NOT NULL DEFAULT 'ACTIVE' CHECK (status IN ('ACTIVE', 'CONCLUDED', 'ABANDONED')),
+		winning_proposal_id TEXT NOT NULL DEFAULT '',
+		opened_tick INTEGER NOT NULL DEFAULT 0,
+		closed_tick INTEGER NOT NULL DEFAULT 0,
+		created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+	);
+
+	CREATE INDEX IF NOT EXISTS idx_civic_assemblies_clan ON civic_assemblies(clan_id);
+	CREATE INDEX IF NOT EXISTS idx_civic_assemblies_status ON civic_assemblies(status);
+
+	CREATE TABLE IF NOT EXISTS civic_votes (
+		assembly_id TEXT NOT NULL,
+		agent_id TEXT NOT NULL,
+		voter_type TEXT NOT NULL DEFAULT 'AGENT' CHECK (voter_type IN ('AGENT', 'PLAYER')),
+		proposal_id TEXT NOT NULL,
+		vote_weight REAL NOT NULL DEFAULT 1.0 CHECK (vote_weight >= 0.0),
+		rationale TEXT NOT NULL DEFAULT '',
+		world_tick INTEGER NOT NULL DEFAULT 0,
+		created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+		PRIMARY KEY (assembly_id, agent_id),
+		FOREIGN KEY (assembly_id) REFERENCES civic_assemblies(id) ON DELETE CASCADE
+	);
+
+	CREATE INDEX IF NOT EXISTS idx_civic_votes_assembly ON civic_votes(assembly_id);
+	CREATE INDEX IF NOT EXISTS idx_civic_votes_proposal ON civic_votes(proposal_id);
+
+	CREATE TABLE IF NOT EXISTS civic_edicts (
+		id TEXT PRIMARY KEY,
+		clan_id TEXT NOT NULL,
+		leader_agent_id TEXT NOT NULL,
+		regime_type TEXT NOT NULL CHECK (regime_type IN ('DEMOCRACY', 'BENEVOLENT_MONARCHY', 'WARLORD', 'OLIGARCHY')),
+		edict_title TEXT NOT NULL,
+		blueprint_id TEXT NOT NULL DEFAULT '',
+		raw_decree TEXT NOT NULL DEFAULT '',
+		status TEXT NOT NULL DEFAULT 'ACTIVE' CHECK (status IN ('ACTIVE', 'COMPLETED', 'RESCINDED')),
+		compliance_count INTEGER NOT NULL DEFAULT 0 CHECK (compliance_count >= 0),
+		dissent_count INTEGER NOT NULL DEFAULT 0 CHECK (dissent_count >= 0),
+		issued_tick INTEGER NOT NULL DEFAULT 0,
+		created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+	);
+
+	CREATE INDEX IF NOT EXISTS idx_civic_edicts_clan ON civic_edicts(clan_id);
+	CREATE INDEX IF NOT EXISTS idx_civic_edicts_status ON civic_edicts(status);
 	`
 	_, err := c.db.ExecContext(ctx, schema)
 	return err

@@ -261,3 +261,67 @@ type CaravanLogEntry struct {
 	ReturnTick         int64     `json:"return_tick"`
 	CreatedAt          time.Time `json:"created_at,omitempty"`
 }
+
+// ClanGovernance tracks dynamic regime type, leadership, legitimacy, and mandate goal.
+// Stored in civic_registry.db in the clan_governance table per ADR-016.
+type ClanGovernance struct {
+	ClanID           string    `json:"clan_id"`
+	RegimeType       string    `json:"regime_type"` // 'DEMOCRACY', 'BENEVOLENT_MONARCHY', 'WARLORD', 'OLIGARCHY'
+	LeaderAgentID    string    `json:"leader_agent_id"`
+	LeaderType       string    `json:"leader_type"` // 'AGENT', 'PLAYER'
+	MandateGoal      string    `json:"mandate_goal"`
+	LegitimacyScore  float64   `json:"legitimacy_score"` // [0.0 - 100.0]
+	TermStartTick    int64     `json:"term_start_tick"`
+	LastElectionTick int64     `json:"last_election_tick"`
+	UpdatedAt        time.Time `json:"updated_at,omitempty"`
+}
+
+// CivicAssembly represents a collective deliberative gathering triggered by an axis of change.
+// Stored in civic_registry.db in the civic_assemblies table per ADR-016.
+type CivicAssembly struct {
+	ID                string    `json:"id"`
+	ClanID            string    `json:"clan_id"`
+	TriggerAxis       string    `json:"trigger_axis"` // 'MATERIAL_SHOCK', 'SECURITY_CRISIS', 'DYNASTIC_SUCCESSION', 'GOAL_VACUUM'
+	Status            string    `json:"status"`       // 'ACTIVE', 'CONCLUDED', 'ABANDONED'
+	WinningProposalID string    `json:"winning_proposal_id,omitempty"`
+	OpenedTick        int64     `json:"opened_tick"`
+	ClosedTick        int64     `json:"closed_tick,omitempty"`
+	CreatedAt         time.Time `json:"created_at,omitempty"`
+}
+
+// CivicVote records an individual settler or player ballot in a civic assembly.
+// Stored in civic_registry.db in the civic_votes table per ADR-016.
+type CivicVote struct {
+	AssemblyID string    `json:"assembly_id"`
+	AgentID    string    `json:"agent_id"`
+	VoterType  string    `json:"voter_type"` // 'AGENT', 'PLAYER'
+	ProposalID string    `json:"proposal_id"`
+	VoteWeight float64   `json:"vote_weight"`
+	Rationale  string    `json:"rationale"`
+	WorldTick  int64     `json:"world_tick"`
+	CreatedAt  time.Time `json:"created_at,omitempty"`
+}
+
+// CivicEdict represents a unilateral decree issued by a monarch or warlord sovereign.
+// Stored in civic_registry.db in the civic_edicts table per ADR-016.
+type CivicEdict struct {
+	ID              string    `json:"id"`
+	ClanID          string    `json:"clan_id"`
+	LeaderAgentID   string    `json:"leader_agent_id"`
+	RegimeType      string    `json:"regime_type"` // 'DEMOCRACY', 'BENEVOLENT_MONARCHY', 'WARLORD', 'OLIGARCHY'
+	EdictTitle      string    `json:"edict_title"`
+	BlueprintID     string    `json:"blueprint_id,omitempty"`
+	RawDecree       string    `json:"raw_decree"`
+	Status          string    `json:"status"` // 'ACTIVE', 'COMPLETED', 'RESCINDED'
+	ComplianceCount int       `json:"compliance_count"`
+	DissentCount    int       `json:"dissent_count"`
+	IssuedTick      int64     `json:"issued_tick"`
+	CreatedAt       time.Time `json:"created_at,omitempty"`
+}
+
+// AssemblyBallotTally aggregates the total weighted score and ballot count for a proposal.
+type AssemblyBallotTally struct {
+	ProposalID  string  `json:"proposal_id"`
+	TotalWeight float64 `json:"total_weight"`
+	VoteCount   int     `json:"vote_count"`
+}
