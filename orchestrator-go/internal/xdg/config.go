@@ -165,6 +165,9 @@ type AgentIdentityConfig struct {
 	IsChild        bool               `yaml:"is_child,omitempty"`
 	Generation     int                `yaml:"generation,omitempty"`
 	Lineage        AgentLineageConfig `yaml:"lineage,omitempty"`
+	ImmediateGoal  string             `yaml:"immediate_goal,omitempty"`
+	ShortTermGoal  string             `yaml:"short_term_goal,omitempty"`
+	LongTermGoal   string             `yaml:"long_term_goal,omitempty"`
 }
 
 // AgentVoiceConfig defines individualized speech cadence, diction, quirks, and persona parameters

@@ -2923,3 +2923,436 @@ func TestRuntime_AgrarianSharecroppingAndSpecialization(t *testing.T) {
 	cancel()
 	_ = <-runErrCh
 }
+
+func TestRuntime_System2_NighttimeContemplation_ExecutionAndDebounce(t *testing.T) {
+	mockSvc, bridgeClient, cleanup := setupTestBridge(t)
+	defer cleanup()
+
+	var callCount atomic.Int32
+	llmServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		callCount.Add(1)
+		payload, _ := json.Marshal(system2.StrategicContemplationResponse{
+			ImmediateGoal:    "SURVEY_OUTPOST_NW: Establish fortified watch in NW quadrant",
+			ShortTermGoal:    "PAVE_MAIN_AVENUE: Clear brush and lay stone along trade axis",
+			LongTermGoal:     "UNIFY_CLAN_TRADE: Establish open barter network with clan_ironborn",
+			ReflectiveMemory: "Resting beneath the timber roof, I contemplated the northern mountain passes and need for stone tools.",
+			TradeAdjustments: []system2.TradeValuationAdjustment{
+				{
+					ItemID:         "minecraft:stone_pickaxe",
+					BaseValue:      8.0,
+					NeedMultiplier: 2.5,
+					MinAcceptRatio: 0.85,
+					Rationale:      "Urgent stone harvesting for fortifications",
+				},
+			},
+			CivicProposals: []string{"granary", "watchtower"},
+			Rationale:      "Winter approaches and food reserves require expansion.",
+		})
+
+		resp := system2.ChatCompletionResponse{
+			ID: "contemplate-test",
+			Choices: []system2.ChatCompletionChoice{
+				{
+					Index: 0,
+					Message: system2.ChatMessage{
+						Role:    "assistant",
+						Content: string(payload),
+					},
+					FinishReason: "stop",
+				},
+			},
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(resp)
+	}))
+	defer llmServer.Close()
+
+	llmClient, err := system2.NewClient(
+		&xdg.GlobalConfig{
+			LLMGateway: xdg.LLMGatewayConfig{
+				BaseURL: llmServer.URL + "/v1",
+				Model:   "mock-model",
+			},
+		},
+		system2.WithHTTPClient(llmServer.Client()),
+	)
+	if err != nil {
+		t.Fatalf("failed creating LLM client: %v", err)
+	}
+	defer llmClient.Close()
+
+	tmpDir := t.TempDir()
+	r := xdg.NewResolver(xdg.WithCustomRoot(tmpDir))
+
+	agentDB, err := db.OpenAgentDB(r.AgentDataDir("contemplative_agent"))
+	if err != nil {
+		t.Fatalf("OpenAgentDB failed: %v", err)
+	}
+	defer agentDB.Close()
+
+	agentCfg := xdg.DefaultAgentIdentityConfig("contemplative_agent")
+	agentCfg.Profession = "BUILDER"
+
+	sockPath := filepath.Join(tmpDir, "contemplate.sock")
+
+	rt, err := agent.NewRuntime(agent.Config{
+		AgentID:              "contemplative_agent",
+		ClanID:               "pioneers",
+		IdentityConfig:       agentCfg,
+		Resolver:             r,
+		AgentDB:              agentDB,
+		BridgeClient:         bridgeClient,
+		SocketPath:           sockPath,
+		ContemplationService: system2.NewContemplationService(llmClient),
+	})
+	if err != nil {
+		t.Fatalf("NewRuntime failed: %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	runErrCh := make(chan error, 1)
+	go func() {
+		runErrCh <- rt.Start(ctx)
+	}()
+
+	// Wait for RUNNING state
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		if rt.Status() == "RUNNING" {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	// 1. Send sleep frame on Day 0 (tick 14000, time of day 14000, in bed)
+	nightFrameDay0 := &civquestv1.TelemetryFrame{
+		WorldTick: 14000,
+		TimeOfDay: 14000,
+		Status: &civquestv1.AgentStatus{
+			Health:     20.0,
+			FoodLevel:  20,
+			IsSleeping: true,
+			Position:   &civquestv1.Vec3{X: 10, Y: 64, Z: 10},
+		},
+	}
+	if err := mockSvc.SendFrame(nightFrameDay0); err != nil {
+		t.Fatalf("failed sending night frame day 0: %v", err)
+	}
+
+	// Wait for contemplation to complete and goals to be updated
+	goalDeadline := time.Now().Add(4 * time.Second)
+	var imm, st, lt string
+	for time.Now().Before(goalDeadline) {
+		imm, st, lt = rt.Goals()
+		if imm == "SURVEY_OUTPOST_NW: Establish fortified watch in NW quadrant" {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+
+	if imm != "SURVEY_OUTPOST_NW: Establish fortified watch in NW quadrant" {
+		t.Fatalf("expected immediate goal to be updated, got %q", imm)
+	}
+	if st != "PAVE_MAIN_AVENUE: Clear brush and lay stone along trade axis" {
+		t.Errorf("expected short-term goal to be updated, got %q", st)
+	}
+	if lt != "UNIFY_CLAN_TRADE: Establish open barter network with clan_ironborn" {
+		t.Errorf("expected long-term goal to be updated, got %q", lt)
+	}
+	if callCount.Load() != 1 {
+		t.Fatalf("expected exactly 1 LLM contemplation call, got %d", callCount.Load())
+	}
+
+	// 2. Send another frame on Day 0 (tick 16000) - must be debounced
+	subsequentFrameDay0 := &civquestv1.TelemetryFrame{
+		WorldTick: 16000,
+		TimeOfDay: 16000,
+		Status: &civquestv1.AgentStatus{
+			Health:     20.0,
+			FoodLevel:  20,
+			IsSleeping: true,
+			Position:   &civquestv1.Vec3{X: 10, Y: 64, Z: 10},
+		},
+	}
+	if err := mockSvc.SendFrame(subsequentFrameDay0); err != nil {
+		t.Fatalf("failed sending subsequent frame day 0: %v", err)
+	}
+
+	time.Sleep(100 * time.Millisecond)
+	if callCount.Load() != 1 {
+		t.Fatalf("expected call count to remain 1 after debounce, got %d", callCount.Load())
+	}
+
+	// Verify trade valuation upserted in agentDB
+	valuations, err := agentDB.GetTradeValuations(context.Background())
+	if err != nil {
+		t.Fatalf("GetTradeValuations failed: %v", err)
+	}
+	if v, ok := valuations["minecraft:stone_pickaxe"]; !ok {
+		t.Error("expected minecraft:stone_pickaxe in trade valuations")
+	} else if v.NeedMultiplier != 2.5 {
+		t.Errorf("expected need_multiplier 2.5, got %f", v.NeedMultiplier)
+	}
+
+	// Verify episodic memory was recorded
+	recentMems, err := agentDB.GetRecentMemories(context.Background(), 5)
+	if err != nil {
+		t.Fatalf("GetRecentMemories failed: %v", err)
+	}
+	if len(recentMems) == 0 {
+		t.Fatal("expected at least 1 episodic memory recorded")
+	}
+	foundReflective := false
+	for _, m := range recentMems {
+		if strings.Contains(m.SummaryText, "northern mountain passes") {
+			foundReflective = true
+			if m.SaliencyScore < 0.80 {
+				t.Errorf("expected saliency >= 0.80, got %f", m.SaliencyScore)
+			}
+			break
+		}
+	}
+	if !foundReflective {
+		t.Error("expected reflective memory in recent episodic memories")
+	}
+
+	// 3. Advance to Day 1 (tick 38000, time of day 14000) - must trigger new contemplation
+	nightFrameDay1 := &civquestv1.TelemetryFrame{
+		WorldTick: 38000,
+		TimeOfDay: 14000,
+		Status: &civquestv1.AgentStatus{
+			Health:     20.0,
+			FoodLevel:  20,
+			IsSleeping: true,
+			Position:   &civquestv1.Vec3{X: 10, Y: 64, Z: 10},
+		},
+	}
+	if err := mockSvc.SendFrame(nightFrameDay1); err != nil {
+		t.Fatalf("failed sending night frame day 1: %v", err)
+	}
+
+	day1Deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(day1Deadline) {
+		if callCount.Load() == 2 {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+
+	if callCount.Load() != 2 {
+		t.Fatalf("expected call count to advance to 2 on Day 1, got %d", callCount.Load())
+	}
+
+	rt.Stop()
+	cancel()
+	_ = <-runErrCh
+}
+
+func TestRuntime_System2_Contemplation_DialogueVitalsAndSocketIntegration(t *testing.T) {
+	_, bridgeClient, cleanup := setupTestBridge(t)
+	defer cleanup()
+
+	tmpDir := t.TempDir()
+	r := xdg.NewResolver(xdg.WithCustomRoot(tmpDir))
+
+	agentDB, err := db.OpenAgentDB(r.AgentDataDir("social_builder"))
+	if err != nil {
+		t.Fatalf("OpenAgentDB failed: %v", err)
+	}
+	defer agentDB.Close()
+
+	agentCfg := xdg.DefaultAgentIdentityConfig("social_builder")
+	sockPath := filepath.Join(tmpDir, "social_builder.sock")
+
+	rt, err := agent.NewRuntime(agent.Config{
+		AgentID:        "social_builder",
+		ClanID:         "pioneers",
+		IdentityConfig: agentCfg,
+		Resolver:       r,
+		AgentDB:        agentDB,
+		BridgeClient:   bridgeClient,
+		SocketPath:     sockPath,
+	})
+	if err != nil {
+		t.Fatalf("NewRuntime failed: %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	runErrCh := make(chan error, 1)
+	go func() {
+		runErrCh <- rt.Start(ctx)
+	}()
+
+	// Wait for RUNNING state
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		if rt.Status() == "RUNNING" {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	// Explicitly set synthesized goals
+	rt.UpdateGoals(
+		"BUILD_WATCHTOWER_SE: Lay timber foundation for south-east outpost",
+		"STOCKPILE_COBBLESTONE: Quarry 128 cobblestone from nearby outcrop",
+		"SECURE_SETTLEMENT_WALL: Complete perimeter stone palisade",
+	)
+
+	// Verify goals retrieved thread-safely
+	imm, st, lt := rt.Goals()
+	if imm != "BUILD_WATCHTOWER_SE: Lay timber foundation for south-east outpost" {
+		t.Errorf("unexpected immediate goal: %s", imm)
+	}
+	if st != "STOCKPILE_COBBLESTONE: Quarry 128 cobblestone from nearby outcrop" {
+		t.Errorf("unexpected short-term goal: %s", st)
+	}
+	if lt != "SECURE_SETTLEMENT_WALL: Complete perimeter stone palisade" {
+		t.Errorf("unexpected long-term goal: %s", lt)
+	}
+
+	// Verify socket serves goals in SocketStatusResponse
+	conn, err := net.Dial("unix", sockPath)
+	if err != nil {
+		t.Fatalf("failed dialing agent socket: %v", err)
+	}
+	defer conn.Close()
+
+	var sockResp agent.SocketStatusResponse
+	if err := json.NewDecoder(conn).Decode(&sockResp); err != nil {
+		t.Fatalf("failed decoding socket response: %v", err)
+	}
+
+	if sockResp.Goals == nil {
+		t.Fatal("expected non-nil Goals in socket response")
+	}
+	if sockResp.Goals.ImmediateGoal != imm {
+		t.Errorf("expected socket ImmediateGoal %q, got %q", imm, sockResp.Goals.ImmediateGoal)
+	}
+	if sockResp.Goals.ShortTermGoal != st {
+		t.Errorf("expected socket ShortTermGoal %q, got %q", st, sockResp.Goals.ShortTermGoal)
+	}
+	if sockResp.Goals.LongTermGoal != lt {
+		t.Errorf("expected socket LongTermGoal %q, got %q", lt, sockResp.Goals.LongTermGoal)
+	}
+
+	rt.Stop()
+	cancel()
+	_ = <-runErrCh
+}
+
+func TestRuntime_TriggerContemplation_Synchronous(t *testing.T) {
+	expectedImmediate := "EXPAND_IRRIGATED_FARM: Dig canal from river to western field"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		payload, _ := json.Marshal(system2.StrategicContemplationResponse{
+			ImmediateGoal:    expectedImmediate,
+			ShortTermGoal:    "SEED_PUMPKIN_PATCH: Plant 16 pumpkin seeds along canal",
+			LongTermGoal:     "SURPLUS_HARVEST: Achieve 14 days food reserves in clan granary",
+			ReflectiveMemory: "Dreamt of golden wheat fields stretching to the horizon.",
+			TradeAdjustments: []system2.TradeValuationAdjustment{
+				{
+					ItemID:         "wheat_seeds",
+					BaseValue:      2.0,
+					NeedMultiplier: 2.0,
+					MinAcceptRatio: 0.9,
+					Rationale:      "Expanding crop fields",
+				},
+			},
+			CivicProposals: []string{"irrigation_canal", "granary_expansion"},
+			Rationale:      "Food security ensures clan survival through winter.",
+		})
+
+		resp := system2.ChatCompletionResponse{
+			ID: "sync-contemplate-test",
+			Choices: []system2.ChatCompletionChoice{
+				{
+					Index: 0,
+					Message: system2.ChatMessage{
+						Role:    "assistant",
+						Content: string(payload),
+					},
+					FinishReason: "stop",
+				},
+			},
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(resp)
+	}))
+	defer server.Close()
+
+	llmClient, err := system2.NewClient(
+		&xdg.GlobalConfig{
+			LLMGateway: xdg.LLMGatewayConfig{
+				BaseURL: server.URL + "/v1",
+				Model:   "mock-model",
+			},
+		},
+		system2.WithHTTPClient(server.Client()),
+	)
+	if err != nil {
+		t.Fatalf("failed creating LLM client: %v", err)
+	}
+	defer llmClient.Close()
+
+	tmpDir := t.TempDir()
+	r := xdg.NewResolver(xdg.WithCustomRoot(tmpDir))
+
+	agentDB, err := db.OpenAgentDB(r.AgentDataDir("farmer_sync"))
+	if err != nil {
+		t.Fatalf("OpenAgentDB failed: %v", err)
+	}
+	defer agentDB.Close()
+
+	rt, err := agent.NewRuntime(agent.Config{
+		AgentID:              "farmer_sync",
+		ClanID:               "pioneers",
+		IdentityConfig:       xdg.DefaultAgentIdentityConfig("farmer_sync"),
+		Resolver:             r,
+		AgentDB:              agentDB,
+		SocketPath:           filepath.Join(tmpDir, "farmer_sync.sock"),
+		ContemplationService: system2.NewContemplationService(llmClient),
+	})
+	if err != nil {
+		t.Fatalf("NewRuntime failed: %v", err)
+	}
+	defer rt.Stop()
+
+	frame := &civquestv1.TelemetryFrame{
+		WorldTick: 14500,
+		TimeOfDay: 14500,
+		Status: &civquestv1.AgentStatus{
+			Health:    20.0,
+			FoodLevel: 19,
+			Position:  &civquestv1.Vec3{X: 5, Y: 64, Z: 5},
+		},
+	}
+
+	resp, err := rt.TriggerContemplation(context.Background(), frame)
+	if err != nil {
+		t.Fatalf("TriggerContemplation failed: %v", err)
+	}
+
+	if resp.ImmediateGoal != expectedImmediate {
+		t.Errorf("expected ImmediateGoal %q, got %q", expectedImmediate, resp.ImmediateGoal)
+	}
+
+	imm, _, _ := rt.Goals()
+	if imm != expectedImmediate {
+		t.Errorf("expected rt.Goals() to reflect %q, got %q", expectedImmediate, imm)
+	}
+
+	// Verify trade valuation updated in AgentDB
+	valuations, err := agentDB.GetTradeValuations(context.Background())
+	if err != nil {
+		t.Fatalf("GetTradeValuations failed: %v", err)
+	}
+	if v, ok := valuations["minecraft:wheat_seeds"]; !ok {
+		t.Error("expected minecraft:wheat_seeds in valuations")
+	} else if v.NeedMultiplier != 2.0 {
+		t.Errorf("expected need_multiplier 2.0, got %f", v.NeedMultiplier)
+	}
+}

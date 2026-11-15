@@ -47,26 +47,30 @@ type StreamConnector interface {
 
 // Config provides initial configuration options for constructing an AgentRuntime.
 type Config struct {
-	AgentID           string
-	AgentUUID         string
-	ClanID            string
-	IdentityConfig    *xdg.AgentIdentityConfig
-	Resolver          *xdg.Resolver
-	AgentDB           *db.AgentDB
-	ReputationDB      *db.ReputationDB
-	MemoryPipeline    *memory.Pipeline
-	BridgeClient      *bridge.Client
-	StreamConnector   StreamConnector
-	SocketPath        string
-	IntentQueueSize   int
-	OnDeath           func(*civquestv1.DeathEvent)
-	DialogueService   *system2.DialogueService
-	ChroniclerService *system2.ChroniclerService
-	ToponymyService   *system2.ToponymyService
-	CompanionService  *system2.CompanionService
-	LandmarksDB       *db.LandmarksDB
-	ContractsDB       *db.ContractsDB
-	SharecroppingEngine *agrarian.SharecroppingEngine
+	AgentID              string
+	AgentUUID            string
+	ClanID               string
+	IdentityConfig       *xdg.AgentIdentityConfig
+	Resolver             *xdg.Resolver
+	AgentDB              *db.AgentDB
+	ReputationDB         *db.ReputationDB
+	MemoryPipeline       *memory.Pipeline
+	BridgeClient         *bridge.Client
+	StreamConnector      StreamConnector
+	SocketPath           string
+	IntentQueueSize      int
+	OnDeath              func(*civquestv1.DeathEvent)
+	DialogueService      *system2.DialogueService
+	ChroniclerService    *system2.ChroniclerService
+	ToponymyService      *system2.ToponymyService
+	CompanionService     *system2.CompanionService
+	LandmarksDB          *db.LandmarksDB
+	ContractsDB          *db.ContractsDB
+	SharecroppingEngine  *agrarian.SharecroppingEngine
+	CivicRegistryDB      *db.CivicRegistryDB
+	RumorsDB             *db.RumorsDB
+	DiplomacyDB          *db.DiplomacyDB
+	ContemplationService *system2.ContemplationService
 }
 
 // SocketPosition represents 3D coordinates in the diagnostic socket payload.
@@ -88,22 +92,23 @@ type System1UtilityScores struct {
 
 // SocketStatusResponse represents the JSON payload served over the per-agent UNIX domain socket.
 type SocketStatusResponse struct {
-	Agent                 string                `json:"agent"`
-	Clan                  string                `json:"clan"`
-	Status                string                `json:"status"`
-	PID                   int                   `json:"pid"`
-	WorldTick             int64                 `json:"world_tick"`
-	Health                float32               `json:"health"`
-	FoodLevel             int32                 `json:"food_level"`
-	Position              *SocketPosition       `json:"position,omitempty"`
-	NavigationState       string                `json:"navigation_state"`
-	NavigationDestination *SocketPosition       `json:"navigation_destination,omitempty"`
-	UptimeSeconds         float64               `json:"uptime_seconds"`
-	MemoryRSS             uint64                `json:"memory_rss"`
-	MemoryRSSMB           float64               `json:"memory_rss_mb"`
-	FrameLatencyMs        float64               `json:"frame_latency_ms"`
-	ActiveLLMRequests     int32                 `json:"active_llm_requests"`
-	UtilityScores         *System1UtilityScores `json:"utility_scores,omitempty"`
+	Agent                 string                 `json:"agent"`
+	Clan                  string                 `json:"clan"`
+	Status                string                 `json:"status"`
+	PID                   int                    `json:"pid"`
+	WorldTick             int64                  `json:"world_tick"`
+	Health                float32                `json:"health"`
+	FoodLevel             int32                  `json:"food_level"`
+	Position              *SocketPosition        `json:"position,omitempty"`
+	NavigationState       string                 `json:"navigation_state"`
+	NavigationDestination *SocketPosition        `json:"navigation_destination,omitempty"`
+	UptimeSeconds         float64                `json:"uptime_seconds"`
+	MemoryRSS             uint64                 `json:"memory_rss"`
+	MemoryRSSMB           float64                `json:"memory_rss_mb"`
+	FrameLatencyMs        float64                `json:"frame_latency_ms"`
+	ActiveLLMRequests     int32                  `json:"active_llm_requests"`
+	UtilityScores         *System1UtilityScores  `json:"utility_scores,omitempty"`
+	Goals                 *system1.GoalHierarchy `json:"goals,omitempty"`
 }
 
 // AgentRuntime manages the isolated OS-process lifecycle for an individual agent.
@@ -171,6 +176,12 @@ type AgentRuntime struct {
 	companionService     *system2.CompanionService
 	landmarksDB          *db.LandmarksDB
 	contractsDB          *db.ContractsDB
+	civicRegistryDB      *db.CivicRegistryDB
+	rumorsDB             *db.RumorsDB
+	diplomacyDB          *db.DiplomacyDB
+	contemplationService *system2.ContemplationService
+	lastContemplatedDay  int64
+	contemplationActive  atomic.Bool
 	sharecroppingEngine  *agrarian.SharecroppingEngine
 	lastChronicleAttempt time.Time
 	lastChronicleTick    int64
@@ -293,6 +304,19 @@ func NewRuntime(cfg Config) (*AgentRuntime, error) {
 		companionService:  companionService,
 		landmarksDB:       cfg.LandmarksDB,
 		contractsDB:       cfg.ContractsDB,
+		civicRegistryDB:   cfg.CivicRegistryDB,
+		rumorsDB:          cfg.RumorsDB,
+		diplomacyDB:       cfg.DiplomacyDB,
+		contemplationService: func() *system2.ContemplationService {
+			if cfg.ContemplationService != nil {
+				return cfg.ContemplationService
+			}
+			if cfg.DialogueService != nil && cfg.DialogueService.Client() != nil {
+				return system2.NewContemplationService(cfg.DialogueService.Client())
+			}
+			return nil
+		}(),
+		lastContemplatedDay: -1,
 		sharecroppingEngine: func() *agrarian.SharecroppingEngine {
 			if cfg.SharecroppingEngine != nil {
 				return cfg.SharecroppingEngine
@@ -302,19 +326,19 @@ func NewRuntime(cfg Config) (*AgentRuntime, error) {
 			}
 			return nil
 		}(),
-		debugLogger:       debugLog,
-		slotQueue:         NewSlotQueue(),
-		socketPath:        sockPath,
-		pid:               os.Getpid(),
-		startTime:         time.Now().UTC(),
-		status:            "INITIALIZING",
-		onDeath:           cfg.OnDeath,
-		done:              make(chan struct{}),
-		socketDone:        make(chan struct{}),
-		lastCachedItems:   nil,
-		system1State:      sys1State,
-		agentFSM:          agentFSM,
-		pavingTracker:     pavingTracker,
+		debugLogger:     debugLog,
+		slotQueue:       NewSlotQueue(),
+		socketPath:      sockPath,
+		pid:             os.Getpid(),
+		startTime:       time.Now().UTC(),
+		status:          "INITIALIZING",
+		onDeath:         cfg.OnDeath,
+		done:            make(chan struct{}),
+		socketDone:      make(chan struct{}),
+		lastCachedItems: nil,
+		system1State:    sys1State,
+		agentFSM:        agentFSM,
+		pavingTracker:   pavingTracker,
 	}
 
 	if debugLog != nil {
@@ -497,6 +521,110 @@ func (r *AgentRuntime) SetLandmarksDB(l *db.LandmarksDB) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.landmarksDB = l
+}
+
+// CivicRegistryDB returns the clan civic registry database handle.
+func (r *AgentRuntime) CivicRegistryDB() *db.CivicRegistryDB {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.civicRegistryDB
+}
+
+// SetCivicRegistryDB assigns the clan civic registry database handle.
+func (r *AgentRuntime) SetCivicRegistryDB(c *db.CivicRegistryDB) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.civicRegistryDB = c
+}
+
+// RumorsDB returns the clan rumors database handle.
+func (r *AgentRuntime) RumorsDB() *db.RumorsDB {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.rumorsDB
+}
+
+// SetRumorsDB assigns the clan rumors database handle.
+func (r *AgentRuntime) SetRumorsDB(rum *db.RumorsDB) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.rumorsDB = rum
+}
+
+// DiplomacyDB returns the clan diplomacy database handle.
+func (r *AgentRuntime) DiplomacyDB() *db.DiplomacyDB {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.diplomacyDB
+}
+
+// SetDiplomacyDB assigns the clan diplomacy database handle.
+func (r *AgentRuntime) SetDiplomacyDB(d *db.DiplomacyDB) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.diplomacyDB = d
+}
+
+// ContemplationService returns the System 2 Contemplation service if configured.
+func (r *AgentRuntime) ContemplationService() *system2.ContemplationService {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.contemplationService
+}
+
+// SetContemplationService assigns or updates the System 2 Contemplation service.
+func (r *AgentRuntime) SetContemplationService(c *system2.ContemplationService) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.contemplationService = c
+}
+
+// LastContemplatedDay returns the last in-game day on which contemplation completed.
+func (r *AgentRuntime) LastContemplatedDay() int64 {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.lastContemplatedDay
+}
+
+// UpdateGoals updates the immediate, short-term, and long-term goals thread-safely
+// across identity config and volatile system1 state.
+func (r *AgentRuntime) UpdateGoals(immediate, shortTerm, longTerm string) {
+	r.mu.Lock()
+	if r.identityConfig != nil {
+		r.identityConfig.ImmediateGoal = immediate
+		r.identityConfig.ShortTermGoal = shortTerm
+		r.identityConfig.LongTermGoal = longTerm
+	}
+	cfgCopy := r.identityConfig
+	resolver := r.resolver
+	agentID := r.agentID
+	r.mu.Unlock()
+
+	if r.system1State != nil {
+		r.system1State.SetGoals(system1.GoalHierarchy{
+			ImmediateGoal: immediate,
+			ShortTermGoal: shortTerm,
+			LongTermGoal:  longTerm,
+		})
+	}
+
+	if resolver != nil && cfgCopy != nil {
+		_ = xdg.SaveAgentConfig(cfgCopy, resolver.AgentConfigPath(agentID))
+	}
+}
+
+// Goals returns the current immediate, short-term, and long-term goals thread-safely.
+func (r *AgentRuntime) Goals() (string, string, string) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	if r.identityConfig != nil && (r.identityConfig.ImmediateGoal != "" || r.identityConfig.ShortTermGoal != "" || r.identityConfig.LongTermGoal != "") {
+		return r.identityConfig.ImmediateGoal, r.identityConfig.ShortTermGoal, r.identityConfig.LongTermGoal
+	}
+	if r.system1State != nil {
+		gh := r.system1State.GetGoals()
+		return gh.ImmediateGoal, gh.ShortTermGoal, gh.LongTermGoal
+	}
+	return "", "", ""
 }
 
 // System1State returns the volatile System 1 agent routine, needs, and paving state.
@@ -1097,6 +1225,7 @@ func (r *AgentRuntime) Stop() {
 		r.tradeActive.Store(false)
 		r.chroniclerActive.Store(false)
 		r.toponymyActive.Store(false)
+		r.contemplationActive.Store(false)
 		r.dialogueWg.Wait()
 
 		// Close dialogue service if assigned
@@ -1271,6 +1400,7 @@ func (r *AgentRuntime) HandleTelemetryFrame(frame *civquestv1.TelemetryFrame) {
 		r.tradeActive.Store(false)
 		r.chroniclerActive.Store(false)
 		r.toponymyActive.Store(false)
+		r.contemplationActive.Store(false)
 		r.dialogueWg.Wait()
 
 		// 3. Stop socket server and close dialogue service to prevent IPC queries
@@ -1357,6 +1487,9 @@ func (r *AgentRuntime) HandleTelemetryFrame(frame *civquestv1.TelemetryFrame) {
 
 	// Dispatch Agrarian specialization and farmland sharecropping routines (non-blocking)
 	r.dispatchAgrarian(frame)
+
+	// Dispatch System 2 Nighttime Strategic Contemplation during sleep hours (ticks 13000-23500) (non-blocking)
+	r.dispatchContemplation(frame)
 }
 
 // dispatchDialogue asynchronously processes incoming chat messages and pending trade requests
@@ -2098,6 +2231,388 @@ func (r *AgentRuntime) dispatchAgrarian(frame *civquestv1.TelemetryFrame) {
 	}
 }
 
+// dispatchContemplation evaluates conditions for nighttime strategic contemplation (SLEEP routine / ticks 13000-23500)
+// and runs deliberative inference asynchronously with a per-in-game-day debounce.
+func (r *AgentRuntime) dispatchContemplation(frame *civquestv1.TelemetryFrame) {
+	if frame == nil {
+		return
+	}
+
+	r.mu.RLock()
+	if r.status != "RUNNING" || r.isDead || r.agentDB == nil || (r.contemplationService == nil && r.dialogueService == nil) {
+		r.mu.RUnlock()
+		return
+	}
+
+	tod := ((frame.TimeOfDay % 24000) + 24000) % 24000
+	isBedtimeHours := tod >= 13000 && tod <= 23500
+	isSleeping := (frame.Status != nil && frame.Status.IsSleeping) ||
+		(r.system1State != nil && r.system1State.GetCurrentRoutine() == system1.RoutineSleep)
+
+	if !isBedtimeHours && !isSleeping {
+		r.mu.RUnlock()
+		return
+	}
+
+	// Calculate in-game day index: 24,000 ticks per day
+	currentDay := frame.WorldTick / 24000
+	if frame.WorldTick < 0 {
+		currentDay = (frame.WorldTick - 23999) / 24000
+	}
+
+	if r.lastContemplatedDay >= currentDay {
+		r.mu.RUnlock()
+		return
+	}
+
+	if !r.contemplationActive.CompareAndSwap(false, true) {
+		r.mu.RUnlock()
+		return
+	}
+
+	r.dialogueWg.Add(1)
+	r.mu.RUnlock()
+
+	r.mu.Lock()
+	r.lastContemplatedDay = currentDay
+	r.mu.Unlock()
+
+	go func() {
+		defer func() {
+			r.contemplationActive.Store(false)
+			r.dialogueWg.Done()
+		}()
+
+		r.mu.RLock()
+		ctx := r.ctx
+		if ctx == nil || ctx.Err() != nil {
+			r.mu.RUnlock()
+			return
+		}
+
+		contemplator := r.contemplationService
+		if contemplator == nil && r.dialogueService != nil && r.dialogueService.Client() != nil {
+			contemplator = system2.NewContemplationService(r.dialogueService.Client())
+		}
+		if contemplator == nil {
+			r.mu.RUnlock()
+			return
+		}
+
+		agentID := r.agentID
+		clanID := r.clanID
+		agentCfg := r.identityConfig
+		agentDB := r.agentDB
+		civicDB := r.civicRegistryDB
+		rumorsDB := r.rumorsDB
+		diploDB := r.diplomacyDB
+		repDB := r.reputationDB
+		memPipe := r.memoryPipeline
+		res := r.resolver
+		r.mu.RUnlock()
+
+		// Attempt to open clan DBs if not pre-injected
+		var closeCivic, closeRumors, closeDiplo func()
+		if civicDB == nil && res != nil && clanID != "" {
+			if c, err := db.OpenCivicRegistryDBForClan(res, clanID); err == nil {
+				civicDB = c
+				closeCivic = func() { _ = c.Close() }
+			}
+		}
+		if closeCivic != nil {
+			defer closeCivic()
+		}
+
+		if rumorsDB == nil && res != nil && clanID != "" {
+			if rum, err := db.OpenRumorsDBForClan(res, clanID); err == nil {
+				rumorsDB = rum
+				closeRumors = func() { _ = rum.Close() }
+			}
+		}
+		if closeRumors != nil {
+			defer closeRumors()
+		}
+
+		if diploDB == nil && res != nil && clanID != "" {
+			if d, err := db.OpenDiplomacyDBForClan(res, clanID); err == nil {
+				diploDB = d
+				closeDiplo = func() { _ = d.Close() }
+			}
+		}
+		if closeDiplo != nil {
+			defer closeDiplo()
+		}
+
+		reqCtx, cancel := context.WithTimeout(ctx, 45*time.Second)
+		defer cancel()
+
+		r.activeLLMRequests.Add(1)
+		defer r.activeLLMRequests.Add(-1)
+
+		// Build personal profile
+		var prof system2.PersonalProfile
+		prof.AgentID = agentID
+		prof.ClanID = clanID
+		if agentCfg != nil {
+			prof.Profession = agentCfg.Profession
+			prof.SecondaryHobby = agentCfg.SecondaryHobby
+			prof.Traits = map[string]float64{
+				"bravery":         agentCfg.Traits.Bravery,
+				"industriousness": agentCfg.Traits.Industriousness,
+				"sociability":     agentCfg.Traits.Sociability,
+				"curiosity":       agentCfg.Traits.Curiosity,
+				"aggressiveness":  agentCfg.Traits.Aggressiveness,
+			}
+		}
+		if frame.Status != nil {
+			prof.Vitals.Health = frame.Status.Health
+			prof.Vitals.FoodLevel = frame.Status.FoodLevel
+			if p := frame.Status.Position; p != nil {
+				prof.Vitals.Position = fmt.Sprintf("(%.0f, %.0f, %.0f)", p.X, p.Y, p.Z)
+			}
+			for _, item := range frame.Status.Inventory {
+				if item != nil && item.Count > 0 {
+					prof.InventoryItems = append(prof.InventoryItems, fmt.Sprintf("%dx %s", item.Count, item.ItemId))
+				}
+			}
+		}
+
+		ledger, err := system2.AssembleStrategicLedger(reqCtx, agentDB, civicDB, rumorsDB, diploDB, repDB, prof, frame.WorldTick)
+		if err != nil {
+			log.Printf("[WARN] agent %s failed to assemble strategic ledger: %v", agentID, err)
+			return
+		}
+
+		resp, err := contemplator.Contemplate(reqCtx, ledger)
+		if err != nil {
+			if !errors.Is(err, context.Canceled) {
+				log.Printf("[WARN] agent %s nighttime strategic contemplation failed: %v", agentID, err)
+			}
+			return
+		}
+
+		// 1. Update goals thread-safely
+		r.UpdateGoals(resp.ImmediateGoal, resp.ShortTermGoal, resp.LongTermGoal)
+
+		// 2. Update trade valuations in agentDB and runtime cache
+		if len(resp.TradeAdjustments) > 0 && agentDB != nil {
+			var valuations []db.TradeValuation
+			for _, adj := range resp.TradeAdjustments {
+				itemID := strings.ToLower(strings.TrimSpace(adj.ItemID))
+				if itemID == "" {
+					continue
+				}
+				if !strings.Contains(itemID, ":") {
+					itemID = "minecraft:" + itemID
+				}
+				valuations = append(valuations, db.TradeValuation{
+					ItemID:         itemID,
+					BaseValue:      math.Max(0.1, math.Min(100.0, adj.BaseValue)),
+					NeedMultiplier: math.Max(0.2, math.Min(4.0, adj.NeedMultiplier)),
+					MinAcceptRatio: math.Max(0.5, math.Min(1.5, adj.MinAcceptRatio)),
+					Rationale:      adj.Rationale,
+					UpdatedTick:    frame.WorldTick,
+				})
+			}
+			if len(valuations) > 0 {
+				_ = agentDB.UpsertTradeValuationsBatch(reqCtx, valuations)
+				r.mu.Lock()
+				if r.tradeValuations == nil {
+					r.tradeValuations = make(map[string]db.TradeValuation)
+				}
+				for _, v := range valuations {
+					r.tradeValuations[v.ItemID] = v
+				}
+				r.mu.Unlock()
+			}
+		}
+
+		// 3. Record ReflectiveMemory into agentDB.InsertEpisodicMemory (saliency >= 0.80)
+		if strings.TrimSpace(resp.ReflectiveMemory) != "" {
+			if memPipe != nil {
+				_, _ = memPipe.Ingest(reqCtx, memory.MemoryEvent{
+					WorldTick:        frame.WorldTick,
+					Category:         memory.CategoryDiscovery,
+					SaliencyScore:    0.85,
+					ExplicitSaliency: true,
+					SummaryText:      resp.ReflectiveMemory,
+				})
+			} else if agentDB != nil {
+				_, _ = agentDB.InsertEpisodicMemory(reqCtx, db.EpisodicMemory{
+					WorldTick:     frame.WorldTick,
+					EventCategory: "DISCOVERY",
+					SaliencyScore: 0.85,
+					SummaryText:   resp.ReflectiveMemory,
+				}, nil)
+			}
+		}
+
+		if r.debugLogger != nil {
+			r.debugLogger.Emit(frame.WorldTick, "STRATEGIC_CONTEMPLATION",
+				fmt.Sprintf("Contemplation complete: %s", resp.ImmediateGoal), map[string]any{
+					"immediate_goal":    resp.ImmediateGoal,
+					"short_term_goal":   resp.ShortTermGoal,
+					"long_term_goal":    resp.LongTermGoal,
+					"reflective_memory": resp.ReflectiveMemory,
+					"proposals_count":   len(resp.CivicProposals),
+					"trade_adjustments": len(resp.TradeAdjustments),
+				})
+		}
+	}()
+}
+
+// TriggerContemplation executes strategic contemplation synchronously for testing and validation.
+func (r *AgentRuntime) TriggerContemplation(ctx context.Context, frame *civquestv1.TelemetryFrame) (*system2.StrategicContemplationResponse, error) {
+	if frame == nil {
+		return nil, errors.New("frame cannot be nil")
+	}
+
+	r.mu.RLock()
+	contemplator := r.contemplationService
+	if contemplator == nil && r.dialogueService != nil && r.dialogueService.Client() != nil {
+		contemplator = system2.NewContemplationService(r.dialogueService.Client())
+	}
+	agentID := r.agentID
+	clanID := r.clanID
+	agentCfg := r.identityConfig
+	agentDB := r.agentDB
+	civicDB := r.civicRegistryDB
+	rumorsDB := r.rumorsDB
+	diploDB := r.diplomacyDB
+	repDB := r.reputationDB
+	memPipe := r.memoryPipeline
+	res := r.resolver
+	r.mu.RUnlock()
+
+	if contemplator == nil {
+		return nil, errors.New("contemplation service not configured")
+	}
+
+	// Attempt to open clan DBs if not pre-injected
+	var closeCivic, closeRumors, closeDiplo func()
+	if civicDB == nil && res != nil && clanID != "" {
+		if c, err := db.OpenCivicRegistryDBForClan(res, clanID); err == nil {
+			civicDB = c
+			closeCivic = func() { _ = c.Close() }
+		}
+	}
+	if closeCivic != nil {
+		defer closeCivic()
+	}
+
+	if rumorsDB == nil && res != nil && clanID != "" {
+		if rum, err := db.OpenRumorsDBForClan(res, clanID); err == nil {
+			rumorsDB = rum
+			closeRumors = func() { _ = rum.Close() }
+		}
+	}
+	if closeRumors != nil {
+		defer closeRumors()
+	}
+
+	if diploDB == nil && res != nil && clanID != "" {
+		if d, err := db.OpenDiplomacyDBForClan(res, clanID); err == nil {
+			diploDB = d
+			closeDiplo = func() { _ = d.Close() }
+		}
+	}
+	if closeDiplo != nil {
+		defer closeDiplo()
+	}
+
+	var prof system2.PersonalProfile
+	prof.AgentID = agentID
+	prof.ClanID = clanID
+	if agentCfg != nil {
+		prof.Profession = agentCfg.Profession
+		prof.SecondaryHobby = agentCfg.SecondaryHobby
+		prof.Traits = map[string]float64{
+			"bravery":         agentCfg.Traits.Bravery,
+			"industriousness": agentCfg.Traits.Industriousness,
+			"sociability":     agentCfg.Traits.Sociability,
+			"curiosity":       agentCfg.Traits.Curiosity,
+			"aggressiveness":  agentCfg.Traits.Aggressiveness,
+		}
+	}
+	if frame.Status != nil {
+		prof.Vitals.Health = frame.Status.Health
+		prof.Vitals.FoodLevel = frame.Status.FoodLevel
+		if p := frame.Status.Position; p != nil {
+			prof.Vitals.Position = fmt.Sprintf("(%.0f, %.0f, %.0f)", p.X, p.Y, p.Z)
+		}
+		for _, item := range frame.Status.Inventory {
+			if item != nil && item.Count > 0 {
+				prof.InventoryItems = append(prof.InventoryItems, fmt.Sprintf("%dx %s", item.Count, item.ItemId))
+			}
+		}
+	}
+
+	ledger, err := system2.AssembleStrategicLedger(ctx, agentDB, civicDB, rumorsDB, diploDB, repDB, prof, frame.WorldTick)
+	if err != nil {
+		return nil, fmt.Errorf("assembling strategic ledger: %w", err)
+	}
+
+	resp, err := contemplator.Contemplate(ctx, ledger)
+	if err != nil {
+		return nil, err
+	}
+
+	r.UpdateGoals(resp.ImmediateGoal, resp.ShortTermGoal, resp.LongTermGoal)
+
+	if len(resp.TradeAdjustments) > 0 && agentDB != nil {
+		var valuations []db.TradeValuation
+		for _, adj := range resp.TradeAdjustments {
+			itemID := strings.ToLower(strings.TrimSpace(adj.ItemID))
+			if itemID == "" {
+				continue
+			}
+			if !strings.Contains(itemID, ":") {
+				itemID = "minecraft:" + itemID
+			}
+			valuations = append(valuations, db.TradeValuation{
+				ItemID:         itemID,
+				BaseValue:      math.Max(0.1, math.Min(100.0, adj.BaseValue)),
+				NeedMultiplier: math.Max(0.2, math.Min(4.0, adj.NeedMultiplier)),
+				MinAcceptRatio: math.Max(0.5, math.Min(1.5, adj.MinAcceptRatio)),
+				Rationale:      adj.Rationale,
+				UpdatedTick:    frame.WorldTick,
+			})
+		}
+		if len(valuations) > 0 {
+			_ = agentDB.UpsertTradeValuationsBatch(ctx, valuations)
+			r.mu.Lock()
+			if r.tradeValuations == nil {
+				r.tradeValuations = make(map[string]db.TradeValuation)
+			}
+			for _, v := range valuations {
+				r.tradeValuations[v.ItemID] = v
+			}
+			r.mu.Unlock()
+		}
+	}
+
+	if strings.TrimSpace(resp.ReflectiveMemory) != "" {
+		if memPipe != nil {
+			_, _ = memPipe.Ingest(ctx, memory.MemoryEvent{
+				WorldTick:        frame.WorldTick,
+				Category:         memory.CategoryDiscovery,
+				SaliencyScore:    0.85,
+				ExplicitSaliency: true,
+				SummaryText:      resp.ReflectiveMemory,
+			})
+		} else if agentDB != nil {
+			_, _ = agentDB.InsertEpisodicMemory(ctx, db.EpisodicMemory{
+				WorldTick:     frame.WorldTick,
+				EventCategory: "DISCOVERY",
+				SaliencyScore: 0.85,
+				SummaryText:   resp.ReflectiveMemory,
+			}, nil)
+		}
+	}
+
+	return resp, nil
+}
+
 // ContractsDB returns the handle to the clan contracts database.
 func (r *AgentRuntime) ContractsDB() *db.ContractsDB {
 	r.mu.RLock()
@@ -2175,6 +2690,25 @@ func (r *AgentRuntime) buildDialogueVitals(frame *civquestv1.TelemetryFrame) *sy
 	}
 	goals := system1.EvaluateGoals(frame, r.identityConfig, r.system1State)
 	r.mu.RLock()
+	immGoal := goals.ImmediateGoal
+	stGoal := goals.ShortTermGoal
+	ltGoal := goals.LongTermGoal
+	if r.identityConfig != nil {
+		if r.identityConfig.ImmediateGoal != "" {
+			immGoal = r.identityConfig.ImmediateGoal
+		}
+		if r.identityConfig.ShortTermGoal != "" {
+			stGoal = r.identityConfig.ShortTermGoal
+		}
+		if r.identityConfig.LongTermGoal != "" {
+			ltGoal = r.identityConfig.LongTermGoal
+		}
+	}
+	// Under immediate reflex emergency (active hostile threat or critical starvation), reflex overrides
+	if goals.ImmediateGoal == "COMBAT_SURVIVAL: Defend against or evade nearby hostile threats" ||
+		goals.ImmediateGoal == "CRITICAL_HUNGER: Consume food or forage immediately" {
+		immGoal = goals.ImmediateGoal
+	}
 	recentCombat := r.lastCombatSummary
 	r.mu.RUnlock()
 
@@ -2191,9 +2725,9 @@ func (r *AgentRuntime) buildDialogueVitals(frame *civquestv1.TelemetryFrame) *sy
 		CombatConfidence: conf,
 		RecentCombat:     recentCombat,
 		InventorySummary: formatInventorySummary(frame.Status.Inventory),
-		ImmediateGoal:    goals.ImmediateGoal,
-		ShortTermGoal:    goals.ShortTermGoal,
-		LongTermGoal:     goals.LongTermGoal,
+		ImmediateGoal:    immGoal,
+		ShortTermGoal:    stGoal,
+		LongTermGoal:     ltGoal,
 	}
 }
 
@@ -2876,6 +3410,20 @@ func (r *AgentRuntime) handleSocketConn(conn net.Conn) {
 	latencyMs := r.FrameLatency()
 	activeLLM := r.ActiveLLMRequests()
 
+	var goals *system1.GoalHierarchy
+	r.mu.RLock()
+	if r.identityConfig != nil && (r.identityConfig.ImmediateGoal != "" || r.identityConfig.ShortTermGoal != "" || r.identityConfig.LongTermGoal != "") {
+		goals = &system1.GoalHierarchy{
+			ImmediateGoal: r.identityConfig.ImmediateGoal,
+			ShortTermGoal: r.identityConfig.ShortTermGoal,
+			LongTermGoal:  r.identityConfig.LongTermGoal,
+		}
+	} else if r.system1State != nil {
+		gh := r.system1State.GetGoals()
+		goals = &gh
+	}
+	r.mu.RUnlock()
+
 	resp := SocketStatusResponse{
 		Agent:                 r.agentID,
 		Clan:                  r.clanID,
@@ -2893,6 +3441,7 @@ func (r *AgentRuntime) handleSocketConn(conn net.Conn) {
 		FrameLatencyMs:        latencyMs,
 		ActiveLLMRequests:     activeLLM,
 		UtilityScores:         scores,
+		Goals:                 goals,
 	}
 
 	data, err := json.Marshal(resp)
