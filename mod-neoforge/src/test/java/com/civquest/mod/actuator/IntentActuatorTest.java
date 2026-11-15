@@ -7,6 +7,7 @@ import com.civquest.mod.StreamRegistry;
 import com.civquest.mod.grpc.v1.AgentIntent;
 import com.civquest.mod.grpc.v1.AttackIntent;
 import com.civquest.mod.grpc.v1.BlockPosProto;
+import com.civquest.mod.grpc.v1.CraftItemIntent;
 import com.civquest.mod.grpc.v1.CreateWrittenBookIntent;
 import com.civquest.mod.grpc.v1.InteractBlockIntent;
 import com.civquest.mod.grpc.v1.NavigateIntent;
@@ -19,8 +20,13 @@ import io.grpc.StatusRuntimeException;
 import io.grpc.stub.StreamObserver;
 import net.minecraft.core.BlockPos;
 import net.minecraft.world.entity.Entity;
+import net.minecraft.world.entity.player.Inventory;
 import net.minecraft.world.entity.player.Player;
+import net.minecraft.world.item.Item;
+import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.item.Items;
 import net.minecraft.world.level.Level;
+import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.shapes.Shapes;
@@ -510,5 +516,82 @@ public class IntentActuatorTest {
         boolean result = testActuator.actuateInteractBlock(agent, intent);
         assertTrue(result, "PLACE_BLOCK must succeed when no collision occurs");
         verify(level, times(1)).setBlockAndUpdate(eq(targetPos), any());
+    }
+
+    @Test
+    @DisplayName("3x3 tool and structure recipes fail immediately when no crafting table is within reach")
+    void test3x3RecipesFailWithoutCraftingTable() {
+        AgentEntity agent = mock(AgentEntity.class);
+        Level level = mock(Level.class);
+        when(agent.level()).thenReturn(level);
+        when(agent.blockPosition()).thenReturn(new BlockPos(0, 64, 0));
+        when(agent.distanceToSqr(anyDouble(), anyDouble(), anyDouble())).thenReturn(100.0);
+        BlockState air = mock(BlockState.class);
+        when(level.getBlockState(any(BlockPos.class))).thenReturn(air);
+
+        assertFalse(actuator.actuateCraftItem(agent, CraftItemIntent.newBuilder().setRecipeId("minecraft:wooden_axe").build()));
+        assertFalse(actuator.actuateCraftItem(agent, CraftItemIntent.newBuilder().setRecipeId("minecraft:wooden_pickaxe").build()));
+        assertFalse(actuator.actuateCraftItem(agent, CraftItemIntent.newBuilder().setRecipeId("minecraft:wooden_sword").build()));
+        assertFalse(actuator.actuateCraftItem(agent, CraftItemIntent.newBuilder().setRecipeId("minecraft:stone_axe").build()));
+        assertFalse(actuator.actuateCraftItem(agent, CraftItemIntent.newBuilder().setRecipeId("minecraft:stone_pickaxe").build()));
+        assertFalse(actuator.actuateCraftItem(agent, CraftItemIntent.newBuilder().setRecipeId("minecraft:stone_sword").build()));
+        assertFalse(actuator.actuateCraftItem(agent, CraftItemIntent.newBuilder().setRecipeId("minecraft:door").build()));
+        assertFalse(actuator.actuateCraftItem(agent, CraftItemIntent.newBuilder().setRecipeId("minecraft:chest").build()));
+    }
+
+    @Test
+    @DisplayName("isCraftingTableWithinReach detects crafting table within interaction reach (<= 4.5 blocks / 20.25 reach_sq)")
+    void testCraftingTableProximityDetection() {
+        AgentEntity agent = mock(AgentEntity.class);
+        Level level = mock(Level.class);
+        when(agent.level()).thenReturn(level);
+        when(agent.blockPosition()).thenReturn(new BlockPos(0, 64, 0));
+
+        // When surrounded by air, reach check returns false
+        BlockState air = mock(BlockState.class);
+        when(level.getBlockState(any(BlockPos.class))).thenReturn(air);
+        CraftItemIntent axeIntent = CraftItemIntent.newBuilder().setRecipeId("minecraft:wooden_axe").build();
+        assertFalse(actuator.isCraftingTableWithinReach(agent, axeIntent));
+
+        // When crafting table is placed at (1, 64, 0) (dist_sq = 1.0 <= 20.25)
+        BlockState tableState = mock(BlockState.class);
+        when(tableState.toString()).thenReturn("Block{minecraft:crafting_table}");
+        BlockPos tablePos = new BlockPos(1, 64, 0);
+        when(agent.distanceToSqr(tablePos.getX() + 0.5, tablePos.getY() + 0.5, tablePos.getZ() + 0.5)).thenReturn(1.0);
+        when(level.getBlockState(tablePos)).thenReturn(tableState);
+
+        assertTrue(actuator.isCraftingTableWithinReach(agent, axeIntent));
+
+        // When crafting table is provided explicitly via workstation_pos
+        CraftItemIntent intentWithWorkstation = CraftItemIntent.newBuilder()
+                .setRecipeId("minecraft:stone_sword")
+                .setWorkstationPos(BlockPosProto.newBuilder().setX(1).setY(64).setZ(0).build())
+                .build();
+        assertTrue(actuator.isCraftingTableWithinReach(agent, intentWithWorkstation));
+    }
+
+    @Test
+    @DisplayName("isCraftingTableWithinReach rejects workstations farther than 4.5 blocks (20.25 reach_sq)")
+    void testCraftingTableProximityThreshold() {
+        AgentEntity agent = mock(AgentEntity.class);
+        Level level = mock(Level.class);
+        when(agent.level()).thenReturn(level);
+        when(agent.blockPosition()).thenReturn(new BlockPos(0, 64, 0));
+
+        // Crafting table at (5, 64, 0) -> distance squared is 25.0 > 20.25
+        BlockState tableState = mock(BlockState.class);
+        when(tableState.toString()).thenReturn("Block{minecraft:crafting_table}");
+
+        BlockPos distantTable = new BlockPos(5, 64, 0);
+        when(agent.distanceToSqr(distantTable.getX() + 0.5, distantTable.getY() + 0.5, distantTable.getZ() + 0.5)).thenReturn(25.0);
+        when(level.getBlockState(distantTable)).thenReturn(tableState);
+        when(level.getBlockState(argThat(p -> p != null && !p.equals(distantTable)))).thenReturn(mock(BlockState.class));
+
+        // Test with explicit workstation_pos that is distant (> 20.25)
+        CraftItemIntent distantIntent = CraftItemIntent.newBuilder()
+                .setRecipeId("minecraft:wooden_axe")
+                .setWorkstationPos(BlockPosProto.newBuilder().setX(5).setY(64).setZ(0).build())
+                .build();
+        assertFalse(actuator.isCraftingTableWithinReach(agent, distantIntent), "Crafting table at dist_sq=25 > 20.25 must be out of reach");
     }
 }

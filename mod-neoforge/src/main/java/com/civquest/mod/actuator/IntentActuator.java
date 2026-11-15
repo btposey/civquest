@@ -738,7 +738,18 @@ public class IntentActuator {
                 }
                 return false;
             }
+            case "crafting_table" -> {
+                if (consumeInventoryMatch(inv, id -> id.endsWith("_planks"), 4)
+                        || consumeInventoryMatch(inv, id -> id.endsWith("_log") || id.endsWith("_wood") || id.endsWith("_stem"), 1)) {
+                    inv.add(new ItemStack(Items.CRAFTING_TABLE, 1));
+                    return true;
+                }
+                return false;
+            }
             case "wooden_pickaxe", "wooden_axe", "wooden_sword" -> {
+                if (!isCraftingTableWithinReach(agent, intent)) {
+                    return false;
+                }
                 boolean paid = consumeInventoryMatch(inv, id -> id.endsWith("_log") || id.endsWith("_wood"), 1);
                 if (!paid && countInventoryMatch(inv, id -> id.endsWith("_planks")) >= 3
                         && countInventoryMatch(inv, id -> id.equals("minecraft:stick") || id.endsWith(":stick")) >= 2) {
@@ -762,6 +773,9 @@ public class IntentActuator {
                 return true;
             }
             case "stone_pickaxe", "stone_axe", "stone_sword" -> {
+                if (!isCraftingTableWithinReach(agent, intent)) {
+                    return false;
+                }
                 int cobbleCount = countInventoryMatch(inv, id -> id.contains("cobblestone") || id.contains("cobbled_deepslate") || id.contains("blackstone"));
                 int woodCount = countInventoryMatch(inv, id -> id.endsWith("_log") || id.endsWith("_planks") || id.endsWith("stick"));
                 if (cobbleCount < 3 || woodCount < 1) {
@@ -777,6 +791,28 @@ public class IntentActuator {
                 inv.add(new ItemStack(resultItem, 1));
                 agent.autoEquipBestGear();
                 return true;
+            }
+            case "door", "oak_door", "wooden_door" -> {
+                if (!isCraftingTableWithinReach(agent, intent)) {
+                    return false;
+                }
+                if (consumeInventoryMatch(inv, id -> id.endsWith("_planks"), 6)
+                        || consumeInventoryMatch(inv, id -> id.endsWith("_log") || id.endsWith("_wood") || id.endsWith("_stem"), 2)) {
+                    inv.add(new ItemStack(Items.OAK_DOOR, 3));
+                    return true;
+                }
+                return false;
+            }
+            case "chest" -> {
+                if (!isCraftingTableWithinReach(agent, intent)) {
+                    return false;
+                }
+                if (consumeInventoryMatch(inv, id -> id.endsWith("_planks"), 8)
+                        || consumeInventoryMatch(inv, id -> id.endsWith("_log") || id.endsWith("_wood") || id.endsWith("_stem"), 2)) {
+                    inv.add(new ItemStack(Items.CHEST, 1));
+                    return true;
+                }
+                return false;
             }
             case "torch", "torches" -> {
                 if (consumeInventoryMatch(inv, id -> id.contains("coal") || id.endsWith("_log") || id.endsWith("_planks") || id.endsWith("stick"), 1)) {
@@ -798,12 +834,31 @@ public class IntentActuator {
         }
     }
 
+    static String getItemId(Item item) {
+        if (item == null) {
+            return "";
+        }
+        try {
+            ResourceLocation loc = BuiltInRegistries.ITEM.getKey(item);
+            if (loc != null) {
+                return loc.toString().toLowerCase();
+            }
+        } catch (Throwable ignored) {}
+        try {
+            String desc = item.getDescriptionId();
+            if (desc != null) {
+                return desc.toLowerCase();
+            }
+        } catch (Throwable ignored) {}
+        return "";
+    }
+
     private static int countInventoryMatch(net.minecraft.world.entity.player.Inventory inv, java.util.function.Predicate<String> matcher) {
         int total = 0;
         for (int i = 0; i < inv.getContainerSize(); i++) {
             ItemStack s = inv.getItem(i);
             if (s != null && !s.isEmpty()) {
-                String id = BuiltInRegistries.ITEM.getKey(s.getItem()).toString().toLowerCase();
+                String id = getItemId(s.getItem());
                 if (matcher.test(id)) {
                     total += s.getCount();
                 }
@@ -820,7 +875,7 @@ public class IntentActuator {
         for (int i = 0; i < inv.getContainerSize() && remaining > 0; i++) {
             ItemStack s = inv.getItem(i);
             if (s != null && !s.isEmpty()) {
-                String id = BuiltInRegistries.ITEM.getKey(s.getItem()).toString().toLowerCase();
+                String id = getItemId(s.getItem());
                 if (matcher.test(id)) {
                     int take = Math.min(remaining, s.getCount());
                     s.shrink(take);
@@ -829,6 +884,63 @@ public class IntentActuator {
             }
         }
         return true;
+    }
+
+    static final double CRAFTING_TABLE_REACH_SQ = 20.25; // 4.5 blocks squared
+
+    boolean isCraftingTableWithinReach(AgentEntity agent, com.civquest.mod.grpc.v1.CraftItemIntent intent) {
+        if (agent == null || agent.level() == null) {
+            return false;
+        }
+        if (intent != null && intent.hasWorkstationPos()) {
+            com.civquest.mod.grpc.v1.BlockPosProto wp = intent.getWorkstationPos();
+            BlockPos targetPos = new BlockPos(wp.getX(), wp.getY(), wp.getZ());
+            if (agent.distanceToSqr(targetPos.getX() + 0.5, targetPos.getY() + 0.5, targetPos.getZ() + 0.5) <= CRAFTING_TABLE_REACH_SQ) {
+                if (isCraftingTableBlock(agent.level().getBlockState(targetPos))) {
+                    return true;
+                }
+            }
+        }
+        BlockPos center = agent.blockPosition();
+        int reach = 5;
+        for (int dx = -reach; dx <= reach; dx++) {
+            for (int dy = -reach; dy <= reach; dy++) {
+                for (int dz = -reach; dz <= reach; dz++) {
+                    BlockPos p = center.offset(dx, dy, dz);
+                    if (agent.distanceToSqr(p.getX() + 0.5, p.getY() + 0.5, p.getZ() + 0.5) <= CRAFTING_TABLE_REACH_SQ) {
+                        if (isCraftingTableBlock(agent.level().getBlockState(p))) {
+                            return true;
+                        }
+                    }
+                }
+            }
+        }
+        return false;
+    }
+
+    static boolean isCraftingTableBlock(BlockState bs) {
+        if (bs == null) {
+            return false;
+        }
+        try {
+            if (bs.is(Blocks.CRAFTING_TABLE)) {
+                return true;
+            }
+        } catch (Throwable ignored) {}
+        try {
+            if (bs.toString().contains("crafting_table")) {
+                return true;
+            }
+        } catch (Throwable ignored) {}
+        try {
+            if (bs.getBlock() != null) {
+                ResourceLocation loc = BuiltInRegistries.BLOCK.getKey(bs.getBlock());
+                if (loc != null && (loc.getPath().equals("crafting_table") || loc.toString().equals("minecraft:crafting_table"))) {
+                    return true;
+                }
+            }
+        } catch (Throwable ignored) {}
+        return false;
     }
 
     private static String sanitizeSignLine(String line) {

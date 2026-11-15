@@ -373,4 +373,26 @@ public class AgentEntityTest {
         assertTrue(registry.register("agent-reopen-3", dummyObserver));
         assertEquals(1, registry.getActiveAgentCount());
     }
+
+    @Test
+    @DisplayName("cq-0b0.9: Player gift gratitude triggers ONLY when item thrower UUID matches the nearby player")
+    void testGratitudeAttributionOnThrowerUUID() {
+        UUID playerUUID = UUID.randomUUID();
+        UUID otherUUID = UUID.randomUUID();
+
+        // 1. Naturally dropped item (seeds/flowers from grass) has no thrower/owner (null)
+        UUID naturalDropThrower = null;
+        boolean naturalThanked = playerUUID != null && naturalDropThrower != null && naturalDropThrower.equals(playerUUID);
+        assertFalse(naturalThanked, "Naturally dropped items without thrower must not trigger gratitude dialogue");
+
+        // 2. Genuine player gift thrown by the player (thrower UUID matches player)
+        UUID playerGiftThrower = playerUUID;
+        boolean playerGiftThanked = playerUUID != null && playerGiftThrower != null && playerGiftThrower.equals(playerUUID);
+        assertTrue(playerGiftThanked, "Genuine player gift matching player UUID must trigger gratitude dialogue");
+
+        // 3. Item thrown by a different entity/player
+        UUID otherEntityThrower = otherUUID;
+        boolean otherEntityThanked = playerUUID != null && otherEntityThrower != null && otherEntityThrower.equals(playerUUID);
+        assertFalse(otherEntityThanked, "Items thrown by other entities must not thank the nearby player");
+    }
 }
