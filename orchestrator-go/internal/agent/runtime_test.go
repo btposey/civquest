@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -3362,4 +3363,193 @@ func TestRuntime_TriggerContemplation_Synchronous(t *testing.T) {
 	} else if v.NeedMultiplier != 2.0 {
 		t.Errorf("expected need_multiplier 2.0, got %f", v.NeedMultiplier)
 	}
+}
+
+func TestRuntime_ExplorerSectorLockedFrontierScouting(t *testing.T) {
+	mockSvc, bridgeClient, cleanupBridge := setupPermadeathMockBridge(t)
+	defer cleanupBridge()
+
+	tempDir := t.TempDir()
+	agentID := "Able"
+	clanID := "explorers"
+
+	resolver := xdg.NewResolver(xdg.WithCustomRoot(tempDir))
+	_ = resolver.InitAgentDirectories(agentID)
+
+	agentDB, err := db.OpenAgentDBForAgent(resolver, agentID)
+	if err != nil {
+		t.Fatalf("failed to open agent db: %v", err)
+	}
+	defer agentDB.Close()
+
+	agentCfg := xdg.DefaultAgentIdentityConfig(agentID)
+	agentCfg.Profession = "EXPLORER"
+	agentCfg.ClanID = clanID
+
+	rt, err := agent.NewRuntime(agent.Config{
+		AgentID:        agentID,
+		ClanID:         clanID,
+		Resolver:       resolver,
+		AgentDB:        agentDB,
+		BridgeClient:   bridgeClient,
+		IdentityConfig: agentCfg,
+	})
+	if err != nil {
+		t.Fatalf("failed to initialize runtime: %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	runErrCh := make(chan error, 1)
+	go func() {
+		runErrCh <- rt.Start(ctx)
+	}()
+
+	select {
+	case <-mockSvc.streamReady:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for stream readiness")
+	}
+
+	// Drain handshake intent
+	select {
+	case <-mockSvc.intentCh:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for handshake intent")
+	}
+
+	// 1. Warm-up frame
+	warmupFrame := &civquestv1.TelemetryFrame{
+		WorldTick: 1000,
+		TimeOfDay: 2000,
+		Status: &civquestv1.AgentStatus{
+			AgentId:         agentID,
+			Health:          20,
+			FoodLevel:       20,
+			Position:        &civquestv1.Vec3{X: 0, Y: 64, Z: 0},
+			NavigationState: civquestv1.NavigationState_NAVIGATION_STATE_IDLE,
+			Inventory: []*civquestv1.ItemStackProto{
+				{Slot: 0, ItemId: "minecraft:wooden_axe", Count: 1},
+				{Slot: 1, ItemId: "minecraft:wooden_sword", Count: 1},
+				{Slot: 2, ItemId: "minecraft:torch", Count: 8},
+			},
+		},
+	}
+	if err := mockSvc.SendFrame(warmupFrame); err != nil {
+		t.Fatalf("failed sending warmup frame: %v", err)
+	}
+
+	// 2. Daytime exploration trigger frame (after 60-tick Explorer cooldown from warmup tick 1000)
+	startFrame := &civquestv1.TelemetryFrame{
+		WorldTick: 1060,
+		TimeOfDay: 2060,
+		Status: &civquestv1.AgentStatus{
+			AgentId:         agentID,
+			Health:          20,
+			FoodLevel:       20,
+			Position:        &civquestv1.Vec3{X: 0, Y: 64, Z: 0},
+			NavigationState: civquestv1.NavigationState_NAVIGATION_STATE_IDLE,
+			Inventory: []*civquestv1.ItemStackProto{
+				{Slot: 0, ItemId: "minecraft:wooden_axe", Count: 1},
+				{Slot: 1, ItemId: "minecraft:wooden_sword", Count: 1},
+				{Slot: 2, ItemId: "minecraft:torch", Count: 8},
+			},
+		},
+	}
+	if err := mockSvc.SendFrame(startFrame); err != nil {
+		t.Fatalf("failed sending start frame: %v", err)
+	}
+
+	var target0 *civquestv1.Vec3
+	select {
+	case intent := <-mockSvc.intentCh:
+		nav := intent.GetNavigate()
+		if nav == nil || nav.Target == nil {
+			t.Fatalf("expected NavigateIntent from runtime exploration, got %+v", intent)
+		}
+		target0 = nav.Target
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for initial NavigateIntent on bridge")
+	}
+
+	dist0 := math.Hypot(target0.X, target0.Z)
+	if math.Abs(dist0-48.0) > 1.0 {
+		t.Fatalf("expected initial Leg 0 target at ~48m, got %.2fm (target: %+v)", dist0, target0)
+	}
+	azimuth0 := math.Atan2(target0.Z, target0.X)
+
+	// 3. Actively navigating frame (3s later): Must NOT emit another intent (no 3s oscillation)
+	pathingFrame := &civquestv1.TelemetryFrame{
+		WorldTick: 1120,
+		TimeOfDay: 2120,
+		Status: &civquestv1.AgentStatus{
+			AgentId:         agentID,
+			Health:          20,
+			FoodLevel:       20,
+			Position:        &civquestv1.Vec3{X: math.Cos(azimuth0) * 15.0, Y: 64, Z: math.Sin(azimuth0) * 15.0},
+			NavigationState: civquestv1.NavigationState_NAVIGATION_STATE_PATHING,
+			Inventory: []*civquestv1.ItemStackProto{
+				{Slot: 0, ItemId: "minecraft:wooden_axe", Count: 1},
+				{Slot: 1, ItemId: "minecraft:wooden_sword", Count: 1},
+				{Slot: 2, ItemId: "minecraft:torch", Count: 8},
+			},
+		},
+	}
+	if err := mockSvc.SendFrame(pathingFrame); err != nil {
+		t.Fatalf("failed sending pathing frame: %v", err)
+	}
+
+	select {
+	case intent := <-mockSvc.intentCh:
+		t.Fatalf("unexpected intent received while actively navigating (3s oscillation detected): %+v", intent)
+	case <-time.After(250 * time.Millisecond):
+		// Desired: no spurious intents while pathing
+	}
+
+	// 4. Arrival frame at Leg 0 (~48m): Must advance to Leg 1 (~96m, chained beyond 64m) along SAME azimuth
+	arriveFrame := &civquestv1.TelemetryFrame{
+		WorldTick: 1200,
+		TimeOfDay: 2200,
+		Status: &civquestv1.AgentStatus{
+			AgentId:         agentID,
+			Health:          20,
+			FoodLevel:       20,
+			Position:        &civquestv1.Vec3{X: math.Cos(azimuth0) * 47.5, Y: 64, Z: math.Sin(azimuth0) * 47.5},
+			NavigationState: civquestv1.NavigationState_NAVIGATION_STATE_ARRIVED,
+			Inventory: []*civquestv1.ItemStackProto{
+				{Slot: 0, ItemId: "minecraft:wooden_axe", Count: 1},
+				{Slot: 1, ItemId: "minecraft:wooden_sword", Count: 1},
+				{Slot: 2, ItemId: "minecraft:torch", Count: 8},
+			},
+		},
+	}
+	if err := mockSvc.SendFrame(arriveFrame); err != nil {
+		t.Fatalf("failed sending arrive frame: %v", err)
+	}
+
+	var target1 *civquestv1.Vec3
+	select {
+	case intent := <-mockSvc.intentCh:
+		nav := intent.GetNavigate()
+		if nav == nil || nav.Target == nil {
+			t.Fatalf("expected NavigateIntent for Leg 1 upon arrival, got %+v", intent)
+		}
+		target1 = nav.Target
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for Leg 1 NavigateIntent on bridge")
+	}
+
+	dist1 := math.Hypot(target1.X, target1.Z)
+	if math.Abs(dist1-96.0) > 1.0 {
+		t.Fatalf("expected Leg 1 target chained outward beyond 64m to ~96m, got %.2fm (target: %+v)", dist1, target1)
+	}
+	azimuth1 := math.Atan2(target1.Z, target1.X)
+	if math.Abs(math.Atan2(math.Sin(azimuth1-azimuth0), math.Cos(azimuth1-azimuth0))) > 0.001 {
+		t.Fatalf("expected Leg 1 to maintain same sector azimuth (%.4f), got %.4f (angular oscillation detected)", azimuth0, azimuth1)
+	}
+
+	rt.Stop()
+	cancel()
+	_ = <-runErrCh
 }
