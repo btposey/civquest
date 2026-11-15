@@ -435,6 +435,59 @@ func (s *AgentState) SetLastShelterTimeoutTick(tick int64) {
 	s.lastShelterTimeoutTick = tick
 }
 
+// IsShelterOnCooldown returns true if shelter construction is on backoff cooldown after a timeout.
+func (s *AgentState) IsShelterOnCooldown(currentTick int64) bool {
+	if s == nil {
+		return false
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if s.lastShelterTimeoutTick <= 0 {
+		return false
+	}
+	return (currentTick - s.lastShelterTimeoutTick) < 600
+}
+
+// GetLastHarvestTick safely returns the tick of the last block harvesting event.
+func (s *AgentState) GetLastHarvestTick() int64 {
+	if s == nil {
+		return 0
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.lastHarvestTick
+}
+
+// SetLastHarvestTick safely records the tick of the last block harvesting event.
+func (s *AgentState) SetLastHarvestTick(tick int64) {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.lastHarvestTick = tick
+}
+
+// GetLastCraftTick safely returns the tick of the last crafting event.
+func (s *AgentState) GetLastCraftTick() int64 {
+	if s == nil {
+		return 0
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.lastCraftTick
+}
+
+// SetLastCraftTick safely records the tick of the last crafting event.
+func (s *AgentState) SetLastCraftTick(tick int64) {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.lastCraftTick = tick
+}
+
 // GetShelterBlocksPlaced returns the count of emergency shelter wall blocks placed during the current night.
 func (s *AgentState) GetShelterBlocksPlaced() int {
 	if s == nil {

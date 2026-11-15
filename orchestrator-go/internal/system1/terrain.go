@@ -455,9 +455,7 @@ func EvaluateTerrainExploration(
 	}
 
 	if goalLabel != "" && state != nil {
-		g := state.GetGoals()
-		g.ImmediateGoal = goalLabel
-		state.SetGoals(g)
+		state.goals.ImmediateGoal = goalLabel
 	}
 
 	state.lastExploreTick = frame.WorldTick

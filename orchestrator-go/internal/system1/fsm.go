@@ -194,11 +194,7 @@ func (c *FSMContext) IsShelterOnCooldown() bool {
 	if c == nil || c.State == nil || c.Frame == nil {
 		return false
 	}
-	lastTimeout := c.State.GetLastShelterTimeoutTick()
-	if lastTimeout <= 0 {
-		return false
-	}
-	return (c.Frame.WorldTick - lastTimeout) < 600
+	return c.State.IsShelterOnCooldown(c.Frame.WorldTick)
 }
 
 // IsSleeping checks if agent status reports sleeping.
@@ -213,6 +209,19 @@ func (c *FSMContext) IsSleeping() bool {
 func (c *FSMContext) IsStuckInState(maxTicks int64) bool {
 	if c == nil {
 		return false
+	}
+	// If active shelter construction, timber harvesting, or crafting is progressing, the agent is not stuck
+	if c.State != nil && c.Frame != nil {
+		wt := c.Frame.WorldTick
+		if lastPlace := c.State.GetLastShelterPlaceTick(); lastPlace > 0 && wt >= lastPlace && wt-lastPlace < 100 {
+			return false
+		}
+		if lastHarvest := c.State.GetLastHarvestTick(); lastHarvest > 0 && wt >= lastHarvest && wt-lastHarvest < 100 {
+			return false
+		}
+		if lastCraft := c.State.GetLastCraftTick(); lastCraft > 0 && wt >= lastCraft && wt-lastCraft < 100 {
+			return false
+		}
 	}
 	return c.StuckTicks >= maxTicks || (maxTicks > 0 && c.TimeInState >= maxTicks)
 }
@@ -762,7 +771,22 @@ func (fsm *AgentFSM) Tick(ctx *FSMContext) FSMResult {
 			dy := pos.Y - fsm.lastPos.Y
 			dz := pos.Z - fsm.lastPos.Z
 			if dx*dx+dy*dy+dz*dz < 0.04 || ctx.Frame.Status.NavigationState == civquestv1.NavigationState_NAVIGATION_STATE_STUCK {
-				fsm.stuckTicks++
+				// If actively placing blocks, harvesting, or crafting, agent is actively engaged and not stuck
+				activeProgress := false
+				if ctx.State != nil {
+					wt := ctx.Frame.WorldTick
+					if (ctx.State.GetLastShelterPlaceTick() > 0 && wt-ctx.State.GetLastShelterPlaceTick() < 100) ||
+						(ctx.State.GetLastHarvestTick() > 0 && wt-ctx.State.GetLastHarvestTick() < 100) ||
+						(ctx.State.GetLastCraftTick() > 0 && wt-ctx.State.GetLastCraftTick() < 100) {
+						activeProgress = true
+					}
+				}
+				if activeProgress {
+					fsm.stuckTicks = 0
+					fsm.stateEnteredTick = worldTick
+				} else {
+					fsm.stuckTicks++
+				}
 			} else {
 				fsm.stuckTicks = 0
 			}

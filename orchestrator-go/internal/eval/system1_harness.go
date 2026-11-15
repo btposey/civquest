@@ -405,10 +405,11 @@ func NewSystem1DesirePathPavingScenario() System1Scenario {
 					WorldTick: tick,
 					TimeOfDay: 3000,
 					Status: &civquestv1.AgentStatus{
-						Health:    20.0,
-						MaxHealth: 20.0,
-						FoodLevel: 20,
-						Position:  &civquestv1.Vec3{X: float64(x) + 0.5, Y: 64, Z: float64(z) + 0.5},
+						Health:          20.0,
+						MaxHealth:       20.0,
+						FoodLevel:       20,
+						Position:        &civquestv1.Vec3{X: float64(x) + 0.5, Y: 64, Z: float64(z) + 0.5},
+						NavigationState: civquestv1.NavigationState_NAVIGATION_STATE_PATHING,
 						Inventory: []*civquestv1.ItemStackProto{
 							{ItemId: "minecraft:iron_shovel", Count: 1, Slot: 0},
 							{ItemId: "minecraft:cobblestone", Count: 32, Slot: 1},
@@ -423,13 +424,24 @@ func NewSystem1DesirePathPavingScenario() System1Scenario {
 				}
 			}
 
+			rt.PavingTracker().SetThreshold(3)
+			// Establish campfire home origin far enough away to avoid the 4m radial exclusion zone
+			rt.PavingTracker().SetHomeOrigin(&civquestv1.Vec3{X: float64(bx) - 20, Y: 64, Z: float64(bz) - 20})
+			if rt.System1State() != nil {
+				rt.System1State().SetHomeOrigin(&civquestv1.Vec3{X: float64(bx) - 20, Y: 64, Z: float64(bz) - 20})
+			}
+
 			// Step onto (bx, bz) 3 times separated by stepping onto an adjacent block
 			start := time.Now()
-			rt.HandleTelemetryFrame(makeFrame(10, bx, bz))
-			rt.HandleTelemetryFrame(makeFrame(20, bx+1, bz))
-			rt.HandleTelemetryFrame(makeFrame(30, bx, bz))
-			rt.HandleTelemetryFrame(makeFrame(40, bx+1, bz))
-			rt.HandleTelemetryFrame(makeFrame(50, bx, bz))
+			for step := 1; step <= 5; step++ {
+				var f *civquestv1.TelemetryFrame
+				if step%2 != 0 {
+					f = makeFrame(int64(step*10), bx, bz)
+				} else {
+					f = makeFrame(int64(step*10), bx+1, bz)
+				}
+				rt.HandleTelemetryFrame(f)
+			}
 			latency := time.Since(start) / 5
 
 			intents := drainRuntimeIntents(rt)
