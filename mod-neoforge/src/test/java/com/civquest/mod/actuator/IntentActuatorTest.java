@@ -1,5 +1,6 @@
 package com.civquest.mod.actuator;
 
+import com.civquest.mod.AgentEntity;
 import com.civquest.mod.CivQuestBridgeServiceImpl;
 import com.civquest.mod.AgentEntityManager;
 import com.civquest.mod.StreamRegistry;
@@ -16,19 +17,39 @@ import com.civquest.mod.grpc.v1.UseItemIntent;
 import com.civquest.mod.grpc.v1.Vec3;
 import io.grpc.StatusRuntimeException;
 import io.grpc.stub.StreamObserver;
+import net.minecraft.core.BlockPos;
+import net.minecraft.world.entity.Entity;
+import net.minecraft.world.entity.player.Player;
+import net.minecraft.world.level.Level;
+import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.phys.AABB;
+import net.minecraft.world.phys.shapes.Shapes;
+import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
+import java.util.Collections;
+import java.util.List;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.atomic.AtomicReference;
 
 import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.ArgumentMatchers.*;
+import static org.mockito.Mockito.*;
 
 public class IntentActuatorTest {
 
     private IntentActuator actuator;
     private AgentNavigator navigator;
+
+    @BeforeAll
+    static void initMinecraft() {
+        try {
+            net.minecraft.SharedConstants.tryDetectVersion();
+            net.minecraft.server.Bootstrap.bootStrap();
+        } catch (Throwable ignored) {}
+    }
 
     @BeforeEach
     void setUp() {
@@ -356,5 +377,138 @@ public class IntentActuatorTest {
                 .build();
         assertEquals("Ironwood", sign.getLine1());
         assertFalse(sign.getIsHangingSign());
+    }
+
+    @Test
+    @DisplayName("IntentActuator rejects PLACE_BLOCK when agent AABB collides with target block")
+    void testPlaceBlockRejectsCollisionWithAgentAABB() {
+        BlockState solidBlockState = mock(BlockState.class);
+        when(solidBlockState.blocksMotion()).thenReturn(true);
+        when(solidBlockState.getCollisionShape(any(), any())).thenReturn(Shapes.block());
+
+        IntentActuator testActuator = new IntentActuator() {
+            @Override
+            protected BlockState resolveBlockState(AgentEntity a, String id) {
+                return solidBlockState;
+            }
+        };
+
+        AgentEntity agent = mock(AgentEntity.class);
+        Level level = mock(Level.class);
+        when(agent.level()).thenReturn(level);
+        when(agent.isCreative()).thenReturn(true);
+        // Agent positioned at (0.5, 64.0, 0.5), bounding box [0.2, 64.0, 0.2] to [0.8, 65.8, 0.8]
+        AABB agentBox = new AABB(0.2, 64.0, 0.2, 0.8, 65.8, 0.8);
+        when(agent.getBoundingBox()).thenReturn(agentBox);
+        when(agent.distanceToSqr(anyDouble(), anyDouble(), anyDouble())).thenReturn(1.0);
+
+        BlockPos targetPos = new BlockPos(0, 64, 0);
+        when(level.hasChunkAt(targetPos)).thenReturn(true);
+        BlockState replaceableState = mock(BlockState.class);
+        when(replaceableState.canBeReplaced()).thenReturn(true);
+        when(level.getBlockState(targetPos)).thenReturn(replaceableState);
+
+        InteractBlockIntent intent = InteractBlockIntent.newBuilder()
+                .setPos(BlockPosProto.newBuilder().setX(0).setY(64).setZ(0).build())
+                .setInteractionType(InteractBlockIntent.InteractionType.PLACE_BLOCK)
+                .setBlockOrItemId("minecraft:cobblestone")
+                .build();
+
+        boolean result = testActuator.actuateInteractBlock(agent, intent);
+        assertFalse(result, "PLACE_BLOCK must be rejected when agent bounding box intersects target block");
+        verify(level, never()).setBlockAndUpdate(any(), any());
+    }
+
+    @Test
+    @DisplayName("IntentActuator rejects PLACE_BLOCK when another player or living entity AABB collides with target block")
+    void testPlaceBlockRejectsCollisionWithOtherPlayerAABB() {
+        BlockState solidBlockState = mock(BlockState.class);
+        when(solidBlockState.blocksMotion()).thenReturn(true);
+        when(solidBlockState.getCollisionShape(any(), any())).thenReturn(Shapes.block());
+
+        IntentActuator testActuator = new IntentActuator() {
+            @Override
+            protected BlockState resolveBlockState(AgentEntity a, String id) {
+                return solidBlockState;
+            }
+        };
+
+        AgentEntity agent = mock(AgentEntity.class);
+        Level level = mock(Level.class);
+        when(agent.level()).thenReturn(level);
+        when(agent.isCreative()).thenReturn(true);
+        // Agent positioned far away at (10.0, 64.0, 10.0)
+        AABB agentBox = new AABB(9.7, 64.0, 9.7, 10.3, 65.8, 10.3);
+        when(agent.getBoundingBox()).thenReturn(agentBox);
+        when(agent.distanceToSqr(anyDouble(), anyDouble(), anyDouble())).thenReturn(4.0);
+
+        BlockPos targetPos = new BlockPos(0, 64, 0);
+        when(level.hasChunkAt(targetPos)).thenReturn(true);
+        BlockState replaceableState = mock(BlockState.class);
+        when(replaceableState.canBeReplaced()).thenReturn(true);
+        when(level.getBlockState(targetPos)).thenReturn(replaceableState);
+
+        // Another player is standing inside pos (0, 64, 0)
+        Player otherPlayer = mock(Player.class);
+        when(otherPlayer.isAlive()).thenReturn(true);
+        AABB otherBox = new AABB(0.2, 64.0, 0.2, 0.8, 65.8, 0.8);
+        when(otherPlayer.getBoundingBox()).thenReturn(otherBox);
+
+        AABB blockBox = new AABB(targetPos);
+        when(level.getEntities(eq(agent), eq(blockBox), any())).thenReturn(List.of(otherPlayer));
+
+        InteractBlockIntent intent = InteractBlockIntent.newBuilder()
+                .setPos(BlockPosProto.newBuilder().setX(0).setY(64).setZ(0).build())
+                .setInteractionType(InteractBlockIntent.InteractionType.PLACE_BLOCK)
+                .setBlockOrItemId("minecraft:cobblestone")
+                .build();
+
+        boolean result = testActuator.actuateInteractBlock(agent, intent);
+        assertFalse(result, "PLACE_BLOCK must be rejected when another player's bounding box intersects target block");
+        verify(level, never()).setBlockAndUpdate(any(), any());
+    }
+
+    @Test
+    @DisplayName("IntentActuator succeeds with PLACE_BLOCK when no entity collides with target block")
+    void testPlaceBlockSucceedsWhenNoCollision() {
+        BlockState solidBlockState = mock(BlockState.class);
+        when(solidBlockState.blocksMotion()).thenReturn(true);
+        when(solidBlockState.getCollisionShape(any(), any())).thenReturn(Shapes.block());
+
+        IntentActuator testActuator = new IntentActuator() {
+            @Override
+            protected BlockState resolveBlockState(AgentEntity a, String id) {
+                return solidBlockState;
+            }
+        };
+
+        AgentEntity agent = mock(AgentEntity.class);
+        Level level = mock(Level.class);
+        when(agent.level()).thenReturn(level);
+        when(agent.isCreative()).thenReturn(true);
+        // Agent positioned safely outside target block at (2.0, 64.0, 2.0)
+        AABB agentBox = new AABB(1.7, 64.0, 1.7, 2.3, 65.8, 2.3);
+        when(agent.getBoundingBox()).thenReturn(agentBox);
+        when(agent.distanceToSqr(anyDouble(), anyDouble(), anyDouble())).thenReturn(4.0);
+
+        BlockPos targetPos = new BlockPos(0, 64, 0);
+        when(level.hasChunkAt(targetPos)).thenReturn(true);
+        BlockState replaceableState = mock(BlockState.class);
+        when(replaceableState.canBeReplaced()).thenReturn(true);
+        when(level.getBlockState(targetPos)).thenReturn(replaceableState);
+        when(level.setBlockAndUpdate(eq(targetPos), any())).thenReturn(true);
+
+        AABB blockBox = new AABB(targetPos);
+        when(level.getEntities(eq(agent), eq(blockBox), any())).thenReturn(Collections.emptyList());
+
+        InteractBlockIntent intent = InteractBlockIntent.newBuilder()
+                .setPos(BlockPosProto.newBuilder().setX(0).setY(64).setZ(0).build())
+                .setInteractionType(InteractBlockIntent.InteractionType.PLACE_BLOCK)
+                .setBlockOrItemId("minecraft:cobblestone")
+                .build();
+
+        boolean result = testActuator.actuateInteractBlock(agent, intent);
+        assertTrue(result, "PLACE_BLOCK must succeed when no collision occurs");
+        verify(level, times(1)).setBlockAndUpdate(eq(targetPos), any());
     }
 }

@@ -1,8 +1,11 @@
 package blueprints
 
 import (
+	"math"
 	"path/filepath"
 	"testing"
+
+	civquestv1 "github.com/btposey/civquest/orchestrator-go/internal/proto/v1"
 )
 
 func TestBlueprint_GenerateTemplateAndValidate(t *testing.T) {
@@ -82,5 +85,50 @@ func TestBlueprint_ValidationErrors(t *testing.T) {
 	}
 	if err := bp.Validate(); err == nil {
 		t.Errorf("expected error for matrix dimension mismatch")
+	}
+}
+
+func TestIsCollidingWithVoxel(t *testing.T) {
+	target := &civquestv1.BlockPosProto{X: 0, Y: 64, Z: 0}
+
+	// Case 1: Agent directly centered in voxel -> collides
+	posCentered := &civquestv1.Vec3{X: 0.5, Y: 64.0, Z: 0.5}
+	if !IsCollidingWithVoxel(posCentered, target) {
+		t.Errorf("expected collision when centered in voxel")
+	}
+
+	// Case 2: Agent standing on block at Y=64 (pos.Y=65.0) within horizontal boundary -> collides
+	posAbove := &civquestv1.Vec3{X: 0.5, Y: 65.0, Z: 0.5}
+	if !IsCollidingWithVoxel(posAbove, target) {
+		t.Errorf("expected collision when standing directly above block")
+	}
+
+	// Case 3: Agent standing far outside horizontally -> no collision
+	posOutsideH := &civquestv1.Vec3{X: 3.5, Y: 64.0, Z: 0.5}
+	if IsCollidingWithVoxel(posOutsideH, target) {
+		t.Errorf("expected no collision when 3.5m away horizontally")
+	}
+
+	// Case 4: Agent standing far above vertically -> no collision
+	posOutsideV := &civquestv1.Vec3{X: 0.5, Y: 68.0, Z: 0.5}
+	if IsCollidingWithVoxel(posOutsideV, target) {
+		t.Errorf("expected no collision when 4m above vertically")
+	}
+}
+
+func TestCalculateCabinStepBack(t *testing.T) {
+	shelterCenter := &civquestv1.BlockPosProto{X: 0, Y: 64, Z: 0}
+	targetVoxel := &civquestv1.BlockPosProto{X: 0, Y: 64, Z: 0}
+	pos := &civquestv1.Vec3{X: 0.5, Y: 64.0, Z: 0.5}
+
+	stepBack := CalculateCabinStepBack(pos, targetVoxel, shelterCenter)
+	if stepBack == nil {
+		t.Fatalf("expected non-nil stepBack coordinate")
+	}
+
+	// Distance from cabin center should be 3.5 (outside 2.5m construction boundary)
+	dist := math.Hypot(stepBack.X-0.5, stepBack.Z-0.5)
+	if math.Abs(dist-3.5) > 0.1 {
+		t.Errorf("expected stepBack at distance 3.5m from shelter center, got %f", dist)
 	}
 }

@@ -321,6 +321,7 @@ func TestDuskEmergencyShelterFromLogsBottomUp(t *testing.T) {
 
 	// Step 2: Now has oak_planks and campfire placed nearby -> builds cabin bottom-up (Y=64 floor before Y=65 walls)
 	var placedY []int32
+	var backstepCount int
 	for i := 0; i < 26; i++ {
 		f := &civquestv1.TelemetryFrame{
 			WorldTick: int64(300 + i*25),
@@ -342,11 +343,19 @@ func TestDuskEmergencyShelterFromLogsBottomUp(t *testing.T) {
 			},
 		}
 		placeIntent := EvaluateExploration("Able", f, cfg, state)
+		if nav := placeIntent.GetNavigate(); nav != nil && nav.Target != nil {
+			backstepCount++
+			f.Status.Position = nav.Target
+			placeIntent = EvaluateExploration("Able", f, cfg, state)
+		}
 		if placeIntent == nil || placeIntent.GetInteractBlock() == nil ||
 			placeIntent.GetInteractBlock().InteractionType != civquestv1.InteractBlockIntent_PLACE_BLOCK {
 			t.Fatalf("step %d: expected PLACE_BLOCK for shelter wall, got %+v", i, placeIntent)
 		}
 		placedY = append(placedY, placeIntent.GetInteractBlock().Pos.GetY())
+	}
+	if backstepCount == 0 {
+		t.Fatalf("expected at least one back-step NavigateIntent to avoid placing shelter block on self")
 	}
 
 	for i := 0; i < 25; i++ {
@@ -356,6 +365,69 @@ func TestDuskEmergencyShelterFromLogsBottomUp(t *testing.T) {
 	}
 	if placedY[25] != 65 {
 		t.Fatalf("expected bottom-up placement: first wall block at Y=65, got Y=%d", placedY[25])
+	}
+}
+
+func TestShelterConstructionAvoidsSelfCollisionAndStepsBack(t *testing.T) {
+	state := NewAgentState()
+	cfg := xdg.DefaultAgentIdentityConfig("Able")
+	cfg.Profession = "EXPLORER"
+
+	// Initialize shelter position at (0, 64, 0)
+	state.ShelterPos = &civquestv1.BlockPosProto{X: 0, Y: 64, Z: 0}
+	state.ShelterBuildIndex = 12 // index 12 is center floor block (0, 64, 0)
+
+	// Agent standing directly inside (0, 64, 0) at (0.5, 64.0, 0.5)
+	frame := &civquestv1.TelemetryFrame{
+		WorldTick: 500,
+		TimeOfDay: 13000,
+		Status: &civquestv1.AgentStatus{
+			Position:        &civquestv1.Vec3{X: 0.5, Y: 64.0, Z: 0.5},
+			Health:          20,
+			FoodLevel:       20,
+			NavigationState: civquestv1.NavigationState_NAVIGATION_STATE_IDLE,
+			Inventory: []*civquestv1.ItemStackProto{
+				{Slot: 0, ItemId: "minecraft:oak_planks", Count: 10},
+			},
+		},
+		InterestingBlocks: []*civquestv1.VisibleBlock{
+			{Pos: &civquestv1.BlockPosProto{X: 1, Y: 64, Z: 1}, BlockId: "minecraft:campfire"},
+		},
+	}
+	state.telemetryFramesSeen = 3
+
+	// EvaluateExploration should reject placing on self and emit micro-step NavigateIntent
+	intent := EvaluateExploration("Able", frame, cfg, state)
+	if intent == nil || intent.GetNavigate() == nil {
+		t.Fatalf("expected micro-step NavigateIntent when agent collides with target voxel, got %+v", intent)
+	}
+
+	navTarget := intent.GetNavigate().Target
+	if navTarget == nil {
+		t.Fatalf("expected valid navigation target")
+	}
+
+	// Verify build index was NOT advanced
+	if state.ShelterBuildIndex != 12 {
+		t.Fatalf("expected ShelterBuildIndex to remain 12 during step back, got %d", state.ShelterBuildIndex)
+	}
+
+	// Verify navigation target is outside the 5x5 construction boundary
+	distFromCenter := math.Hypot(navTarget.X-0.5, navTarget.Z-0.5)
+	if distFromCenter < 2.5 {
+		t.Fatalf("expected step-back target outside 2.5m construction boundary, got distance %.2f", distFromCenter)
+	}
+
+	// Now simulate agent arriving at the stepped-back position
+	frame.Status.Position = navTarget
+	frame.WorldTick += 25
+	placeIntent := EvaluateExploration("Able", frame, cfg, state)
+	if placeIntent == nil || placeIntent.GetInteractBlock() == nil ||
+		placeIntent.GetInteractBlock().InteractionType != civquestv1.InteractBlockIntent_PLACE_BLOCK {
+		t.Fatalf("expected PLACE_BLOCK once positioned outside target voxel, got %+v", placeIntent)
+	}
+	if state.ShelterBuildIndex != 13 {
+		t.Fatalf("expected ShelterBuildIndex to advance to 13 after placement, got %d", state.ShelterBuildIndex)
 	}
 }
 
@@ -510,4 +582,3 @@ func TestAgentState_ShelterBuildPhaseAndIndex(t *testing.T) {
 		t.Fatalf("expected index 42, got %d", state.GetShelterBuildIndex())
 	}
 }
-

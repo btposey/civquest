@@ -488,4 +488,3 @@ func (s *AgentState) SetShelterBuildIndex(idx int) {
 	defer s.mu.Unlock()
 	s.ShelterBuildIndex = idx
 }
-

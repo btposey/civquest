@@ -1,6 +1,8 @@
 package blueprints
 
 import (
+	"math"
+
 	civquestv1 "github.com/btposey/civquest/orchestrator-go/internal/proto/v1"
 )
 
@@ -379,5 +381,67 @@ func FrontierCabinSpec() *BlueprintSpec {
 			"6: Interior Lighting (torch)",
 		},
 		Blocks: blocks,
+	}
+}
+
+// IsCollidingWithVoxel reports whether the agent's position is within 1.0 block horizontally
+// and vertically of targetVoxel, indicating that placing a block at targetVoxel would collide
+// with or entomb the agent.
+func IsCollidingWithVoxel(pos *civquestv1.Vec3, targetVoxel *civquestv1.BlockPosProto) bool {
+	if pos == nil || targetVoxel == nil {
+		return false
+	}
+	targetCenterX := float64(targetVoxel.X) + 0.5
+	targetCenterZ := float64(targetVoxel.Z) + 0.5
+	hDist := math.Hypot(pos.X-targetCenterX, pos.Z-targetCenterZ)
+	vDist := math.Abs(pos.Y - float64(targetVoxel.Y))
+	return hDist <= 1.0 && vDist <= 1.0
+}
+
+// CalculateCabinStepBack computes a micro-step waypoint positioned outside the 5x5 construction boundary
+// when the agent is within collision range of targetVoxel during shelter construction.
+func CalculateCabinStepBack(pos *civquestv1.Vec3, targetVoxel *civquestv1.BlockPosProto, shelterCenter *civquestv1.BlockPosProto) *civquestv1.Vec3 {
+	if pos == nil {
+		return &civquestv1.Vec3{X: 0, Y: 64, Z: 0}
+	}
+	cx := float64(0)
+	cy := pos.Y
+	cz := float64(0)
+	if shelterCenter != nil {
+		cx = float64(shelterCenter.X) + 0.5
+		cy = float64(shelterCenter.Y)
+		cz = float64(shelterCenter.Z) + 0.5
+	}
+
+	targetCenterX := cx
+	targetCenterZ := cz
+	if targetVoxel != nil {
+		targetCenterX = float64(targetVoxel.X) + 0.5
+		targetCenterZ = float64(targetVoxel.Z) + 0.5
+	}
+
+	// Direction away from the target voxel
+	dirX := pos.X - targetCenterX
+	dirZ := pos.Z - targetCenterZ
+	if math.Hypot(dirX, dirZ) < 0.05 {
+		dirX = pos.X - cx
+		dirZ = pos.Z - cz
+	}
+	if math.Hypot(dirX, dirZ) < 0.05 {
+		// Default to South (towards doorway at Z=+2)
+		dirX = 0
+		dirZ = 1
+	}
+
+	d := math.Hypot(dirX, dirZ)
+	normX := dirX / d
+	normZ := dirZ / d
+
+	// Step back outside the 5x5 construction boundary (half-width 2.5, place at 3.5)
+	const boundaryRadius = 3.5
+	return &civquestv1.Vec3{
+		X: math.Round((cx+normX*boundaryRadius)*10) / 10,
+		Y: cy,
+		Z: math.Round((cz+normZ*boundaryRadius)*10) / 10,
 	}
 }

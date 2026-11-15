@@ -47,6 +47,7 @@ import net.minecraft.world.level.block.entity.LecternBlockEntity;
 import net.minecraft.world.level.block.entity.SignBlockEntity;
 import net.minecraft.world.level.block.entity.SignText;
 import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.phys.AABB;
 import org.slf4j.Logger;
 
 import java.util.ArrayList;
@@ -362,8 +363,9 @@ public class IntentActuator {
                     return false;
                 }
 
+                int slot = -1;
                 if (!agent.isCreative()) {
-                    int slot = findMatchingBlockItemSlot(agent, blockState, intent.getBlockOrItemId());
+                    slot = findMatchingBlockItemSlot(agent, blockState, intent.getBlockOrItemId());
                     if (slot < 0) {
                         return false;
                     }
@@ -371,6 +373,29 @@ public class IntentActuator {
                     if (chosen.getItem() instanceof BlockItem chosenBi) {
                         blockState = chosenBi.getBlock().defaultBlockState();
                     }
+                }
+
+                // Verify that solid block placement does not collide with the agent's bounding box
+                // or any other player/living entity's bounding box to prevent entombment or suffocation.
+                AABB blockBox = new AABB(pos);
+                boolean isSolid = blockState.blocksMotion() || !blockState.getCollisionShape(level, pos).isEmpty();
+                if (isSolid) {
+                    if (agent.getBoundingBox() != null && agent.getBoundingBox().intersects(blockBox)) {
+                        return false;
+                    }
+                    List<Entity> colliding = level.getEntities(agent, blockBox,
+                            e -> e != null && (e instanceof Player || (e.isAlive() && !e.isSpectator())));
+                    if (colliding != null) {
+                        for (Entity entity : colliding) {
+                            if (entity.getBoundingBox() != null && entity.getBoundingBox().intersects(blockBox)) {
+                                return false;
+                            }
+                        }
+                    }
+                }
+
+                if (!agent.isCreative() && slot >= 0) {
+                    ItemStack chosen = agent.getInventory().getItem(slot);
                     chosen.shrink(1);
                 }
                 agent.swing(InteractionHand.MAIN_HAND, true);
@@ -437,7 +462,7 @@ public class IntentActuator {
         return -1;
     }
 
-    private BlockState resolveBlockState(AgentEntity agent, String blockOrItemId) {
+    protected BlockState resolveBlockState(AgentEntity agent, String blockOrItemId) {
         if (blockOrItemId != null && !blockOrItemId.isBlank()) {
             ResourceLocation id = ResourceLocation.tryParse(blockOrItemId);
             if (id != null) {
@@ -451,11 +476,13 @@ public class IntentActuator {
                 }
             }
         }
-        ItemStack mainHand = agent.getMainHandItem();
-        if (mainHand.getItem() instanceof BlockItem bi) {
-            return bi.getBlock().defaultBlockState();
+        if (agent != null) {
+            ItemStack mainHand = agent.getMainHandItem();
+            if (mainHand != null && !mainHand.isEmpty() && mainHand.getItem() instanceof BlockItem bi) {
+                return bi.getBlock().defaultBlockState();
+            }
         }
-        return Blocks.COBBLESTONE.defaultBlockState();
+        return Blocks.COBBLESTONE != null ? Blocks.COBBLESTONE.defaultBlockState() : null;
     }
 
     public boolean actuateUseItem(AgentEntity agent, UseItemIntent intent) {
