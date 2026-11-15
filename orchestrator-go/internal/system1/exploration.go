@@ -974,6 +974,29 @@ func evaluateDuskNightOutpostShelterLocked(
 
 	if inv.buildingBlockCount > 0 && state.ShelterBuildIndex < len(cabinIntents) && canPlace {
 		target := cabinIntents[state.ShelterBuildIndex]
+
+		// Ensure the agent is positioned outside the target block voxel before placing.
+		// If pos is within 1.0 block horizontally and vertically of target.GetTargetVoxel(),
+		// emit a micro-step NavigateIntent to step back outside the construction boundary.
+		if targetVoxel := target.GetTargetVoxel(); targetVoxel != nil && blueprints.IsCollidingWithVoxel(pos, targetVoxel) {
+			stepBackPos := blueprints.CalculateCabinStepBack(pos, targetVoxel, state.ShelterPos)
+			state.lastExploreTick = frame.WorldTick
+			return &civquestv1.AgentIntent{
+				AgentId: agentID,
+				Action: &civquestv1.AgentIntent_Navigate{
+					Navigate: &civquestv1.NavigateIntent{
+						Target: &civquestv1.Vec3{
+							X: stepBackPos.X,
+							Y: pos.Y,
+							Z: stepBackPos.Z,
+						},
+						SpeedMultiplier:  1.0,
+						ArrivalTolerance: 1,
+					},
+				},
+			}
+		}
+
 		state.ShelterBuildPhase = blueprints.CabinBlockPhase(state.ShelterBuildIndex)
 		state.ShelterBuildIndex++
 		state.shelterBlocksPlaced = state.ShelterBuildIndex
