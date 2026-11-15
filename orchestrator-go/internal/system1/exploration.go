@@ -349,6 +349,8 @@ type bootstrapInventorySummary struct {
 	hasStoneGear        bool
 	hasLight            bool
 	lightItemID         string
+	craftingTableCount  int32
+	hasCraftingTable    bool
 }
 
 func inspectBootstrapInventory(inventory []*civquestv1.ItemStackProto) bootstrapInventorySummary {
@@ -408,6 +410,10 @@ func inspectBootstrapInventory(inventory []*civquestv1.ItemStackProto) bootstrap
 			if s.lightItemID == "" {
 				s.lightItemID = it.ItemId
 			}
+		}
+		if strings.Contains(id, "crafting_table") {
+			s.hasCraftingTable = true
+			s.craftingTableCount += it.Count
 		}
 	}
 	switch {
@@ -862,35 +868,133 @@ func evaluateBootstrapGoalsLocked(
 	inv := inspectBootstrapInventory(frame.Status.Inventory)
 
 	canCraft := state.lastCraftTick == 0 || frame.WorldTick < state.lastCraftTick || frame.WorldTick-state.lastCraftTick >= 20
+	canPlace := state.lastShelterPlaceTick == 0 || frame.WorldTick < state.lastShelterPlaceTick || frame.WorldTick-state.lastShelterPlaceTick >= 20
 
-	// 1. Upgrade to stone sword if cobblestone and wood are available
-	if !inv.hasStoneGear && inv.cobbleCount >= 3 && (inv.logCount >= 1 || inv.planksCount >= 1 || inv.stickCount >= 1) && canCraft {
-		state.lastCraftTick = frame.WorldTick
-		return &civquestv1.AgentIntent{
-			AgentId: agentID,
-			Action: &civquestv1.AgentIntent_CraftItem{
-				CraftItem: &civquestv1.CraftItemIntent{
-					RecipeId:   "minecraft:stone_sword",
-					BatchCount: 1,
-				},
-			},
+	needsStoneUpgrade := !inv.hasStoneGear && inv.cobbleCount >= 3 && (inv.logCount >= 1 || inv.planksCount >= 1 || inv.stickCount >= 1)
+	needsWoodenTools := (!inv.hasAxe || !inv.hasSword) && (inv.logCount >= 1 || inv.planksCount >= 4)
+	needsTools := needsStoneUpgrade || needsWoodenTools
+
+	var nearestCraftingTable *civquestv1.VisibleBlock
+	bestTableDistSq := math.MaxFloat64
+	for _, b := range frame.InterestingBlocks {
+		if b == nil || b.Pos == nil {
+			continue
+		}
+		id := strings.ToLower(b.BlockId)
+		if strings.Contains(id, "crafting_table") {
+			dx := float64(b.Pos.X) + 0.5 - pos.X
+			dy := float64(b.Pos.Y) + 0.5 - pos.Y
+			dz := float64(b.Pos.Z) + 0.5 - pos.Z
+			dSq := dx*dx + dy*dy + dz*dz
+			if dSq < bestTableDistSq {
+				bestTableDistSq = dSq
+				nearestCraftingTable = b
+			}
 		}
 	}
 
-	// 2. Craft wooden axe, wooden sword, or campfire when timber is in inventory
-	if (!inv.hasAxe || !inv.hasSword || !inv.hasLight) && (inv.logCount >= 1 || inv.planksCount >= 4) && canCraft {
-		recipe := "minecraft:wooden_axe"
-		if inv.hasAxe && !inv.hasSword {
-			recipe = "minecraft:wooden_sword"
-		} else if inv.hasAxe && inv.hasSword && !inv.hasLight {
-			recipe = "minecraft:campfire"
+	if needsTools {
+		if nearestCraftingTable == nil {
+			if inv.hasCraftingTable {
+				if canPlace {
+					state.lastShelterPlaceTick = frame.WorldTick
+					cx := int32(math.Floor(pos.X))
+					cy := int32(math.Floor(pos.Y))
+					cz := int32(math.Floor(pos.Z))
+					return &civquestv1.AgentIntent{
+						AgentId: agentID,
+						Action: &civquestv1.AgentIntent_InteractBlock{
+							InteractBlock: &civquestv1.InteractBlockIntent{
+								Pos: &civquestv1.BlockPosProto{
+									X: cx + 1,
+									Y: cy,
+									Z: cz,
+								},
+								InteractionType: civquestv1.InteractBlockIntent_PLACE_BLOCK,
+								BlockOrItemId:   "minecraft:crafting_table",
+							},
+						},
+					}
+				}
+				return nil
+			}
+
+			if (inv.logCount >= 1 || inv.planksCount >= 4) && canCraft {
+				state.lastCraftTick = frame.WorldTick
+				return &civquestv1.AgentIntent{
+					AgentId: agentID,
+					Action: &civquestv1.AgentIntent_CraftItem{
+						CraftItem: &civquestv1.CraftItemIntent{
+							RecipeId:   "minecraft:crafting_table",
+							BatchCount: 1,
+						},
+					},
+				}
+			}
+		} else {
+			if bestTableDistSq <= 20.25 {
+				if needsStoneUpgrade && canCraft {
+					state.lastCraftTick = frame.WorldTick
+					return &civquestv1.AgentIntent{
+						AgentId: agentID,
+						Action: &civquestv1.AgentIntent_CraftItem{
+							CraftItem: &civquestv1.CraftItemIntent{
+								RecipeId:       "minecraft:stone_sword",
+								WorkstationPos: nearestCraftingTable.Pos,
+								BatchCount:     1,
+							},
+						},
+					}
+				}
+				if needsWoodenTools && canCraft {
+					recipe := "minecraft:wooden_axe"
+					if inv.hasAxe && !inv.hasSword {
+						recipe = "minecraft:wooden_sword"
+					}
+					state.lastCraftTick = frame.WorldTick
+					return &civquestv1.AgentIntent{
+						AgentId: agentID,
+						Action: &civquestv1.AgentIntent_CraftItem{
+							CraftItem: &civquestv1.CraftItemIntent{
+								RecipeId:       recipe,
+								WorkstationPos: nearestCraftingTable.Pos,
+								BatchCount:     1,
+							},
+						},
+					}
+				}
+			} else {
+				if navState != civquestv1.NavigationState_NAVIGATION_STATE_PATHING {
+					if state.lastExploreTick == 0 || frame.WorldTick < state.lastExploreTick || frame.WorldTick-state.lastExploreTick >= 40 {
+						state.lastExploreTick = frame.WorldTick
+						return &civquestv1.AgentIntent{
+							AgentId: agentID,
+							Action: &civquestv1.AgentIntent_Navigate{
+								Navigate: &civquestv1.NavigateIntent{
+									Target: &civquestv1.Vec3{
+										X: float64(nearestCraftingTable.Pos.X) + 0.5,
+										Y: float64(nearestCraftingTable.Pos.Y),
+										Z: float64(nearestCraftingTable.Pos.Z) + 0.5,
+									},
+									SpeedMultiplier:  1.0,
+									ArrivalTolerance: 2,
+								},
+							},
+						}
+					}
+				}
+				return nil
+			}
 		}
+	}
+
+	if !inv.hasLight && (inv.logCount >= 1 || inv.planksCount >= 1 || inv.stickCount >= 1) && canCraft {
 		state.lastCraftTick = frame.WorldTick
 		return &civquestv1.AgentIntent{
 			AgentId: agentID,
 			Action: &civquestv1.AgentIntent_CraftItem{
 				CraftItem: &civquestv1.CraftItemIntent{
-					RecipeId:   recipe,
+					RecipeId:   "minecraft:campfire",
 					BatchCount: 1,
 				},
 			},

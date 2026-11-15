@@ -250,7 +250,9 @@ public class AgentEntity extends FakePlayer {
                     ie.setNoPickUpDelay();
                 }
                 autoEquipBestGear();
-                if (nearestPlayer != null) {
+                net.minecraft.world.entity.Entity owner = ie.getOwner();
+                UUID thrower = owner != null ? owner.getUUID() : null;
+                if (nearestPlayer != null && thrower != null && thrower.equals(nearestPlayer.getUUID())) {
                     nearestPlayer.sendSystemMessage(Component.literal(
                             "<" + agentName + "> Thank you for the " + pickedCount + "x " + itemName + ", " + nearestPlayer.getName().getString() + "!"));
                     queueIncomingChat(com.civquest.mod.grpc.v1.ChatEvent.newBuilder()
@@ -267,7 +269,9 @@ public class AgentEntity extends FakePlayer {
                 }
             } else {
                 ie.setNoPickUpDelay();
-                if (nearestPlayer != null && (this.tickCount - this.lastInventoryFullNoticeTick >= 100)) {
+                net.minecraft.world.entity.Entity owner = ie.getOwner();
+                UUID thrower = owner != null ? owner.getUUID() : null;
+                if (nearestPlayer != null && thrower != null && thrower.equals(nearestPlayer.getUUID()) && (this.tickCount - this.lastInventoryFullNoticeTick >= 100)) {
                     nearestPlayer.sendSystemMessage(Component.literal(
                             "<" + agentName + "> My pack is completely full, " + nearestPlayer.getName().getString() + "! I can't carry the " + origCount + "x " + itemName + " — please pick it back up."));
                     this.lastInventoryFullNoticeTick = this.tickCount;
