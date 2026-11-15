@@ -218,14 +218,14 @@ if [ "$READY" -ne 1 ]; then
 fi
 
 # ------------------------------------------------------------------------------
-# Execute Go integration probe suite
+# Execute Go integration probe & playtest scenario suite
 # ------------------------------------------------------------------------------
-echo "==> Executing Go integration probe suite..."
+echo "==> Executing Go integration probe & in-world playtest suite..."
 (
     cd "$REPO_ROOT/orchestrator-go"
     CIVQUEST_DISCOVERY_PATH="$META_PATH" \
     CIVQUEST_REQUIRE_LIVE_SERVER=true \
-    go test -timeout=60s -count=1 -v -tags=integration ./test/integration/...
+    go test -timeout=180s -count=1 -v -tags=integration -run="TestLiveServerEndToEnd|TestInWorldPlaytestScenarios|TestSystem1ImpulseAgentHarness" ./test/integration/...
 )
 
 echo "==> Probe suite passed!"

@@ -43,7 +43,11 @@ func getResolver() *xdg.Resolver {
 	}
 	serverID := flagServerID
 	if serverID == "" {
-		if meta, err := bridge.ReadDiscovery(""); err == nil && meta.IsReady() && meta.ServerID != "" && meta.ServerID != "default" {
+		discPath := ""
+		if flagDataDir != "" {
+			discPath = filepath.Join(flagDataDir, "server", "civquest-server-meta.json")
+		}
+		if meta, err := bridge.ReadDiscovery(discPath); err == nil && meta.IsReady() && meta.ServerID != "" && meta.ServerID != "default" {
 			serverID = meta.ServerID
 		}
 	}

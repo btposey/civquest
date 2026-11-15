@@ -77,7 +77,13 @@ func run(parentCtx context.Context, args []string, stdout, stderr io.Writer, r *
 
 	// Read discovery metadata if available
 	var meta *bridge.ServerMeta
-	if metaRead, discErr := bridge.ReadDiscovery(""); discErr == nil && metaRead.IsReady() {
+	discCandidate := ""
+	if r != nil {
+		discCandidate = filepath.Join(r.ServerDir(), "civquest-server-meta.json")
+		if metaRead, discErr := bridge.ReadDiscovery(discCandidate); discErr == nil && metaRead.IsReady() {
+			meta = metaRead
+		}
+	} else if metaRead, discErr := bridge.ReadDiscovery(""); discErr == nil && metaRead.IsReady() {
 		meta = metaRead
 	}
 
