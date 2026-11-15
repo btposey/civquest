@@ -394,7 +394,11 @@ done
 detect_source_mode
 detect_arch
 resolve_version
-log_info "Installation Mode: ${SOURCE_MODE && echo 'Source (local build)' || echo 'Binary (GitHub Releases)'}"
+if [ "${SOURCE_MODE}" = "true" ]; then
+    log_info "Installation Mode: Source (local build)"
+else
+    log_info "Installation Mode: Binary (GitHub Releases)"
+fi
 log_info "Platform: Linux ${ARCH}, Version: ${RELEASE_VERSION}"
 echo ""
 
