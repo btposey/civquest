@@ -82,7 +82,7 @@ func NewAgentState() *AgentState {
 	return &AgentState{
 		CurrentRoutine: RoutineDawnAwakening,
 		FSMState:       StateBootstrap,
-		PavingTracker:  NewRoadPavingTracker(1000, 3),
+		PavingTracker:  NewRoadPavingTracker(DefaultPavingCapacity, DefaultPavingThreshold),
 		goals: GoalHierarchy{
 			ImmediateGoal: "GATHER_TIMBER: Gather 4 logs and craft basic wooden tools",
 			ShortTermGoal: "ESTABLISH_OUTPOST_CHAIN: Advance frontier and establish safe day-night outposts with tools & light",

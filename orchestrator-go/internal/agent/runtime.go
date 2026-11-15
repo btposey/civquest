@@ -247,7 +247,7 @@ func NewRuntime(cfg Config) (*AgentRuntime, error) {
 		connector = cfg.BridgeClient
 	}
 
-	pavingTracker := system1.NewRoadPavingTracker(1000, 3)
+	pavingTracker := system1.NewRoadPavingTracker(1000, system1.DefaultPavingThreshold)
 	sys1State := system1.NewAgentState()
 	sys1State.PavingTracker = pavingTracker
 

@@ -2372,6 +2372,11 @@ func TestRuntime_System1_RoadPavingIntegration(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed creating runtime: %v", err)
 	}
+	rt.PavingTracker().SetThreshold(3)
+	// Set spawn origin at (0, 64, 0) so (10, 63, 10) is along a road outside the campfire exclusion zone (radius 4)
+	spawnOrigin := &civquestv1.Vec3{X: 0, Y: 64, Z: 0}
+	rt.System1State().SetHomeOrigin(spawnOrigin)
+	rt.PavingTracker().SetHomeOrigin(spawnOrigin)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -2399,11 +2404,12 @@ func TestRuntime_System1_RoadPavingIntegration(t *testing.T) {
 		WorldTick: 100,
 		TimeOfDay: 2000,
 		Status: &civquestv1.AgentStatus{
-			AgentId:   "paving_agent",
-			Health:    20.0,
-			MaxHealth: 20.0,
-			FoodLevel: 20,
-			Position:  &civquestv1.Vec3{X: 10.5, Y: 64.0, Z: 10.5},
+			AgentId:         "paving_agent",
+			Health:          20.0,
+			MaxHealth:       20.0,
+			FoodLevel:       20,
+			Position:        &civquestv1.Vec3{X: 10.5, Y: 64.0, Z: 10.5},
+			NavigationState: civquestv1.NavigationState_NAVIGATION_STATE_PATHING,
 		},
 		InterestingBlocks: []*civquestv1.VisibleBlock{
 			{Pos: &civquestv1.BlockPosProto{X: 10, Y: 63, Z: 10}, BlockId: "minecraft:grass_block"},
@@ -2414,11 +2420,12 @@ func TestRuntime_System1_RoadPavingIntegration(t *testing.T) {
 		WorldTick: 105,
 		TimeOfDay: 2005,
 		Status: &civquestv1.AgentStatus{
-			AgentId:   "paving_agent",
-			Health:    20.0,
-			MaxHealth: 20.0,
-			FoodLevel: 20,
-			Position:  &civquestv1.Vec3{X: 11.5, Y: 64.0, Z: 10.5},
+			AgentId:         "paving_agent",
+			Health:          20.0,
+			MaxHealth:       20.0,
+			FoodLevel:       20,
+			Position:        &civquestv1.Vec3{X: 11.5, Y: 64.0, Z: 10.5},
+			NavigationState: civquestv1.NavigationState_NAVIGATION_STATE_PATHING,
 		},
 		InterestingBlocks: []*civquestv1.VisibleBlock{
 			{Pos: &civquestv1.BlockPosProto{X: 11, Y: 63, Z: 10}, BlockId: "minecraft:grass_block"},

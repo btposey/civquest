@@ -420,6 +420,11 @@ func (h *BootstrapStateHandler) OnTick(ctx *FSMContext) []FSMIntent {
 	if !ctx.Frame.Status.IsSleeping && ctx.PavingTracker != nil &&
 		ctx.Frame.Status.NavigationState != civquestv1.NavigationState_NAVIGATION_STATE_STUCK &&
 		!ctx.Frame.Status.NavigationEnclosed {
+		if ctx.State != nil && ctx.PavingTracker.GetHomeOrigin() == nil {
+			if home := ctx.State.GetHomeOrigin(); home != nil {
+				ctx.PavingTracker.SetHomeOrigin(home)
+			}
+		}
 		if paveIntent := ctx.PavingTracker.EvaluatePaving(ctx.AgentID, ctx.Frame); paveIntent != nil {
 			intents = append(intents, FSMIntent{Intent: paveIntent, Priority: false})
 		}
@@ -469,6 +474,11 @@ func (h *ExploreStateHandler) OnTick(ctx *FSMContext) []FSMIntent {
 	if !ctx.Frame.Status.IsSleeping && ctx.PavingTracker != nil &&
 		ctx.Frame.Status.NavigationState != civquestv1.NavigationState_NAVIGATION_STATE_STUCK &&
 		!ctx.Frame.Status.NavigationEnclosed {
+		if ctx.State != nil && ctx.PavingTracker.GetHomeOrigin() == nil {
+			if home := ctx.State.GetHomeOrigin(); home != nil {
+				ctx.PavingTracker.SetHomeOrigin(home)
+			}
+		}
 		if paveIntent := ctx.PavingTracker.EvaluatePaving(ctx.AgentID, ctx.Frame); paveIntent != nil {
 			intents = append(intents, FSMIntent{Intent: paveIntent, Priority: false})
 		}
