@@ -65,16 +65,22 @@ type AgentState struct {
 	PavingTracker          *RoadPavingTracker
 
 	// Autonomous exploration, forward outposts & topological mapping state
-	homeOrigin          *civquestv1.Vec3
-	currentOutpost      *civquestv1.Vec3
-	outposts            []*civquestv1.Vec3
-	lastExploreTick     int64
-	exploreStepIndex    int
-	lastHeadingRad      float64
-	lastMapNodeID       string
-	lastMapPos          *civquestv1.Vec3
-	telemetryFramesSeen int64
-	goals               GoalHierarchy
+	homeOrigin              *civquestv1.Vec3
+	currentOutpost          *civquestv1.Vec3
+	outposts                []*civquestv1.Vec3
+	lastExploreTick         int64
+	exploreStepIndex        int
+	lastHeadingRad          float64
+	frontierAzimuthRad      float64
+	frontierAzimuthSet      bool
+	frontierRadialLeg       int
+	currentExploreTarget    *civquestv1.Vec3
+	lastExploreProgressDist float64
+	lastExploreProgressTick int64
+	lastMapNodeID           string
+	lastMapPos              *civquestv1.Vec3
+	telemetryFramesSeen     int64
+	goals                   GoalHierarchy
 }
 
 // NewAgentState creates an initialized AgentState.
@@ -487,5 +493,102 @@ func (s *AgentState) SetShelterBuildIndex(idx int) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.ShelterBuildIndex = idx
+}
+
+// GetFrontierAzimuth returns the current locked frontier sector azimuth heading and whether it is set.
+func (s *AgentState) GetFrontierAzimuth() (float64, bool) {
+	if s == nil {
+		return 0, false
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.frontierAzimuthRad, s.frontierAzimuthSet
+}
+
+// SetFrontierAzimuth locks the agent's outward frontier sector azimuth heading.
+func (s *AgentState) SetFrontierAzimuth(rad float64) {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.frontierAzimuthRad = rad
+	s.frontierAzimuthSet = true
+	s.lastHeadingRad = rad
+}
+
+// GetFrontierRadialLeg returns the current progressive outward radial leg index.
+func (s *AgentState) GetFrontierRadialLeg() int {
+	if s == nil {
+		return 0
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.frontierRadialLeg
+}
+
+// SetFrontierRadialLeg sets the current progressive outward radial leg index.
+func (s *AgentState) SetFrontierRadialLeg(leg int) {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.frontierRadialLeg = leg
+}
+
+// GetCurrentExploreTarget returns a defensive copy of the current active exploration target waypoint.
+func (s *AgentState) GetCurrentExploreTarget() *civquestv1.Vec3 {
+	if s == nil {
+		return nil
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if s.currentExploreTarget == nil {
+		return nil
+	}
+	return &civquestv1.Vec3{
+		X: s.currentExploreTarget.X,
+		Y: s.currentExploreTarget.Y,
+		Z: s.currentExploreTarget.Z,
+	}
+}
+
+// SetCurrentExploreTarget sets the current active exploration target waypoint.
+func (s *AgentState) SetCurrentExploreTarget(pos *civquestv1.Vec3) {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if pos == nil {
+		s.currentExploreTarget = nil
+		return
+	}
+	s.currentExploreTarget = &civquestv1.Vec3{
+		X: pos.X,
+		Y: pos.Y,
+		Z: pos.Z,
+	}
+}
+
+// GetLastHeadingRad returns the last recorded heading in radians.
+func (s *AgentState) GetLastHeadingRad() float64 {
+	if s == nil {
+		return 0
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.lastHeadingRad
+}
+
+// SetLastHeadingRad sets the last recorded heading in radians.
+func (s *AgentState) SetLastHeadingRad(rad float64) {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.lastHeadingRad = rad
 }
 
