@@ -64,32 +64,33 @@ type TimeWarpConfig struct {
 // time progression (day/night, hunger, physics, voxel interactions) for CivQuest agent runtimes
 // in milliseconds without needing a running Minecraft Java server.
 type TimeWarpSimulation struct {
-	cfg                  TimeWarpConfig
-	runtime              *agent.AgentRuntime
-	tempDir              string
-	currentTick          int64
-	timeOfDay            int64
-	weather              civquestv1.Weather
-	pos                  *civquestv1.Vec3
-	yaw                  float32
-	pitch                float32
-	health               float32
-	maxHealth            float32
-	foodLevel            int32
-	stamina              float32
-	isSleeping           bool
-	isOnFire             bool
-	navState             civquestv1.NavigationState
-	navTarget            *civquestv1.Vec3
-	navSpeed             float64
-	navArrivalTol        float64
-	inventory            []*civquestv1.ItemStackProto
-	blocks               map[BlockPosKey]string
-	entities             []*civquestv1.VisibleEntity
-	injectedChats        []*civquestv1.ChatEvent
-	lastHarvestTick      int64
-	lastCraftTick        int64
-	hungerAcc            float64
+	cfg             TimeWarpConfig
+	runtime         *agent.AgentRuntime
+	tempDir         string
+	currentTick     int64
+	timeOfDay       int64
+	weather         civquestv1.Weather
+	pos             *civquestv1.Vec3
+	yaw             float32
+	pitch           float32
+	health          float32
+	maxHealth       float32
+	foodLevel       int32
+	stamina         float32
+	isSleeping      bool
+	isOnFire        bool
+	navState        civquestv1.NavigationState
+	navTarget       *civquestv1.Vec3
+	navSpeed        float64
+	navArrivalTol   float64
+	inventory       []*civquestv1.ItemStackProto
+	blocks          map[BlockPosKey]string
+	blockStates     map[BlockPosKey]string
+	entities        []*civquestv1.VisibleEntity
+	injectedChats   []*civquestv1.ChatEvent
+	lastHarvestTick int64
+	lastCraftTick   int64
+	hungerAcc       float64
 
 	// Detectors
 	OscillationDetector *FSMOscillationDetector
@@ -98,10 +99,11 @@ type TimeWarpSimulation struct {
 	AzimuthDetector     *SectorAzimuthLockDetector
 
 	// Metrics
-	AllIntents          []*civquestv1.AgentIntent
-	IntentsThisStep      []*civquestv1.AgentIntent
-	ActionOccurredThisStep bool
-	PavingIntentsCount  int
+	AllIntents              []*civquestv1.AgentIntent
+	IntentsThisStep         []*civquestv1.AgentIntent
+	ActionOccurredThisStep  bool
+	PavingIntentsCount      int
+	DepositedContainerItems []*civquestv1.ItemStackProto
 }
 
 // NewTimeWarpSimulation initializes a high-speed time-warp virtual world and agent harness.
@@ -165,36 +167,38 @@ func NewTimeWarpSimulation(cfg TimeWarpConfig) (*TimeWarpSimulation, error) {
 	}
 
 	sim := &TimeWarpSimulation{
-		cfg:             cfg,
-		runtime:         rt,
-		tempDir:         tempDir,
-		currentTick:     cfg.InitialTick,
-		timeOfDay:       cfg.InitialTimeOfDay,
-		weather:         cfg.Weather,
-		pos:             &civquestv1.Vec3{X: cfg.InitialPosition.X, Y: cfg.InitialPosition.Y, Z: cfg.InitialPosition.Z},
-		health:          20.0,
-		maxHealth:       20.0,
-		foodLevel:       20,
-		stamina:         100.0,
-		navState:        civquestv1.NavigationState_NAVIGATION_STATE_IDLE,
-		navSpeed:        cfg.WalkSpeed,
-		navArrivalTol:   2.0,
-		inventory:       make([]*civquestv1.ItemStackProto, 0),
-		blocks:          make(map[BlockPosKey]string),
-		entities:        make([]*civquestv1.VisibleEntity, 0),
-		injectedChats:   make([]*civquestv1.ChatEvent, 0),
-		AllIntents:      make([]*civquestv1.AgentIntent, 0),
-		OscillationDetector: NewFSMOscillationDetector(1200, 2),
-		StallDetector:       NewNavigationStallDetector(600, 1.0),
+		cfg:                     cfg,
+		runtime:                 rt,
+		tempDir:                 tempDir,
+		currentTick:             cfg.InitialTick,
+		timeOfDay:               cfg.InitialTimeOfDay,
+		weather:                 cfg.Weather,
+		pos:                     &civquestv1.Vec3{X: cfg.InitialPosition.X, Y: cfg.InitialPosition.Y, Z: cfg.InitialPosition.Z},
+		health:                  20.0,
+		maxHealth:               20.0,
+		foodLevel:               20,
+		stamina:                 100.0,
+		navState:                civquestv1.NavigationState_NAVIGATION_STATE_IDLE,
+		navSpeed:                cfg.WalkSpeed,
+		navArrivalTol:           2.0,
+		inventory:               make([]*civquestv1.ItemStackProto, 0),
+		blocks:                  make(map[BlockPosKey]string),
+		blockStates:             make(map[BlockPosKey]string),
+		entities:                make([]*civquestv1.VisibleEntity, 0),
+		injectedChats:           make([]*civquestv1.ChatEvent, 0),
+		AllIntents:              make([]*civquestv1.AgentIntent, 0),
+		DepositedContainerItems: make([]*civquestv1.ItemStackProto, 0),
+		OscillationDetector:     NewFSMOscillationDetector(1200, 2),
+		StallDetector:           NewNavigationStallDetector(600, 1.0),
 	}
 
 	// Copy initial inventory
 	for _, it := range cfg.InitialInventory {
 		if it != nil {
 			sim.inventory = append(sim.inventory, &civquestv1.ItemStackProto{
-				Slot:    it.Slot,
-				ItemId:  it.ItemId,
-				Count:   it.Count,
+				Slot:       it.Slot,
+				ItemId:     it.ItemId,
+				Count:      it.Count,
 				Durability: it.Durability,
 			})
 		}
@@ -290,9 +294,44 @@ func (sim *TimeWarpSimulation) AddBlock(x, y, z int32, blockID string) {
 	sim.blocks[BlockPosKey{X: x, Y: y, Z: z}] = blockID
 }
 
+// AddBlockWithState places a block with an optional BlockStateString into the simulated voxel world.
+func (sim *TimeWarpSimulation) AddBlockWithState(x, y, z int32, blockID, state string) {
+	k := BlockPosKey{X: x, Y: y, Z: z}
+	sim.blocks[k] = blockID
+	if state != "" {
+		sim.blockStates[k] = state
+	} else {
+		delete(sim.blockStates, k)
+	}
+}
+
+// LoadSyntheticWorld loads a complete SyntheticStartingWorld layout into the simulation.
+func (sim *TimeWarpSimulation) LoadSyntheticWorld(world *SyntheticStartingWorld) {
+	if world == nil {
+		return
+	}
+	sim.blocks = make(map[BlockPosKey]string, len(world.Blocks))
+	sim.blockStates = make(map[BlockPosKey]string, len(world.BlockStates))
+	for k, v := range world.Blocks {
+		sim.blocks[k] = v
+	}
+	for k, v := range world.BlockStates {
+		sim.blockStates[k] = v
+	}
+	if world.AssignedBeds != nil {
+		if bed, ok := world.AssignedBeds[sim.cfg.AgentID]; ok && bed != nil {
+			if sim.runtime != nil {
+				sim.runtime.SetAssignedBed(bed)
+			}
+		}
+	}
+}
+
 // RemoveBlock removes a block from the simulated voxel world.
 func (sim *TimeWarpSimulation) RemoveBlock(x, y, z int32) {
-	delete(sim.blocks, BlockPosKey{X: x, Y: y, Z: z})
+	k := BlockPosKey{X: x, Y: y, Z: z}
+	delete(sim.blocks, k)
+	delete(sim.blockStates, k)
 }
 
 // HasBlock checks if a block exists at discrete coordinates.
@@ -406,9 +445,11 @@ func (sim *TimeWarpSimulation) BuildTelemetryFrame() *civquestv1.TelemetryFrame 
 		bz := float64(k.Z) + 0.5
 		dist := math.Hypot(bx-sim.pos.X, bz-sim.pos.Z)
 		if dist <= 32.0 && math.Abs(by-sim.pos.Y) <= 16.0 {
+			stateStr := sim.blockStates[k]
 			visibleBlocks = append(visibleBlocks, &civquestv1.VisibleBlock{
-				Pos:     &civquestv1.BlockPosProto{X: k.X, Y: k.Y, Z: k.Z},
-				BlockId: blockID,
+				Pos:              &civquestv1.BlockPosProto{X: k.X, Y: k.Y, Z: k.Z},
+				BlockId:          blockID,
+				BlockStateString: stateStr,
 			})
 		}
 	}
@@ -544,6 +585,9 @@ func (sim *TimeWarpSimulation) advancePhysics(deltaTicks int64) {
 			// Arrived at target waypoint
 			sim.pos.X = sim.navTarget.X
 			sim.pos.Z = sim.navTarget.Z
+			if sim.navTarget.Y > 0 {
+				sim.pos.Y = sim.navTarget.Y
+			}
 			sim.navState = civquestv1.NavigationState_NAVIGATION_STATE_ARRIVED
 			sim.navTarget = nil
 			sim.ActionOccurredThisStep = true
@@ -551,6 +595,15 @@ func (sim *TimeWarpSimulation) advancePhysics(deltaTicks int64) {
 			// Move incrementally toward target
 			sim.pos.X += (dx / dist) * stepDist
 			sim.pos.Z += (dz / dist) * stepDist
+			if sim.navTarget.Y > 0 && math.Abs(sim.navTarget.Y-sim.pos.Y) > 0.01 {
+				dy := sim.navTarget.Y - sim.pos.Y
+				yStep := (stepDist / dist) * dy
+				if math.Abs(yStep) > math.Abs(dy) {
+					sim.pos.Y = sim.navTarget.Y
+				} else {
+					sim.pos.Y += yStep
+				}
+			}
 			sim.ActionOccurredThisStep = true
 		}
 	}
@@ -722,6 +775,25 @@ func (sim *TimeWarpSimulation) applyIntentFeedback(intent *civquestv1.AgentInten
 			}
 		}
 	}
+
+	// 5. Transfer Container Intent
+	if tc := intent.GetTransferContainer(); tc != nil {
+		if tc.DepositIntoContainer {
+			for _, item := range tc.Items {
+				if item != nil && item.Count > 0 {
+					sim.RemoveInventoryItem(item.ItemId, item.Count)
+					sim.DepositedContainerItems = append(sim.DepositedContainerItems, item)
+				}
+			}
+			sim.ActionOccurredThisStep = true
+		}
+	}
+
+	// 6. Create Written Book Intent
+	if cwb := intent.GetCreateBook(); cwb != nil {
+		sim.AddInventoryItem("minecraft:written_book", 1)
+		sim.ActionOccurredThisStep = true
+	}
 }
 
 // RemoveFirstMatchingLog removes 1 log of any wood type from inventory.
@@ -749,6 +821,10 @@ func resolveHarvestDrop(blockID string) string {
 		return "minecraft:cobblestone"
 	case id == "minecraft:dirt_path" || id == "minecraft:grass_block":
 		return "minecraft:dirt"
+	case strings.Contains(id, "wheat"):
+		return "minecraft:wheat"
+	case strings.Contains(id, "carrot"):
+		return "minecraft:carrot"
 	default:
 		return blockID
 	}

@@ -97,7 +97,7 @@ func TestInvariantSuiteEvaluation(t *testing.T) {
 
 	// Invariant 5: Drop Gratitude
 	suite.RecordItemPickupGratitude(600, "minecraft:wheat_seeds", false, false, false) // natural silent
-	suite.RecordItemPickupGratitude(610, "minecraft:iron_ingot", true, true, true)      // player gift thanked
+	suite.RecordItemPickupGratitude(610, "minecraft:iron_ingot", true, true, true)     // player gift thanked
 
 	results := suite.Evaluate()
 	if len(results) != 5 {
@@ -169,5 +169,42 @@ func TestPlaytestRunnerExecution(t *testing.T) {
 		if !strings.Contains(reportStr, req) {
 			t.Errorf("Report missing expected string: %q", req)
 		}
+	}
+}
+
+func TestPlaytestRunner_SyntheticWorldSeeding(t *testing.T) {
+	tempDir := t.TempDir()
+	reportPath := filepath.Join(tempDir, "playtest-report.md")
+
+	runner, err := NewPlaytestRunner(RunnerConfig{
+		OutputDir:          tempDir,
+		ReportOutputPath:   reportPath,
+		TotalWorldTicks:    24000,
+		SeedSyntheticWorld: true,
+	})
+	if err != nil {
+		t.Fatalf("Failed creating playtest runner: %v", err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	summary, err := runner.Run(ctx)
+	if err != nil {
+		t.Fatalf("Playtest runner failed with synthetic world seeding: %v", err)
+	}
+
+	if !summary.AllPassed {
+		t.Errorf("Expected all playtest invariants to pass with synthetic world seeding")
+	}
+
+	// Verify puppet trace recorded the synthetic world seed event
+	puppetTracePath := filepath.Join(tempDir, "puppeteering.jsonl")
+	data, err := os.ReadFile(puppetTracePath)
+	if err != nil {
+		t.Fatalf("Failed reading puppet trace: %v", err)
+	}
+	if !strings.Contains(string(data), "synthetic_world_seed") {
+		t.Errorf("expected puppet trace to contain synthetic_world_seed event")
 	}
 }

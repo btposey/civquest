@@ -26,7 +26,7 @@ const (
 	DefaultMaxActiveAgents    = 16
 	DefaultMinFoodSurplusDays = 7
 	DefaultDailyFoodPerAgent  = 3
-	MinSpouseDisposition     = 80.0
+	MinSpouseDisposition      = 80.0
 	KinshipRoleSpouse         = "SPOUSE"
 	KinshipRoleParent         = "PARENT"
 	KinshipRoleChild          = "CHILD"
@@ -53,7 +53,7 @@ type ReproductionGovernorConfig struct {
 	Spawner              EntitySpawner
 	RNG                  *rand.Rand
 	ActiveAgentsProvider func() int
-	WorldTickProvider   func() int64
+	WorldTickProvider    func() int64
 }
 
 // MarriedPair encapsulates two adult agents who share mutual SPOUSE status and high disposition.
@@ -105,7 +105,7 @@ type ReproductionGovernor struct {
 	spawner              EntitySpawner
 	rng                  *rand.Rand
 	activeAgentsProvider func() int
-	worldTickProvider   func() int64
+	worldTickProvider    func() int64
 }
 
 // NewReproductionGovernor creates an initialized ReproductionGovernor.
@@ -153,7 +153,7 @@ func NewReproductionGovernor(cfg ReproductionGovernorConfig) (*ReproductionGover
 		spawner:              cfg.Spawner,
 		rng:                  rng,
 		activeAgentsProvider: cfg.ActiveAgentsProvider,
-		worldTickProvider:   cfg.WorldTickProvider,
+		worldTickProvider:    cfg.WorldTickProvider,
 	}, nil
 }
 
@@ -650,6 +650,10 @@ func (g *ReproductionGovernor) recordKinshipRelationships(ctx context.Context, p
 
 func (g *ReproductionGovernor) generateUniqueChildName(parentA, parentB string) (string, error) {
 	namePool := []string{
+		"arthur", "bertha", "cristobal", "dolly", "edouard", "fay",
+		"gonzalo", "hanna", "isaias", "josephine", "kyle", "leah",
+		"marco", "nana", "omar", "paulette", "rene", "sally",
+		"teddy", "vicky", "wilfred",
 		"cora", "elias", "rowan", "silas", "lydia", "jonah", "talia", "ezra",
 		"milo", "clara", "aspen", "finn", "nora", "gage", "hazel", "titus",
 		"iris", "caleb", "wren", "jude", "selah", "tobias", "faye", "soren",

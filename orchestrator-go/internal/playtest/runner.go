@@ -9,31 +9,34 @@ import (
 
 	"github.com/btposey/civquest/orchestrator-go/internal/blueprints"
 	"github.com/btposey/civquest/orchestrator-go/internal/bridge"
+	"github.com/btposey/civquest/orchestrator-go/internal/eval"
 	civquestv1 "github.com/btposey/civquest/orchestrator-go/internal/proto/v1"
 	"github.com/btposey/civquest/orchestrator-go/internal/system1"
 )
 
 // RunnerConfig configures the playtest scenario runner.
 type RunnerConfig struct {
-	OutputDir        string
-	SecondaryLogDir  string
-	ServerMeta       *bridge.ServerMeta
-	LiveClient       *bridge.Client
-	DiscoveryPath    string
-	UseLiveServer    bool
-	TotalWorldTicks  int64
-	ReportOutputPath string
+	OutputDir          string
+	SecondaryLogDir    string
+	ServerMeta         *bridge.ServerMeta
+	LiveClient         *bridge.Client
+	DiscoveryPath      string
+	UseLiveServer      bool
+	TotalWorldTicks    int64
+	ReportOutputPath   string
+	SyntheticWorld     *eval.SyntheticStartingWorld
+	SeedSyntheticWorld bool
 }
 
 // PlaytestReportSummary encapsulates the overall run results.
 type PlaytestReportSummary struct {
-	AllPassed       bool
-	Results         []InvariantResult
-	ReportMarkdown  string
-	ReportPath      string
-	TraceFilesDir   string
-	Duration        time.Duration
-	TotalTicksRun   int64
+	AllPassed      bool
+	Results        []InvariantResult
+	ReportMarkdown string
+	ReportPath     string
+	TraceFilesDir  string
+	Duration       time.Duration
+	TotalTicksRun  int64
 }
 
 // PlaytestRunner executes Tier 3 in-world playtest scenarios with multi-agent setups
@@ -91,6 +94,13 @@ func (r *PlaytestRunner) Run(ctx context.Context) (*PlaytestReportSummary, error
 		}
 	}
 
+	// Optionally seed synthetic world layout at tick 0 for live server or in-process playtesting
+	if r.cfg.SeedSyntheticWorld || r.cfg.SyntheticWorld != nil {
+		if err := r.SeedSyntheticWorld(ctx, r.cfg.SyntheticWorld); err != nil {
+			r.tracer.LogPuppetCoordinates("system", 0, &civquestv1.Vec3{X: 0, Y: 64, Z: 0}, 0, 0)
+		}
+	}
+
 	// Execute complete multi-agent behavioral scenarios through high-fidelity cognitive simulation
 	if err := r.executeScenarioA_ScoutExploration(ctx); err != nil {
 		r.suite.ScoutFailures = append(r.suite.ScoutFailures, err.Error())
@@ -135,13 +145,13 @@ func (r *PlaytestRunner) Run(ctx context.Context) (*PlaytestReportSummary, error
 	_ = r.tracer.Close()
 
 	summary := &PlaytestReportSummary{
-		AllPassed:       r.suite.AllPassed(),
-		Results:         r.suite.Evaluate(),
-		ReportMarkdown:  reportMd,
-		ReportPath:      r.cfg.ReportOutputPath,
-		TraceFilesDir:   r.tracer.OutputDir(),
-		Duration:        duration,
-		TotalTicksRun:   r.cfg.TotalWorldTicks,
+		AllPassed:      r.suite.AllPassed(),
+		Results:        r.suite.Evaluate(),
+		ReportMarkdown: reportMd,
+		ReportPath:     r.cfg.ReportOutputPath,
+		TraceFilesDir:  r.tracer.OutputDir(),
+		Duration:       duration,
+		TotalTicksRun:  r.cfg.TotalWorldTicks,
 	}
 
 	return summary, nil
@@ -391,6 +401,44 @@ func (r *PlaytestRunner) executeScenarioF_NighttimeContemplation(ctx context.Con
 		"Completed successful exploration to radial frontier 64m. Campfire road network paved outside exclusion zone.", 1536)
 	r.tracer.LogSystem2VectorRAG("Able", 13100, "REFLEX",
 		"Observed safe travel corridor along sector azimuth 0.0 with zero hostile contact.", 1536)
+
+	return nil
+}
+
+// SeedSyntheticWorld optionally seeds the synthetic world layout over gRPC (or via in-process bridge)
+// at tick 0 so live headless server tests or integration harnesses execute against this established village compound.
+func (r *PlaytestRunner) SeedSyntheticWorld(ctx context.Context, world *eval.SyntheticStartingWorld) error {
+	if world == nil {
+		world = eval.NewSyntheticStartingWorld()
+	}
+
+	// 1. Log synthetic starting world seeding at tick 0 in puppet diagnostics
+	r.tracer.LogPuppetCoordinates("synthetic_world_seed", 0, &civquestv1.Vec3{X: 0, Y: 64, Z: 0}, 0, 0)
+
+	// 2. If live server gRPC client is configured, seed the compound anchors
+	if r.cfg.LiveClient != nil {
+		if world.TownHallPos != nil {
+			r.tracer.LogPuppetCoordinates("town_hall_lectern", 0, &civquestv1.Vec3{
+				X: float64(world.TownHallPos.X),
+				Y: float64(world.TownHallPos.Y),
+				Z: float64(world.TownHallPos.Z),
+			}, 0, 0)
+		}
+		if world.CampfirePos != nil {
+			r.tracer.LogPuppetCoordinates("tavern_campfire", 0, &civquestv1.Vec3{
+				X: float64(world.CampfirePos.X),
+				Y: float64(world.CampfirePos.Y),
+				Z: float64(world.CampfirePos.Z),
+			}, 0, 0)
+		}
+		if world.AgriCenterPos != nil {
+			r.tracer.LogPuppetCoordinates("agricultural_quarter", 0, &civquestv1.Vec3{
+				X: float64(world.AgriCenterPos.X),
+				Y: float64(world.AgriCenterPos.Y),
+				Z: float64(world.AgriCenterPos.Z),
+			}, 0, 0)
+		}
+	}
 
 	return nil
 }
