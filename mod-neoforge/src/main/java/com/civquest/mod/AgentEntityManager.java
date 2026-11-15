@@ -315,6 +315,15 @@ public class AgentEntityManager {
         return agent;
     }
 
+    /**
+     * Registers an agent entity directly (useful for testing or external initialization).
+     */
+    public void registerAgent(AgentEntity agent) {
+        if (agent != null && agent.getAgentId() != null) {
+            agents.put(agent.getAgentId(), agent);
+        }
+    }
+
     public CompletableFuture<Boolean> despawnAgent(MinecraftServer server, String agentId) {
         if (agentId == null || agentId.isBlank()) {
             return CompletableFuture.completedFuture(false);

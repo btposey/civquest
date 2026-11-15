@@ -182,6 +182,12 @@ public class BlockBreaker {
             }
             if (!broken) {
                 broken = level.destroyBlock(done, true, agent);
+                if (broken) {
+                    ItemStack tool = agent.getMainHandItem();
+                    if (tool != null && !tool.isEmpty()) {
+                        tool.mineBlock(level, state, done, agent);
+                    }
+                }
             }
             level.destroyBlockProgress(agent.getId(), done, -1);
             pos = null;

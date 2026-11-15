@@ -265,6 +265,20 @@ public class SensoryFrustumCollector {
         }
     }
 
+    /**
+     * Determines the raw ambient light level at the specified position (0-15).
+     */
+    public static int getLightLevel(Level level, BlockPos pos) {
+        if (level == null || pos == null) {
+            return 0;
+        }
+        try {
+            return level.getMaxLocalRawBrightness(pos);
+        } catch (Throwable t) {
+            return 0;
+        }
+    }
+
     public static boolean isHostileEntity(Entity entity) {
         if (entity == null) {
             return false;

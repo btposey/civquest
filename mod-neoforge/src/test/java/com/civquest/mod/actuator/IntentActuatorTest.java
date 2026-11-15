@@ -52,6 +52,24 @@ public class IntentActuatorTest {
     @BeforeAll
     static void initMinecraft() {
         try {
+            net.neoforged.fml.loading.LoadingModList.of(
+                    java.util.List.of(), java.util.List.of(), java.util.List.of(), java.util.List.of(), java.util.Map.of()
+            );
+        } catch (Throwable ignored) {}
+        try {
+            java.lang.reflect.Field unsafeField = sun.misc.Unsafe.class.getDeclaredField("theUnsafe");
+            unsafeField.setAccessible(true);
+            sun.misc.Unsafe unsafe = (sun.misc.Unsafe) unsafeField.get(null);
+
+            java.lang.reflect.Field fmlLoaderDist = net.neoforged.fml.loading.FMLLoader.class.getDeclaredField("dist");
+            long offset1 = unsafe.staticFieldOffset(fmlLoaderDist);
+            unsafe.putObject(net.neoforged.fml.loading.FMLLoader.class, offset1, net.neoforged.api.distmarker.Dist.DEDICATED_SERVER);
+
+            java.lang.reflect.Field fmlEnvDist = net.neoforged.fml.loading.FMLEnvironment.class.getDeclaredField("dist");
+            long offset2 = unsafe.staticFieldOffset(fmlEnvDist);
+            unsafe.putObject(net.neoforged.fml.loading.FMLEnvironment.class, offset2, net.neoforged.api.distmarker.Dist.DEDICATED_SERVER);
+        } catch (Throwable ignored) {}
+        try {
             net.minecraft.SharedConstants.tryDetectVersion();
             net.minecraft.server.Bootstrap.bootStrap();
         } catch (Throwable ignored) {}
