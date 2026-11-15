@@ -241,6 +241,29 @@ func newAgentStatusCmd() *cobra.Command {
 					fmt.Fprintf(out, "  • Exploration:   %.2f\n", sockResp.UtilityScores.Exploration)
 					fmt.Fprintf(out, "  • Sleep Need:    %.2f\n", sockResp.UtilityScores.SleepNeed)
 				}
+				if sockResp.Goals != nil {
+					fmt.Fprintln(out, "Synthesized Strategic Goals:")
+					if sockResp.Goals.ImmediateGoal != "" {
+						fmt.Fprintf(out, "  • Immediate:     %s\n", sockResp.Goals.ImmediateGoal)
+					}
+					if sockResp.Goals.ShortTermGoal != "" {
+						fmt.Fprintf(out, "  • Short-Term:    %s\n", sockResp.Goals.ShortTermGoal)
+					}
+					if sockResp.Goals.LongTermGoal != "" {
+						fmt.Fprintf(out, "  • Long-Term:     %s\n", sockResp.Goals.LongTermGoal)
+					}
+				}
+			} else if agentCfg.ImmediateGoal != "" || agentCfg.ShortTermGoal != "" || agentCfg.LongTermGoal != "" {
+				fmt.Fprintln(out, "Synthesized Strategic Goals:")
+				if agentCfg.ImmediateGoal != "" {
+					fmt.Fprintf(out, "  • Immediate:     %s\n", agentCfg.ImmediateGoal)
+				}
+				if agentCfg.ShortTermGoal != "" {
+					fmt.Fprintf(out, "  • Short-Term:    %s\n", agentCfg.ShortTermGoal)
+				}
+				if agentCfg.LongTermGoal != "" {
+					fmt.Fprintf(out, "  • Long-Term:     %s\n", agentCfg.LongTermGoal)
+				}
 			}
 			fmt.Fprintln(out, "Personality Traits:")
 			fmt.Fprintf(out, "  • Bravery:         %.2f\n", agentCfg.Traits.Bravery)

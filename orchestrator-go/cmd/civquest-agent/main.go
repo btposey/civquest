@@ -267,6 +267,23 @@ func run(parentCtx context.Context, args []string, stdout, stderr io.Writer, r *
 		defer lmDB.Close()
 	}
 
+	// Open clan civic registry, rumors, and diplomacy databases if available
+	var civicDB *db.CivicRegistryDB
+	if civic, err := db.OpenCivicRegistryDBForClan(r, cfg.ClanID); err == nil {
+		civicDB = civic
+		defer civicDB.Close()
+	}
+	var rumorsDB *db.RumorsDB
+	if rum, err := db.OpenRumorsDBForClan(r, cfg.ClanID); err == nil {
+		rumorsDB = rum
+		defer rumorsDB.Close()
+	}
+	var diploDB *db.DiplomacyDB
+	if diplo, err := db.OpenDiplomacyDBForClan(r, cfg.ClanID); err == nil {
+		diploDB = diplo
+		defer diploDB.Close()
+	}
+
 	// Dial gRPC bridge with shared key
 	bridgeClient, err := bridge.NewClient(grpcAddr, sharedKey)
 	if err != nil {
@@ -288,6 +305,9 @@ func run(parentCtx context.Context, args []string, stdout, stderr io.Writer, r *
 		ReputationDB:      repDB,
 		MemoryPipeline:    memPipe,
 		LandmarksDB:       lmDB,
+		CivicRegistryDB:   civicDB,
+		RumorsDB:          rumorsDB,
+		DiplomacyDB:       diploDB,
 		BridgeClient:      bridgeClient,
 		SocketPath:        sockPath,
 		DialogueService:   dialogueSvc,
