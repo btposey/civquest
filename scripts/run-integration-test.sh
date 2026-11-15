@@ -25,6 +25,15 @@ command -v jq >/dev/null 2>&1 || {
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
+# ------------------------------------------------------------------------------
+# Strict XDG Isolation Sandbox: Prevent Automated Tests from Colliding with Player World & Server
+# ------------------------------------------------------------------------------
+TEST_SANDBOX_DIR="$(mktemp -d "${TMPDIR:-/tmp}/civquest-integration-xdg-XXXXXX")"
+export XDG_CONFIG_HOME="$TEST_SANDBOX_DIR/config"
+export XDG_DATA_HOME="$TEST_SANDBOX_DIR/data"
+export XDG_STATE_HOME="$TEST_SANDBOX_DIR/state"
+mkdir -p "$XDG_CONFIG_HOME" "$XDG_DATA_HOME" "$XDG_STATE_HOME"
+
 MOD_BUILD_DIR="$REPO_ROOT/mod-neoforge/build/integration-server"
 META_PATH="$MOD_BUILD_DIR/civquest-server-meta.json"
 SERVER_LOG="$MOD_BUILD_DIR/server.log"
@@ -144,6 +153,11 @@ cleanup() {
     # 6. Clean up FIFO directory
     if [ -n "$FIFO_DIR" ] && [ -d "$FIFO_DIR" ]; then
         rm -rf "$FIFO_DIR"
+    fi
+
+    # 7. Clean up isolated test sandbox
+    if [ -n "${TEST_SANDBOX_DIR:-}" ] && [ -d "$TEST_SANDBOX_DIR" ]; then
+        rm -rf "$TEST_SANDBOX_DIR"
     fi
 
     if [ "$exit_code" -ne 0 ]; then

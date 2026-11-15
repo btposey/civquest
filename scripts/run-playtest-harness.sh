@@ -23,6 +23,15 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
+# ------------------------------------------------------------------------------
+# Strict XDG Isolation Sandbox: Prevent Automated Tests from Colliding with Player World & Server
+# ------------------------------------------------------------------------------
+TEST_SANDBOX_DIR="$(mktemp -d "${TMPDIR:-/tmp}/civquest-playtest-xdg-XXXXXX")"
+export XDG_CONFIG_HOME="$TEST_SANDBOX_DIR/config"
+export XDG_DATA_HOME="$TEST_SANDBOX_DIR/data"
+export XDG_STATE_HOME="$TEST_SANDBOX_DIR/state"
+mkdir -p "$XDG_CONFIG_HOME" "$XDG_DATA_HOME" "$XDG_STATE_HOME"
+
 MOD_BUILD_DIR="$REPO_ROOT/mod-neoforge/build/integration-server"
 META_PATH="$MOD_BUILD_DIR/civquest-server-meta.json"
 SERVER_LOG="$MOD_BUILD_DIR/server.log"
@@ -103,6 +112,11 @@ cleanup() {
         rm -rf "$FIFO_DIR"
     fi
 
+    # Clean up isolated test sandbox
+    if [ -n "${TEST_SANDBOX_DIR:-}" ] && [ -d "$TEST_SANDBOX_DIR" ]; then
+        rm -rf "$TEST_SANDBOX_DIR"
+    fi
+
     exit "$exit_code"
 }
 
@@ -111,34 +125,26 @@ trap cleanup EXIT INT TERM
 mkdir -p "$OUTPUT_DIR"
 
 # ------------------------------------------------------------------------------
-# Check for existing running server (e.g. from start-playtest-server or dev run)
+# Isolated Integration Server Discovery:
+# Strictly restricted to the dedicated headless build sandbox ($META_PATH).
+# Automated tests NEVER connect to or interfere with the developer's manual playtest server.
 # ------------------------------------------------------------------------------
 ACTIVE_SERVER=0
 ACTIVE_META_PATH=""
 
-CANDIDATES=(
-    "$META_PATH"
-    "$REPO_ROOT/mod-neoforge/run/civquest-server-meta.json"
-    "${XDG_DATA_HOME:-$HOME/.local/share}/civquest/server/civquest-server-meta.json"
-    "${XDG_RUNTIME_DIR:-/tmp}/civquest-server-meta.json"
-)
-
-for cand in "${CANDIDATES[@]}"; do
-    if [ -f "$cand" ]; then
-        STATUS=$(jq -r '.status // empty' "$cand" 2>/dev/null || true)
-        PID=$(jq -r '.server_pid // empty' "$cand" 2>/dev/null || true)
-        if [ "$STATUS" = "READY" ] && [ -n "$PID" ] && kill -0 "$PID" 2>/dev/null; then
-            ACTIVE_SERVER=1
-            ACTIVE_META_PATH="$cand"
-            echo "==> Found existing running Minecraft server at $cand (PID: $PID)"
-            break
-        fi
+if [ -f "$META_PATH" ]; then
+    STATUS=$(jq -r '.status // empty' "$META_PATH" 2>/dev/null || true)
+    PID=$(jq -r '.server_pid // empty' "$META_PATH" 2>/dev/null || true)
+    if [ "$STATUS" = "READY" ] && [ -n "$PID" ] && kill -0 "$PID" 2>/dev/null; then
+        ACTIVE_SERVER=1
+        ACTIVE_META_PATH="$META_PATH"
+        echo "==> Reusing active dedicated integration server at $META_PATH (PID: $PID)"
     fi
-done
+fi
 
-# If no active server found, launch integration server in background
+# If no active integration server found in build sandbox, launch dedicated headless server
 if [ "$ACTIVE_SERVER" -eq 0 ]; then
-    echo "==> No active Minecraft server found; launching headless integration server..."
+    echo "==> Launching dedicated isolated headless integration server..."
     LAUNCHED_SERVER=1
     mkdir -p "$MOD_BUILD_DIR"
     rm -f "$META_PATH"

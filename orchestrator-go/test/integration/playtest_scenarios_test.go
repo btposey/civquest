@@ -30,8 +30,18 @@ func TestInWorldPlaytestScenarios_LiveServer(t *testing.T) {
 		}
 	}
 
-	t.Logf("Waiting for live server discovery metadata (timeout %v)...", discoveryTimeout)
-	meta, err := bridge.WaitForDiscovery("", discoveryTimeout)
+	// Strict isolation: Ensure integration tests only connect to the dedicated integration-server
+	// and NEVER discover or collide with the developer's personal playtesting server in XDG paths.
+	discoveryPath := os.Getenv("CIVQUEST_DISCOVERY_PATH")
+	if discoveryPath == "" {
+		candidate := filepath.Join("..", "..", "..", "mod-neoforge", "build", "integration-server", "civquest-server-meta.json")
+		if abs, err := filepath.Abs(candidate); err == nil {
+			discoveryPath = abs
+		}
+	}
+
+	t.Logf("Waiting for live server discovery metadata at %s (timeout %v)...", discoveryPath, discoveryTimeout)
+	meta, err := bridge.WaitForDiscovery(discoveryPath, discoveryTimeout)
 	if err != nil {
 		if os.Getenv("CIVQUEST_REQUIRE_LIVE_SERVER") != "true" && os.Getenv("CIVQUEST_DISCOVERY_PATH") == "" {
 			t.Skipf("Skipping live server playtest scenario test: %v (run headless server via './gradlew runIntegrationServer' or set CIVQUEST_REQUIRE_LIVE_SERVER=true)", err)
