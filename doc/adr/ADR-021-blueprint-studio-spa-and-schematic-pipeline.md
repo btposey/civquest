@@ -94,6 +94,15 @@ Blueprints compile directly into the **Spatial Quadrant Partitioning** pipeline:
 - Partitioned into $NW, NE, SW, SE$ quadrant work queues.
 - Scheduled bottom-up ($Y_{\text{min}} \to Y_{\text{max}}$) via `ConstructionSkill` emitting `AgentIntent_PlaceBlock` so builders construct foundations before upper floors and never entrap themselves.
 
+### 7. Generic Material Taxonomy & In-Situ NeoForge Tag Resolution
+Settlements nucleate across diverse biomes with varying local resources (e.g., taiga spruce, birch forests, acacia savannas, desert sandstone, mountain deepslate). Requiring rigid, homogeneous block identifiers (like `minecraft:oak_planks`) restricts blueprints from being built with in-situ materials.
+
+To solve this:
+- **Taxonomy Tag Syntax (`#tag`)**: Blueprint palettes and BOM entries can specify standard Minecraft & NeoForge taxonomy tags (e.g., `#minecraft:planks`, `#minecraft:stairs`, `#minecraft:logs`, `#minecraft:doors`, `#c:stones`).
+- **Directional State Preservation**: Generic taxonomy blocks preserve canonical directional properties (e.g. `#minecraft:stairs[facing=north,half=bottom]` or `#minecraft:logs[axis=y]`). When instantiated with an in-situ material (such as `minecraft:spruce_stairs`), the `facing`, `half`, and `shape` properties are mapped seamlessly.
+- **Taxonomy-Aware BOM Aggregation**: `CalculateBOM()` and `BlueprintEvaluator` aggregate storehouse reserves and inventory sufficiency by taxonomy class. If a blueprint requires 120 `#minecraft:planks`, any combination of available planks (e.g., 80 spruce + 40 oak) satisfies the material budget.
+- **Actuator Tag Resolution**: In `IntentActuator`, `findMatchingBlockItemSlot` resolves `TagKey<Block>` and `TagKey<Item>` dynamically, selecting whatever in-situ item matching the tag class is present in the builder's inventory.
+
 ## Consequences
 
 ### Positive

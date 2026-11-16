@@ -636,4 +636,23 @@ public class IntentActuatorTest {
             assertEquals(Blocks.STONE, stoneState.getBlock());
         }
     }
+
+    @Test
+    @DisplayName("resolveBlockState resolves generic taxonomy tags (#tag) and preserves directional properties")
+    void testResolveBlockState_TaxonomyTagResolution() {
+        if (Blocks.OAK_STAIRS != null && Blocks.OAK_STAIRS.defaultBlockState() != null) {
+            // 1. Generic stairs tag with directional properties fallback
+            BlockState genericStairs = actuator.resolveBlockState(null, "#minecraft:stairs[facing=west,half=top]");
+            assertNotNull(genericStairs);
+            assertEquals(Blocks.OAK_STAIRS, genericStairs.getBlock());
+            assertEquals("west", genericStairs.getValue(net.minecraft.world.level.block.StairBlock.FACING).getSerializedName());
+            assertEquals("top", genericStairs.getValue(net.minecraft.world.level.block.StairBlock.HALF).getSerializedName());
+
+            // 2. Generic logs tag with axis property fallback
+            BlockState genericLogs = actuator.resolveBlockState(null, "#minecraft:logs[axis=z]");
+            assertNotNull(genericLogs);
+            assertEquals(Blocks.OAK_LOG, genericLogs.getBlock());
+            assertEquals("z", genericLogs.getValue(net.minecraft.world.level.block.RotatedPillarBlock.AXIS).getSerializedName());
+        }
+    }
 }

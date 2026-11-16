@@ -17,6 +17,7 @@ import net.minecraft.core.Direction;
 import net.minecraft.core.component.DataComponents;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.network.chat.Component;
+import net.minecraft.core.registries.Registries;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerPlayer;
@@ -24,6 +25,7 @@ import net.minecraft.server.network.Filterable;
 import net.minecraft.sounds.SoundEvents;
 import net.minecraft.sounds.SoundSource;
 import net.minecraft.tags.BlockTags;
+import net.minecraft.tags.TagKey;
 import net.minecraft.util.Mth;
 import net.minecraft.world.InteractionHand;
 import net.minecraft.world.entity.Entity;
@@ -373,7 +375,15 @@ public class IntentActuator {
                     ItemStack chosen = agent.getInventory().getItem(slot);
                     if (chosen.getItem() instanceof BlockItem chosenBi) {
                         if (chosenBi.getBlock() != blockState.getBlock()) {
-                            blockState = chosenBi.getBlock().defaultBlockState();
+                            BlockState newState = chosenBi.getBlock().defaultBlockState();
+                            var stateDef = chosenBi.getBlock().getStateDefinition();
+                            for (var prop : blockState.getProperties()) {
+                                var matchingProp = stateDef.getProperty(prop.getName());
+                                if (matchingProp != null) {
+                                    newState = applyBlockProperty(newState, matchingProp, blockState.getValue(prop).toString().toLowerCase());
+                                }
+                            }
+                            blockState = newState;
                         }
                     }
                 }
@@ -427,6 +437,31 @@ public class IntentActuator {
         if (inv == null) {
             return -1;
         }
+        // 0. Taxonomy tag match (#minecraft:planks, #minecraft:stairs, #c:stones, etc.)
+        String req = requestedId != null ? requestedId.trim().toLowerCase() : "";
+        if (req.startsWith("#")) {
+            String tagId = req.substring(1);
+            if (tagId.contains("[")) {
+                tagId = tagId.substring(0, tagId.indexOf('['));
+            }
+            if (!tagId.contains(":")) {
+                tagId = "minecraft:" + tagId;
+            }
+            ResourceLocation rl = ResourceLocation.tryParse(tagId);
+            if (rl != null) {
+                TagKey<Item> itemTag = TagKey.create(Registries.ITEM, rl);
+                TagKey<Block> blockTag = TagKey.create(Registries.BLOCK, rl);
+                for (int i = 0; i < inv.getContainerSize(); i++) {
+                    ItemStack item = inv.getItem(i);
+                    if (item.isEmpty() || !(item.getItem() instanceof BlockItem bi)) {
+                        continue;
+                    }
+                    if (item.is(itemTag) || bi.getBlock().defaultBlockState().is(blockTag)) {
+                        return i;
+                    }
+                }
+            }
+        }
         // 1. Exact block match
         if (targetState != null) {
             for (int i = 0; i < inv.getContainerSize(); i++) {
@@ -437,7 +472,6 @@ public class IntentActuator {
             }
         }
         // 2. Category / family match (e.g. any planks, log, stone/cobble, or light source)
-        String req = requestedId != null ? requestedId.trim().toLowerCase() : "";
         for (int i = 0; i < inv.getContainerSize(); i++) {
             ItemStack item = inv.getItem(i);
             if (item.isEmpty() || !(item.getItem() instanceof BlockItem bi)) {
@@ -481,6 +515,38 @@ public class IntentActuator {
             if (bracketStart != -1 && bracketEnd > bracketStart) {
                 baseId = trimmed.substring(0, bracketStart).trim();
                 propString = trimmed.substring(bracketStart + 1, bracketEnd).trim();
+            }
+
+            // NeoForge / Minecraft taxonomy tag resolution (#tag)
+            if (baseId.startsWith("#")) {
+                if (agent != null) {
+                    int slot = findMatchingBlockItemSlot(agent, null, trimmed);
+                    if (slot >= 0) {
+                        ItemStack chosen = agent.getInventory().getItem(slot);
+                        if (chosen.getItem() instanceof BlockItem bi) {
+                            String concreteId = BuiltInRegistries.BLOCK.getKey(bi.getBlock()).toString();
+                            if (propString != null && !propString.isEmpty()) {
+                                concreteId += "[" + propString + "]";
+                            }
+                            return resolveBlockState(agent, concreteId);
+                        }
+                    }
+                }
+                String tag = baseId.toLowerCase();
+                String fallbackId = switch (tag) {
+                    case "#minecraft:stairs", "#stairs" -> "minecraft:oak_stairs";
+                    case "#minecraft:logs", "#minecraft:wood", "#logs", "#wood" -> "minecraft:oak_log";
+                    case "#minecraft:doors", "#doors" -> "minecraft:oak_door";
+                    case "#minecraft:trapdoors", "#trapdoors" -> "minecraft:oak_trapdoor";
+                    case "#minecraft:slabs", "#slabs" -> "minecraft:oak_slab";
+                    case "#minecraft:fence_gates", "#fence_gates" -> "minecraft:oak_fence_gate";
+                    case "#c:stones", "#minecraft:base_stone_overworld", "#stones", "#c:cobblestones" -> "minecraft:cobblestone";
+                    default -> "minecraft:oak_planks";
+                };
+                if (propString != null && !propString.isEmpty()) {
+                    fallbackId += "[" + propString + "]";
+                }
+                return resolveBlockState(agent, fallbackId);
             }
 
             ResourceLocation id = ResourceLocation.tryParse(baseId);
