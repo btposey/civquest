@@ -171,28 +171,31 @@ class IsometricCanvas {
 
     // Render sorted voxels
     for (const v of voxels) {
-      const isoX = originX + (v.x - v.z) * (tileWidth / 2);
-      const isoY = originY + (v.x + v.z) * (tileHeight / 2) - (v.y - minY) * voxelHeight;
-
       // Detect front-facing outer wall or roof block
       const isFrontWall = (v.x === dims.width - 1 || v.z === dims.length - 1);
-      const isRoof = (v.y === maxY);
-      const isGhostTarget = isXRayActive && (isFrontWall || isRoof);
+      const isRoof = (v.y === maxY) ||
+                     (v.y >= maxY - 1 && (v.blockState.includes("stairs") || v.blockState.includes("slab"))) ||
+                     (v.y >= minY + dims.height - 1);
+
+      // In X-Ray mode, completely hide front walls and roof elements to leave interior 100% unobstructed
+      if (isXRayActive && (isFrontWall || isRoof)) {
+        continue;
+      }
+
+      const isoX = originX + (v.x - v.z) * (tileWidth / 2);
+      const isoY = originY + (v.x + v.z) * (tileHeight / 2) - (v.y - minY) * voxelHeight;
 
       const baseColor = this.resolveColor(v.blockState);
       const isGlass = v.blockState.includes("glass");
 
       ctx.save();
-      if (isGhostTarget) {
-        // Dynamic X-Ray wall ghosting: drop camera-facing front blocks to ~15% opacity with wireframe
-        ctx.globalAlpha = 0.15;
-      } else if (isGlass) {
+      if (isGlass) {
         ctx.globalAlpha = 0.5;
       } else {
         ctx.globalAlpha = 1.0;
       }
 
-      this.drawVoxelCube(ctx, isoX, isoY, tileWidth, tileHeight, voxelHeight, baseColor, isGhostTarget);
+      this.drawVoxelCube(ctx, isoX, isoY, tileWidth, tileHeight, voxelHeight, baseColor, false);
       ctx.restore();
     }
 
@@ -201,8 +204,8 @@ class IsometricCanvas {
     ctx.font = "11px monospace";
     ctx.textAlign = "left";
     const statusText = isXRayActive
-      ? "⚡ Dynamic X-Ray Wall Ghosting ACTIVE (Front Walls @ 15% Opacity)"
-      : "✦ Hover cursor across canvas for interactive X-Ray interior ghosting";
+      ? "⚡ Dynamic X-Ray Interior View ACTIVE (Front Walls & Roof Hidden)"
+      : "✦ Hover cursor across canvas for interactive X-Ray interior view";
     ctx.fillText(statusText, 14, height - 14);
 
     if (minY < 0) {

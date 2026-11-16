@@ -83,7 +83,8 @@
         <div class="toolbar-section">
           <span class="toolbar-label">Guides &amp; X-Ray:</span>
           <button id="btn-toggle-onion" class="btn btn-sm btn-toggle active" title="Toggle ghost guide of lower Y-1 layer">👻 Onion Skin (Y-1): ON</button>
-          <button id="btn-toggle-xray" class="btn btn-sm btn-toggle" title="Lock or auto-hover X-Ray wall ghosting">⚡ X-Ray Walls: Auto (Hover)</button>
+          <button id="btn-toggle-xray" class="btn btn-sm btn-toggle" title="Lock or auto-hover X-Ray wall and roof hiding">⚡ X-Ray Walls: Auto (Hover)</button>
+          <button id="btn-walkthrough-3d" class="btn btn-sm btn-primary" title="First-person 3D walkthrough with WASD and mouse look">🚶 3D Walkthrough</button>
         </div>
 
         <div class="toolbar-section">
@@ -174,11 +175,23 @@
         <div class="pane-column right-pane">
           <div class="column-header">
             <h3>HTML5 Canvas Isometric 3D Voxel View</h3>
-            <span class="xray-hint">Hover cursor across canvas for interior X-Ray</span>
+            <div class="header-actions-inline">
+              <button id="btn-walkthrough-header" class="btn btn-sm btn-primary" title="First-person 3D walkthrough with WASD and mouse look">🚶 3D Walkthrough</button>
+              <span class="xray-hint">Hover cursor across canvas for interior X-Ray</span>
+            </div>
           </div>
 
-          <div class="canvas-viewport-box">
+          <div class="canvas-viewport-box" id="canvas-viewport-container">
             <canvas id="isometric-canvas" width="620" height="420"></canvas>
+            <canvas id="walkthrough-canvas" width="620" height="420" class="hidden"></canvas>
+            <div id="walkthrough-hud" class="walkthrough-hud hidden">
+              <div class="hud-top">
+                <span class="hud-title">🚶 3D Walkthrough Mode</span>
+                <span class="hud-hint">WASD: Move | Mouse: Look | Space/Shift: Up/Down | ESC: Exit Walkthrough</span>
+                <button id="btn-exit-walkthrough" class="btn btn-sm btn-exit">Exit (ESC)</button>
+              </div>
+              <div class="walkthrough-crosshair">+</div>
+            </div>
           </div>
 
           <!-- Real-Time Stats & Live BOM Computation -->
@@ -350,6 +363,7 @@
 
   <!-- Modular Scripts -->
   <script src="canvas.js"></script>
+  <script src="walkthrough.js"></script>
   <script src="grid.js"></script>
   <script src="app.js"></script>
 </body>

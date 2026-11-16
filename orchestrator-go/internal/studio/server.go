@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"log"
 	"net"
 	"net/http"
 	"os"
@@ -175,8 +176,8 @@ func NewServer(cfg Config) *Server {
 
 	s.httpSrv = &http.Server{
 		Handler:      mux,
-		ReadTimeout:  30 * time.Second,
-		WriteTimeout: 30 * time.Second,
+		ReadTimeout:  60 * time.Second,
+		WriteTimeout: 0, // No timeout to prevent dropping connection on long LLM inference
 	}
 
 	return s
@@ -505,7 +506,10 @@ func (s *Server) handleAssistantDraft(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 
-		bp, err := archSrv.GenerateDerivative(r.Context(), &system2.ArchitecturalDerivativeRequest{
+		ctx, cancel := context.WithTimeout(r.Context(), 75*time.Second)
+		defer cancel()
+
+		bp, err := archSrv.GenerateDerivative(ctx, &system2.ArchitecturalDerivativeRequest{
 			BaseBlueprint:           baseForReq,
 			ModificationDescription: req.Prompt,
 			TargetStyle:             req.Style,
@@ -514,11 +518,19 @@ func (s *Server) handleAssistantDraft(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, http.StatusOK, bp)
 			return
 		}
+		if err != nil {
+			log.Printf("[studio] LLM synthesis failed or timed out: %v; falling back to procedural architect\n", err)
+		} else if bp != nil {
+			if vErr := bp.Validate(); vErr != nil {
+				log.Printf("[studio] LLM blueprint validation failed: %v; falling back to procedural architect\n", vErr)
+			}
+		}
 	}
 
 	// 2. Procedural Fallback Architect: Deterministic synthesis fulfilling prompt requirements
 	bp, err := generateFallbackBlueprint(req, baseBP)
 	if err != nil {
+		log.Printf("[studio] Fallback blueprint generation failed: %v\n", err)
 		writeJSONError(w, http.StatusInternalServerError, fmt.Sprintf("blueprint generation failed: %v", err))
 		return
 	}
@@ -577,9 +589,35 @@ func generateFallbackBlueprint(req AssistantDraftRequest, baseBP *blueprints.Blu
 		}
 	}
 
+	// Feature flags from prompt analysis
+	hasDivision := strings.Contains(promptLower, "two room") ||
+		strings.Contains(promptLower, "two-room") ||
+		strings.Contains(promptLower, "divided") ||
+		strings.Contains(promptLower, "interior wall") ||
+		strings.Contains(promptLower, "partition") ||
+		strings.Contains(promptLower, "divider") ||
+		strings.Contains(promptLower, "bedroom") ||
+		strings.Contains(promptLower, "wall between")
+
+	hasSlopedRoof := strings.Contains(promptLower, "sloped roof") ||
+		strings.Contains(promptLower, "sloped") ||
+		strings.Contains(promptLower, "pitched") ||
+		strings.Contains(promptLower, "gable") ||
+		strings.Contains(promptLower, "roof")
+
+	hasCellar := strings.Contains(promptLower, "cellar") ||
+		strings.Contains(promptLower, "basement") ||
+		strings.Contains(promptLower, "subterranean")
+
+	hasPorch := strings.Contains(promptLower, "porch")
+
 	// Dimensions
 	width := 7
 	length := 5
+	if hasDivision {
+		width = 9
+		length = 7
+	}
 	if baseBP != nil {
 		width = baseBP.Dimensions.Width
 		length = baseBP.Dimensions.Length
@@ -594,8 +632,13 @@ func generateFallbackBlueprint(req AssistantDraftRequest, baseBP *blueprints.Blu
 			length = l
 		}
 	}
+	if hasDivision && width < 7 {
+		width = 7
+	}
+	if hasDivision && length < 5 {
+		length = 5
+	}
 
-	hasCellar := strings.Contains(promptLower, "cellar") || strings.Contains(promptLower, "basement") || strings.Contains(promptLower, "subterranean")
 	minY := 0
 	if hasCellar {
 		minY = -1
@@ -603,12 +646,19 @@ func generateFallbackBlueprint(req AssistantDraftRequest, baseBP *blueprints.Blu
 		minY = baseBP.Dimensions.MinY
 	}
 
-	height := 4
-	if hasCellar {
-		height = 5
-	}
+	wallHeight := 3 // Y=0 floor, Y=1 lower wall, Y=2 upper wall
 	if strings.Contains(promptLower, "tower") || strings.Contains(promptLower, "2-story") || strings.Contains(promptLower, "two-story") {
-		height += 2
+		wallHeight += 2
+	}
+
+	roofLayersCount := 1
+	if hasSlopedRoof && length >= 5 {
+		roofLayersCount = 2
+	}
+
+	totalHeight := wallHeight + roofLayersCount
+	if hasCellar {
+		totalHeight += 1
 	}
 
 	// Build Palette
@@ -622,24 +672,36 @@ func generateFallbackBlueprint(req AssistantDraftRequest, baseBP *blueprints.Blu
 		plankBlock = "minecraft:spruce_planks"
 	}
 
+	stairsNorth := "minecraft:oak_stairs[facing=north]"
+	stairsSouth := "minecraft:oak_stairs[facing=south]"
+	if strings.Contains(promptLower, "spruce") {
+		stairsNorth = "minecraft:spruce_stairs[facing=north]"
+		stairsSouth = "minecraft:spruce_stairs[facing=south]"
+	}
+
 	palette := map[int]string{
 		1:  plankBlock,
 		2:  logBlock,
 		3:  "minecraft:cobblestone",
-		4:  "minecraft:oak_stairs[facing=north]",
+		4:  stairsNorth,
 		5:  "minecraft:glass_pane",
 		6:  "minecraft:barrel",
 		7:  "minecraft:torch",
 		8:  "minecraft:crafting_table",
 		9:  "minecraft:chest",
 		10: "minecraft:stone_bricks",
+		11: "minecraft:red_bed",
+		12: "minecraft:furnace",
+		13: "minecraft:oak_door",
+		14: stairsSouth,
 	}
 
-	hasPorch := strings.Contains(promptLower, "porch")
+	dividerX := width / 2
+	doorZ := length / 2
 
-	layers := make([]blueprints.Layer, 0, height)
+	layers := make([]blueprints.Layer, 0, totalHeight)
 
-	for y := minY; y < minY+height; y++ {
+	for y := minY; y < minY+totalHeight; y++ {
 		matrix := make([][]int, length)
 		for z := 0; z < length; z++ {
 			matrix[z] = make([]int, width)
@@ -647,12 +709,12 @@ func generateFallbackBlueprint(req AssistantDraftRequest, baseBP *blueprints.Blu
 
 		switch {
 		case y < 0:
-			// Subterranean Cellar level: stone perimeter walls, stone floor, storage barrels & torches
+			// Subterranean Cellar level: stone perimeter walls, storage barrels & torches
 			for z := 0; z < length; z++ {
 				for x := 0; x < width; x++ {
 					if z == 0 || z == length-1 || x == 0 || x == width-1 {
 						matrix[z][x] = 10 // stone_bricks walls
-					} else if (x == 1 && z == 1) || (x == width-2 && z == 1) {
+					} else if (x == 1 && z == 1) || (x == width-2 && z == 1) || (x == width-2 && z == length-2) {
 						matrix[z][x] = 6 // barrel
 					} else if x == 1 && z == length-2 {
 						matrix[z][x] = 7 // torch
@@ -663,11 +725,12 @@ func generateFallbackBlueprint(req AssistantDraftRequest, baseBP *blueprints.Blu
 			}
 
 		case y == 0:
-			// Ground Floor: foundation / planks, corner log pillars, optional porch
+			// Ground Floor: foundation / planks, corner log pillars, divider pillar if multi-room
 			for z := 0; z < length; z++ {
 				for x := 0; x < width; x++ {
 					isCorner := (x == 0 || x == width-1) && (z == 0 || z == length-1)
-					if isCorner {
+					isDivPillar := hasDivision && (x == dividerX) && (z == 0 || z == length-1)
+					if isCorner || isDivPillar {
 						matrix[z][x] = 2 // log pillar
 					} else {
 						matrix[z][x] = 1 // planks floor
@@ -675,8 +738,8 @@ func generateFallbackBlueprint(req AssistantDraftRequest, baseBP *blueprints.Blu
 				}
 			}
 
-		case y == 1:
-			// Lower Walls: corner log pillars, perimeter walls, windows, door opening at front
+		case y >= 1 && y < wallHeight:
+			// Wall Layers: Y=1 lower wall with doors & windows; Y=2 upper wall
 			for z := 0; z < length; z++ {
 				for x := 0; x < width; x++ {
 					isCorner := (x == 0 || x == width-1) && (z == 0 || z == length-1)
@@ -691,80 +754,152 @@ func generateFallbackBlueprint(req AssistantDraftRequest, baseBP *blueprints.Blu
 						continue
 					}
 
-					isWall := z == 0 || z == length-1 || x == 0 || x == width-1
+					isOuterWall := z == 0 || z == length-1 || x == 0 || x == width-1
 					if hasPorch && z == length-2 {
-						isWall = true
+						isOuterWall = true
 					}
 
-					if isWall {
-						// Doorway at center
-						doorZ := length - 1
+					if isOuterWall {
+						frontWallZ := length - 1
 						if hasPorch {
-							doorZ = length - 2
+							frontWallZ = length - 2
 						}
-						if z == doorZ && x == width/2 {
-							matrix[z][x] = 0 // doorway air
+						mainDoorX := width / 2
+						if hasDivision {
+							mainDoorX = dividerX + (width-dividerX)/2
+						}
+
+						if z == frontWallZ && x == mainDoorX {
+							if y == 1 {
+								matrix[z][x] = 13 // oak door opening
+							} else {
+								matrix[z][x] = 1 // plank lintel above door
+							}
 						} else if (x == 0 || x == width-1) && z == length/2 {
+							matrix[z][x] = 5 // glass pane
+						} else if z == 0 && (x == width/4 || x == 3*width/4) {
 							matrix[z][x] = 5 // glass pane
 						} else {
 							matrix[z][x] = 1 // plank wall
 						}
-					} else {
-						// Interior furnishing
-						if x == 1 && z == 1 {
-							matrix[z][x] = 8 // crafting table
-						} else if x == width-2 && z == 1 {
-							matrix[z][x] = 9 // chest
-						} else if purpose == blueprints.PurposeTavern && x == 2 && z == 2 {
-							matrix[z][x] = 6 // barrel
-						} else {
-							matrix[z][x] = 0
-						}
+						continue
 					}
-				}
-			}
 
-		case y == 2:
-			// Upper Walls
-			for z := 0; z < length; z++ {
-				for x := 0; x < width; x++ {
-					isCorner := (x == 0 || x == width-1) && (z == 0 || z == length-1)
-					if isCorner {
-						matrix[z][x] = 2 // log pillar
-						continue
-					}
-					if hasPorch && z == length-1 {
-						matrix[z][x] = 0
-						continue
-					}
-					isWall := z == 0 || z == length-1 || x == 0 || x == width-1
-					if hasPorch && z == length-2 {
-						isWall = true
-					}
-					if isWall {
-						if (x == 0 || x == width-1) && z == length/2 {
-							matrix[z][x] = 5 // glass pane
+					// Interior divider wall
+					if hasDivision && x == dividerX {
+						if z == doorZ {
+							if y == 1 {
+								matrix[z][x] = 13 // interior door opening
+							} else {
+								matrix[z][x] = 1 // plank above interior door
+							}
 						} else {
-							matrix[z][x] = 1
+							matrix[z][x] = 1 // plank divider wall
 						}
-					} else if x == 1 && z == 1 {
-						matrix[z][x] = 7 // torch
-					} else {
-						matrix[z][x] = 0
+						continue
+					}
+
+					// Furnishings
+					if y == 1 {
+						if hasDivision {
+							// Room 1 (Left / Bedroom): bed, chest
+							if x == 1 && z == 1 {
+								matrix[z][x] = 11 // red_bed
+							} else if x == 1 && z == 2 && length > 4 {
+								matrix[z][x] = 11 // bed foot
+							} else if x == dividerX-1 && z == 1 {
+								matrix[z][x] = 9 // chest
+							}
+
+							// Room 2 (Right / Workshop): crafting table, furnace, barrel/crates, chest
+							if x == width-2 && z == 1 {
+								matrix[z][x] = 8 // crafting table
+							} else if x == width-2 && z == 2 && length > 4 {
+								matrix[z][x] = 12 // furnace
+							} else if x == width-2 && z == length-2 {
+								matrix[z][x] = 6 // barrel
+							} else if x == dividerX+1 && z == 1 {
+								matrix[z][x] = 9 // chest
+							}
+						} else {
+							// Single room furnishings
+							if x == 1 && z == 1 {
+								matrix[z][x] = 8 // crafting table
+							} else if x == width-2 && z == 1 {
+								matrix[z][x] = 9 // chest
+							} else if x == 1 && z == length-2 {
+								matrix[z][x] = 11 // red_bed
+							} else if x == width-2 && z == length-2 {
+								matrix[z][x] = 6 // barrel
+							}
+						}
+					} else if y == 2 {
+						// Torches on interior walls
+						if hasDivision {
+							if x == dividerX/2 && z == 1 {
+								matrix[z][x] = 7 // torch in bedroom
+							} else if x == dividerX+(width-dividerX)/2 && z == 1 {
+								matrix[z][x] = 7 // torch in workshop
+							}
+						} else if x == 1 && z == 1 {
+							matrix[z][x] = 7 // torch
+						}
 					}
 				}
 			}
 
 		default:
-			// Roof / Ceiling (top layers)
-			for z := 0; z < length; z++ {
-				for x := 0; x < width; x++ {
-					if hasPorch && z == length-1 {
-						matrix[z][x] = 4 // stairs overhang
-					} else if z == 0 || z == length-1 || x == 0 || x == width-1 {
-						matrix[z][x] = 4 // roof trim stairs
-					} else {
-						matrix[z][x] = 1 // ceiling planks
+			// Roof layers
+			roofRelY := y - wallHeight
+			if hasSlopedRoof && roofLayersCount == 2 {
+				if roofRelY == 0 {
+					// Base roof layer
+					for z := 0; z < length; z++ {
+						for x := 0; x < width; x++ {
+							if z == 0 {
+								matrix[z][x] = 14 // stairs facing south
+							} else if z == length-1 {
+								matrix[z][x] = 4 // stairs facing north
+							} else if x == 0 || x == width-1 {
+								matrix[z][x] = 1 // gable wall planks
+							} else {
+								matrix[z][x] = 1 // ceiling planks
+							}
+						}
+					}
+				} else {
+					// Upper ridge roof layer
+					for z := 0; z < length; z++ {
+						for x := 0; x < width; x++ {
+							if z == 0 || z == length-1 {
+								matrix[z][x] = 0 // open air (slope recedes inward)
+							} else if z == 1 {
+								matrix[z][x] = 14 // stairs facing south
+							} else if z == length-2 {
+								matrix[z][x] = 4 // stairs facing north
+							} else if x == 0 || x == width-1 {
+								matrix[z][x] = 1 // gable wall planks
+							} else {
+								matrix[z][x] = 1 // center ridge planks
+							}
+						}
+					}
+				}
+			} else {
+				// Single roof layer (stairs trim with ceiling planks)
+				for z := 0; z < length; z++ {
+					for x := 0; x < width; x++ {
+						if hasPorch && z == length-1 {
+							matrix[z][x] = 4 // stairs overhang
+						} else if z == 0 {
+							matrix[z][x] = 14 // stairs facing south
+						} else if z == length-1 {
+							matrix[z][x] = 4 // stairs facing north
+						} else if x == 0 || x == width-1 {
+							matrix[z][x] = 4 // stairs roof trim
+						} else {
+							matrix[z][x] = 1 // ceiling planks
+						}
 					}
 				}
 			}
@@ -788,7 +923,7 @@ func generateFallbackBlueprint(req AssistantDraftRequest, baseBP *blueprints.Blu
 		Description: fmt.Sprintf("Architecturally synthesized blueprint: %s", req.Prompt),
 		Dimensions: blueprints.Dimensions{
 			Width:  width,
-			Height: height,
+			Height: totalHeight,
 			Length: length,
 			MinY:   minY,
 		},

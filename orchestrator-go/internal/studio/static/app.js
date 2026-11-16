@@ -8,6 +8,7 @@ window.StudioState = {
   activeY: 0,
   isoCanvas: null,
   gridEditor: null,
+  walkthroughRenderer: null,
 };
 
 document.addEventListener("DOMContentLoaded", () => {
@@ -96,12 +97,26 @@ function initStudioWebSocket() {
 }
 
 // =============================================================================
-// 2D Grid Editor & Isometric Canvas Initialization
+// 2D Grid Editor, Isometric Canvas & 3D Walkthrough Initialization
 // =============================================================================
 function initCanvasAndGrid() {
   const canvasEl = document.getElementById("isometric-canvas");
   if (canvasEl && window.IsometricCanvas) {
     window.StudioState.isoCanvas = new window.IsometricCanvas("isometric-canvas");
+  }
+
+  const walkthroughEl = document.getElementById("walkthrough-canvas");
+  if (walkthroughEl && window.WalkthroughRenderer) {
+    window.StudioState.walkthroughRenderer = new window.WalkthroughRenderer(
+      "walkthrough-canvas",
+      "walkthrough-hud",
+      () => {
+        const btnWalkToolbar = document.getElementById("btn-walkthrough-3d");
+        const btnWalkHeader = document.getElementById("btn-walkthrough-header");
+        if (btnWalkToolbar) btnWalkToolbar.classList.remove("active");
+        if (btnWalkHeader) btnWalkHeader.classList.remove("active");
+      }
+    );
   }
 
   const gridEl = document.getElementById("layer-grid-container");
@@ -112,6 +127,9 @@ function initCanvasAndGrid() {
         // Synchronize 3D isometric canvas in real time
         if (window.StudioState.isoCanvas) {
           window.StudioState.isoCanvas.setBlueprint(bp, activeY);
+        }
+        if (window.StudioState.walkthroughRenderer) {
+          window.StudioState.walkthroughRenderer.setBlueprint(bp);
         }
         // Update raw JSON editor value
         const jsonInput = document.getElementById("blueprint-input");
@@ -204,6 +222,10 @@ function loadBlueprintIntoStudio(bp) {
     window.StudioState.isoCanvas.setBlueprint(bp, window.StudioState.activeY);
   }
 
+  if (window.StudioState.walkthroughRenderer) {
+    window.StudioState.walkthroughRenderer.setBlueprint(bp);
+  }
+
   const jsonInput = document.getElementById("blueprint-input");
   if (jsonInput) {
     jsonInput.value = JSON.stringify(bp, null, 2);
@@ -279,7 +301,44 @@ function initEditorControls() {
       if (window.StudioState.isoCanvas) {
         const locked = window.StudioState.isoCanvas.toggleXRay();
         btnXRay.classList.toggle("active", locked);
-        btnXRay.textContent = locked ? "⚡ X-Ray Walls: LOCKED ON" : "⚡ X-Ray Walls: Auto (Hover)";
+        btnXRay.textContent = locked ? "⚡ X-Ray Walls & Roof: LOCKED ON" : "⚡ X-Ray Walls: Auto (Hover)";
+      }
+    });
+  }
+
+  // 3D Walkthrough Mode Toggles
+  const toggleWalkthrough = () => {
+    const wr = window.StudioState.walkthroughRenderer;
+    if (!wr) return;
+    const btnWalkToolbar = document.getElementById("btn-walkthrough-3d");
+    const btnWalkHeader = document.getElementById("btn-walkthrough-header");
+
+    if (wr.isActive) {
+      wr.exit();
+      if (btnWalkToolbar) btnWalkToolbar.classList.remove("active");
+      if (btnWalkHeader) btnWalkHeader.classList.remove("active");
+    } else {
+      wr.enter();
+      if (btnWalkToolbar) btnWalkToolbar.classList.add("active");
+      if (btnWalkHeader) btnWalkHeader.classList.add("active");
+    }
+  };
+
+  const btnWalkToolbar = document.getElementById("btn-walkthrough-3d");
+  if (btnWalkToolbar) {
+    btnWalkToolbar.addEventListener("click", toggleWalkthrough);
+  }
+
+  const btnWalkHeader = document.getElementById("btn-walkthrough-header");
+  if (btnWalkHeader) {
+    btnWalkHeader.addEventListener("click", toggleWalkthrough);
+  }
+
+  const btnExitWalk = document.getElementById("btn-exit-walkthrough");
+  if (btnExitWalk) {
+    btnExitWalk.addEventListener("click", () => {
+      if (window.StudioState.walkthroughRenderer) {
+        window.StudioState.walkthroughRenderer.exit();
       }
     });
   }
@@ -450,6 +509,7 @@ function initAssistantDrawer() {
   const promptInput = document.getElementById("assistant-prompt-input");
   const styleSelect = document.getElementById("assistant-style-select");
   const loadingIndicator = document.getElementById("assistant-loading");
+  const loadingSpan = loadingIndicator ? loadingIndicator.querySelector("span") : null;
   const historyStream = document.getElementById("assistant-chat-history");
 
   if (btnOpen && drawer) {
@@ -481,14 +541,33 @@ function initAssistantDrawer() {
       appendChatMessage("user", "Operator", text);
       promptInput.value = "";
 
-      // 2. Show thinking indicator
-      if (loadingIndicator) loadingIndicator.classList.remove("hidden");
+      // 2. Show thinking indicator with active timer
+      let elapsedSeconds = 0;
+      if (loadingIndicator) {
+        loadingIndicator.classList.remove("hidden");
+        if (loadingSpan) {
+          loadingSpan.textContent = "Architect is synthesizing blueprint... (0s)";
+        }
+      }
+      const timerInterval = setInterval(() => {
+        elapsedSeconds++;
+        if (loadingSpan) {
+          loadingSpan.textContent = `Architect is synthesizing blueprint... (${elapsedSeconds}s)`;
+        }
+      }, 1000);
       btnSend.disabled = true;
+
+      // 120s client timeout handling
+      const abortController = new AbortController();
+      const timeoutId = setTimeout(() => {
+        abortController.abort();
+      }, 120000);
 
       try {
         const res = await fetch("/api/assistant/draft", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
+          signal: abortController.signal,
           body: JSON.stringify({
             prompt: text,
             style: style,
@@ -496,9 +575,15 @@ function initAssistantDrawer() {
           })
         });
 
+        clearTimeout(timeoutId);
+
         if (!res.ok) {
-          const err = await res.json();
-          throw new Error(err.error || `HTTP ${res.status}`);
+          let errMsg = `HTTP ${res.status}`;
+          try {
+            const err = await res.json();
+            if (err && err.error) errMsg = err.error;
+          } catch (_) {}
+          throw new Error(errMsg);
         }
 
         const draftedBP = await res.json();
@@ -524,9 +609,23 @@ function initAssistantDrawer() {
 
         appendChatMessage("architect", "🏛 Master Architect", responseSummary, true);
       } catch (err) {
-        appendChatMessage("architect", "🏛 Master Architect", `⚠️ Synthesis error: ${escapeHTML(err.message)}`);
+        clearTimeout(timeoutId);
+        let errorMsg = err.message;
+        if (err.name === "AbortError") {
+          errorMsg = "Architect synthesis request timed out after 120s. Server took too long to complete LLM inference.";
+        } else if (err.message && err.message.includes("Failed to fetch")) {
+          errorMsg = "Failed to fetch: Connection dropped or server unreachable. The procedural architect is available as a fallback.";
+        }
+        appendChatMessage("architect", "🏛 Master Architect", `⚠️ Synthesis error: ${escapeHTML(errorMsg)}`);
       } finally {
-        if (loadingIndicator) loadingIndicator.classList.add("hidden");
+        clearInterval(timerInterval);
+        clearTimeout(timeoutId);
+        if (loadingIndicator) {
+          loadingIndicator.classList.add("hidden");
+          if (loadingSpan) {
+            loadingSpan.textContent = "Reasoning with System 2 and synthesizing blueprint layers...";
+          }
+        }
         btnSend.disabled = false;
       }
     });

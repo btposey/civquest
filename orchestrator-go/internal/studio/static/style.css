@@ -754,6 +754,87 @@ textarea#blueprint-input {
   cursor: crosshair;
 }
 
+#walkthrough-canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+  cursor: crosshair;
+}
+
+.header-actions-inline {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.walkthrough-hud {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  padding: 0.75rem;
+}
+
+.walkthrough-hud .hud-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  background: rgba(15, 23, 42, 0.88);
+  backdrop-filter: blur(6px);
+  border: 1px solid rgba(56, 189, 248, 0.4);
+  border-radius: 6px;
+  padding: 0.45rem 0.85rem;
+  pointer-events: auto;
+}
+
+.walkthrough-hud .hud-title {
+  font-weight: 700;
+  color: #38bdf8;
+  font-size: 0.85rem;
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.walkthrough-hud .hud-hint {
+  font-family: monospace;
+  font-size: 0.78rem;
+  color: #cbd5e1;
+}
+
+.walkthrough-hud .btn-exit {
+  background: rgba(239, 68, 68, 0.25);
+  border: 1px solid rgba(239, 68, 68, 0.5);
+  color: #fca5a5;
+  font-size: 0.75rem;
+  padding: 0.25rem 0.6rem;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.walkthrough-hud .btn-exit:hover {
+  background: rgba(239, 68, 68, 0.45);
+  color: #ffffff;
+}
+
+.walkthrough-crosshair {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  color: rgba(255, 255, 255, 0.75);
+  font-size: 22px;
+  font-weight: 300;
+  user-select: none;
+  pointer-events: none;
+}
+
 .live-stats-box {
   background: #131722;
   border: 1px solid #252a3b;

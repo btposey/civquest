@@ -634,7 +634,7 @@ func TestServer_StaticAndSPA(t *testing.T) {
 	}
 
 	// 3. JS assets
-	for _, jsAsset := range []string{"/app.js", "/canvas.js", "/grid.js"} {
+	for _, jsAsset := range []string{"/app.js", "/canvas.js", "/grid.js", "/walkthrough.js"} {
 		jsResp, err := http.Get(srvURL + jsAsset)
 		if err != nil {
 			t.Fatalf("GET %s failed: %v", jsAsset, err)
@@ -800,6 +800,100 @@ func TestServer_AssistantDraft(t *testing.T) {
 
 	if llmBP.Name != "LLM Nordic Mead Hall" {
 		t.Errorf("expected name 'LLM Nordic Mead Hall', got %q", llmBP.Name)
+	}
+
+	// 5. Test multi-room division with sloped roof and furnishings keyword synthesis (procedural fallback)
+	srv.cfg.ArchitectService = nil
+	srv.cfg.LLMClient = nil
+
+	multiRoomReq := AssistantDraftRequest{
+		Prompt: "Build a two rooms cabin divided by a wall with interior door, bedroom, beds, crates, crafting table, chests, and sloped roof",
+		Style:  "frontier",
+	}
+	multiBytes, _ := json.Marshal(multiRoomReq)
+	multiResp, err := http.Post(srvURL+"/api/assistant/draft", "application/json", strings.NewReader(string(multiBytes)))
+	if err != nil {
+		t.Fatalf("POST multi-room prompt failed: %v", err)
+	}
+	defer multiResp.Body.Close()
+	if multiResp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(multiResp.Body)
+		t.Fatalf("expected 200 OK for multi-room, got %d: %s", multiResp.StatusCode, string(body))
+	}
+
+	var multiBP blueprints.Blueprint
+	if err := json.NewDecoder(multiResp.Body).Decode(&multiBP); err != nil {
+		t.Fatalf("failed decoding multi-room blueprint: %v", err)
+	}
+	if err := multiBP.Validate(); err != nil {
+		t.Fatalf("multi-room blueprint failed validation: %v", err)
+	}
+	if multiBP.Dimensions.Width < 7 {
+		t.Errorf("expected width >= 7 for multi-room, got %d", multiBP.Dimensions.Width)
+	}
+	// Verify palette has bed, chest, crafting table
+	foundBed := false
+	foundChest := false
+	foundCrafting := false
+	for _, state := range multiBP.Palette {
+		if strings.Contains(state, "bed") {
+			foundBed = true
+		}
+		if strings.Contains(state, "chest") {
+			foundChest = true
+		}
+		if strings.Contains(state, "crafting_table") {
+			foundCrafting = true
+		}
+	}
+	if !foundBed || !foundChest || !foundCrafting {
+		t.Errorf("expected palette to contain bed (%v), chest (%v), crafting table (%v)", foundBed, foundChest, foundCrafting)
+	}
+
+	// 6. Test LLM failure / invalid JSON seamlessly falls back to procedural architect
+	failGateway := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		mockResp := system2.ChatCompletionResponse{
+			Choices: []system2.ChatCompletionChoice{
+				{
+					Message: system2.ChatMessage{
+						Role:    "assistant",
+						Content: `Not a valid JSON blueprint response - syntax error`,
+					},
+				},
+			},
+		}
+		_ = json.NewEncoder(w).Encode(mockResp)
+	}))
+	defer failGateway.Close()
+
+	failLLMClient, _ := system2.NewClientWithConfig(
+		xdg.LLMGatewayConfig{BaseURL: failGateway.URL},
+		xdg.InferenceGovernorConfig{MaxConcurrentLLMRequests: 2},
+	)
+	srv.cfg.LLMClient = failLLMClient
+	srv.cfg.ArchitectService = system2.NewArchitectService(failLLMClient)
+
+	failReq := AssistantDraftRequest{
+		Prompt: "A cozy 7x5 rustic cabin with a sloped roof",
+		Style:  "rustic",
+	}
+	failBytes, _ := json.Marshal(failReq)
+	failResp, err := http.Post(srvURL+"/api/assistant/draft", "application/json", strings.NewReader(string(failBytes)))
+	if err != nil {
+		t.Fatalf("POST fallback test failed: %v", err)
+	}
+	defer failResp.Body.Close()
+	if failResp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(failResp.Body)
+		t.Fatalf("expected fallback 200 OK, got %d: %s", failResp.StatusCode, string(body))
+	}
+	var fallbackBP blueprints.Blueprint
+	if err := json.NewDecoder(failResp.Body).Decode(&fallbackBP); err != nil {
+		t.Fatalf("failed decoding fallback blueprint: %v", err)
+	}
+	if err := fallbackBP.Validate(); err != nil {
+		t.Fatalf("fallback blueprint failed validation: %v", err)
 	}
 }
 
