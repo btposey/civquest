@@ -2,6 +2,7 @@ package blueprints
 
 import (
 	"math"
+	"os"
 	"path/filepath"
 	"testing"
 
@@ -18,6 +19,14 @@ func TestBlueprint_GenerateTemplateAndValidate(t *testing.T) {
 		t.Errorf("unexpected dimensions: %+v", bp.Dimensions)
 	}
 
+	if bp.Purpose != PurposeTavern {
+		t.Errorf("expected purpose %q, got %q", PurposeTavern, bp.Purpose)
+	}
+
+	if bp.ID != "pioneer_tavern" {
+		t.Errorf("expected ID %q, got %q", "pioneer_tavern", bp.ID)
+	}
+
 	bom := bp.CalculateBOM()
 	if len(bom) == 0 {
 		t.Errorf("expected non-empty BOM")
@@ -27,20 +36,244 @@ func TestBlueprint_GenerateTemplateAndValidate(t *testing.T) {
 		t.Errorf("expected cobblestone in BOM, got %d", bom["minecraft:cobblestone"])
 	}
 
-	// Test Save and Load
+	// Test Save and Load YAML
 	tmpDir := t.TempDir()
 	path := filepath.Join(tmpDir, "tavern.yaml")
 	if err := bp.SaveYAML(path); err != nil {
-		t.Fatalf("failed saving blueprint: %v", err)
+		t.Fatalf("failed saving blueprint YAML: %v", err)
 	}
 
 	loaded, err := LoadYAML(path)
 	if err != nil {
-		t.Fatalf("failed loading blueprint: %v", err)
+		t.Fatalf("failed loading blueprint YAML: %v", err)
 	}
 
 	if loaded.Name != bp.Name {
 		t.Errorf("expected name %q, got %q", bp.Name, loaded.Name)
+	}
+	if loaded.ID != bp.ID {
+		t.Errorf("expected ID %q, got %q", bp.ID, loaded.ID)
+	}
+	if loaded.Purpose != bp.Purpose {
+		t.Errorf("expected Purpose %q, got %q", bp.Purpose, loaded.Purpose)
+	}
+}
+
+func TestBlueprint_JSONSerializationRoundtrip(t *testing.T) {
+	bp := GenerateTemplate("storehouse", "pioneer")
+	bp.Description = "Pioneer settlement storehouse"
+	bp.Tags = []string{"storage", "pioneer"}
+
+	tmpDir := t.TempDir()
+	jsonPath := filepath.Join(tmpDir, "storehouse.json")
+
+	// Test SaveJSON
+	if err := bp.SaveJSON(jsonPath); err != nil {
+		t.Fatalf("SaveJSON failed: %v", err)
+	}
+
+	// Test LoadJSON
+	loaded, err := LoadJSON(jsonPath)
+	if err != nil {
+		t.Fatalf("LoadJSON failed: %v", err)
+	}
+
+	if loaded.ID != bp.ID {
+		t.Errorf("expected ID %q, got %q", bp.ID, loaded.ID)
+	}
+	if loaded.Purpose != PurposeStorehouse {
+		t.Errorf("expected Purpose %q, got %q", PurposeStorehouse, loaded.Purpose)
+	}
+	if loaded.Description != bp.Description {
+		t.Errorf("expected Description %q, got %q", bp.Description, loaded.Description)
+	}
+	if len(loaded.Tags) != len(bp.Tags) {
+		t.Errorf("expected %d tags, got %d", len(bp.Tags), len(loaded.Tags))
+	}
+	if len(loaded.BOM) == 0 {
+		t.Errorf("expected populated BOM after LoadJSON")
+	}
+
+	// Test LoadFile auto-detection
+	loadFileLoaded, err := LoadFile(jsonPath)
+	if err != nil {
+		t.Fatalf("LoadFile on JSON failed: %v", err)
+	}
+	if loadFileLoaded.Name != bp.Name {
+		t.Errorf("expected name %q, got %q", bp.Name, loadFileLoaded.Name)
+	}
+
+	// Test SaveFile auto-detection
+	yamlPath := filepath.Join(tmpDir, "storehouse.yaml")
+	if err := bp.SaveFile(yamlPath); err != nil {
+		t.Fatalf("SaveFile on YAML failed: %v", err)
+	}
+
+	yamlLoaded, err := LoadFile(yamlPath)
+	if err != nil {
+		t.Fatalf("LoadFile on YAML failed: %v", err)
+	}
+	if yamlLoaded.ID != bp.ID {
+		t.Errorf("expected ID %q, got %q", bp.ID, yamlLoaded.ID)
+	}
+}
+
+func TestBlueprint_ValidationDefaultsAndBOM(t *testing.T) {
+	// 1. Defaults ID to slugified Name and Purpose to HOME
+	bp := &Blueprint{
+		Name: "Rustic Cozy Home",
+		Dimensions: Dimensions{
+			Width:  3,
+			Height: 2,
+			Length: 3,
+		},
+		Palette: map[int]string{
+			1: "minecraft:oak_planks",
+		},
+		Layers: []Layer{
+			{Y: 0, Matrix: [][]int{{1, 1, 1}, {1, 1, 1}, {1, 1, 1}}},
+			{Y: 1, Matrix: [][]int{{1, 0, 1}, {0, 0, 0}, {1, 0, 1}}},
+		},
+	}
+
+	if err := bp.Validate(); err != nil {
+		t.Fatalf("Validate failed: %v", err)
+	}
+
+	if bp.ID != "rustic_cozy_home" {
+		t.Errorf("expected slugified ID 'rustic_cozy_home', got %q", bp.ID)
+	}
+	if bp.Purpose != PurposeHome {
+		t.Errorf("expected default Purpose %q, got %q", PurposeHome, bp.Purpose)
+	}
+	if bp.Type != "home" {
+		t.Errorf("expected Type synced to 'home', got %q", bp.Type)
+	}
+
+	// Verify BOM was populated automatically
+	if len(bp.BOM) == 0 {
+		t.Fatalf("expected BOM to be populated automatically on Validate()")
+	}
+	// 9 blocks on layer 0 + 4 blocks on layer 1 = 13 oak_planks
+	if bp.BOM["minecraft:oak_planks"] != 13 {
+		t.Errorf("expected 13 oak_planks in BOM, got %d", bp.BOM["minecraft:oak_planks"])
+	}
+}
+
+func TestBlueprint_GranaryAliasNormalization(t *testing.T) {
+	bp := &Blueprint{
+		Name:    "Valley Granary",
+		Purpose: "GRANARY",
+		Dimensions: Dimensions{
+			Width:  3,
+			Height: 1,
+			Length: 3,
+		},
+		Palette: map[int]string{1: "minecraft:cobblestone"},
+		Layers: []Layer{
+			{Y: 0, Matrix: [][]int{{1, 1, 1}, {1, 1, 1}, {1, 1, 1}}},
+		},
+	}
+
+	if err := bp.Validate(); err != nil {
+		t.Fatalf("Validate failed: %v", err)
+	}
+
+	if bp.Purpose != PurposeStorehouse {
+		t.Errorf("expected GRANARY to normalize to STOREHOUSE, got %q", bp.Purpose)
+	}
+}
+
+func TestBlueprint_SubterraneanBasementAndExcavation(t *testing.T) {
+	// A 5x4x5 blueprint with MinY = -1 (so Y = -1, 0, 1, 2)
+	// Y = -1 has a 5x5 perimeter of cobblestone with a 3x3 interior of air + 1 chest.
+	// Interior within perimeter bounds = 3x3 = 9 voxels to be excavated.
+	bp := &Blueprint{
+		ID:      "cellar_lodge",
+		Name:    "Cellar Lodge",
+		Purpose: PurposeTavern,
+		Dimensions: Dimensions{
+			Width:  5,
+			Height: 4,
+			Length: 5,
+			MinY:   -1,
+		},
+		Palette: map[int]string{
+			0: "minecraft:air",
+			1: "minecraft:cobblestone",
+			2: "minecraft:oak_planks",
+			3: "minecraft:barrel",
+		},
+		Layers: []Layer{
+			{
+				Y: -1, // Cellar basement
+				Matrix: [][]int{
+					{1, 1, 1, 1, 1},
+					{1, 3, 0, 0, 1}, // (1,1) barrel
+					{1, 0, 0, 0, 1},
+					{1, 0, 0, 3, 1}, // (3,3) barrel
+					{1, 1, 1, 1, 1},
+				},
+			},
+			{
+				Y: 0, // Ground floor
+				Matrix: [][]int{
+					{2, 2, 2, 2, 2},
+					{2, 2, 2, 2, 2},
+					{2, 2, 2, 2, 2},
+					{2, 2, 2, 2, 2},
+					{2, 2, 2, 2, 2},
+				},
+			},
+			{
+				Y: 1, // Walls
+				Matrix: [][]int{
+					{2, 2, 2, 2, 2},
+					{2, 0, 0, 0, 2},
+					{2, 0, 0, 0, 2},
+					{2, 0, 0, 0, 2},
+					{2, 2, 2, 2, 2},
+				},
+			},
+			{
+				Y: 2, // Roof
+				Matrix: [][]int{
+					{2, 2, 2, 2, 2},
+					{2, 2, 2, 2, 2},
+					{2, 2, 2, 2, 2},
+					{2, 2, 2, 2, 2},
+					{2, 2, 2, 2, 2},
+				},
+			},
+		},
+	}
+
+	if err := bp.Validate(); err != nil {
+		t.Fatalf("failed validating blueprint with negative Y cellar: %v", err)
+	}
+
+	// Verify excavation volume
+	excavation := bp.ComputeExcavation()
+	// The 3x3 interior bounded by perimeter is 9 blocks
+	if excavation != 9 {
+		t.Errorf("expected excavation volume of 9 blocks, got %d", excavation)
+	}
+	if bp.Excavation != 9 {
+		t.Errorf("expected bp.Excavation field to be 9, got %d", bp.Excavation)
+	}
+
+	// Verify VoxelMatrix roundtrip with negative Y
+	vm, err := bp.ToVoxelMatrix()
+	if err != nil {
+		t.Fatalf("ToVoxelMatrix failed: %v", err)
+	}
+
+	st, err := vm.Get(1, -1, 1)
+	if err != nil {
+		t.Fatalf("vm.Get(1, -1, 1) failed: %v", err)
+	}
+	if st.BaseItem() != "minecraft:barrel" {
+		t.Errorf("expected barrel at (1, -1, 1), got %s", st.String())
 	}
 }
 
@@ -85,6 +318,15 @@ func TestBlueprint_ValidationErrors(t *testing.T) {
 	}
 	if err := bp.Validate(); err == nil {
 		t.Errorf("expected error for matrix dimension mismatch")
+	}
+
+	// 6. Invalid purpose
+	bp.Layers = []Layer{
+		{Y: 0, Matrix: [][]int{{1, 1, 1}, {1, 1, 1}, {1, 1, 1}}},
+	}
+	bp.Purpose = "ASTRONOMY_OBSERVATORY_NONEXISTENT"
+	if err := bp.Validate(); err == nil {
+		t.Errorf("expected error for invalid purpose")
 	}
 }
 
@@ -132,3 +374,6 @@ func TestCalculateCabinStepBack(t *testing.T) {
 		t.Errorf("expected stepBack at distance 3.5m from shelter center, got %f", dist)
 	}
 }
+
+// Silence unused import in test if needed
+var _ = os.PathSeparator

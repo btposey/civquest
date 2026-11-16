@@ -179,11 +179,13 @@ func (vm *VoxelMatrix) BoundsCheck(x, y, z int) error {
 	if vm == nil {
 		return ErrNilBlueprint
 	}
+	minY := vm.Dimensions.MinY
+	maxY := minY + vm.Dimensions.Height - 1
 	if x < 0 || x >= vm.Dimensions.Width ||
-		y < 0 || y >= vm.Dimensions.Height ||
+		y < minY || y > maxY ||
 		z < 0 || z >= vm.Dimensions.Length {
-		return fmt.Errorf("%w: (%d,%d,%d) outside [0..%d, 0..%d, 0..%d]",
-			ErrVoxelOutOfBounds, x, y, z, vm.Dimensions.Width-1, vm.Dimensions.Height-1, vm.Dimensions.Length-1)
+		return fmt.Errorf("%w: (%d,%d,%d) outside [0..%d, %d..%d, 0..%d]",
+			ErrVoxelOutOfBounds, x, y, z, vm.Dimensions.Width-1, minY, maxY, vm.Dimensions.Length-1)
 	}
 	return nil
 }
@@ -193,7 +195,8 @@ func (vm *VoxelMatrix) Get(x, y, z int) (BlockState, error) {
 	if err := vm.BoundsCheck(x, y, z); err != nil {
 		return BlockState{}, err
 	}
-	return vm.voxels[y][z][x], nil
+	arrayY := y - vm.Dimensions.MinY
+	return vm.voxels[arrayY][z][x], nil
 }
 
 // Set stores a BlockState at coordinates (x, y, z).
@@ -201,7 +204,8 @@ func (vm *VoxelMatrix) Set(x, y, z int, state BlockState) error {
 	if err := vm.BoundsCheck(x, y, z); err != nil {
 		return err
 	}
-	vm.voxels[y][z][x] = state
+	arrayY := y - vm.Dimensions.MinY
+	vm.voxels[arrayY][z][x] = state
 	return nil
 }
 
@@ -210,7 +214,7 @@ func (vm *VoxelMatrix) SetStateString(x, y, z int, raw string) error {
 	return vm.Set(x, y, z, ParseBlockState(raw))
 }
 
-// CalculateBOM tallies all non-air blocks present in the matrix.
+// CalculateBOM tallies all non-air blocks present in the matrix, normalized by base item ID.
 func (vm *VoxelMatrix) CalculateBOM() map[string]int {
 	bom := make(map[string]int)
 	if vm == nil {
@@ -222,7 +226,7 @@ func (vm *VoxelMatrix) CalculateBOM() map[string]int {
 			for x := 0; x < vm.Dimensions.Width; x++ {
 				state := vm.voxels[y][z][x]
 				if !state.IsAir() {
-					bom[state.String()]++
+					bom[state.BaseItem()]++
 				}
 			}
 		}
@@ -236,6 +240,7 @@ func (vm *VoxelMatrix) Clone() *VoxelMatrix {
 		return nil
 	}
 	clone := NewVoxelMatrix(vm.Dimensions.Width, vm.Dimensions.Height, vm.Dimensions.Length)
+	clone.Dimensions.MinY = vm.Dimensions.MinY
 	for y := 0; y < vm.Dimensions.Height; y++ {
 		for z := 0; z < vm.Dimensions.Length; z++ {
 			for x := 0; x < vm.Dimensions.Width; x++ {
@@ -263,6 +268,7 @@ func FromBlueprint(bp *Blueprint) (*VoxelMatrix, error) {
 	}
 
 	vm := NewVoxelMatrix(bp.Dimensions.Width, bp.Dimensions.Height, bp.Dimensions.Length)
+	vm.Dimensions.MinY = bp.Dimensions.MinY
 
 	// 1. Populate from layers & palette
 	for _, l := range bp.Layers {
@@ -330,7 +336,7 @@ func (vm *VoxelMatrix) ToBlueprint(name, bpType, style, author string) *Blueprin
 			mat[z] = row
 		}
 		layers[y] = Layer{
-			Y:      y,
+			Y:      y + vm.Dimensions.MinY,
 			Matrix: mat,
 		}
 	}
@@ -339,9 +345,11 @@ func (vm *VoxelMatrix) ToBlueprint(name, bpType, style, author string) *Blueprin
 		name = fmt.Sprintf("%s %s", strings.Title(style), strings.Title(bpType))
 	}
 
-	return &Blueprint{
+	bp := &Blueprint{
+		ID:         Slugify(name),
 		Name:       name,
 		Version:    1,
+		Purpose:    NormalizePurpose(bpType),
 		Type:       bpType,
 		Style:      style,
 		Author:     author,
@@ -349,6 +357,8 @@ func (vm *VoxelMatrix) ToBlueprint(name, bpType, style, author string) *Blueprin
 		Palette:    palette,
 		Layers:     layers,
 	}
+	_ = bp.Validate()
+	return bp
 }
 
 // rawYAMLMatrixFormat is used to parse YAML that defines matrices directly.

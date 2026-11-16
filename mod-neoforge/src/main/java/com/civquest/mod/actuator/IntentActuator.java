@@ -40,6 +40,7 @@ import net.minecraft.world.item.component.WrittenBookContent;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.BedBlock;
 import net.minecraft.world.level.block.BellBlock;
+import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.LecternBlock;
 import net.minecraft.world.level.block.entity.BlockEntity;
@@ -371,7 +372,9 @@ public class IntentActuator {
                     }
                     ItemStack chosen = agent.getInventory().getItem(slot);
                     if (chosen.getItem() instanceof BlockItem chosenBi) {
-                        blockState = chosenBi.getBlock().defaultBlockState();
+                        if (chosenBi.getBlock() != blockState.getBlock()) {
+                            blockState = chosenBi.getBlock().defaultBlockState();
+                        }
                     }
                 }
 
@@ -462,17 +465,54 @@ public class IntentActuator {
         return -1;
     }
 
+    @SuppressWarnings("unchecked")
+    private static <T extends Comparable<T>> BlockState applyBlockProperty(BlockState state, net.minecraft.world.level.block.state.properties.Property<T> prop, String valStr) {
+        java.util.Optional<T> val = prop.getValue(valStr);
+        return val.map(t -> state.setValue(prop, t)).orElse(state);
+    }
+
     protected BlockState resolveBlockState(AgentEntity agent, String blockOrItemId) {
         if (blockOrItemId != null && !blockOrItemId.isBlank()) {
-            ResourceLocation id = ResourceLocation.tryParse(blockOrItemId);
+            String trimmed = blockOrItemId.trim();
+            String baseId = trimmed;
+            String propString = null;
+            int bracketStart = trimmed.indexOf('[');
+            int bracketEnd = trimmed.lastIndexOf(']');
+            if (bracketStart != -1 && bracketEnd > bracketStart) {
+                baseId = trimmed.substring(0, bracketStart).trim();
+                propString = trimmed.substring(bracketStart + 1, bracketEnd).trim();
+            }
+
+            ResourceLocation id = ResourceLocation.tryParse(baseId);
             if (id != null) {
+                Block block = null;
                 if (BuiltInRegistries.BLOCK.containsKey(id)) {
-                    return BuiltInRegistries.BLOCK.get(id).defaultBlockState();
+                    block = BuiltInRegistries.BLOCK.get(id);
                 } else if (BuiltInRegistries.ITEM.containsKey(id)) {
                     Item item = BuiltInRegistries.ITEM.get(id);
                     if (item instanceof BlockItem bi) {
-                        return bi.getBlock().defaultBlockState();
+                        block = bi.getBlock();
                     }
+                }
+
+                if (block != null) {
+                    BlockState state = block.defaultBlockState();
+                    if (propString != null && !propString.isEmpty()) {
+                        var stateDef = block.getStateDefinition();
+                        String[] pairs = propString.split(",");
+                        for (String pair : pairs) {
+                            String[] kv = pair.split("=", 2);
+                            if (kv.length == 2) {
+                                String propName = kv[0].trim();
+                                String propVal = kv[1].trim();
+                                var prop = stateDef.getProperty(propName);
+                                if (prop != null) {
+                                    state = applyBlockProperty(state, prop, propVal);
+                                }
+                            }
+                        }
+                    }
+                    return state;
                 }
             }
         }

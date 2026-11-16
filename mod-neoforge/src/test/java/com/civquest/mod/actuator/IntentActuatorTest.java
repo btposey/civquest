@@ -612,4 +612,28 @@ public class IntentActuatorTest {
                 .build();
         assertFalse(actuator.isCraftingTableWithinReach(agent, distantIntent), "Crafting table at dist_sq=25 > 20.25 must be out of reach");
     }
+
+    @Test
+    @DisplayName("resolveBlockState parses directional block state properties correctly")
+    void testResolveBlockState_DirectionalProperties() {
+        if (Blocks.OAK_STAIRS != null && Blocks.OAK_STAIRS.defaultBlockState() != null) {
+            // 1. Horizontal facing + half on stairs
+            BlockState stairState = actuator.resolveBlockState(null, "minecraft:oak_stairs[facing=south,half=top]");
+            assertNotNull(stairState);
+            assertEquals(Blocks.OAK_STAIRS, stairState.getBlock());
+            assertEquals("south", stairState.getValue(net.minecraft.world.level.block.StairBlock.FACING).getSerializedName());
+            assertEquals("top", stairState.getValue(net.minecraft.world.level.block.StairBlock.HALF).getSerializedName());
+
+            // 2. Axis on log
+            BlockState logState = actuator.resolveBlockState(null, "minecraft:oak_log[axis=x]");
+            assertNotNull(logState);
+            assertEquals(Blocks.OAK_LOG, logState.getBlock());
+            assertEquals("x", logState.getValue(net.minecraft.world.level.block.RotatedPillarBlock.AXIS).getSerializedName());
+
+            // 3. Simple block without properties
+            BlockState stoneState = actuator.resolveBlockState(null, "minecraft:stone");
+            assertNotNull(stoneState);
+            assertEquals(Blocks.STONE, stoneState.getBlock());
+        }
+    }
 }

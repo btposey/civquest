@@ -29,9 +29,23 @@ Minecraft defines **$Y$ as vertical elevation** and **$(X, Z)$ as the horizontal
   - **Onion-Skinning**: Layer $Y-1$ (underlying foundation/walls) is rendered as a semi-transparent, cyan/grey blueprint outline beneath the active layer, providing visual alignment for load-bearing walls, stairwells, and doorways. In basement layers, the overlying ground layer ($Y=0$) or adjacent depth serves as the excavation perimeter guide.
 - **HTML5 Canvas 2.5D Isometric Renderer**:
   - Real-time dimetric projection ($30^\circ$ isometric grid, 2:1 aspect ratio) updating instantaneously as blocks are placed or erased.
+  - **Directional Block Rendering**: Renders directional block geometry (stairs ascending in their facing direction, horizontal/vertical log grain bark, slab half-heights, door orientations).
   - **Interactive X-Ray Wall Ghosting**: When the user moves their mouse cursor across the face of the isometric view, front-facing exterior walls (camera-adjacent South and East facades) drop to $15\%$ opacity with wireframe contours, revealing interior rooms, staircases, chests, and beds. When the mouse leaves the canvas, full solid exterior occlusion is restored.
 
-### 3. Token-Efficient ASCII-Slice Blueprint Schema
+### 3. Directional Block State Representation & BOM Normalization
+Many structural Minecraft voxels possess discrete spatial orientation:
+- **Pillars / Logs**: `axis=y` (vertical), `axis=x` (east-west), `axis=z` (north-south).
+- **Stairs**: `facing=north/south/east/west`, `half=top/bottom`, `shape=straight/inner_left/outer_right`.
+- **Slabs**: `type=bottom/top/double`.
+- **Doors & Beds**: `facing=north/south/east/west`, `half=lower/upper` (doors), `part=head/foot` (beds).
+
+**Mechanics**:
+1. **Canonical Palette Encoding**: Each distinct oriented state is assigned a unique index in the schematic `palette` (e.g. `minecraft:oak_stairs[facing=north,half=bottom]`).
+2. **2D Editor Rotation Controls**: Pressing `R` or clicking the rotation widget cycles orientation azimuths ($0^\circ, 90^\circ, 180^\circ, 270^\circ$) and half-height flips. Cells display directional glyphs (`↑`, `→`, `↓`, `←`, `◢`, `◣`).
+3. **BOM Normalization**: When compiling the Bill of Materials, bracketed blockstate properties are normalized to base inventory item identifiers (e.g., stairs facing North, South, and East all aggregate into a single `minecraft:oak_stairs` inventory requirement).
+4. **Mod-Side Ingestion**: When the builder agent dispatches `AgentIntent_PlaceBlock`, the NeoForge mod parses the full canonical blockstate via `BlockStateParser` and sets both the block and its directional properties atomically in the world.
+
+### 4. Token-Efficient ASCII-Slice Blueprint Schema
 To enable System 2 LLMs to inspect, reason about, and mutate blueprints without context exhaustion, blueprints are persisted in `$XDG_DATA_HOME/civquest/blueprints/` using a **Semantic Layer-Slice Format** ($<400$ tokens per building):
 
 ```json
