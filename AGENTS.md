@@ -84,6 +84,7 @@ Major technical decisions are formally recorded in `doc/adr/`:
 - [ADR-018: Circadian Shift Work and Tavern Social Synchronization](file:///home/brian/Workspaces/btposey/civquest/doc/adr/ADR-018-circadian-shift-work-and-tavern-social-synchronization.md)
 - [ADR-019: Population-Scaled Militia Armory Maintenance and Munitions Crafting](file:///home/brian/Workspaces/btposey/civquest/doc/adr/ADR-019-population-scaled-militia-armory-maintenance-and-munitions-crafting.md)
 - [ADR-020: FactGraph Blackboard and Modular Skill Engine](file:///home/brian/Workspaces/btposey/civquest/doc/adr/ADR-020-factgraph-blackboard-and-modular-skill-engine.md)
+- [ADR-021: Blueprint Studio SPA, Token-Efficient Voxel Schematics, and Autonomous Construction Pipeline](file:///home/brian/Workspaces/btposey/civquest/doc/adr/ADR-021-blueprint-studio-spa-and-schematic-pipeline.md)
 
 ---
 
