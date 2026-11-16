@@ -200,7 +200,8 @@ func (e *ThreatEvaluator) Evaluate(ctx *EvaluatorContext, graph *FactGraph) erro
 		}
 	}
 
-	threatsCleared := !hostilesPresent && !damageTaken && !isCriticalHealth && !isOnFire && !isCriticalHunger && !shouldPanic
+	isEmergency := hostilesPresent || damageTaken || isCriticalHealth || isOnFire || isCriticalHunger || shouldPanic
+	threatsCleared := !isEmergency
 
 	graph.SetBool("threat.hostiles_present", "threat", hostilesPresent, fmt.Sprintf("Hostile threats present: %t", hostilesPresent))
 	graph.SetInt("threat.immediate_threat_count", "threat", threatCount, fmt.Sprintf("Immediate threat count: %d", threatCount))
@@ -208,6 +209,7 @@ func (e *ThreatEvaluator) Evaluate(ctx *EvaluatorContext, graph *FactGraph) erro
 	graph.SetBool("threat.should_panic", "threat", shouldPanic, fmt.Sprintf("Combat panic triggered: %t", shouldPanic))
 	graph.SetInt("threat.nearest_hostile_id", "threat", nearestHostileID, fmt.Sprintf("Nearest hostile entity ID: %d", nearestHostileID))
 	graph.SetFloat("threat.nearest_hostile_dist", "threat", nearestHostileDist, fmt.Sprintf("Nearest hostile distance: %.2f", nearestHostileDist))
+	graph.SetBool("threat.is_emergency", "threat", isEmergency, fmt.Sprintf("Immediate threat emergency: %t", isEmergency))
 	graph.SetBool("threat.threats_cleared", "threat", threatsCleared, fmt.Sprintf("All threats cleared: %t", threatsCleared))
 	graph.SetBool("threat.has_shield", "threat", hasShield, fmt.Sprintf("Shield equipped or in inventory: %t", hasShield))
 	graph.SetBool("threat.has_weapon", "threat", hasWeapon, fmt.Sprintf("Weapon available: %t", hasWeapon))

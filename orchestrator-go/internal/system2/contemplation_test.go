@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/btposey/civquest/orchestrator-go/internal/db"
+	"github.com/btposey/civquest/orchestrator-go/internal/system1"
 	"github.com/btposey/civquest/orchestrator-go/internal/system2"
 	"github.com/btposey/civquest/orchestrator-go/internal/xdg"
 )
@@ -587,5 +588,83 @@ func TestContemplate_CustomSystemPrompt(t *testing.T) {
 	expectedDefault := system2.DefaultContemplationPrompt("solas", "BUILDER", "clan_iron")
 	if !strings.Contains(capturedSystemPrompt, expectedDefault) {
 		t.Errorf("expected captured system prompt to contain default contemplation prompt, got: %s", capturedSystemPrompt)
+	}
+}
+
+func TestContemplate_VerifiedFactsInStrategicLedger(t *testing.T) {
+	graph := system1.NewFactGraph()
+	graph.SetBool("colonize.is_establishing", "colonize", true, "Establishing new settlement node")
+	graph.SetBool("threat.is_emergency", "threat", false, "Threat nominal")
+
+	ledger := &system2.StrategicLedger{
+		AgentID:   "aria",
+		ClanID:    "clan_pioneers",
+		WorldTick: 15000,
+		PersonalProfile: system2.PersonalProfile{
+			AgentID:    "aria",
+			ClanID:     "clan_pioneers",
+			Profession: "EXPLORER",
+		},
+	}
+	ledger.WithFactGraph(graph)
+
+	if !strings.Contains(ledger.VerifiedFacts, "Establishing new settlement node") {
+		t.Fatalf("expected ledger.VerifiedFacts to contain fact evidence, got:\n%s", ledger.VerifiedFacts)
+	}
+
+	var capturedSystemPrompt string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var req system2.ChatCompletionRequest
+		_ = json.NewDecoder(r.Body).Decode(&req)
+		if len(req.Messages) > 0 {
+			capturedSystemPrompt = req.Messages[0].Content
+		}
+
+		resp := system2.ChatCompletionResponse{
+			ID: "contemplate-facts-test",
+			Choices: []system2.ChatCompletionChoice{
+				{
+					Index: 0,
+					Message: system2.ChatMessage{
+						Role:    "assistant",
+						Content: `{"immediate_goal":"SCOUT_FRONTIER","short_term_goal":"MAP_SECTOR","long_term_goal":"FOUND_COLONY","reflective_memory":"Reflected on verified facts","trade_adjustments":[],"civic_proposals":[],"rationale":"Facts verified"}`,
+					},
+					FinishReason: "stop",
+				},
+			},
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(resp)
+	}))
+	defer server.Close()
+
+	client, err := system2.NewClient(
+		&xdg.GlobalConfig{
+			LLMGateway: xdg.LLMGatewayConfig{
+				BaseURL: server.URL + "/v1",
+				Model:   "mock-model",
+			},
+		},
+		system2.WithHTTPClient(server.Client()),
+	)
+	if err != nil {
+		t.Fatalf("failed creating client: %v", err)
+	}
+	defer client.Close()
+
+	svc := system2.NewContemplationService(client)
+	resp, err := svc.Contemplate(context.Background(), ledger)
+	if err != nil {
+		t.Fatalf("Contemplate failed: %v", err)
+	}
+	if resp.ImmediateGoal != "SCOUT_FRONTIER" {
+		t.Errorf("expected SCOUT_FRONTIER, got %s", resp.ImmediateGoal)
+	}
+
+	if !strings.Contains(capturedSystemPrompt, "verified_facts") {
+		t.Errorf("expected capturedSystemPrompt to contain 'verified_facts' key in strategic ledger, got:\n%s", capturedSystemPrompt)
+	}
+	if !strings.Contains(capturedSystemPrompt, "Establishing new settlement node") {
+		t.Errorf("expected capturedSystemPrompt to contain fact evidence, got:\n%s", capturedSystemPrompt)
 	}
 }

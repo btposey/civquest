@@ -566,3 +566,83 @@ func TestFSM_SettlementTransitionsToColonizeWhenEstablishingNewSettlement(t *tes
 		t.Fatalf("expected Transitioned=true on settlement founding")
 	}
 }
+
+func TestFSM_FactGraphPredicatesInTransitionRules(t *testing.T) {
+	rules := defaultTransitionRules()
+
+	// 1. Emergency Preemption evaluates threat.is_emergency
+	facts := NewFactGraph()
+	ctx := &FSMContext{Facts: facts}
+
+	// Not emergency initially
+	facts.SetBool("threat.is_emergency", "threat", false, "calm")
+	for _, r := range rules {
+		if r.ToStage == StageEmergency && r.FromStage == StageBootstrap {
+			if r.Condition(ctx) {
+				t.Errorf("expected emergency preemption condition to be false when threat.is_emergency=false")
+			}
+		}
+	}
+
+	// Threat emergency becomes true
+	facts.SetBool("threat.is_emergency", "threat", true, "hostiles present")
+	for _, r := range rules {
+		if r.ToStage == StageEmergency && r.FromStage == StageBootstrap {
+			if !r.Condition(ctx) {
+				t.Errorf("expected emergency preemption condition to be true when threat.is_emergency=true")
+			}
+		}
+	}
+
+	// 2. Out of Emergency: threats_cleared + bootstrap.has_kit
+	facts.SetBool("threat.is_emergency", "threat", false, "cleared")
+	facts.SetBool("threat.threats_cleared", "threat", true, "cleared")
+	facts.SetBool("bootstrap.has_kit", "bootstrap", true, "kit ready")
+	facts.SetBool("colonize.is_establishing", "colonize", false, "settled")
+
+	for _, r := range rules {
+		if r.FromStage == StageEmergency && r.ToStage == StageSettlement {
+			if !r.Condition(ctx) {
+				t.Errorf("expected Emergency -> Settlement transition when threats_cleared and has_kit")
+			}
+		}
+		if r.FromStage == StageEmergency && r.ToStage == StageBootstrap {
+			if r.Condition(ctx) {
+				t.Errorf("expected Emergency -> Bootstrap to be false when has_kit=true")
+			}
+		}
+	}
+
+	// 3. Out of Emergency: threats_cleared + colonize.is_establishing
+	facts.SetBool("colonize.is_establishing", "colonize", true, "founding new settlement")
+	for _, r := range rules {
+		if r.FromStage == StageEmergency && r.ToStage == StageColonize {
+			if !r.Condition(ctx) {
+				t.Errorf("expected Emergency -> Colonize when threats_cleared and colonize.is_establishing=true")
+			}
+		}
+	}
+
+	// 4. Circadian Day/Night and Sleeping
+	facts.SetBool("circadian.is_dusk_or_night", "circadian", false, "daytime")
+	facts.SetBool("vitals.is_sleeping", "vitals", false, "awake")
+	facts.SetBool("bootstrap.has_kit", "bootstrap", true, "has kit")
+
+	for _, r := range rules {
+		if r.FromStage == StateRest && r.ToStage == StageSettlement {
+			if !r.Condition(ctx) {
+				t.Errorf("expected Rest -> Settlement on day awakening")
+			}
+		}
+	}
+
+	// Sleeping blocks awakening
+	facts.SetBool("vitals.is_sleeping", "vitals", true, "asleep")
+	for _, r := range rules {
+		if r.FromStage == StateRest && r.ToStage == StageSettlement {
+			if r.Condition(ctx) {
+				t.Errorf("expected Rest -> Settlement to be false while sleeping")
+			}
+		}
+	}
+}

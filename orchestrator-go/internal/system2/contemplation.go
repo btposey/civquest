@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/btposey/civquest/orchestrator-go/internal/db"
+	"github.com/btposey/civquest/orchestrator-go/internal/system1"
 )
 
 // StrategicContemplationSamplingTemperature is the deliberate inference temperature (T=0.30)
@@ -93,6 +94,14 @@ type StrategicLedger struct {
 func (l *StrategicLedger) WithVerifiedFacts(factsContext string) *StrategicLedger {
 	if l != nil {
 		l.VerifiedFacts = factsContext
+	}
+	return l
+}
+
+// WithFactGraph formats and attaches verified environmental facts to StrategicLedger via FactGraph.ToPromptContext().
+func (l *StrategicLedger) WithFactGraph(facts *system1.FactGraph) *StrategicLedger {
+	if l != nil && facts != nil {
+		l.VerifiedFacts = facts.ToPromptContext()
 	}
 	return l
 }

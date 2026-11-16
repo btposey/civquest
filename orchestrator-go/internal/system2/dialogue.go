@@ -13,6 +13,7 @@ import (
 	"github.com/btposey/civquest/orchestrator-go/internal/db"
 	"github.com/btposey/civquest/orchestrator-go/internal/memory"
 	civquestv1 "github.com/btposey/civquest/orchestrator-go/internal/proto/v1"
+	"github.com/btposey/civquest/orchestrator-go/internal/system1"
 	"github.com/btposey/civquest/orchestrator-go/internal/xdg"
 )
 
@@ -43,18 +44,58 @@ type DialogueVitals struct {
 	ImmediateGoal          string  `json:"immediate_goal,omitempty"`
 	ShortTermGoal          string  `json:"short_term_goal,omitempty"`
 	LongTermGoal           string  `json:"long_term_goal,omitempty"`
+	VerifiedFacts          string  `json:"verified_facts,omitempty"`
+}
+
+// WithFactGraph formats and attaches verified environmental facts to DialogueVitals via FactGraph.ToPromptContext().
+func (v *DialogueVitals) WithFactGraph(facts *system1.FactGraph) *DialogueVitals {
+	if v != nil && facts != nil {
+		v.VerifiedFacts = facts.ToPromptContext()
+	}
+	return v
+}
+
+// WithVerifiedFacts attaches formatted verified environmental facts to DialogueVitals.
+func (v *DialogueVitals) WithVerifiedFacts(factsContext string) *DialogueVitals {
+	if v != nil {
+		v.VerifiedFacts = factsContext
+	}
+	return v
 }
 
 // ChatDialogueRequest represents an incoming verbal chat event from a player.
 type ChatDialogueRequest struct {
-	PlayerUUID   string          `json:"player_uuid"`
-	PlayerName   string          `json:"player_name"`
-	Message      string          `json:"message"`
-	Distance     float32         `json:"distance"`
-	WorldTick    int64           `json:"world_tick"`
-	Vitals       *DialogueVitals `json:"vitals,omitempty"`
-	SurplusState SurplusState    `json:"surplus_state,omitempty"`
-	Dangerous    bool            `json:"dangerous,omitempty"`
+	PlayerUUID    string          `json:"player_uuid"`
+	PlayerName    string          `json:"player_name"`
+	Message       string          `json:"message"`
+	Distance      float32         `json:"distance"`
+	WorldTick     int64           `json:"world_tick"`
+	Vitals        *DialogueVitals `json:"vitals,omitempty"`
+	SurplusState  SurplusState    `json:"surplus_state,omitempty"`
+	Dangerous     bool            `json:"dangerous,omitempty"`
+	VerifiedFacts string          `json:"verified_facts,omitempty"`
+}
+
+// WithFactGraph formats and attaches verified environmental facts to ChatDialogueRequest via FactGraph.ToPromptContext().
+func (r *ChatDialogueRequest) WithFactGraph(facts *system1.FactGraph) *ChatDialogueRequest {
+	if r != nil && facts != nil {
+		r.VerifiedFacts = facts.ToPromptContext()
+		if r.Vitals != nil {
+			r.Vitals.VerifiedFacts = r.VerifiedFacts
+		}
+	}
+	return r
+}
+
+// WithVerifiedFacts attaches formatted verified environmental facts to ChatDialogueRequest.
+func (r *ChatDialogueRequest) WithVerifiedFacts(factsContext string) *ChatDialogueRequest {
+	if r != nil {
+		r.VerifiedFacts = factsContext
+		if r.Vitals != nil {
+			r.Vitals.VerifiedFacts = factsContext
+		}
+	}
+	return r
 }
 
 // TradeDialogueRequest represents an active barter trade negotiation initiated by a player.
@@ -68,6 +109,29 @@ type TradeDialogueRequest struct {
 	Vitals         *DialogueVitals              `json:"vitals,omitempty"`
 	SurplusState   SurplusState                 `json:"surplus_state,omitempty"`
 	Dangerous      bool                         `json:"dangerous,omitempty"`
+	VerifiedFacts  string                       `json:"verified_facts,omitempty"`
+}
+
+// WithFactGraph formats and attaches verified environmental facts to TradeDialogueRequest via FactGraph.ToPromptContext().
+func (r *TradeDialogueRequest) WithFactGraph(facts *system1.FactGraph) *TradeDialogueRequest {
+	if r != nil && facts != nil {
+		r.VerifiedFacts = facts.ToPromptContext()
+		if r.Vitals != nil {
+			r.Vitals.VerifiedFacts = r.VerifiedFacts
+		}
+	}
+	return r
+}
+
+// WithVerifiedFacts attaches formatted verified environmental facts to TradeDialogueRequest.
+func (r *TradeDialogueRequest) WithVerifiedFacts(factsContext string) *TradeDialogueRequest {
+	if r != nil {
+		r.VerifiedFacts = factsContext
+		if r.Vitals != nil {
+			r.Vitals.VerifiedFacts = factsContext
+		}
+	}
+	return r
 }
 
 // CounterOfferItem represents an item offered or demanded in barter trade.
@@ -779,6 +843,14 @@ func (s *DialogueService) buildChatPrompt(
 		surplus = SurplusStable
 	}
 
+	if req.VerifiedFacts != "" {
+		if req.Vitals == nil {
+			req.Vitals = &DialogueVitals{VerifiedFacts: req.VerifiedFacts}
+		} else if req.Vitals.VerifiedFacts == "" {
+			req.Vitals.VerifiedFacts = req.VerifiedFacts
+		}
+	}
+
 	sensorySection := formatSensoryEnvironmentSection(req.Vitals, surplus)
 
 	thrift := 1.0 - cfg.Traits.Sociability
@@ -898,6 +970,15 @@ func (s *DialogueService) buildTradePrompt(
 	cleanPlayerName := sanitizePlayerName(req.PlayerName)
 	voiceSection := formatVoiceProfileSection(cfg)
 
+	verifiedFacts := req.VerifiedFacts
+	if verifiedFacts == "" && req.Vitals != nil {
+		verifiedFacts = req.Vitals.VerifiedFacts
+	}
+	var factsSection string
+	if verifiedFacts != "" {
+		factsSection = "\n\n<verified_facts>\n" + strings.TrimSpace(verifiedFacts) + "\n</verified_facts>"
+	}
+
 	systemPrompt := fmt.Sprintf(`You are %s, an autonomous agent negotiating barter trade in CivQuest.
 Clan: %s | Profession: %s | Secondary Hobby: %s
 Personality Traits:
@@ -911,7 +992,7 @@ Personality Traits:
 
 Status & Economy:
 - Vitals: %s
-- Clan Granary State: %s (DEFICIT = protect food and high-value supplies; SURPLUS = generous trades)
+- Clan Granary State: %s (DEFICIT = protect food and high-value supplies; SURPLUS = generous trades)%s
 
 Trading Partner:
 <player_info>
@@ -946,7 +1027,7 @@ Instructions:
 		cfg.Name, cfg.ClanID, cfg.Profession, cfg.SecondaryHobby,
 		cfg.Traits.Bravery, cfg.Traits.Sociability, cfg.Traits.Industriousness, thrift, cfg.Traits.Aggressiveness,
 		voiceSection,
-		vitalsInfo, surplus,
+		vitalsInfo, surplus, factsSection,
 		cleanPlayerName, req.PlayerUUID, prestigeScore, prestigeTitle,
 		formatMemorySection(historicalContext),
 	)
@@ -1045,6 +1126,12 @@ func formatSensoryEnvironmentSection(v *DialogueVitals, surplus SurplusState) st
 	}
 	sb.WriteString(fmt.Sprintf("- Clan Granary State: %s (DEFICIT = clan is starving/protective; STABLE = normal; SURPLUS = thriving/generous)\n", surplus))
 	sb.WriteString("</sensory_environment>")
+
+	if v.VerifiedFacts != "" {
+		sb.WriteString("\n\n<verified_facts>\n")
+		sb.WriteString(strings.TrimSpace(v.VerifiedFacts))
+		sb.WriteString("\n</verified_facts>")
+	}
 
 	if v.ImmediateGoal != "" || v.ShortTermGoal != "" || v.LongTermGoal != "" {
 		sb.WriteString("\n\n<current_goals>\n")

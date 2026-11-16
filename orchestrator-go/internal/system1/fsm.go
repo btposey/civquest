@@ -153,7 +153,15 @@ func (c *FSMContext) ShouldPanic() bool {
 // IsEmergency evaluates whether any high-priority emergency condition is active.
 func (c *FSMContext) IsEmergency() bool {
 	if c != nil && c.Facts != nil {
-		return !c.Facts.GetBool("threat.threats_cleared")
+		if _, exists := c.Facts.Get("threat.is_emergency"); exists {
+			return c.Facts.GetBool("threat.is_emergency")
+		}
+		if _, exists := c.Facts.Get("threat.threats_cleared"); exists {
+			return !c.Facts.GetBool("threat.threats_cleared")
+		}
+	}
+	if c == nil {
+		return false
 	}
 	return c.HostilesPresent() || c.DamageTaken() || c.IsHealthCritical() || c.IsOnFire() || c.IsCriticalHunger() || c.ShouldPanic()
 }
@@ -161,7 +169,15 @@ func (c *FSMContext) IsEmergency() bool {
 // ThreatsCleared evaluates whether all hostiles, panic, critical health, and critical hunger issues have cleared.
 func (c *FSMContext) ThreatsCleared() bool {
 	if c != nil && c.Facts != nil {
-		return c.Facts.GetBool("threat.threats_cleared")
+		if _, exists := c.Facts.Get("threat.threats_cleared"); exists {
+			return c.Facts.GetBool("threat.threats_cleared")
+		}
+		if _, exists := c.Facts.Get("threat.is_emergency"); exists {
+			return !c.Facts.GetBool("threat.is_emergency")
+		}
+	}
+	if c == nil {
+		return true
 	}
 	return !c.HostilesPresent() && !c.DamageTaken() && !c.IsHealthCritical() && !c.IsOnFire() && !c.IsCriticalHunger() && !c.ShouldPanic()
 }
@@ -265,6 +281,11 @@ func (c *FSMContext) IsBootstrapOnCooldown() bool {
 
 // IsEstablishingNewSettlement returns true if the agent is founding a new settlement node.
 func (c *FSMContext) IsEstablishingNewSettlement() bool {
+	if c != nil && c.Facts != nil {
+		if _, exists := c.Facts.Get("colonize.is_establishing"); exists {
+			return c.Facts.GetBool("colonize.is_establishing")
+		}
+	}
 	if c == nil || c.State == nil {
 		return false
 	}
@@ -330,33 +351,58 @@ func defaultTransitionRules() []StageTransitionRule {
 	return []StageTransitionRule{
 		// Priority 1: EMERGENCY Preemption from all non-emergency stages
 		{
-			FromStage:   StageBootstrap,
-			ToStage:     StageEmergency,
-			Condition:   func(c *FSMContext) bool { return c.IsEmergency() },
+			FromStage: StageBootstrap,
+			ToStage:   StageEmergency,
+			Condition: func(c *FSMContext) bool {
+				if c != nil && c.Facts != nil {
+					return c.Facts.GetBool("threat.is_emergency")
+				}
+				return c != nil && c.IsEmergency()
+			},
 			Description: "Hostile threat, damage, or critical vitals detected during bootstrap",
 		},
 		{
-			FromStage:   StageSettlement,
-			ToStage:     StageEmergency,
-			Condition:   func(c *FSMContext) bool { return c.IsEmergency() },
+			FromStage: StageSettlement,
+			ToStage:   StageEmergency,
+			Condition: func(c *FSMContext) bool {
+				if c != nil && c.Facts != nil {
+					return c.Facts.GetBool("threat.is_emergency")
+				}
+				return c != nil && c.IsEmergency()
+			},
 			Description: "Hostile threat, damage, or critical vitals detected during settlement living",
 		},
 		{
-			FromStage:   StageColonize,
-			ToStage:     StageEmergency,
-			Condition:   func(c *FSMContext) bool { return c.IsEmergency() },
+			FromStage: StageColonize,
+			ToStage:   StageEmergency,
+			Condition: func(c *FSMContext) bool {
+				if c != nil && c.Facts != nil {
+					return c.Facts.GetBool("threat.is_emergency")
+				}
+				return c != nil && c.IsEmergency()
+			},
 			Description: "Hostile threat, damage, or critical vitals detected during colonization",
 		},
 		{
-			FromStage:   StateShelter,
-			ToStage:     StageEmergency,
-			Condition:   func(c *FSMContext) bool { return c.IsEmergency() },
+			FromStage: StateShelter,
+			ToStage:   StageEmergency,
+			Condition: func(c *FSMContext) bool {
+				if c != nil && c.Facts != nil {
+					return c.Facts.GetBool("threat.is_emergency")
+				}
+				return c != nil && c.IsEmergency()
+			},
 			Description: "Hostile threat or damage detected; preempting shelter construction",
 		},
 		{
-			FromStage:   StateRest,
-			ToStage:     StageEmergency,
-			Condition:   func(c *FSMContext) bool { return c.IsEmergency() },
+			FromStage: StateRest,
+			ToStage:   StageEmergency,
+			Condition: func(c *FSMContext) bool {
+				if c != nil && c.Facts != nil {
+					return c.Facts.GetBool("threat.is_emergency")
+				}
+				return c != nil && c.IsEmergency()
+			},
 			Description: "Hostile threat or damage detected while resting; waking to defend or flee",
 		},
 
@@ -365,7 +411,10 @@ func defaultTransitionRules() []StageTransitionRule {
 			FromStage: StageEmergency,
 			ToStage:   StageColonize,
 			Condition: func(c *FSMContext) bool {
-				return c.ThreatsCleared() && c.IsEstablishingNewSettlement()
+				if c != nil && c.Facts != nil {
+					return c.Facts.GetBool("threat.threats_cleared") && c.Facts.GetBool("colonize.is_establishing")
+				}
+				return c != nil && c.ThreatsCleared() && c.IsEstablishingNewSettlement()
 			},
 			Description: "Threats cleared; resuming settlement colonization",
 		},
@@ -373,7 +422,10 @@ func defaultTransitionRules() []StageTransitionRule {
 			FromStage: StageEmergency,
 			ToStage:   StageBootstrap,
 			Condition: func(c *FSMContext) bool {
-				return c.ThreatsCleared() && !c.HasSurvivalKit()
+				if c != nil && c.Facts != nil {
+					return c.Facts.GetBool("threat.threats_cleared") && !c.Facts.GetBool("bootstrap.has_kit")
+				}
+				return c != nil && c.ThreatsCleared() && !c.HasSurvivalKit()
 			},
 			Description: "Threats cleared; resuming bootstrap tool gathering",
 		},
@@ -381,88 +433,146 @@ func defaultTransitionRules() []StageTransitionRule {
 			FromStage: StageEmergency,
 			ToStage:   StageSettlement,
 			Condition: func(c *FSMContext) bool {
-				return c.ThreatsCleared() && c.HasSurvivalKit() && !c.IsEstablishingNewSettlement()
+				if c != nil && c.Facts != nil {
+					return c.Facts.GetBool("threat.threats_cleared") && c.Facts.GetBool("bootstrap.has_kit") && !c.Facts.GetBool("colonize.is_establishing")
+				}
+				return c != nil && c.ThreatsCleared() && c.HasSurvivalKit() && !c.IsEstablishingNewSettlement()
 			},
 			Description: "Threats cleared; resuming established settlement living",
 		},
 
 		// Priority 3: Transitions from BOOTSTRAP
 		{
-			FromStage:   StageBootstrap,
-			ToStage:     StageColonize,
-			Condition:   func(c *FSMContext) bool { return c.HasSurvivalKit() && c.IsEstablishingNewSettlement() },
+			FromStage: StageBootstrap,
+			ToStage:   StageColonize,
+			Condition: func(c *FSMContext) bool {
+				if c != nil && c.Facts != nil {
+					return c.Facts.GetBool("bootstrap.has_kit") && c.Facts.GetBool("colonize.is_establishing")
+				}
+				return c != nil && c.HasSurvivalKit() && c.IsEstablishingNewSettlement()
+			},
 			Description: "Survival kit acquired; advancing to colonization",
 		},
 		{
-			FromStage:   StageBootstrap,
-			ToStage:     StageSettlement,
-			Condition:   func(c *FSMContext) bool { return c.HasSurvivalKit() && !c.IsEstablishingNewSettlement() },
+			FromStage: StageBootstrap,
+			ToStage:   StageSettlement,
+			Condition: func(c *FSMContext) bool {
+				if c != nil && c.Facts != nil {
+					return c.Facts.GetBool("bootstrap.has_kit") && !c.Facts.GetBool("colonize.is_establishing")
+				}
+				return c != nil && c.HasSurvivalKit() && !c.IsEstablishingNewSettlement()
+			},
 			Description: "Survival kit acquired (axe, sword, light); advancing to settlement living",
 		},
 
 		// Priority 4: Transitions from SETTLEMENT
 		{
-			FromStage:   StageSettlement,
-			ToStage:     StageColonize,
-			Condition:   func(c *FSMContext) bool { return c.IsEstablishingNewSettlement() },
+			FromStage: StageSettlement,
+			ToStage:   StageColonize,
+			Condition: func(c *FSMContext) bool {
+				if c != nil && c.Facts != nil {
+					return c.Facts.GetBool("colonize.is_establishing")
+				}
+				return c != nil && c.IsEstablishingNewSettlement()
+			},
 			Description: "Founding new settlement node; advancing to colonization",
 		},
 		{
-			FromStage:   StageSettlement,
-			ToStage:     StageBootstrap,
-			Condition:   func(c *FSMContext) bool { return c.IsDawnOrDay() && !c.HasSurvivalKit() },
+			FromStage: StageSettlement,
+			ToStage:   StageBootstrap,
+			Condition: func(c *FSMContext) bool {
+				if c != nil && c.Facts != nil {
+					return !c.Facts.GetBool("circadian.is_dusk_or_night") && !c.Facts.GetBool("bootstrap.has_kit")
+				}
+				return c != nil && c.IsDawnOrDay() && !c.HasSurvivalKit()
+			},
 			Description: "Survival kit broken or missing; reverting to bootstrap",
 		},
 
 		// Priority 5: Transitions from COLONIZE
 		{
-			FromStage:   StageColonize,
-			ToStage:     StageSettlement,
-			Condition:   func(c *FSMContext) bool { return !c.IsEstablishingNewSettlement() && c.HasSurvivalKit() },
+			FromStage: StageColonize,
+			ToStage:   StageSettlement,
+			Condition: func(c *FSMContext) bool {
+				if c != nil && c.Facts != nil {
+					return !c.Facts.GetBool("colonize.is_establishing") && c.Facts.GetBool("bootstrap.has_kit")
+				}
+				return c != nil && !c.IsEstablishingNewSettlement() && c.HasSurvivalKit()
+			},
 			Description: "Colonization complete and kit secured; transitioning to settlement living",
 		},
 		{
-			FromStage:   StageColonize,
-			ToStage:     StageBootstrap,
-			Condition:   func(c *FSMContext) bool { return !c.IsEstablishingNewSettlement() && !c.HasSurvivalKit() },
+			FromStage: StageColonize,
+			ToStage:   StageBootstrap,
+			Condition: func(c *FSMContext) bool {
+				if c != nil && c.Facts != nil {
+					return !c.Facts.GetBool("colonize.is_establishing") && !c.Facts.GetBool("bootstrap.has_kit")
+				}
+				return c != nil && !c.IsEstablishingNewSettlement() && !c.HasSurvivalKit()
+			},
 			Description: "Colony site cancelled or tools broken; reverting to bootstrap",
 		},
 		{
-			FromStage:   StageColonize,
-			ToStage:     StageBootstrap,
-			Condition:   func(c *FSMContext) bool { return c.IsDawnOrDay() && !c.HasSurvivalKit() },
+			FromStage: StageColonize,
+			ToStage:   StageBootstrap,
+			Condition: func(c *FSMContext) bool {
+				if c != nil && c.Facts != nil {
+					return !c.Facts.GetBool("circadian.is_dusk_or_night") && !c.Facts.GetBool("bootstrap.has_kit")
+				}
+				return c != nil && c.IsDawnOrDay() && !c.HasSurvivalKit()
+			},
 			Description: "Survival kit broken or missing; reverting to bootstrap",
 		},
 
 		// Priority 6: Legacy transitions from SHELTER and REST (backward compatibility)
 		{
-			FromStage:   StateShelter,
-			ToStage:     StageSettlement,
-			Condition:   func(c *FSMContext) bool { return c.IsDawnOrDay() && c.HasSurvivalKit() },
+			FromStage: StateShelter,
+			ToStage:   StageSettlement,
+			Condition: func(c *FSMContext) bool {
+				if c != nil && c.Facts != nil {
+					return !c.Facts.GetBool("circadian.is_dusk_or_night") && c.Facts.GetBool("bootstrap.has_kit")
+				}
+				return c != nil && c.IsDawnOrDay() && c.HasSurvivalKit()
+			},
 			Description: "Dawn arrived; resuming settlement exploration and duties",
 		},
 		{
-			FromStage:   StateShelter,
-			ToStage:     StageBootstrap,
-			Condition:   func(c *FSMContext) bool { return c.IsDawnOrDay() && !c.HasSurvivalKit() },
+			FromStage: StateShelter,
+			ToStage:   StageBootstrap,
+			Condition: func(c *FSMContext) bool {
+				if c != nil && c.Facts != nil {
+					return !c.Facts.GetBool("circadian.is_dusk_or_night") && !c.Facts.GetBool("bootstrap.has_kit")
+				}
+				return c != nil && c.IsDawnOrDay() && !c.HasSurvivalKit()
+			},
 			Description: "Dawn arrived; resuming bootstrap survival crafting",
 		},
 		{
 			FromStage:   StateShelter,
 			ToStage:     StageSettlement,
-			Condition:   func(c *FSMContext) bool { return c.IsStuckInState(600) },
+			Condition:   func(c *FSMContext) bool { return c != nil && c.IsStuckInState(600) },
 			Description: "Shelter construction timed out/stuck; falling back to settlement",
 		},
 		{
-			FromStage:   StateRest,
-			ToStage:     StageSettlement,
-			Condition:   func(c *FSMContext) bool { return c.IsDawnOrDay() && c.HasSurvivalKit() && !c.IsSleeping() },
+			FromStage: StateRest,
+			ToStage:   StageSettlement,
+			Condition: func(c *FSMContext) bool {
+				if c != nil && c.Facts != nil {
+					return !c.Facts.GetBool("circadian.is_dusk_or_night") && c.Facts.GetBool("bootstrap.has_kit") && !c.Facts.GetBool("vitals.is_sleeping")
+				}
+				return c != nil && c.IsDawnOrDay() && c.HasSurvivalKit() && !c.IsSleeping()
+			},
 			Description: "Dawn awakening; starting daily settlement duties",
 		},
 		{
-			FromStage:   StateRest,
-			ToStage:     StageBootstrap,
-			Condition:   func(c *FSMContext) bool { return c.IsDawnOrDay() && !c.HasSurvivalKit() && !c.IsSleeping() },
+			FromStage: StateRest,
+			ToStage:   StageBootstrap,
+			Condition: func(c *FSMContext) bool {
+				if c != nil && c.Facts != nil {
+					return !c.Facts.GetBool("circadian.is_dusk_or_night") && !c.Facts.GetBool("bootstrap.has_kit") && !c.Facts.GetBool("vitals.is_sleeping")
+				}
+				return c != nil && c.IsDawnOrDay() && !c.HasSurvivalKit() && !c.IsSleeping()
+			},
 			Description: "Dawn awakening; starting survival kit bootstrap",
 		},
 	}
@@ -1098,6 +1208,7 @@ type FSMResult struct {
 	Intents             []FSMIntent
 	GoalHierarchy       *GoalHierarchy
 	CombatResult        *ReflexResult
+	Facts               *FactGraph
 }
 
 // AgentFSM manages the formal Two-Tier Hierarchical Finite State Machine for System 1.
@@ -1117,6 +1228,17 @@ type AgentFSM struct {
 	onRoutineTransition func(from, to Routine, reason string)
 	stack               []StateStackFrame
 	maxStackDepth       int
+	lastFacts           *FactGraph
+}
+
+// LastFacts returns the most recently evaluated FactGraph from Tick.
+func (fsm *AgentFSM) LastFacts() *FactGraph {
+	if fsm == nil {
+		return nil
+	}
+	fsm.mu.RLock()
+	defer fsm.mu.RUnlock()
+	return fsm.lastFacts
 }
 
 // AgentHFSM is an alias for AgentFSM representing the formal Two-Tier Hierarchical FSM.
@@ -1453,6 +1575,10 @@ func (fsm *AgentFSM) Tick(ctx *FSMContext) FSMResult {
 	fsm.mu.Lock()
 	defer fsm.mu.Unlock()
 
+	if ctx != nil {
+		fsm.lastFacts = ctx.Facts
+	}
+
 	worldTick := int64(0)
 	tod := int64(0)
 	var weather civquestv1.Weather
@@ -1518,6 +1644,7 @@ func (fsm *AgentFSM) Tick(ctx *FSMContext) FSMResult {
 				State:               StageDead,
 				PreviousState:       fromStage,
 				TransitionReason:    "terminal agent death detected",
+				Facts:               fsm.lastFacts,
 			}
 		}
 
@@ -1531,6 +1658,7 @@ func (fsm *AgentFSM) Tick(ctx *FSMContext) FSMResult {
 			PreviousRoutine: fsm.previousRoutine,
 			State:           StageDead,
 			PreviousState:   fsm.previousStage,
+			Facts:           fsm.lastFacts,
 		}
 	}
 
@@ -1769,5 +1897,6 @@ func (fsm *AgentFSM) Tick(ctx *FSMContext) FSMResult {
 		TransitionReason:    transitionReason,
 		Intents:             intents,
 		GoalHierarchy:       &goals,
+		Facts:               fsm.lastFacts,
 	}
 }

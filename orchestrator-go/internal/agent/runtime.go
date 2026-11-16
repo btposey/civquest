@@ -2402,6 +2402,13 @@ func (r *AgentRuntime) dispatchContemplation(frame *civquestv1.TelemetryFrame) {
 			return
 		}
 
+		r.mu.RLock()
+		fsm := r.agentFSM
+		r.mu.RUnlock()
+		if fsm != nil && fsm.LastFacts() != nil {
+			ledger.WithFactGraph(fsm.LastFacts())
+		}
+
 		resp, err := contemplator.Contemplate(reqCtx, ledger)
 		if err != nil {
 			if !errors.Is(err, context.Canceled) {
@@ -2577,6 +2584,13 @@ func (r *AgentRuntime) TriggerContemplation(ctx context.Context, frame *civquest
 		return nil, fmt.Errorf("assembling strategic ledger: %w", err)
 	}
 
+	r.mu.RLock()
+	fsm := r.agentFSM
+	r.mu.RUnlock()
+	if fsm != nil && fsm.LastFacts() != nil {
+		ledger.WithFactGraph(fsm.LastFacts())
+	}
+
 	resp, err := contemplator.Contemplate(ctx, ledger)
 	if err != nil {
 		return nil, err
@@ -2737,7 +2751,7 @@ func (r *AgentRuntime) buildDialogueVitals(frame *civquestv1.TelemetryFrame) *sy
 	recentCombat := r.lastCombatSummary
 	r.mu.RUnlock()
 
-	return &system2.DialogueVitals{
+	vitals := &system2.DialogueVitals{
 		Health:           frame.Status.Health,
 		FoodLevel:        frame.Status.FoodLevel,
 		TimeOfDay:        frame.TimeOfDay,
@@ -2754,6 +2768,14 @@ func (r *AgentRuntime) buildDialogueVitals(frame *civquestv1.TelemetryFrame) *sy
 		ShortTermGoal:    stGoal,
 		LongTermGoal:     ltGoal,
 	}
+
+	r.mu.RLock()
+	fsm := r.agentFSM
+	r.mu.RUnlock()
+	if fsm != nil && fsm.LastFacts() != nil {
+		vitals.WithFactGraph(fsm.LastFacts())
+	}
+	return vitals
 }
 
 func formatPlayerRelativeLocation(frame *civquestv1.TelemetryFrame, chat *civquestv1.ChatEvent) string {

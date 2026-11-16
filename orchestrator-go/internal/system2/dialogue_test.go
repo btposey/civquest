@@ -14,6 +14,7 @@ import (
 	"github.com/btposey/civquest/orchestrator-go/internal/db"
 	"github.com/btposey/civquest/orchestrator-go/internal/memory"
 	civquestv1 "github.com/btposey/civquest/orchestrator-go/internal/proto/v1"
+	"github.com/btposey/civquest/orchestrator-go/internal/system1"
 	"github.com/btposey/civquest/orchestrator-go/internal/xdg"
 )
 
@@ -890,5 +891,74 @@ func TestFormatSensoryEnvironmentSection_RelativeLocationAndGoals(t *testing.T) 
 	}
 	if !strings.Contains(section, "<current_goals>") || !strings.Contains(section, "ESTABLISH_OUTPOST:") || !strings.Contains(section, "CHART_REGIONAL_ATLAS:") {
 		t.Errorf("expected <current_goals> block in sensory section, got:\n%s", section)
+	}
+}
+
+func TestDialogueService_VerifiedFactsPromptInjection(t *testing.T) {
+	// 1. Create a FactGraph with verified environmental facts
+	graph := system1.NewFactGraph()
+	graph.SetBool("threat.is_emergency", "threat", false, "Threat nominal")
+	graph.SetBool("bootstrap.has_kit", "bootstrap", true, "Has survival kit")
+	graph.SetBool("colonize.is_establishing", "colonize", true, "Establishing outpost")
+
+	promptContext := graph.ToPromptContext()
+	if !strings.Contains(promptContext, "### Verified Environmental Facts") {
+		t.Fatalf("expected header '### Verified Environmental Facts', got:\n%s", promptContext)
+	}
+
+	// 2. Test DialogueVitals.WithFactGraph
+	vitals := &DialogueVitals{Health: 20, FoodLevel: 20}
+	vitals.WithFactGraph(graph)
+	if vitals.VerifiedFacts != promptContext {
+		t.Errorf("expected vitals.VerifiedFacts to match promptContext")
+	}
+
+	// 3. Test formatSensoryEnvironmentSection includes <verified_facts>
+	sensorySection := formatSensoryEnvironmentSection(vitals, SurplusStable)
+	if !strings.Contains(sensorySection, "<verified_facts>") || !strings.Contains(sensorySection, "</verified_facts>") {
+		t.Errorf("expected <verified_facts> tag in sensory section, got:\n%s", sensorySection)
+	}
+	if !strings.Contains(sensorySection, "Establishing outpost") {
+		t.Errorf("expected fact evidence in sensory section, got:\n%s", sensorySection)
+	}
+
+	// 4. Test ChatDialogueRequest with FactGraph and prompt building
+	chatReq := ChatDialogueRequest{
+		PlayerUUID: "player-123",
+		PlayerName: "Steve",
+		Message:    "Hello",
+		WorldTick:  1000,
+		Vitals:     vitals,
+	}
+	cfg := &xdg.AgentIdentityConfig{
+		Name:       "Aria",
+		ClanID:     "ClanPioneers",
+		Profession: "EXPLORER",
+	}
+
+	svc := &DialogueService{sanitizer: NewChatSanitizer()}
+	chatMessages := svc.buildChatPrompt(chatReq, "Hello", cfg, 10.0, "FRIEND", "")
+	if len(chatMessages) < 2 {
+		t.Fatalf("expected at least 2 chat prompt messages")
+	}
+	chatSys := chatMessages[0].Content
+	if !strings.Contains(chatSys, "<verified_facts>") || !strings.Contains(chatSys, "Establishing outpost") {
+		t.Errorf("expected <verified_facts> in chat system prompt, got:\n%s", chatSys)
+	}
+
+	// 5. Test TradeDialogueRequest with FactGraph and prompt building
+	tradeReq := TradeDialogueRequest{
+		PlayerUUID: "player-123",
+		PlayerName: "Steve",
+		WorldTick:  1000,
+		Vitals:     vitals,
+	}
+	tradeMessages := svc.buildTradePrompt(tradeReq, "I offer 5 emeralds", cfg, 10.0, "FRIEND", "")
+	if len(tradeMessages) < 2 {
+		t.Fatalf("expected at least 2 trade prompt messages")
+	}
+	tradeSys := tradeMessages[0].Content
+	if !strings.Contains(tradeSys, "<verified_facts>") || !strings.Contains(tradeSys, "Establishing outpost") {
+		t.Errorf("expected <verified_facts> in trade system prompt, got:\n%s", tradeSys)
 	}
 }

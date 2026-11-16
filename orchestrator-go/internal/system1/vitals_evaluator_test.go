@@ -207,6 +207,9 @@ func TestThreatEvaluator_PopulatesAllFacts(t *testing.T) {
 	if graphSafe.GetBool("threat.damage_taken") {
 		t.Errorf("expected threat.damage_taken false")
 	}
+	if graphSafe.GetBool("threat.is_emergency") {
+		t.Errorf("expected threat.is_emergency false in safe environment")
+	}
 	if !graphSafe.GetBool("threat.threats_cleared") {
 		t.Errorf("expected threat.threats_cleared true in safe environment")
 	}
@@ -278,6 +281,9 @@ func TestThreatEvaluator_PopulatesAllFacts(t *testing.T) {
 	if wSlot != 0 {
 		t.Errorf("expected weapon_slot 0, got %d", wSlot)
 	}
+	if !graphHostile.GetBool("threat.is_emergency") {
+		t.Errorf("expected threat.is_emergency true with zombie present")
+	}
 	if graphHostile.GetBool("threat.threats_cleared") {
 		t.Errorf("expected threat.threats_cleared false with zombie present")
 	}
@@ -306,6 +312,9 @@ func TestThreatEvaluator_PopulatesAllFacts(t *testing.T) {
 	if !graphCreeper.GetBool("threat.should_panic") {
 		t.Errorf("expected threat.should_panic true for hissing creeper")
 	}
+	if !graphCreeper.GetBool("threat.is_emergency") {
+		t.Errorf("expected threat.is_emergency true for hissing creeper")
+	}
 
 	// 4. Damage taken
 	frameDamage := &civquestv1.TelemetryFrame{
@@ -324,6 +333,9 @@ func TestThreatEvaluator_PopulatesAllFacts(t *testing.T) {
 	_ = eval.Evaluate(&EvaluatorContext{Frame: frameDamage}, graphDamage)
 	if !graphDamage.GetBool("threat.damage_taken") {
 		t.Errorf("expected threat.damage_taken true")
+	}
+	if !graphDamage.GetBool("threat.is_emergency") {
+		t.Errorf("expected threat.is_emergency true after damage taken")
 	}
 	if graphDamage.GetBool("threat.threats_cleared") {
 		t.Errorf("expected threat.threats_cleared false with recent damage")
