@@ -939,3 +939,39 @@ func TestAgentSkill_SaveAndLoad(t *testing.T) {
 		t.Errorf("expected non-empty AgentSkillPath")
 	}
 }
+
+func TestAgentIdentityConfig_EffectiveShift(t *testing.T) {
+	tests := []struct {
+		name      string
+		cfg       *xdg.AgentIdentityConfig
+		wantShift string
+	}{
+		{"nil config defaults to 1st", nil, xdg.ShiftFirst},
+		{"explicit 1st", &xdg.AgentIdentityConfig{Shift: "1st"}, xdg.ShiftFirst},
+		{"explicit first", &xdg.AgentIdentityConfig{Shift: "first"}, xdg.ShiftFirst},
+		{"explicit day", &xdg.AgentIdentityConfig{Shift: "day"}, xdg.ShiftFirst},
+		{"explicit 3rd", &xdg.AgentIdentityConfig{Shift: "3rd"}, xdg.ShiftThird},
+		{"explicit third", &xdg.AgentIdentityConfig{Shift: "third"}, xdg.ShiftThird},
+		{"explicit night", &xdg.AgentIdentityConfig{Shift: "night"}, xdg.ShiftThird},
+		{"explicit nightwatch", &xdg.AgentIdentityConfig{Shift: "nightwatch"}, xdg.ShiftThird},
+		{"guard profession defaults to 3rd", &xdg.AgentIdentityConfig{Profession: "Guard"}, xdg.ShiftThird},
+		{"patrol profession defaults to 3rd", &xdg.AgentIdentityConfig{Profession: "PATROL"}, xdg.ShiftThird},
+		{"watchman profession defaults to 3rd", &xdg.AgentIdentityConfig{Profession: "watchman"}, xdg.ShiftThird},
+		{"sentry profession defaults to 3rd", &xdg.AgentIdentityConfig{Profession: "Sentry"}, xdg.ShiftThird},
+		{"warrior profession defaults to 3rd", &xdg.AgentIdentityConfig{Profession: "Warrior"}, xdg.ShiftThird},
+		{"farmer profession defaults to 1st", &xdg.AgentIdentityConfig{Profession: "Farmer"}, xdg.ShiftFirst},
+		{"builder profession defaults to 1st", &xdg.AgentIdentityConfig{Profession: "Builder"}, xdg.ShiftFirst},
+		{"guard with explicit 1st overrides profession", &xdg.AgentIdentityConfig{Profession: "Guard", Shift: "1st"}, xdg.ShiftFirst},
+		{"farmer with explicit 3rd overrides profession", &xdg.AgentIdentityConfig{Profession: "Farmer", Shift: "3rd"}, xdg.ShiftThird},
+		{"empty string and empty profession defaults to 1st", &xdg.AgentIdentityConfig{Profession: "", Shift: ""}, xdg.ShiftFirst},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := tt.cfg.EffectiveShift()
+			if got != tt.wantShift {
+				t.Errorf("EffectiveShift() = %q, want %q", got, tt.wantShift)
+			}
+		})
+	}
+}

@@ -18,6 +18,8 @@ const (
 	StageSettlement Stage = "SETTLEMENT"
 	// StageColonize represents founding a new frontier settlement node.
 	StageColonize Stage = "COLONIZE"
+	// StageDead represents terminal permadeath state where all agent loops cease.
+	StageDead Stage = "DEAD"
 )
 
 // State is an alias for Stage, preserving backward compatibility with legacy FSM code.
@@ -28,6 +30,7 @@ const (
 	StateBootstrap  State = StageBootstrap
 	StateSettlement State = StageSettlement
 	StateColonize   State = StageColonize
+	StateDead       State = StageDead
 
 	// Backward compatibility aliases for legacy states
 	StateExplore State = StageSettlement
@@ -60,6 +63,8 @@ const (
 	RoutineCivicPatrol Routine = "CIVIC_PATROL"
 	// RoutineCamp represents camping with player companion during evening/night, overriding tavern and bed return.
 	RoutineCamp Routine = "CAMP"
+	// RoutineDead represents terminal permadeath cessation of all operational routines.
+	RoutineDead Routine = "DEAD"
 )
 
 // StateTuple encapsulates the unified (Stage, Routine) state of an agent in the Two-Tier HFSM.

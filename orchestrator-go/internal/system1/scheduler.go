@@ -179,31 +179,9 @@ func ComputeCircadianRoutine(
 		return RoutineSleep
 	}
 
-	if tod >= 23500 || tod < 1000 {
-		return RoutineDawnPrep
-	}
-
-	if tod >= 1000 && tod < 8000 {
-		if state != nil && state.IsCivicPatrolActive() {
-			return RoutineCivicPatrol
-		}
-		if agentCfg != nil {
-			profUpper := strings.ToUpper(strings.TrimSpace(agentCfg.Profession))
-			if (profUpper == "GUARD" || profUpper == "PATROL" || profUpper == "WATCHMAN" || profUpper == "SENTRY" || profUpper == "WARRIOR") &&
-				state != nil && state.IsCivicPatrolActive() {
-				return RoutineCivicPatrol
-			}
-		}
-		if state != nil && state.IsPrimaryDutyBlocked() {
-			return RoutineSecondaryHobby
-		}
-		return RoutinePrimaryDuty
-	}
-
-	if tod >= 8000 && tod < 11000 {
-		return RoutineSecondaryHobby
-	}
-
+	// Late Day Social Time at Tavern (11000 <= tod < 13000):
+	// Both 1st shift and 3rd shift evaluate to RoutineTavernSocial!
+	// (If companion active, RoutineCamp).
 	if tod >= 11000 && tod < 13000 {
 		if state != nil && state.IsCompanionActive() {
 			return RoutineCamp
@@ -211,10 +189,58 @@ func ComputeCircadianRoutine(
 		return RoutineTavernSocial
 	}
 
+	shift := agentCfg.EffectiveShift()
+
+	if shift == xdg.ShiftThird {
+		// 3rd Shift (Night Watch):
+		// [13000, 23500): RoutineCivicPatrol ("night watch and perimeter patrol during monster emergence")
+		if tod >= 13000 && tod < 23500 {
+			if state != nil && state.IsCompanionActive() {
+				return RoutineCamp
+			}
+			return RoutineCivicPatrol
+		}
+		// [23500, 2000): RoutineDawnPrep ("dawn watch debrief and morning handover to 1st shift")
+		if tod >= 23500 || tod < 2000 {
+			return RoutineDawnPrep
+		}
+		// [2000, 10000): RoutineSleep ("daytime sleep during safe daylight hours")
+		if tod >= 2000 && tod < 10000 {
+			if state != nil && state.IsCompanionActive() {
+				return RoutineCamp
+			}
+			return RoutineSleep
+		}
+		// [10000, 11000): RoutineSecondaryHobby ("waking, equipment maintenance, and personal hobby")
+		return RoutineSecondaryHobby
+	}
+
+	// 1st Shift (Day Shift):
+	// [23500, 1000): RoutineDawnPrep ("dawn awakening and morning routine")
+	if tod >= 23500 || tod < 1000 {
+		return RoutineDawnPrep
+	}
+
+	// [1000, 8000): RoutinePrimaryDuty (or RoutineCivicPatrol if patrol active, or RoutineSecondaryHobby if blocked)
+	if tod >= 1000 && tod < 8000 {
+		if state != nil && state.IsCivicPatrolActive() {
+			return RoutineCivicPatrol
+		}
+		if state != nil && state.IsPrimaryDutyBlocked() {
+			return RoutineSecondaryHobby
+		}
+		return RoutinePrimaryDuty
+	}
+
+	// [8000, 11000): RoutineSecondaryHobby ("gathering and practicing secondary hobby")
+	if tod >= 8000 && tod < 11000 {
+		return RoutineSecondaryHobby
+	}
+
+	// [13000, 23500): RoutineSleep ("sleeping through the night in assigned bed")
 	if state != nil && state.IsCompanionActive() {
 		return RoutineCamp
 	}
-
 	return RoutineSleep
 }
 
@@ -239,13 +265,6 @@ func EvaluateCircadianRoutine(
 
 	tod := ((timeOfDay % 24000) + 24000) % 24000
 
-	// Check if profession is assigned to civic patrol / perimeter sentry duties
-	isGuardOrPatrol := false
-	profUpper := strings.ToUpper(strings.TrimSpace(profession))
-	if profUpper == "GUARD" || profUpper == "PATROL" || profUpper == "WATCHMAN" || profUpper == "SENTRY" || profUpper == "WARRIOR" {
-		isGuardOrPatrol = true
-	}
-
 	// Sleeping during thunderstorm override (synchronized with EvaluateSleep in needs.go)
 	if weather == civquestv1.Weather_WEATHER_THUNDER {
 		return &UtilityDecision{
@@ -258,8 +277,107 @@ func EvaluateCircadianRoutine(
 		}
 	}
 
+	// Late Day Social Time at Tavern (11000 <= tod < 13000):
+	// Both 1st shift and 3rd shift evaluate to RoutineTavernSocial!
+	// (If companion active, RoutineCamp).
+	if tod >= 11000 && tod < 13000 {
+		if state != nil && state.IsCompanionActive() {
+			return &UtilityDecision{
+				State:      RoutineCamp,
+				Utility:    0.85,
+				Profession: profession,
+				Hobby:      hobby,
+				Reason:     "camping with player companion, overriding tavern return",
+				TimeOfDay:  tod,
+			}
+		}
+		reason := "gathering at tavern for late-day social consciousness coordination"
+		if agentCfg.EffectiveShift() == xdg.ShiftThird {
+			reason = "late-day tavern social and shift briefing with 1st shift"
+		}
+		return &UtilityDecision{
+			State:      RoutineTavernSocial,
+			Utility:    0.65,
+			Profession: profession,
+			Hobby:      hobby,
+			Reason:     reason,
+			TimeOfDay:  tod,
+		}
+	}
+
+	shift := agentCfg.EffectiveShift()
+
+	if shift == xdg.ShiftThird {
+		// [13000, 23500): RoutineCivicPatrol ("night watch and perimeter patrol during monster emergence")
+		if tod >= 13000 && tod < 23500 {
+			if state != nil && state.IsCompanionActive() {
+				return &UtilityDecision{
+					State:      RoutineCamp,
+					Utility:    0.85,
+					Profession: profession,
+					Hobby:      hobby,
+					Reason:     "camping and resting with player companion, overriding village bed routine",
+					TimeOfDay:  tod,
+				}
+			}
+			return &UtilityDecision{
+				State:      RoutineCivicPatrol,
+				Utility:    0.80,
+				Profession: profession,
+				Hobby:      hobby,
+				Reason:     "night watch and perimeter patrol during monster emergence",
+				TimeOfDay:  tod,
+			}
+		}
+
+		// [23500, 2000): RoutineDawnPrep ("dawn watch debrief and morning handover to 1st shift")
+		if tod >= 23500 || tod < 2000 {
+			return &UtilityDecision{
+				State:      RoutineDawnPrep,
+				Utility:    0.75,
+				Profession: profession,
+				Hobby:      hobby,
+				Reason:     "dawn watch debrief and morning handover to 1st shift",
+				TimeOfDay:  tod,
+			}
+		}
+
+		// [2000, 10000): RoutineSleep ("daytime sleep during safe daylight hours")
+		if tod >= 2000 && tod < 10000 {
+			if state != nil && state.IsCompanionActive() {
+				return &UtilityDecision{
+					State:      RoutineCamp,
+					Utility:    0.85,
+					Profession: profession,
+					Hobby:      hobby,
+					Reason:     "camping and resting with player companion, overriding village bed routine",
+					TimeOfDay:  tod,
+				}
+			}
+			return &UtilityDecision{
+				State:      RoutineSleep,
+				Utility:    0.90,
+				Profession: profession,
+				Hobby:      hobby,
+				Reason:     "daytime sleep during safe daylight hours",
+				TimeOfDay:  tod,
+			}
+		}
+
+		// [10000, 11000): RoutineSecondaryHobby ("waking, equipment maintenance, and personal hobby")
+		return &UtilityDecision{
+			State:      RoutineSecondaryHobby,
+			Utility:    0.70,
+			Profession: profession,
+			Hobby:      hobby,
+			Reason:     "waking, equipment maintenance, and personal hobby",
+			TimeOfDay:  tod,
+		}
+	}
+
+	// 1st Shift (Day Shift):
+	// [23500, 1000): RoutineDawnPrep ("dawn awakening and morning routine")
 	if tod >= 23500 || tod < 1000 {
-		// Dawn Awakening (Ticks 23500–1000)
 		return &UtilityDecision{
 			State:      RoutineDawnPrep,
 			Utility:    0.80,
@@ -270,9 +388,9 @@ func EvaluateCircadianRoutine(
 		}
 	}
 
+	// [1000, 8000): RoutinePrimaryDuty (or RoutineCivicPatrol if patrol active, or RoutineSecondaryHobby if blocked)
 	if tod >= 1000 && tod < 8000 {
-		// Primary Duty (Ticks 1000–8000)
-		if (isGuardOrPatrol && state != nil && state.IsCivicPatrolActive()) || (state != nil && state.IsCivicPatrolActive()) {
+		if state != nil && state.IsCivicPatrolActive() {
 			return &UtilityDecision{
 				State:      RoutineCivicPatrol,
 				Utility:    0.75,
@@ -302,8 +420,8 @@ func EvaluateCircadianRoutine(
 		}
 	}
 
+	// [8000, 11000): RoutineSecondaryHobby ("gathering and practicing secondary hobby")
 	if tod >= 8000 && tod < 11000 {
-		// Secondary Hobby (Ticks 8000–11000)
 		return &UtilityDecision{
 			State:      RoutineSecondaryHobby,
 			Utility:    0.70,
@@ -314,29 +432,7 @@ func EvaluateCircadianRoutine(
 		}
 	}
 
-	if tod >= 11000 && tod < 13000 {
-		// Tavern Social (Ticks 11000–13000)
-		if state != nil && state.IsCompanionActive() {
-			return &UtilityDecision{
-				State:      RoutineCamp,
-				Utility:    0.85,
-				Profession: profession,
-				Hobby:      hobby,
-				Reason:     "camping with player companion, overriding tavern return",
-				TimeOfDay:  tod,
-			}
-		}
-		return &UtilityDecision{
-			State:      RoutineTavernSocial,
-			Utility:    0.65,
-			Profession: profession,
-			Hobby:      hobby,
-			Reason:     "gathering at tavern for social relaxation",
-			TimeOfDay:  tod,
-		}
-	}
-
-	// Sleep (Ticks 13000–23500)
+	// [13000, 23500): RoutineSleep ("sleeping through the night in assigned bed")
 	if state != nil && state.IsCompanionActive() {
 		return &UtilityDecision{
 			State:      RoutineCamp,
@@ -352,7 +448,7 @@ func EvaluateCircadianRoutine(
 		Utility:    0.90,
 		Profession: profession,
 		Hobby:      hobby,
-		Reason:     "navigating to assigned bed and sleeping through the night",
+		Reason:     "sleeping through the night in assigned bed",
 		TimeOfDay:  tod,
 	}
 }

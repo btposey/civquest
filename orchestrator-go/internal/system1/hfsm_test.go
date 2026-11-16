@@ -262,6 +262,7 @@ func TestTwoTierHFSM_CivicPatrolRoutine(t *testing.T) {
 	cfg := &xdg.AgentIdentityConfig{
 		Name:       "boreas",
 		Profession: "Guard",
+		Shift:      xdg.ShiftFirst,
 		Traits:     xdg.AgentTraits{Bravery: 0.8},
 	}
 
@@ -539,4 +540,506 @@ func TestTwoTierHFSM_ConcurrentSafety(t *testing.T) {
 	}
 
 	wg.Wait()
+}
+
+// ==================== HTPDA & SHIFT WORK TESTS ====================
+
+const (
+	stageTestDialogue   Stage   = "DIALOGUE"
+	routineTestDialogue Routine = "DIALOGUE"
+)
+
+type testDialogueStateHandler struct{}
+
+func (h *testDialogueStateHandler) Name() State                         { return stageTestDialogue }
+func (h *testDialogueStateHandler) Guard(ctx *FSMContext) bool          { return true }
+func (h *testDialogueStateHandler) OnEntry(ctx *FSMContext, from State) {}
+func (h *testDialogueStateHandler) OnExit(ctx *FSMContext, to State)    {}
+func (h *testDialogueStateHandler) OnTick(ctx *FSMContext) []FSMIntent {
+	return nil
+}
+
+// TestTwoTierHFSM_PushdownAutomata verifies:
+// 1. Preemption: entering StageEmergency pushes previous stage (StageSettlement) onto stack.
+// 2. Threat clearance: ThreatsCleared() pops previous stage (StageSettlement) and resumes it with zero amnesia.
+// 3. Multi-level push/pop: Dialogue interrupt on top of work, then emergency on top of dialogue.
+// 4. Terminal sink: fatal health drops/clears stack and transitions to StageDead.
+// 5. Stack bounds, duplicate top suppression, and capacity overflow.
+func TestTwoTierHFSM_PushdownAutomata(t *testing.T) {
+	t.Run("Preemption and Zero-Amnesia Resume", func(t *testing.T) {
+		fsm := NewAgentFSM(StageSettlement, nil)
+		state := NewAgentState()
+		state.SetStageAndRoutine(StageSettlement, RoutinePrimaryDuty)
+
+		cfg := &xdg.AgentIdentityConfig{
+			Name:       "artisan",
+			Profession: "Carpenter",
+			Shift:      xdg.ShiftFirst,
+			Traits:     xdg.AgentTraits{Bravery: 0.5},
+		}
+
+		ctx := &FSMContext{
+			AgentID: "pda_artisan",
+			State:   state,
+			Config:  cfg,
+			Frame: &civquestv1.TelemetryFrame{
+				WorldTick: 2000,
+				TimeOfDay: 3000, // Daylight work hours
+				Status: &civquestv1.AgentStatus{
+					AgentId:   "pda_artisan",
+					Health:    20.0,
+					MaxHealth: 20.0,
+					FoodLevel: 20,
+					Position:  &civquestv1.Vec3{X: 10, Y: 64, Z: 10},
+					Inventory: []*civquestv1.ItemStackProto{
+						{ItemId: "minecraft:iron_axe", Count: 1},
+						{ItemId: "minecraft:iron_sword", Count: 1},
+						{ItemId: "minecraft:torch", Count: 4},
+					},
+				},
+			},
+		}
+
+		// Initial tick in settlement
+		res := fsm.Tick(ctx)
+		if res.Stage != StageSettlement || res.Routine != RoutinePrimaryDuty {
+			t.Fatalf("expected initial (Settlement, PrimaryDuty), got (%s, %s)", res.Stage, res.Routine)
+		}
+		if fsm.StackDepth() != 0 {
+			t.Fatalf("expected stack depth 0 initially, got %d", fsm.StackDepth())
+		}
+
+		// Preemption: Creeper appears -> StageEmergency
+		ctx.Frame.WorldTick = 2020
+		ctx.Frame.VisibleEntities = []*civquestv1.VisibleEntity{
+			{
+				EntityId:   201,
+				EntityType: "minecraft:creeper",
+				Distance:   3.0,
+				IsHostile:  true,
+				Position:   &civquestv1.Vec3{X: 12, Y: 64, Z: 10},
+			},
+		}
+
+		res = fsm.Tick(ctx)
+		if res.Stage != StageEmergency || res.Routine != RoutineEmergency {
+			t.Fatalf("expected (Emergency, Emergency), got (%s, %s)", res.Stage, res.Routine)
+		}
+		if fsm.StackDepth() != 1 {
+			t.Fatalf("expected stack depth 1 after preemption, got %d", fsm.StackDepth())
+		}
+		peek, ok := fsm.Peek()
+		if !ok || peek.Stage != StageSettlement || peek.Routine != RoutinePrimaryDuty {
+			t.Fatalf("expected top stack frame (Settlement, PrimaryDuty), got (%s, %s)", peek.Stage, peek.Routine)
+		}
+
+		// Threat clearance: Creeper despawns/killed -> threats cleared!
+		ctx.Frame.WorldTick = 2050
+		ctx.Frame.VisibleEntities = nil
+
+		res = fsm.Tick(ctx)
+		if res.Stage != StageSettlement || res.Routine != RoutinePrimaryDuty {
+			t.Fatalf("expected restored (Settlement, PrimaryDuty), got (%s, %s)", res.Stage, res.Routine)
+		}
+		if fsm.StackDepth() != 0 {
+			t.Fatalf("expected stack depth 0 after pop, got %d", fsm.StackDepth())
+		}
+		if state.Stage() != StageSettlement || state.Routine() != RoutinePrimaryDuty {
+			t.Fatalf("state desync after pop: (%s, %s)", state.Stage(), state.Routine())
+		}
+	})
+
+	t.Run("Multi-Level Push Pop (Dialogue Interrupt and Emergency)", func(t *testing.T) {
+		fsm := NewAgentFSM(StageSettlement, nil)
+		fsm.RegisterHandler(&testDialogueStateHandler{})
+
+		state := NewAgentState()
+		state.SetStageAndRoutine(StageSettlement, RoutinePrimaryDuty)
+
+		cfg := &xdg.AgentIdentityConfig{
+			Name:       "librarian",
+			Profession: "Chronicler",
+			Shift:      xdg.ShiftFirst,
+			Traits:     xdg.AgentTraits{Bravery: 0.5},
+		}
+
+		ctx := &FSMContext{
+			AgentID: "pda_librarian",
+			State:   state,
+			Config:  cfg,
+			Frame: &civquestv1.TelemetryFrame{
+				WorldTick: 3000,
+				TimeOfDay: 4000,
+				Status: &civquestv1.AgentStatus{
+					AgentId:   "pda_librarian",
+					Health:    20.0,
+					MaxHealth: 20.0,
+					FoodLevel: 20,
+					Position:  &civquestv1.Vec3{X: 0, Y: 64, Z: 0},
+					Inventory: []*civquestv1.ItemStackProto{
+						{ItemId: "minecraft:iron_axe", Count: 1},
+						{ItemId: "minecraft:iron_sword", Count: 1},
+						{ItemId: "minecraft:torch", Count: 8},
+					},
+				},
+			},
+		}
+
+		// 1. Initially at work
+		res := fsm.Tick(ctx)
+		if res.Stage != StageSettlement || res.Routine != RoutinePrimaryDuty {
+			t.Fatalf("expected (Settlement, PrimaryDuty), got (%s, %s)", res.Stage, res.Routine)
+		}
+
+		// 2. Dialogue interrupt: player talks to librarian
+		// Agent pushes work frame and transitions to DIALOGUE
+		fsm.Push(StageSettlement, RoutinePrimaryDuty, "work interrupted for player dialogue", 3000, map[string]string{"topic": "lore"})
+		if !fsm.TransitionTo(stageTestDialogue, "player conversation initiated", ctx) {
+			t.Fatalf("failed transition to DIALOGUE")
+		}
+		// Manually set dialogue routine on FSM/state for custom routine preservation
+		fsm.mu.Lock()
+		fsm.currentRoutine = routineTestDialogue
+		fsm.mu.Unlock()
+		state.SetStageAndRoutine(stageTestDialogue, routineTestDialogue)
+
+		if fsm.StackDepth() != 1 {
+			t.Fatalf("expected stack depth 1 during dialogue, got %d", fsm.StackDepth())
+		}
+		if fsm.CurrentStage() != stageTestDialogue || fsm.CurrentRoutine() != routineTestDialogue {
+			t.Fatalf("expected (DIALOGUE, DIALOGUE), got (%s, %s)", fsm.CurrentStage(), fsm.CurrentRoutine())
+		}
+
+		// 3. Emergency strikes while in dialogue!
+		ctx.Frame.WorldTick = 3050
+		ctx.Frame.VisibleEntities = []*civquestv1.VisibleEntity{
+			{
+				EntityId:   301,
+				EntityType: "minecraft:skeleton",
+				Distance:   4.0,
+				IsHostile:  true,
+				Position:   &civquestv1.Vec3{X: 4, Y: 64, Z: 0},
+			},
+		}
+
+		res = fsm.Tick(ctx)
+		if res.Stage != StageEmergency || res.Routine != RoutineEmergency {
+			t.Fatalf("expected (Emergency, Emergency), got (%s, %s)", res.Stage, res.Routine)
+		}
+		if fsm.StackDepth() != 2 {
+			t.Fatalf("expected stack depth 2 after emergency on dialogue, got %d", fsm.StackDepth())
+		}
+		top, ok := fsm.Peek()
+		if !ok || top.Stage != stageTestDialogue || top.Routine != routineTestDialogue {
+			t.Fatalf("expected top stack frame (DIALOGUE, DIALOGUE), got (%s, %s)", top.Stage, top.Routine)
+		}
+
+		// 4. Threats cleared!
+		ctx.Frame.WorldTick = 3100
+		ctx.Frame.VisibleEntities = nil
+
+		res = fsm.Tick(ctx)
+		// Pop 1: Must restore DIALOGUE stage and routine with zero amnesia
+		if res.Stage != stageTestDialogue || res.Routine != routineTestDialogue {
+			t.Fatalf("expected restored (DIALOGUE, DIALOGUE), got (%s, %s)", res.Stage, res.Routine)
+		}
+		if fsm.StackDepth() != 1 {
+			t.Fatalf("expected stack depth 1 after first pop, got %d", fsm.StackDepth())
+		}
+		nextTop, ok := fsm.Peek()
+		if !ok || nextTop.Stage != StageSettlement || nextTop.Routine != RoutinePrimaryDuty {
+			t.Fatalf("expected next frame (Settlement, PrimaryDuty), got (%s, %s)", nextTop.Stage, nextTop.Routine)
+		}
+
+		// 5. Dialogue concludes -> Pop 2 resumes work
+		workFrame, ok := fsm.Pop()
+		if !ok || workFrame.Stage != StageSettlement || workFrame.Routine != RoutinePrimaryDuty {
+			t.Fatalf("failed popping work frame")
+		}
+		if !fsm.TransitionTo(workFrame.Stage, "dialogue concluded; resuming primary duty", ctx) {
+			t.Fatalf("failed transition back to Settlement")
+		}
+		if fsm.CurrentStage() != StageSettlement || fsm.CurrentRoutine() != RoutinePrimaryDuty {
+			t.Fatalf("expected restored work state (Settlement, PrimaryDuty), got (%s, %s)", fsm.CurrentStage(), fsm.CurrentRoutine())
+		}
+		if fsm.StackDepth() != 0 {
+			t.Fatalf("expected empty stack after full pop sequence, got %d", fsm.StackDepth())
+		}
+	})
+
+	t.Run("Terminal Sink Fatal Health Clears Stack", func(t *testing.T) {
+		fsm := NewAgentFSM(StageSettlement, nil)
+		state := NewAgentState()
+
+		// Push multiple frames to test stack clearing on death
+		fsm.Push(StageSettlement, RoutinePrimaryDuty, "work", 100, nil)
+		fsm.Push(StageSettlement, RoutineSecondaryHobby, "hobby", 200, nil)
+		fsm.Push(stageTestDialogue, routineTestDialogue, "dialogue", 300, nil)
+		if fsm.StackDepth() != 3 {
+			t.Fatalf("expected stack depth 3, got %d", fsm.StackDepth())
+		}
+
+		ctx := &FSMContext{
+			AgentID: "mortal_agent",
+			State:   state,
+			Frame: &civquestv1.TelemetryFrame{
+				WorldTick: 500,
+				Status: &civquestv1.AgentStatus{
+					AgentId:   "mortal_agent",
+					Health:    0.0, // Lethal damage!
+					MaxHealth: 20.0,
+				},
+			},
+		}
+
+		res := fsm.Tick(ctx)
+		if res.Stage != StageDead || res.Routine != RoutineDead {
+			t.Fatalf("expected terminal (DEAD, DEAD), got (%s, %s)", res.Stage, res.Routine)
+		}
+		if fsm.StackDepth() != 0 {
+			t.Fatalf("expected stack cleared on death, got depth %d", fsm.StackDepth())
+		}
+		if state.Stage() != StageDead || state.Routine() != RoutineDead {
+			t.Fatalf("state desync on death: (%s, %s)", state.Stage(), state.Routine())
+		}
+
+		// Subsequent ticks must remain in terminal DEAD state
+		ctx.Frame.WorldTick = 510
+		ctx.Frame.Status.Health = 20.0 // Even if health miraculously changes, death is permanent
+		res2 := fsm.Tick(ctx)
+		if res2.Stage != StageDead || res2.Routine != RoutineDead {
+			t.Fatalf("permadeath invariant violation: resurrected to (%s, %s)", res2.Stage, res2.Routine)
+		}
+
+		// TransitionTo must be completely rejected from StageDead
+		if fsm.TransitionTo(StageSettlement, "resurrection attempt", ctx) {
+			t.Fatalf("permadeath invariant violation: TransitionTo succeeded from StageDead")
+		}
+	})
+
+	t.Run("Stack Bounds and Duplicate Top Suppression", func(t *testing.T) {
+		fsm := NewAgentFSM(StageBootstrap, nil)
+		fsm.SetMaxStackDepth(4)
+
+		// 1. Pushing duplicate top should be ignored
+		fsm.Push(StageBootstrap, RoutineDawnPrep, "first", 1, nil)
+		fsm.Push(StageBootstrap, RoutineDawnPrep, "duplicate", 2, nil)
+		if fsm.StackDepth() != 1 {
+			t.Fatalf("expected duplicate top ignored, depth=%d", fsm.StackDepth())
+		}
+
+		// 2. Push up to capacity
+		fsm.Push(StageSettlement, RoutinePrimaryDuty, "work", 10, nil)
+		fsm.Push(StageSettlement, RoutineSecondaryHobby, "hobby", 20, nil)
+		fsm.Push(StageColonize, RoutinePrimaryDuty, "colony", 30, nil)
+		if fsm.StackDepth() != 4 {
+			t.Fatalf("expected depth 4 at capacity, got %d", fsm.StackDepth())
+		}
+
+		// 3. Overflow drops oldest
+		fsm.Push(StageSettlement, RoutineTavernSocial, "tavern", 40, nil)
+		if fsm.StackDepth() != 4 {
+			t.Fatalf("expected depth 4 after overflow, got %d", fsm.StackDepth())
+		}
+
+		// Top should be the newest
+		top, ok := fsm.Peek()
+		if !ok || top.Routine != RoutineTavernSocial {
+			t.Fatalf("expected newest frame on top, got %v", top)
+		}
+
+		// Clear stack
+		fsm.ClearStack()
+		if fsm.StackDepth() != 0 {
+			t.Fatalf("expected stack depth 0 after ClearStack, got %d", fsm.StackDepth())
+		}
+		_, ok = fsm.Pop()
+		if ok {
+			t.Fatalf("pop from empty stack should return false")
+		}
+	})
+}
+
+// TestTwoTierHFSM_ShiftWork verifies:
+// 1. 1st shift circadian progression across 24,000 ticks.
+// 2. 3rd shift circadian progression across 24,000 ticks.
+// 3. At ticks 11000, 12000, and 12999, BOTH 1st shift and 3rd shift are in RoutineTavernSocial.
+// 4. At tick 18000 (midnight), 1st shift is RoutineSleep and 3rd shift is RoutineCivicPatrol.
+// 5. At tick 5000 (midday), 1st shift is RoutinePrimaryDuty and 3rd shift is RoutineSleep.
+// 6. Thunderstorm and companion camping overrides.
+func TestTwoTierHFSM_ShiftWork(t *testing.T) {
+	firstShiftCfg := &xdg.AgentIdentityConfig{
+		Name:       "day_farmer",
+		Profession: "Farmer",
+		Shift:      xdg.ShiftFirst,
+	}
+
+	thirdShiftCfg := &xdg.AgentIdentityConfig{
+		Name:       "night_sentry",
+		Profession: "Guard",
+		Shift:      xdg.ShiftThird,
+	}
+
+	t.Run("1st Shift Circadian Progression Across 24000 Ticks", func(t *testing.T) {
+		for tod := int64(0); tod < 24000; tod += 100 {
+			routine := ComputeCircadianRoutine(tod, civquestv1.Weather_WEATHER_CLEAR, firstShiftCfg, nil)
+			var expected Routine
+			switch {
+			case tod >= 23500 || tod < 1000:
+				expected = RoutineDawnPrep
+			case tod >= 1000 && tod < 8000:
+				expected = RoutinePrimaryDuty
+			case tod >= 8000 && tod < 11000:
+				expected = RoutineSecondaryHobby
+			case tod >= 11000 && tod < 13000:
+				expected = RoutineTavernSocial
+			case tod >= 13000 && tod < 23500:
+				expected = RoutineSleep
+			}
+
+			if routine != expected {
+				t.Fatalf("1st shift tod %d: expected %s, got %s", tod, expected, routine)
+			}
+		}
+	})
+
+	t.Run("3rd Shift Circadian Progression Across 24000 Ticks", func(t *testing.T) {
+		for tod := int64(0); tod < 24000; tod += 100 {
+			routine := ComputeCircadianRoutine(tod, civquestv1.Weather_WEATHER_CLEAR, thirdShiftCfg, nil)
+			var expected Routine
+			switch {
+			case tod >= 11000 && tod < 13000:
+				expected = RoutineTavernSocial
+			case tod >= 13000 && tod < 23500:
+				expected = RoutineCivicPatrol
+			case tod >= 23500 || tod < 2000:
+				expected = RoutineDawnPrep
+			case tod >= 2000 && tod < 10000:
+				expected = RoutineSleep
+			case tod >= 10000 && tod < 11000:
+				expected = RoutineSecondaryHobby
+			}
+
+			if routine != expected {
+				t.Fatalf("3rd shift tod %d: expected %s, got %s", tod, expected, routine)
+			}
+		}
+	})
+
+	t.Run("Exact Specification Checkpoints", func(t *testing.T) {
+		// 1. At ticks 11000, 12000, and 12999: BOTH 1st shift and 3rd shift are in RoutineTavernSocial
+		for _, tick := range []int64{11000, 12000, 12999} {
+			r1 := ComputeCircadianRoutine(tick, civquestv1.Weather_WEATHER_CLEAR, firstShiftCfg, nil)
+			r3 := ComputeCircadianRoutine(tick, civquestv1.Weather_WEATHER_CLEAR, thirdShiftCfg, nil)
+			if r1 != RoutineTavernSocial {
+				t.Errorf("tick %d: expected 1st shift RoutineTavernSocial, got %s", tick, r1)
+			}
+			if r3 != RoutineTavernSocial {
+				t.Errorf("tick %d: expected 3rd shift RoutineTavernSocial, got %s", tick, r3)
+			}
+
+			d1 := EvaluateCircadianRoutine(tick, civquestv1.Weather_WEATHER_CLEAR, firstShiftCfg, nil)
+			d3 := EvaluateCircadianRoutine(tick, civquestv1.Weather_WEATHER_CLEAR, thirdShiftCfg, nil)
+			if d1.State != RoutineTavernSocial || d3.State != RoutineTavernSocial {
+				t.Errorf("tick %d: evaluate decision mismatch: d1=%s, d3=%s", tick, d1.State, d3.State)
+			}
+		}
+
+		// 2. At tick 18000 (midnight): 1st shift is RoutineSleep and 3rd shift is RoutineCivicPatrol
+		r1Mid := ComputeCircadianRoutine(18000, civquestv1.Weather_WEATHER_CLEAR, firstShiftCfg, nil)
+		r3Mid := ComputeCircadianRoutine(18000, civquestv1.Weather_WEATHER_CLEAR, thirdShiftCfg, nil)
+		if r1Mid != RoutineSleep {
+			t.Errorf("tick 18000: expected 1st shift RoutineSleep, got %s", r1Mid)
+		}
+		if r3Mid != RoutineCivicPatrol {
+			t.Errorf("tick 18000: expected 3rd shift RoutineCivicPatrol, got %s", r3Mid)
+		}
+
+		// 3. At tick 5000 (midday): 1st shift is RoutinePrimaryDuty and 3rd shift is RoutineSleep
+		r1Day := ComputeCircadianRoutine(5000, civquestv1.Weather_WEATHER_CLEAR, firstShiftCfg, nil)
+		r3Day := ComputeCircadianRoutine(5000, civquestv1.Weather_WEATHER_CLEAR, thirdShiftCfg, nil)
+		if r1Day != RoutinePrimaryDuty {
+			t.Errorf("tick 5000: expected 1st shift RoutinePrimaryDuty, got %s", r1Day)
+		}
+		if r3Day != RoutineSleep {
+			t.Errorf("tick 5000: expected 3rd shift RoutineSleep, got %s", r3Day)
+		}
+	})
+
+	t.Run("Thunderstorm and Companion Overrides", func(t *testing.T) {
+		// Thunderstorm forces RoutineSleep for both shifts
+		r1Thunder := ComputeCircadianRoutine(5000, civquestv1.Weather_WEATHER_THUNDER, firstShiftCfg, nil)
+		r3Thunder := ComputeCircadianRoutine(18000, civquestv1.Weather_WEATHER_THUNDER, thirdShiftCfg, nil)
+		if r1Thunder != RoutineSleep || r3Thunder != RoutineSleep {
+			t.Errorf("thunderstorm should force RoutineSleep: r1=%s, r3=%s", r1Thunder, r3Thunder)
+		}
+
+		// Companion active forces RoutineCamp during social and rest brackets
+		state := NewAgentState()
+		state.SetCompanionActive(true)
+
+		r1Camp := ComputeCircadianRoutine(12000, civquestv1.Weather_WEATHER_CLEAR, firstShiftCfg, state)
+		r3Camp := ComputeCircadianRoutine(12000, civquestv1.Weather_WEATHER_CLEAR, thirdShiftCfg, state)
+		if r1Camp != RoutineCamp || r3Camp != RoutineCamp {
+			t.Errorf("companion active should force RoutineCamp at 12000: r1=%s, r3=%s", r1Camp, r3Camp)
+		}
+
+		r1CampSleep := ComputeCircadianRoutine(18000, civquestv1.Weather_WEATHER_CLEAR, firstShiftCfg, state)
+		r3CampSleep := ComputeCircadianRoutine(5000, civquestv1.Weather_WEATHER_CLEAR, thirdShiftCfg, state)
+		if r1CampSleep != RoutineCamp || r3CampSleep != RoutineCamp {
+			t.Errorf("companion active should force RoutineCamp during sleep periods: r1=%s, r3=%s", r1CampSleep, r3CampSleep)
+		}
+	})
+}
+
+// BenchmarkTwoTierHFSM_ShiftWorkAndPDA verifies that full Two-Tier HFSM ticks execute well under
+// the 5ms real-time budget, achieving microsecond-level determinism.
+func BenchmarkTwoTierHFSM_ShiftWorkAndPDA(b *testing.B) {
+	fsm := NewAgentFSM(StageSettlement, nil)
+	state := NewAgentState()
+	cfg := &xdg.AgentIdentityConfig{
+		Name:       "bench_agent",
+		Profession: "Guard",
+		Shift:      xdg.ShiftThird,
+	}
+
+	ctx := &FSMContext{
+		AgentID: "bench_agent",
+		State:   state,
+		Config:  cfg,
+		Frame: &civquestv1.TelemetryFrame{
+			WorldTick: 1000,
+			TimeOfDay: 18000, // Midnight 3rd shift patrol
+			Status: &civquestv1.AgentStatus{
+				AgentId:   "bench_agent",
+				Health:    20.0,
+				MaxHealth: 20.0,
+				FoodLevel: 20,
+				Position:  &civquestv1.Vec3{X: 10, Y: 64, Z: 10},
+				Inventory: []*civquestv1.ItemStackProto{
+					{ItemId: "minecraft:iron_sword", Count: 1},
+					{ItemId: "minecraft:shield", Count: 1},
+				},
+			},
+		},
+	}
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		ctx.Frame.WorldTick = int64(i)
+		ctx.Frame.TimeOfDay = int64(i*50) % 24000
+
+		// Sporadic threat to exercise PDA push/pop
+		if i%100 == 50 {
+			ctx.Frame.VisibleEntities = []*civquestv1.VisibleEntity{
+				{EntityId: 999, EntityType: "minecraft:creeper", Distance: 3.0, IsHostile: true},
+			}
+		} else if i%100 == 55 {
+			ctx.Frame.VisibleEntities = nil
+		}
+
+		res := fsm.Tick(ctx)
+		_ = res.Stage
+		_ = res.Routine
+	}
 }

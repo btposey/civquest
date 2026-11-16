@@ -137,6 +137,7 @@ func TestEvaluateUtility_EmergencyOverrides(t *testing.T) {
 	agentCfg := &xdg.AgentIdentityConfig{
 		Name:       "aria",
 		Profession: "Guard",
+		Shift:      xdg.ShiftFirst,
 	}
 
 	// 1. On Fire Override

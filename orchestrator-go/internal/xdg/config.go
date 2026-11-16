@@ -151,12 +151,19 @@ type AgentLineageConfig struct {
 	BirthTick  int64    `yaml:"birth_tick,omitempty"`
 }
 
+// Shift constants defining standard settlement work shifts.
+const (
+	ShiftFirst = "1st"
+	ShiftThird = "3rd"
+)
+
 // AgentIdentityConfig holds the identity, personality, voice, and skin configuration for an agent.
 type AgentIdentityConfig struct {
 	Name              string             `yaml:"name"`
 	UUID              string             `yaml:"uuid"`
 	ClanID            string             `yaml:"clan_id"`
 	Profession        string             `yaml:"profession"`
+	Shift             string             `yaml:"shift,omitempty"`
 	SecondaryHobby    string             `yaml:"secondary_hobby,omitempty"`
 	SystemPrompt      string             `yaml:"system_prompt,omitempty"`
 	SkillPrompt       string             `yaml:"skill_prompt,omitempty"`
@@ -181,6 +188,26 @@ type AgentVoiceConfig struct {
 	SpeechQuirks []string `yaml:"speech_quirks,omitempty"` // e.g. ["uses farming metaphors", "addresses travelers as friend"]
 	Catchphrase  string   `yaml:"catchphrase,omitempty"`   // Optional recurring idiom or expression
 	Backstory    string   `yaml:"backstory,omitempty"`     // Short individualized origin note
+}
+
+// EffectiveShift returns the normalized work shift ("1st" or "3rd") for the agent.
+// If unset, it infers the shift based on profession (combat/guard professions default to 3rd shift).
+func (c *AgentIdentityConfig) EffectiveShift() string {
+	if c == nil {
+		return ShiftFirst
+	}
+	switch strings.ToLower(strings.TrimSpace(c.Shift)) {
+	case "3rd", "third", "night", "nightwatch":
+		return ShiftThird
+	case "1st", "first", "day":
+		return ShiftFirst
+	}
+	switch strings.ToUpper(strings.TrimSpace(c.Profession)) {
+	case "GUARD", "PATROL", "WATCHMAN", "SENTRY", "WARRIOR":
+		return ShiftThird
+	default:
+		return ShiftFirst
+	}
 }
 
 // EffectiveSleepSystemPrompt returns the custom system prompt for sleep-state strategic reasoning,
