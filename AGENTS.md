@@ -80,6 +80,10 @@ Major technical decisions are formally recorded in `doc/adr/`:
 - [ADR-014: Jar-in-Jar Dependency Packaging & Client-Safe Mod Lifecycle Isolation](file:///home/brian/Workspaces/btposey/civquest/doc/adr/ADR-014-jarjar-dependency-packaging-and-client-safe-lifecycle.md)
 - [ADR-015: In-Engine Peripheral Reflexes & Afferent Telemetry Streaming](file:///home/brian/Workspaces/btposey/civquest/doc/adr/ADR-015-in-engine-peripheral-reflexes-and-afferent-telemetry.md)
 - [ADR-016: Dynamic Clan Governance, Emergent Councils, Benevolent Monarchy, and Warlord Hegemony](file:///home/brian/Workspaces/btposey/civquest/doc/adr/ADR-016-dynamic-clan-governance-emergent-councils-and-warlord-hegemony.md)
+- [ADR-017: Hierarchical Timed Pushdown Automaton (HTPDA) with Preemptive State Stack](file:///home/brian/Workspaces/btposey/civquest/doc/adr/ADR-017-hierarchical-timed-pushdown-automaton-with-preemptive-state-stack.md)
+- [ADR-018: Circadian Shift Work and Tavern Social Synchronization](file:///home/brian/Workspaces/btposey/civquest/doc/adr/ADR-018-circadian-shift-work-and-tavern-social-synchronization.md)
+- [ADR-019: Population-Scaled Militia Armory Maintenance and Munitions Crafting](file:///home/brian/Workspaces/btposey/civquest/doc/adr/ADR-019-population-scaled-militia-armory-maintenance-and-munitions-crafting.md)
+- [ADR-020: FactGraph Blackboard and Modular Skill Engine](file:///home/brian/Workspaces/btposey/civquest/doc/adr/ADR-020-factgraph-blackboard-and-modular-skill-engine.md)
 
 ---
 

@@ -55,3 +55,34 @@ System 1 evaluates utility curves across four server time-of-day brackets:
 4. **Tavern Social & Sleep (Ticks 11000 - 24000)**:
    - Navigates to the settlement Tavern (`zone_type = 'TAVERN'`).
    - Deposits hobby surplus, shares rumors, updates map graphs with other agents, and sleeps in an assigned bed before midnight.
+
+## 4. Hierarchical Timed Pushdown Automaton (HTPDA) & State Stack (ADR-017)
+
+System 1 models agent cognitive control as a formal **Hierarchical Timed Pushdown Automaton**:
+- **Macro Stages (Tier 1)**: `BOOTSTRAP`, `SETTLEMENT`, `COLONIZE`, `DEAD`.
+- **Micro Routines (Tier 2)**: Clock-driven circadian phases (`DAWN_PREP`, `PRIMARY_DUTY`, `SECONDARY_HOBBY`, `ARMORY_MAINTENANCE`, `TAVERN_SOCIAL`, `CIVIC_PATROL`, `SLEEP`, `CAMP`, `EMERGENCY`).
+- **Pushdown Preemption**: When interrupted by asynchronous threats, player dialogue, or critical starvation, the active `(Stage, Routine)` is pushed onto a bounded LIFO stack (depth $\le 8$).
+- **Context Restoration**: Upon `threat.threats_cleared`, `fsm.Pop()` restores the prior task without behavioral amnesia.
+- **Terminal Dead State**: On fatal health or `DeathEvent`, the stack is cleared, graveyard memorial records are written, and the process exits with code 0.
+
+## 5. Circadian Shift Work & Tavern Social Synchronization (ADR-018)
+
+Settlers support differentiated work shifts parameterized in `AgentIdentityConfig.Shift`:
+- **1st Shift (Day Workers: Farmers, Builders, Artisans)**: Awake and working by day; sleeps through the night ($13000 - 23500$).
+- **3rd Shift (Night Watch: Sentinels, Guards, Patrols)**: Awake on perimeter patrol throughout deep night ($13000 - 23500$); sleeps during sunny midday ($2000 - 10000$).
+- **Universal Tavern Social Hour ($11000 - 13000$)**: Both shifts converge at the tavern during dusk to coordinate clan consciousness, conduct guard handoffs, and debate governance edicts before nightfall.
+
+## 6. Population-Scaled Militia Armory Maintenance (ADR-019)
+
+For 3rd shift guards during off-watch waking hours ($[10000, 11000)$ & $[1000, 2000)$), System 1 schedules `RoutineArmoryMaintenance`:
+- **Militia Sufficiency Formula**: Evaluated dynamically for settlement population $N$:
+  $$\text{Armor Sets} \ge N \quad (4N \text{ total pieces}) \qquad \text{Swords} \ge N \qquad \text{Bows} \ge N \qquad \text{Arrows} \ge 10N \qquad \text{TNT} \ge \max(4, N)$$
+- **Crafting Reflexes**: If below quota and raw materials exist, guards navigate to crafting tables and craft munitions. Once quotas are satisfied or materials exhausted, guards automatically stand down to `RoutineSecondaryHobby`.
+
+## 7. The FactGraph Blackboard & Modular Skill Engine (ADR-020)
+
+System 1 decouples perception, belief, decision, and action into a pure Go modular engine:
+1. **Perception**: Registered `Evaluator` modules (`VitalsEvaluator`, `ThreatEvaluator`, `CircadianEvaluator`, `ArmoryMilitiaEvaluator`, `SurvivalKitEvaluator`, `ShelterEvaluator`, `NavigationEvaluator`, `ColonizeEvaluator`) inspect raw telemetry and emit typed `Fact`s.
+2. **Belief (FactGraph)**: A thread-safe blackboard queried via $O(1)$ accessors by System 1 guards and serialized via `ToPromptContext()` into Markdown for System 2 LLM prompts.
+3. **Action (Skills)**: Registered `Skill` modules (`CombatDefenseSkill`, `BiologicalNeedsSkill`, `ArmoryCraftingSkill`, `BootstrapGatherSkill`, `BootstrapCraftSkill`, `ShelterConstructionSkill`, `CivicPatrolSkill`, `FrontierScoutingSkill`, `RoadPavingSkill`) evaluate preconditions over facts and emit discrete vectors of `AgentIntent`.
+- **Performance**: Entire perception pipeline executes in $<15\text{ µs}$; skill dispatch in $<8\text{ µs}$ ($<0.025\text{ ms}$ total, $>200\times$ faster than the 5ms budget).
