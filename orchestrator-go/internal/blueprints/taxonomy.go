@@ -116,6 +116,27 @@ var knownTaxonomyMap = map[string][]string{
 	},
 }
 
+// KnownTaxonomyMap returns a deep copy of the standard catalog taxonomy mappings.
+func KnownTaxonomyMap() map[string][]string {
+	result := make(map[string][]string, len(knownTaxonomyMap))
+	for k, v := range knownTaxonomyMap {
+		copied := make([]string, len(v))
+		copy(copied, v)
+		result[k] = copied
+	}
+	return result
+}
+
+// KnownTaxonomyTags returns a deterministic sorted slice of all known taxonomy tags.
+func KnownTaxonomyTags() []string {
+	tags := make([]string, 0, len(knownTaxonomyMap))
+	for k := range knownTaxonomyMap {
+		tags = append(tags, k)
+	}
+	sort.Strings(tags)
+	return tags
+}
+
 // IsTaxonomyTag returns true if the given identifier represents a generic taxonomy tag (prefixed with #).
 func IsTaxonomyTag(id string) bool {
 	clean := strings.TrimSpace(id)

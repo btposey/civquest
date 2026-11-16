@@ -23,6 +23,7 @@ used by the settlement engine for multi-agent quadrant construction.`,
 	bpCmd.AddCommand(newBlueprintListCmd())
 	bpCmd.AddCommand(newBlueprintValidateCmd())
 	bpCmd.AddCommand(newBlueprintGenerateCmd())
+	bpCmd.AddCommand(newStudioCmd())
 
 	return bpCmd
 }

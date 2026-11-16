@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>CivQuest Blueprint Studio</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="app-header">
+    <div class="header-left">
+      <div class="logo-mark">CQ</div>
+      <div class="brand">
+        <h1>Blueprint Studio</h1>
+        <span class="sub">Autonomous Settlement Architectural Engine</span>
+      </div>
+    </div>
+    <div class="header-right">
+      <div class="status-badge" id="system-status">Checking System...</div>
+      <div class="status-badge" id="ws-status">WS Disconnected</div>
+    </div>
+  </header>
+
+  <nav class="nav-tabs">
+    <button class="tab-btn active" data-tab="tab-blueprints">Library Blueprints</button>
+    <button class="tab-btn" data-tab="tab-editor">Blueprint Editor &amp; Validator</button>
+    <button class="tab-btn" data-tab="tab-palette">Block Palette</button>
+    <button class="tab-btn" data-tab="tab-taxonomy">Taxonomy Catalog</button>
+    <button class="tab-btn" data-tab="tab-agents">Agents &amp; Sockets</button>
+  </nav>
+
+  <main class="content-container">
+    <!-- Blueprints Tab -->
+    <section id="tab-blueprints" class="tab-pane active">
+      <div class="pane-header">
+        <h2>Architectural Blueprints</h2>
+        <div class="actions">
+          <button id="btn-refresh-blueprints" class="btn">Refresh</button>
+          <button id="btn-new-blueprint" class="btn btn-primary">+ New Blueprint</button>
+        </div>
+      </div>
+      <div id="blueprints-grid" class="cards-grid">
+        <p class="placeholder-text">Loading blueprints...</p>
+      </div>
+      <div id="blueprint-detail-modal" class="modal hidden">
+        <div class="modal-content">
+          <span class="close-modal">&times;</span>
+          <h3 id="modal-title">Blueprint Details</h3>
+          <pre id="modal-json" class="code-block"></pre>
+        </div>
+      </div>
+    </section>
+
+    <!-- Editor & Validator Tab -->
+    <section id="tab-editor" class="tab-pane">
+      <div class="pane-header">
+        <h2>Blueprint Editor &amp; Validator</h2>
+        <div class="actions">
+          <button id="btn-load-sample" class="btn">Load Sample Cabin</button>
+          <button id="btn-validate" class="btn btn-primary">Validate &amp; Calculate BOM</button>
+          <button id="btn-save-blueprint" class="btn btn-success">Save to Library</button>
+        </div>
+      </div>
+      <div class="editor-layout">
+        <div class="editor-col">
+          <label for="blueprint-input">Blueprint JSON Specification</label>
+          <textarea id="blueprint-input" rows="24" spellcheck="false" placeholder="Paste or edit blueprint JSON here..."></textarea>
+        </div>
+        <div class="editor-col">
+          <label>Validation &amp; Bill of Materials (BOM)</label>
+          <div id="validation-output" class="validation-panel">
+            <p class="placeholder-text">Click "Validate &amp; Calculate BOM" to inspect validation results, subterranean excavation volume, and BOM requirements.</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Palette Tab -->
+    <section id="tab-palette" class="tab-pane">
+      <div class="pane-header">
+        <h2>Orientation &amp; Voxel Palette Catalog</h2>
+        <div class="actions">
+          <input type="text" id="palette-search" placeholder="Search blocks..." class="search-input">
+        </div>
+      </div>
+      <div class="table-container">
+        <table class="data-table" id="palette-table">
+          <thead>
+            <tr>
+              <th>Block ID</th>
+              <th>Orientation Category</th>
+              <th>Default State Properties</th>
+              <th>Direction Glyph</th>
+            </tr>
+          </thead>
+          <tbody id="palette-tbody">
+            <tr><td colspan="4" class="placeholder-text">Loading palette catalog...</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- Taxonomy Tab -->
+    <section id="tab-taxonomy" class="tab-pane">
+      <div class="pane-header">
+        <h2>Minecraft &amp; NeoForge Taxonomy Tags</h2>
+      </div>
+      <div id="taxonomy-grid" class="cards-grid">
+        <p class="placeholder-text">Loading taxonomy tags...</p>
+      </div>
+    </section>
+
+    <!-- Agents Tab -->
+    <section id="tab-agents" class="tab-pane">
+      <div class="pane-header">
+        <h2>Configured &amp; Active Agents</h2>
+        <div class="actions">
+          <button id="btn-refresh-agents" class="btn">Refresh Agents</button>
+        </div>
+      </div>
+      <div id="agents-grid" class="cards-grid">
+        <p class="placeholder-text">Loading agent workers...</p>
+      </div>
+      <div id="agent-telemetry-panel" class="telemetry-panel hidden">
+        <div class="pane-header">
+          <h3 id="active-agent-name">Agent Telemetry</h3>
+          <button id="btn-close-telemetry" class="btn btn-sm">Close</button>
+        </div>
+        <pre id="agent-telemetry-data" class="code-block"></pre>
+      </div>
+    </section>
+  </main>
+
+  <footer class="app-footer">
+    <span>CivQuest Studio v1.0.0 &bull; Port 8765 &bull; Go Multi-Process Orchestrator</span>
+  </footer>
+
+  <script src="app.js"></script>
+</body>
+</html>
