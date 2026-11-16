@@ -32,6 +32,7 @@ type FSMContext struct {
 	HasWeapon      bool
 	WeaponSlot     int32
 	CivicDB        *db.CivicRegistryDB
+	Facts          *FactGraph
 }
 
 // HostilesPresent checks if any hostile mobs are within perception range.
@@ -530,7 +531,20 @@ func (h *SettlementStateHandler) OnTick(ctx *FSMContext) []FSMIntent {
 		}
 	case RoutineArmoryMaintenance:
 		if len(ctx.Frame.IncomingChats) == 0 && ctx.Frame.PendingTrade == nil {
-			if armoryIntent := EvaluateArmoryMaintenance(ctx.AgentID, ctx.Frame, ctx.Config, ctx.State, ctx.CivicDB); armoryIntent != nil {
+			skillCtx := &SkillContext{
+				AgentID: ctx.AgentID,
+				Frame:   ctx.Frame,
+				Config:  ctx.Config,
+				State:   ctx.State,
+				CivicDB: ctx.CivicDB,
+			}
+			if skillIntents, _, ok := DefaultRegistry.SelectAndExecuteSkill(skillCtx, ctx.Facts); ok && len(skillIntents) > 0 {
+				for _, si := range skillIntents {
+					if si != nil {
+						intents = append(intents, FSMIntent{Intent: si, Priority: false})
+					}
+				}
+			} else if armoryIntent := EvaluateArmoryMaintenance(ctx.AgentID, ctx.Frame, ctx.Config, ctx.State, ctx.CivicDB); armoryIntent != nil {
 				intents = append(intents, FSMIntent{Intent: armoryIntent, Priority: false})
 			} else {
 				if ctx.State != nil {
@@ -544,6 +558,21 @@ func (h *SettlementStateHandler) OnTick(ctx *FSMContext) []FSMIntent {
 	case RoutineSecondaryHobby:
 		if len(ctx.Frame.IncomingChats) == 0 && ctx.Frame.PendingTrade == nil {
 			if ctx.Config != nil && ctx.Config.EffectiveShift() == xdg.ShiftThird && ctx.State != nil && ctx.State.IsArmoryMaintenanceNeeded() {
+				skillCtx := &SkillContext{
+					AgentID: ctx.AgentID,
+					Frame:   ctx.Frame,
+					Config:  ctx.Config,
+					State:   ctx.State,
+					CivicDB: ctx.CivicDB,
+				}
+				if skillIntents, _, ok := DefaultRegistry.SelectAndExecuteSkill(skillCtx, ctx.Facts); ok && len(skillIntents) > 0 {
+					for _, si := range skillIntents {
+						if si != nil {
+							intents = append(intents, FSMIntent{Intent: si, Priority: false})
+						}
+					}
+					return intents
+				}
 				if armoryIntent := EvaluateArmoryMaintenance(ctx.AgentID, ctx.Frame, ctx.Config, ctx.State, ctx.CivicDB); armoryIntent != nil {
 					intents = append(intents, FSMIntent{Intent: armoryIntent, Priority: false})
 					return intents
@@ -808,6 +837,9 @@ type AgentFSM struct {
 	stack               []StateStackFrame
 	maxStackDepth       int
 }
+
+// AgentHFSM is an alias for AgentFSM representing the formal Two-Tier Hierarchical FSM.
+type AgentHFSM = AgentFSM
 
 // NewAgentFSM constructs an initialized AgentFSM with default state handlers and transition table.
 func NewAgentFSM(initial State, onTransition func(from, to State, reason string)) *AgentFSM {
@@ -1122,6 +1154,18 @@ func (fsm *AgentFSM) TransitionTo(target State, reason string, ctx *FSMContext) 
 func (fsm *AgentFSM) Tick(ctx *FSMContext) FSMResult {
 	if fsm == nil {
 		return FSMResult{Stage: StageBootstrap, Routine: RoutineDawnPrep, State: StageBootstrap}
+	}
+
+	if ctx != nil && ctx.Facts == nil {
+		evalCtx := &EvaluatorContext{
+			AgentID:   ctx.AgentID,
+			Frame:     ctx.Frame,
+			Config:    ctx.Config,
+			State:     ctx.State,
+			CivicDB:   ctx.CivicDB,
+			SafeNodes: ctx.SafeNodes,
+		}
+		ctx.Facts = DefaultRegistry.EvaluateAll(evalCtx)
 	}
 
 	fsm.mu.Lock()

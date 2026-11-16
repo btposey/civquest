@@ -86,6 +86,15 @@ type StrategicLedger struct {
 	TavernRumorsSummary TavernRumorsSummary `json:"tavern_rumors_summary"`
 	DiplomaticSummary   DiplomaticSummary   `json:"diplomatic_summary"`
 	PersonalProfile     PersonalProfile     `json:"personal_profile"`
+	VerifiedFacts       string              `json:"verified_facts,omitempty"`
+}
+
+// WithVerifiedFacts attaches formatted environmental facts context to the StrategicLedger.
+func (l *StrategicLedger) WithVerifiedFacts(factsContext string) *StrategicLedger {
+	if l != nil {
+		l.VerifiedFacts = factsContext
+	}
+	return l
 }
 
 // Cartography returns the CartographySummary.
