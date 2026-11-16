@@ -130,9 +130,11 @@ func PartitionBlueprintWithAnchor(vm *VoxelMatrix, anchorX, anchorY, anchorZ int
 	width := vm.Dimensions.Width
 	height := vm.Dimensions.Height
 	length := vm.Dimensions.Length
+	minY := vm.Dimensions.MinY
+	maxY := minY + height - 1
 
 	// Enforce strict bottom-up layer-by-layer ordering (Y_min -> Y_max)
-	for y := 0; y < height; y++ {
+	for y := minY; y <= maxY; y++ {
 		for z := 0; z < length; z++ {
 			for x := 0; x < width; x++ {
 				state, err := vm.Get(x, y, z)
@@ -228,10 +230,12 @@ func GenerateScaffoldingPlanWithConfig(vm *VoxelMatrix, q Quadrant, cfg Scaffold
 	length := vm.Dimensions.Length
 
 	// Determine the highest block elevation in this quadrant
-	maxBlockY := -1
+	minY := vm.Dimensions.MinY
+	maxY := minY + height - 1
+	maxBlockY := minY - 1
 	bounds, err := GetQuadrantBounds(q, width, length)
 	if err == nil && bounds.MaxX >= bounds.MinX && bounds.MaxZ >= bounds.MinZ {
-		for y := 0; y < height; y++ {
+		for y := minY; y <= maxY; y++ {
 			for z := bounds.MinZ; z <= bounds.MaxZ; z++ {
 				for x := bounds.MinX; x <= bounds.MaxX; x++ {
 					st, err := vm.Get(x, y, z)
@@ -583,12 +587,26 @@ type RegisterZoneParams struct {
 	WorldTick    int64
 }
 
-// NormalizeZoneType maps blueprint types (e.g. "tavern", "granary", "market") to valid civic registry zone types.
+// NormalizeZoneType maps blueprint purposes and types to valid civic registry zone types.
 func NormalizeZoneType(raw string) string {
 	norm := strings.ToUpper(strings.TrimSpace(raw))
 	switch norm {
-	case "HOUSE", "RESIDENCE":
+	case "HOUSE", "RESIDENCE", "SHELTER", "HOME":
 		return db.ZoneTypeResidential
+	case "STOREHOUSE", "GRANARY":
+		return db.ZoneTypeGranary
+	case "ARMORY", "BARRACKS", "DEFENSE":
+		return db.ZoneTypeDefense
+	case "FARM", "FARMLAND":
+		return db.ZoneTypeFarm
+	case "TAVERN":
+		return db.ZoneTypeTavern
+	case "LIBRARY":
+		return db.ZoneTypeLibrary
+	case "WORKSHOP":
+		return db.ZoneTypeWorkshop
+	case "MARKET", "BAZAAR":
+		return db.ZoneTypeMarket
 	default:
 		return norm
 	}
@@ -621,10 +639,10 @@ func RegisterCompletedZone(ctx context.Context, civicDB *db.CivicRegistryDB, par
 		ZoneType:     zoneType,
 		Name:         params.Name,
 		MinX:         params.AnchorX,
-		MinY:         params.AnchorY,
+		MinY:         params.AnchorY + dims.MinY,
 		MinZ:         params.AnchorZ,
 		MaxX:         params.AnchorX + dims.Width - 1,
-		MaxY:         params.AnchorY + dims.Height - 1,
+		MaxY:         params.AnchorY + dims.MinY + dims.Height - 1,
 		MaxZ:         params.AnchorZ + dims.Length - 1,
 		OwnerAgentID: params.OwnerAgentID,
 		CreatedTick:  params.WorldTick,

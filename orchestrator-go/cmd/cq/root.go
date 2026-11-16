@@ -98,6 +98,7 @@ clans, blueprints, and system health.`,
 	cmd.AddCommand(newClanCmd())
 	cmd.AddCommand(newBlueprintCmd())
 	cmd.AddCommand(newStudioCmd())
+	cmd.AddCommand(newViewerCmd())
 	cmd.AddCommand(newGatewayCmd())
 	cmd.AddCommand(newClientCmd())
 	cmd.AddCommand(newDaemonCmd())

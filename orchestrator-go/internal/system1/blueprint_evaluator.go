@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 
@@ -15,17 +16,42 @@ func init() {
 	RegisterEvaluator(NewBlueprintEvaluator())
 }
 
+type bpCacheEntry struct {
+	invKey               string
+	isUnhoused           bool
+	hasTavern            bool
+	hasStorehouse        bool
+	militiaUnderEquipped bool
+	facts                []Fact
+}
+
 // BlueprintEvaluator evaluates available blueprints against settlement storehouse reserves
 // using generic taxonomy BOM resolution and recommends blueprints matching civic deficits.
 type BlueprintEvaluator struct {
 	CachedBlueprints []*blueprints.Blueprint
 	mu               sync.RWMutex
 	cachedLib        []*blueprints.Blueprint
+	libLoaded        bool
+	agentCache       map[string]*bpCacheEntry
 }
 
 // NewBlueprintEvaluator creates a new BlueprintEvaluator instance with optional preloaded blueprints.
 func NewBlueprintEvaluator(cached ...*blueprints.Blueprint) *BlueprintEvaluator {
-	return &BlueprintEvaluator{CachedBlueprints: cached}
+	e := &BlueprintEvaluator{
+		CachedBlueprints: cached,
+		agentCache:       make(map[string]*bpCacheEntry),
+	}
+	if len(cached) > 0 {
+		for _, bp := range cached {
+			if bp != nil && len(bp.BOM) == 0 {
+				bp.BOM = bp.CalculateBOM()
+			}
+		}
+		sort.Slice(e.CachedBlueprints, func(i, j int) bool {
+			return e.CachedBlueprints[i].ID < e.CachedBlueprints[j].ID
+		})
+	}
+	return e
 }
 
 // Name returns the unique evaluator registration name.
@@ -46,7 +72,7 @@ func (e *BlueprintEvaluator) getLibraryBlueprints() []*blueprints.Blueprint {
 	}
 
 	e.mu.RLock()
-	if len(e.cachedLib) > 0 {
+	if e.libLoaded {
 		lib := e.cachedLib
 		e.mu.RUnlock()
 		return lib
@@ -55,7 +81,7 @@ func (e *BlueprintEvaluator) getLibraryBlueprints() []*blueprints.Blueprint {
 
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	if len(e.cachedLib) > 0 {
+	if e.libLoaded {
 		return e.cachedLib
 	}
 
@@ -64,7 +90,16 @@ func (e *BlueprintEvaluator) getLibraryBlueprints() []*blueprints.Blueprint {
 		_ = blueprints.EnsureStarterBlueprints()
 		bps, _ = blueprints.ListLibraryBlueprints()
 	}
+	for _, bp := range bps {
+		if bp != nil && len(bp.BOM) == 0 {
+			bp.BOM = bp.CalculateBOM()
+		}
+	}
+	sort.Slice(bps, func(i, j int) bool {
+		return bps[i].ID < bps[j].ID
+	})
 	e.cachedLib = bps
+	e.libLoaded = true
 	return bps
 }
 
@@ -102,105 +137,27 @@ func (e *BlueprintEvaluator) Evaluate(ctx *EvaluatorContext, graph *FactGraph) e
 		}
 	}
 
-	// 2. Discover candidate blueprints (in-memory cached)
-	bps := e.getLibraryBlueprints()
-
-	// Track feasible blueprints by civic purpose
-	feasibleByPurpose := make(map[string][]string)
-	allPurposes := make(map[string]bool)
-
-	// Seed with standard architectural purposes
-	standardPurposes := []string{
-		blueprints.PurposeShelter,
-		blueprints.PurposeHome,
-		blueprints.PurposeTavern,
-		blueprints.PurposeArmory,
-		blueprints.PurposeStorehouse,
-		blueprints.PurposeFarm,
-		blueprints.PurposeWorkshop,
-		blueprints.PurposeBarracks,
-		blueprints.PurposeLibrary,
-		blueprints.PurposeTownhall,
-	}
-	for _, p := range standardPurposes {
-		allPurposes[p] = true
-		feasibleByPurpose[p] = []string{}
+	agentID := ""
+	if ctx != nil {
+		agentID = ctx.AgentID
 	}
 
-	var affordableBPs []*blueprints.Blueprint
-
-	// Sort candidate blueprints by ID for deterministic evaluation
-	sortedBPs := make([]*blueprints.Blueprint, len(bps))
-	copy(sortedBPs, bps)
-	sort.Slice(sortedBPs, func(i, j int) bool {
-		return sortedBPs[i].ID < sortedBPs[j].ID
-	})
-
-	for _, bp := range sortedBPs {
-		if bp == nil {
-			continue
+	var invKey string
+	if len(inventory) > 0 {
+		var b strings.Builder
+		keys := make([]string, 0, len(inventory))
+		for k := range inventory {
+			keys = append(keys, k)
 		}
-		if bp.ID == "" {
-			bp.ID = blueprints.Slugify(bp.Name)
+		sort.Strings(keys)
+		for _, k := range keys {
+			b.WriteString(k)
+			b.WriteByte(':')
+			b.WriteString(strconv.Itoa(inventory[k]))
+			b.WriteByte(';')
 		}
-
-		normPurpose := blueprints.NormalizePurpose(bp.Purpose)
-		allPurposes[normPurpose] = true
-
-		bom := bp.BOM
-		if len(bom) == 0 {
-			bom = bp.CalculateBOM()
-		}
-
-		satisfied, _, missing := blueprints.EvaluateTaxonomyBOM(bom, inventory)
-
-		// Emit blueprint.affordable:<id> = "true" | "false"
-		affStr := fmt.Sprintf("%t", satisfied)
-		graph.Set(Fact{
-			Key:        "blueprint.affordable:" + bp.ID,
-			Category:   "Blueprint",
-			Value:      FactValue{Bool: satisfied, String: affStr},
-			Confidence: 1.0,
-			Evidence:   affStr,
-		})
-
-		// Emit blueprint.missing:<id>
-		var missingSummary string
-		if !satisfied && len(missing) > 0 {
-			var missingList []string
-			for item, needed := range missing {
-				missingList = append(missingList, fmt.Sprintf("%s:%d", item, needed))
-			}
-			sort.Strings(missingList)
-			missingSummary = strings.Join(missingList, ", ")
-		}
-		graph.SetString("blueprint.missing:"+bp.ID, "Blueprint", missingSummary, missingSummary)
-
-		if satisfied {
-			feasibleByPurpose[normPurpose] = append(feasibleByPurpose[normPurpose], bp.ID)
-			affordableBPs = append(affordableBPs, bp)
-		}
+		invKey = b.String()
 	}
-
-	// Emit blueprint.feasible:<purpose>
-	for purpose := range allPurposes {
-		ids := feasibleByPurpose[purpose]
-		sort.Strings(ids)
-		joined := strings.Join(ids, ", ")
-		evidence := fmt.Sprintf("Feasible %s blueprints: %s", purpose, joined)
-		if joined == "" {
-			evidence = fmt.Sprintf("No feasible %s blueprints available", purpose)
-		}
-		graph.SetString("blueprint.feasible:"+purpose, "Blueprint", joined, evidence)
-	}
-
-	// 3. Evaluate settlement civic deficits and determine blueprint.recommended
-	// Deficit priorities:
-	// Priority 1: Unhoused (SHELTER / HOME)
-	// Priority 2: Tavern deficit (TAVERN if no tavern exists and affordable)
-	// Priority 3: Militia under-equipped (ARMORY / BARRACKS)
-	// Priority 4: Storehouse deficit (STOREHOUSE / GRANARY)
-	// Fallback: First affordable blueprint
 
 	isUnhoused := false
 	if !graph.GetBool("shelter.complete") || !graph.GetBool("shelter.has_bed") {
@@ -233,6 +190,130 @@ func (e *BlueprintEvaluator) Evaluate(ctx *EvaluatorContext, graph *FactGraph) e
 		militiaUnderEquipped = true
 	}
 
+	// Check agent-specific cache to avoid redundant evaluation across 5 Hz ticks
+	e.mu.RLock()
+	if e.agentCache != nil {
+		if entry, ok := e.agentCache[agentID]; ok && entry != nil {
+			if entry.invKey == invKey && entry.isUnhoused == isUnhoused && entry.hasTavern == hasTavern && entry.hasStorehouse == hasStorehouse && entry.militiaUnderEquipped == militiaUnderEquipped && len(entry.facts) > 0 {
+				for _, f := range entry.facts {
+					graph.Set(f)
+				}
+				e.mu.RUnlock()
+				return nil
+			}
+		}
+	}
+	e.mu.RUnlock()
+
+	// 2. Discover candidate blueprints (in-memory cached)
+	bps := e.getLibraryBlueprints()
+
+	var factsToCache []Fact
+
+	// Track feasible blueprints by civic purpose
+	feasibleByPurpose := make(map[string][]string)
+	allPurposes := make(map[string]bool)
+
+	// Seed with standard architectural purposes
+	standardPurposes := []string{
+		blueprints.PurposeShelter,
+		blueprints.PurposeHome,
+		blueprints.PurposeTavern,
+		blueprints.PurposeArmory,
+		blueprints.PurposeStorehouse,
+		blueprints.PurposeFarm,
+		blueprints.PurposeWorkshop,
+		blueprints.PurposeBarracks,
+		blueprints.PurposeLibrary,
+		blueprints.PurposeTownhall,
+	}
+	for _, p := range standardPurposes {
+		allPurposes[p] = true
+		feasibleByPurpose[p] = []string{}
+	}
+
+	var affordableBPs []*blueprints.Blueprint
+
+	for _, bp := range bps {
+		if bp == nil {
+			continue
+		}
+		if bp.ID == "" {
+			bp.ID = blueprints.Slugify(bp.Name)
+		}
+
+		normPurpose := blueprints.NormalizePurpose(bp.Purpose)
+		allPurposes[normPurpose] = true
+
+		bom := bp.BOM
+		if len(bom) == 0 {
+			bom = bp.CalculateBOM()
+		}
+
+		satisfied, _, missing := blueprints.EvaluateTaxonomyBOM(bom, inventory)
+
+		// Emit blueprint.affordable:<id> = "true" | "false"
+		affStr := "false"
+		if satisfied {
+			affStr = "true"
+		}
+		affFact := Fact{
+			Key:        "blueprint.affordable:" + bp.ID,
+			Category:   "Blueprint",
+			Value:      FactValue{Bool: satisfied, String: affStr},
+			Confidence: 1.0,
+			Evidence:   affStr,
+		}
+		graph.Set(affFact)
+		factsToCache = append(factsToCache, affFact)
+
+		// Emit blueprint.missing:<id>
+		var missingSummary string
+		if !satisfied && len(missing) > 0 {
+			var missingList []string
+			for item, needed := range missing {
+				missingList = append(missingList, fmt.Sprintf("%s:%d", item, needed))
+			}
+			sort.Strings(missingList)
+			missingSummary = strings.Join(missingList, ", ")
+		}
+		missingFact := Fact{
+			Key:        "blueprint.missing:" + bp.ID,
+			Category:   "Blueprint",
+			Value:      FactValue{String: missingSummary},
+			Confidence: 1.0,
+			Evidence:   missingSummary,
+		}
+		graph.Set(missingFact)
+		factsToCache = append(factsToCache, missingFact)
+
+		if satisfied {
+			feasibleByPurpose[normPurpose] = append(feasibleByPurpose[normPurpose], bp.ID)
+			affordableBPs = append(affordableBPs, bp)
+		}
+	}
+
+	// Emit blueprint.feasible:<purpose>
+	for purpose := range allPurposes {
+		ids := feasibleByPurpose[purpose]
+		sort.Strings(ids)
+		joined := strings.Join(ids, ", ")
+		evidence := fmt.Sprintf("Feasible %s blueprints: %s", purpose, joined)
+		if joined == "" {
+			evidence = fmt.Sprintf("No feasible %s blueprints available", purpose)
+		}
+		feasibleFact := Fact{
+			Key:        "blueprint.feasible:" + purpose,
+			Category:   "Blueprint",
+			Value:      FactValue{String: joined},
+			Confidence: 1.0,
+			Evidence:   evidence,
+		}
+		graph.Set(feasibleFact)
+		factsToCache = append(factsToCache, feasibleFact)
+	}
+
+	// 3. Evaluate settlement civic deficits and determine blueprint.recommended
 	findAffordableForPurposes := func(purposes ...string) string {
 		for _, p := range purposes {
 			normP := blueprints.NormalizePurpose(p)
@@ -265,7 +346,30 @@ func (e *BlueprintEvaluator) Evaluate(ctx *EvaluatorContext, graph *FactGraph) e
 	} else {
 		recEvidence = "No affordable blueprints currently recommended"
 	}
-	graph.SetString("blueprint.recommended", "Blueprint", recommended, recEvidence)
+	recFact := Fact{
+		Key:        "blueprint.recommended",
+		Category:   "Blueprint",
+		Value:      FactValue{String: recommended},
+		Confidence: 1.0,
+		Evidence:   recEvidence,
+	}
+	graph.Set(recFact)
+	factsToCache = append(factsToCache, recFact)
+
+	// Save to agent cache
+	e.mu.Lock()
+	if e.agentCache == nil {
+		e.agentCache = make(map[string]*bpCacheEntry)
+	}
+	e.agentCache[agentID] = &bpCacheEntry{
+		invKey:               invKey,
+		isUnhoused:           isUnhoused,
+		hasTavern:            hasTavern,
+		hasStorehouse:        hasStorehouse,
+		militiaUnderEquipped: militiaUnderEquipped,
+		facts:                factsToCache,
+	}
+	e.mu.Unlock()
 
 	return nil
 }

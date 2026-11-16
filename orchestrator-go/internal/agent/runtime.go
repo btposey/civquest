@@ -109,6 +109,32 @@ type SocketStatusResponse struct {
 	ActiveLLMRequests     int32                  `json:"active_llm_requests"`
 	UtilityScores         *System1UtilityScores  `json:"utility_scores,omitempty"`
 	Goals                 *system1.GoalHierarchy `json:"goals,omitempty"`
+
+	// Enriched fields for real-time Agent Viewer
+	Yaw            float32                   `json:"yaw,omitempty"`
+	Pitch          float32                   `json:"pitch,omitempty"`
+	MaxHealth      float32                   `json:"max_health,omitempty"`
+	Saturation     float32                   `json:"saturation,omitempty"`
+	Stamina        float32                   `json:"stamina,omitempty"`
+	IsSleeping     bool                      `json:"is_sleeping,omitempty"`
+	TimeOfDay      int64                     `json:"time_of_day,omitempty"`
+	Weather        string                    `json:"weather,omitempty"`
+	BiomeID        string                    `json:"biome_id,omitempty"`
+	Stage          string                    `json:"stage,omitempty"`
+	Routine        string                    `json:"routine,omitempty"`
+	Shift          string                    `json:"shift,omitempty"`
+	ArmorRating    int32                     `json:"armor_rating,omitempty"`
+	StateStack     []system1.StateStackFrame `json:"state_stack,omitempty"`
+	Inventory      []CachedItem              `json:"inventory,omitempty"`
+	Blackboard     map[string]system1.Fact   `json:"blackboard,omitempty"`
+	Reflections    *ViewerReflections        `json:"reflections,omitempty"`
+}
+
+// ViewerReflections represents recent deliberative System 2 reflections, dialogue, and chronicles.
+type ViewerReflections struct {
+	LatestThought   string `json:"latest_thought,omitempty"`
+	LatestDialogue  string `json:"latest_dialogue,omitempty"`
+	LatestChronicle string `json:"latest_chronicle,omitempty"`
 }
 
 // AgentRuntime manages the isolated OS-process lifecycle for an individual agent.
@@ -200,6 +226,9 @@ type AgentRuntime struct {
 	debugLogger          *DebugLogger
 	lastLoggedRoutine    system1.RoutineState
 	lastLoggedGoal       string
+	latestThought        string
+	latestDialogue       string
+	latestChronicle      string
 
 	// Callbacks
 	onDeath func(*civquestv1.DeathEvent)
@@ -2455,6 +2484,7 @@ func (r *AgentRuntime) dispatchContemplation(frame *civquestv1.TelemetryFrame) {
 
 		// 3. Record ReflectiveMemory into agentDB.InsertEpisodicMemory (saliency >= 0.80)
 		if strings.TrimSpace(resp.ReflectiveMemory) != "" {
+			r.RecordThought(strings.TrimSpace(resp.ReflectiveMemory))
 			if memPipe != nil {
 				_, _ = memPipe.Ingest(reqCtx, memory.MemoryEvent{
 					WorldTick:        frame.WorldTick,
@@ -3414,6 +3444,82 @@ func (r *AgentRuntime) serveSocket(l net.Listener) {
 	}
 }
 
+// RecordThought stores the latest System 2 contemplation reflection.
+func (r *AgentRuntime) RecordThought(thought string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.latestThought = thought
+}
+
+// RecordDialogue stores the latest speech utterance or conversation snippet.
+func (r *AgentRuntime) RecordDialogue(dialogue string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.latestDialogue = dialogue
+}
+
+// RecordChronicle stores the latest chronicler diary page or historical event summary.
+func (r *AgentRuntime) RecordChronicle(chronicle string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.latestChronicle = chronicle
+}
+
+// CalculateArmorRating estimates total armor defense points from inventory or equipped items.
+func CalculateArmorRating(items []CachedItem) int32 {
+	armorPoints := map[string]int32{
+		"leather_helmet": 1, "leather_chestplate": 3, "leather_leggings": 2, "leather_boots": 1,
+		"golden_helmet": 2, "golden_chestplate": 5, "golden_leggings": 3, "golden_boots": 1,
+		"chainmail_helmet": 2, "chainmail_chestplate": 5, "chainmail_leggings": 4, "chainmail_boots": 1,
+		"iron_helmet": 2, "iron_chestplate": 6, "iron_leggings": 5, "iron_boots": 2,
+		"diamond_helmet": 3, "diamond_chestplate": 8, "diamond_leggings": 6, "diamond_boots": 3,
+		"netherite_helmet": 3, "netherite_chestplate": 8, "netherite_leggings": 6, "netherite_boots": 3,
+		"turtle_helmet": 2,
+	}
+
+	var total int32
+	hasArmorSlotItems := false
+	for _, it := range items {
+		if it.Slot >= 36 && it.Slot <= 39 {
+			hasArmorSlotItems = true
+			norm := strings.ToLower(strings.TrimPrefix(it.ItemID, "minecraft:"))
+			if pts, ok := armorPoints[norm]; ok {
+				total += pts
+			}
+		}
+	}
+	if hasArmorSlotItems {
+		return total
+	}
+
+	bestPerSlot := make(map[string]int32)
+	for _, it := range items {
+		norm := strings.ToLower(strings.TrimPrefix(it.ItemID, "minecraft:"))
+		pts, ok := armorPoints[norm]
+		if !ok {
+			continue
+		}
+		slotType := ""
+		switch {
+		case strings.HasSuffix(norm, "_helmet") || norm == "turtle_helmet":
+			slotType = "helmet"
+		case strings.HasSuffix(norm, "_chestplate"):
+			slotType = "chestplate"
+		case strings.HasSuffix(norm, "_leggings"):
+			slotType = "leggings"
+		case strings.HasSuffix(norm, "_boots"):
+			slotType = "boots"
+		}
+		if slotType != "" && pts > bestPerSlot[slotType] {
+			bestPerSlot[slotType] = pts
+		}
+	}
+	for _, pts := range bestPerSlot {
+		total += pts
+	}
+	return total
+}
+
 // handleSocketConn serializes and returns the current status snapshot to a socket client.
 func (r *AgentRuntime) handleSocketConn(conn net.Conn) {
 	defer conn.Close()
@@ -3427,11 +3533,26 @@ func (r *AgentRuntime) handleSocketConn(conn net.Conn) {
 	navState := "NAVIGATION_STATE_UNSPECIFIED"
 	var pos *SocketPosition
 
+	var yaw, pitch, maxHealth, saturation, stamina float32
+	var isSleeping bool
+	var timeOfDay int64
+	var weatherStr, biomeID string
+	var invItems []CachedItem
+
 	if r.latestFrame != nil {
 		worldTick = r.latestFrame.WorldTick
+		timeOfDay = r.latestFrame.TimeOfDay
+		weatherStr = r.latestFrame.Weather.String()
+		biomeID = r.latestFrame.BiomeId
 		if r.latestFrame.Status != nil {
 			health = r.latestFrame.Status.Health
+			maxHealth = r.latestFrame.Status.MaxHealth
 			foodLevel = r.latestFrame.Status.FoodLevel
+			saturation = r.latestFrame.Status.Saturation
+			stamina = r.latestFrame.Status.Stamina
+			isSleeping = r.latestFrame.Status.IsSleeping
+			yaw = r.latestFrame.Status.Yaw
+			pitch = r.latestFrame.Status.Pitch
 			navState = r.latestFrame.Status.NavigationState.String()
 			if r.latestFrame.Status.Position != nil {
 				pos = &SocketPosition{
@@ -3440,14 +3561,57 @@ func (r *AgentRuntime) handleSocketConn(conn net.Conn) {
 					Z: r.latestFrame.Status.Position.Z,
 				}
 			}
+			for _, it := range r.latestFrame.Status.Inventory {
+				if it != nil {
+					invItems = append(invItems, CachedItem{
+						Slot:          it.Slot,
+						ItemID:        it.ItemId,
+						Count:         it.Count,
+						Durability:    it.Durability,
+						MaxDurability: it.MaxDurability,
+						CustomName:    it.CustomName,
+					})
+				}
+			}
 		}
 	}
+	if len(invItems) == 0 && len(r.lastCachedItems) > 0 {
+		invItems = make([]CachedItem, len(r.lastCachedItems))
+		copy(invItems, r.lastCachedItems)
+	}
+
 	var navDest *SocketPosition
 	if r.navDestination != nil {
 		navDest = &SocketPosition{
 			X: r.navDestination.X,
 			Y: r.navDestination.Y,
 			Z: r.navDestination.Z,
+		}
+	}
+
+	var currentStage, currentRoutine string
+	var stateStack []system1.StateStackFrame
+	var blackboard map[string]system1.Fact
+	if r.agentFSM != nil {
+		currentStage = string(r.agentFSM.CurrentStage())
+		currentRoutine = string(r.agentFSM.CurrentRoutine())
+		stateStack = r.agentFSM.StackFrames()
+		if facts := r.agentFSM.LastFacts(); facts != nil {
+			blackboard = facts.AllFacts()
+		}
+	}
+
+	shiftStr := ""
+	if r.identityConfig != nil {
+		shiftStr = string(r.identityConfig.EffectiveShift())
+	}
+
+	var refl *ViewerReflections
+	if r.latestThought != "" || r.latestDialogue != "" || r.latestChronicle != "" {
+		refl = &ViewerReflections{
+			LatestThought:   r.latestThought,
+			LatestDialogue:  r.latestDialogue,
+			LatestChronicle: r.latestChronicle,
 		}
 	}
 	r.mu.RUnlock()
@@ -3457,6 +3621,7 @@ func (r *AgentRuntime) handleSocketConn(conn net.Conn) {
 	scores := r.CurrentUtilityScores()
 	latencyMs := r.FrameLatency()
 	activeLLM := r.ActiveLLMRequests()
+	armorRating := CalculateArmorRating(invItems)
 
 	var goals *system1.GoalHierarchy
 	r.mu.RLock()
@@ -3490,6 +3655,23 @@ func (r *AgentRuntime) handleSocketConn(conn net.Conn) {
 		ActiveLLMRequests:     activeLLM,
 		UtilityScores:         scores,
 		Goals:                 goals,
+		Yaw:                   yaw,
+		Pitch:                 pitch,
+		MaxHealth:             maxHealth,
+		Saturation:            saturation,
+		Stamina:               stamina,
+		IsSleeping:            isSleeping,
+		TimeOfDay:             timeOfDay,
+		Weather:               weatherStr,
+		BiomeID:               biomeID,
+		Stage:                 currentStage,
+		Routine:               currentRoutine,
+		Shift:                 shiftStr,
+		ArmorRating:           armorRating,
+		StateStack:            stateStack,
+		Inventory:             invItems,
+		Blackboard:            blackboard,
+		Reflections:           refl,
 	}
 
 	data, err := json.Marshal(resp)

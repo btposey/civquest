@@ -1377,6 +1377,21 @@ func (fsm *AgentFSM) StackDepth() int {
 	return fsm.stackDepthLocked()
 }
 
+// StackFrames returns a snapshot copy of the current HTPDA state stack frames from bottom to top.
+func (fsm *AgentFSM) StackFrames() []StateStackFrame {
+	if fsm == nil {
+		return nil
+	}
+	fsm.mu.RLock()
+	defer fsm.mu.RUnlock()
+	if len(fsm.stack) == 0 {
+		return nil
+	}
+	cpy := make([]StateStackFrame, len(fsm.stack))
+	copy(cpy, fsm.stack)
+	return cpy
+}
+
 // ClearStack empties the HTPDA state stack.
 func (fsm *AgentFSM) ClearStack() {
 	if fsm == nil {

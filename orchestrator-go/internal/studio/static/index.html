@@ -16,6 +16,7 @@
       </div>
     </div>
     <div class="header-right">
+      <button id="btn-open-assistant" class="btn btn-primary btn-assistant-trigger">🏛 AI Master Architect</button>
       <div class="status-badge" id="system-status">Checking System...</div>
       <div class="status-badge" id="ws-status">WS Disconnected</div>
     </div>
@@ -23,7 +24,7 @@
 
   <nav class="nav-tabs">
     <button class="tab-btn active" data-tab="tab-blueprints">Library Blueprints</button>
-    <button class="tab-btn" data-tab="tab-editor">Blueprint Editor &amp; Validator</button>
+    <button class="tab-btn" data-tab="tab-editor">Blueprint Editor &amp; Canvas</button>
     <button class="tab-btn" data-tab="tab-palette">Block Palette</button>
     <button class="tab-btn" data-tab="tab-taxonomy">Taxonomy Catalog</button>
     <button class="tab-btn" data-tab="tab-agents">Agents &amp; Sockets</button>
@@ -51,25 +52,174 @@
       </div>
     </section>
 
-    <!-- Editor & Validator Tab -->
+    <!-- Editor & 2D/3D Canvas Tab -->
     <section id="tab-editor" class="tab-pane">
-      <div class="pane-header">
-        <h2>Blueprint Editor &amp; Validator</h2>
-        <div class="actions">
+      <div class="editor-header-bar">
+        <div class="editor-title-group">
+          <h2 id="current-bp-name">Pioneer Log Cabin</h2>
+          <span id="current-bp-purpose" class="card-badge">HOME</span>
+          <span id="current-bp-dims" class="meta-pill">5x4x5 (MinY: 0)</span>
+          <span id="subterranean-badge" class="badge-subterranean hidden">⛏ Subterranean Basement (Y &lt; 0)</span>
+        </div>
+        <div class="editor-header-actions">
           <button id="btn-load-sample" class="btn">Load Sample Cabin</button>
-          <button id="btn-validate" class="btn btn-primary">Validate &amp; Calculate BOM</button>
+          <button id="btn-validate" class="btn btn-primary">Validate &amp; Compute BOM</button>
           <button id="btn-save-blueprint" class="btn btn-success">Save to Library</button>
+          <button id="btn-toggle-json" class="btn">Raw JSON</button>
         </div>
       </div>
-      <div class="editor-layout">
-        <div class="editor-col">
-          <label for="blueprint-input">Blueprint JSON Specification</label>
-          <textarea id="blueprint-input" rows="24" spellcheck="false" placeholder="Paste or edit blueprint JSON here..."></textarea>
+
+      <!-- Elevation Stepper & View Controls Toolbar -->
+      <div class="editor-toolbar">
+        <div class="toolbar-section">
+          <span class="toolbar-label">Elevation Stepper:</span>
+          <button id="btn-layer-down" class="btn btn-sm" title="Step down vertical layer (Y - 1)">▼ Y-1 (Down)</button>
+          <span id="layer-indicator" class="layer-pill">Layer Y = 0</span>
+          <button id="btn-layer-up" class="btn btn-sm" title="Step up vertical layer (Y + 1)">▲ Y+1 (Up)</button>
+          <button id="btn-add-basement" class="btn btn-sm btn-subterranean" title="Add subterranean level (Y &lt; 0)">⛏ +Basement (Y-1)</button>
+          <button id="btn-add-layer" class="btn btn-sm" title="Add layer above">+Layer (Y+1)</button>
         </div>
-        <div class="editor-col">
-          <label>Validation &amp; Bill of Materials (BOM)</label>
-          <div id="validation-output" class="validation-panel">
-            <p class="placeholder-text">Click "Validate &amp; Calculate BOM" to inspect validation results, subterranean excavation volume, and BOM requirements.</p>
+
+        <div class="toolbar-section">
+          <span class="toolbar-label">Guides &amp; X-Ray:</span>
+          <button id="btn-toggle-onion" class="btn btn-sm btn-toggle active" title="Toggle ghost guide of lower Y-1 layer">👻 Onion Skin (Y-1): ON</button>
+          <button id="btn-toggle-xray" class="btn btn-sm btn-toggle" title="Lock or auto-hover X-Ray wall ghosting">⚡ X-Ray Walls: Auto (Hover)</button>
+        </div>
+
+        <div class="toolbar-section">
+          <span class="toolbar-label">Tool:</span>
+          <button id="btn-tool-place" class="btn btn-sm active-tool" data-tool="place">✏ Place (L-Click)</button>
+          <button id="btn-tool-erase" class="btn btn-sm" data-tool="erase">🧹 Erase (R-Click)</button>
+        </div>
+      </div>
+
+      <!-- Main Dual-Pane Studio Layout -->
+      <div class="studio-dual-layout">
+        <!-- Left Pane: 2D Layer Matrix Grid Editor -->
+        <div class="pane-column left-pane">
+          <div class="column-header">
+            <h3>2D Layer Matrix Editor (Top-Down X/Z Plane)</h3>
+            <span id="grid-cursor-readout" class="cursor-pill">Cursor: X=0, Z=0</span>
+          </div>
+
+          <div id="layer-grid-container" class="grid-scroll-box">
+            <p class="placeholder-text">Loading 2D layer matrix...</p>
+          </div>
+
+          <!-- Mini Palette & Orientation Picker -->
+          <div class="palette-picker-box">
+            <div class="palette-picker-header">
+              <span class="picker-title">Active Block &amp; Directional Orientation</span>
+              <span id="orientation-indicator" class="orientation-pill">Facing: NORTH | Axis: y [R]</span>
+            </div>
+
+            <!-- Quick Selection Block Chips -->
+            <div class="quick-palette-chips" id="quick-palette-chips">
+              <button class="palette-chip active" data-id="minecraft:oak_planks" title="Oak Planks">Oak Planks</button>
+              <button class="palette-chip" data-id="minecraft:spruce_log" title="Spruce Log">Spruce Log</button>
+              <button class="palette-chip" data-id="minecraft:cobblestone" title="Cobblestone">Cobblestone</button>
+              <button class="palette-chip" data-id="minecraft:stone_bricks" title="Stone Bricks">Stone Bricks</button>
+              <button class="palette-chip" data-id="minecraft:oak_stairs" title="Oak Stairs">Oak Stairs</button>
+              <button class="palette-chip" data-id="minecraft:glass_pane" title="Glass Pane">Glass Pane</button>
+              <button class="palette-chip" data-id="minecraft:barrel" title="Storage Barrel">Barrel</button>
+              <button class="palette-chip" data-id="minecraft:torch" title="Torch">Torch</button>
+              <button class="palette-chip" data-id="minecraft:crafting_table" title="Crafting Table">Craft Table</button>
+              <button class="palette-chip" data-id="minecraft:chest" title="Chest">Chest</button>
+              <button class="palette-chip chip-erase" data-id="air" title="Eraser / Air">Air (Erase)</button>
+            </div>
+
+            <div class="orientation-controls-row">
+              <div class="control-group">
+                <label for="palette-block-select">Catalog Block:</label>
+                <select id="palette-block-select" class="control-select"></select>
+              </div>
+
+              <div class="control-group">
+                <label for="orient-facing">Facing:</label>
+                <select id="orient-facing" class="control-select">
+                  <option value="north">North</option>
+                  <option value="east">East</option>
+                  <option value="south">South</option>
+                  <option value="west">West</option>
+                </select>
+              </div>
+
+              <div class="control-group">
+                <label for="orient-axis">Axis:</label>
+                <select id="orient-axis" class="control-select">
+                  <option value="y">Y (Vertical)</option>
+                  <option value="x">X (Horizontal)</option>
+                  <option value="z">Z (Depth)</option>
+                </select>
+              </div>
+
+              <div class="control-group">
+                <label for="orient-half">Half:</label>
+                <select id="orient-half" class="control-select">
+                  <option value="bottom">Bottom</option>
+                  <option value="top">Top</option>
+                </select>
+              </div>
+
+              <div class="control-group">
+                <button id="btn-rotate-block" class="btn btn-sm btn-rotate" title="Press 'R' hotkey to rotate clockwise 90 degrees">
+                  Rotate 90&deg; [R]
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Right Pane: HTML5 Canvas Isometric 2.5D Renderer & Real-time BOM -->
+        <div class="pane-column right-pane">
+          <div class="column-header">
+            <h3>HTML5 Canvas Isometric 3D Voxel View</h3>
+            <span class="xray-hint">Hover cursor across canvas for interior X-Ray</span>
+          </div>
+
+          <div class="canvas-viewport-box">
+            <canvas id="isometric-canvas" width="620" height="420"></canvas>
+          </div>
+
+          <!-- Real-Time Stats & Live BOM Computation -->
+          <div class="live-stats-box">
+            <div class="stats-summary-bar">
+              <div class="stat-item">
+                <span class="stat-label">Total Voxels:</span>
+                <strong id="stat-total-blocks">0</strong>
+              </div>
+              <div class="stat-item">
+                <span class="stat-label">Subterranean Excavation:</span>
+                <strong id="stat-excavation">0</strong> blocks
+              </div>
+            </div>
+
+            <div class="realtime-bom-wrapper">
+              <span class="bom-title">Real-Time Bill of Materials (BOM):</span>
+              <div id="realtime-bom-list" class="bom-chips-grid">
+                <span class="placeholder-text" style="font-size:0.8rem">No blocks placed yet</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Collapsible Raw JSON & Validator Panel -->
+      <div id="raw-json-panel" class="collapsible-panel hidden">
+        <div class="pane-header">
+          <h3>Raw Blueprint JSON Specification &amp; Server Validation</h3>
+          <button id="btn-close-json-panel" class="btn btn-sm">Close Panel</button>
+        </div>
+        <div class="editor-layout">
+          <div class="editor-col">
+            <label for="blueprint-input">Blueprint JSON Specification</label>
+            <textarea id="blueprint-input" rows="18" spellcheck="false" placeholder="Paste or edit blueprint JSON here..."></textarea>
+          </div>
+          <div class="editor-col">
+            <label>Validation Output &amp; Formal BOM Verification</label>
+            <div id="validation-output" class="validation-panel">
+              <p class="placeholder-text">Click "Validate &amp; Compute BOM" to run server-side bounds, orientation, and subterranean checks.</p>
+            </div>
           </div>
         </div>
       </div>
@@ -131,10 +281,76 @@
     </section>
   </main>
 
+  <!-- AI Architectural Assistant Chat Drawer (cq-imw.7) -->
+  <aside id="ai-assistant-drawer" class="assistant-drawer hidden">
+    <div class="drawer-header">
+      <div class="drawer-header-left">
+        <span class="drawer-icon">🏛</span>
+        <div>
+          <h3>Master Architect Assistant</h3>
+          <span class="drawer-sub">System 2 Deliberative Blueprint Synthesis</span>
+        </div>
+      </div>
+      <button id="btn-close-assistant" class="drawer-close">&times;</button>
+    </div>
+
+    <div class="drawer-context-bar">
+      <span>Context:</span>
+      <strong id="assistant-context-name">Pioneer Log Cabin</strong>
+    </div>
+
+    <!-- Quick Suggestion Chips -->
+    <div class="assistant-suggestions">
+      <span class="suggestions-label">Quick Prompts:</span>
+      <div class="suggestion-chips">
+        <button class="chip-suggestion" data-prompt="Build a cozy 7x5 frontier tavern with oak planks, spruce log pillars, a cellar, and a front porch" data-style="frontier">7x5 Frontier Tavern (with Cellar)</button>
+        <button class="chip-suggestion" data-prompt="Draft a 5x5 defense watchtower with battlements, arrow slits, and stone brick foundation" data-style="stone">5x5 Defense Watchtower</button>
+        <button class="chip-suggestion" data-prompt="Design a subterranean armory with weapon vaults, forge, and deepslate walls" data-style="stone">Subterranean Armory</button>
+        <button class="chip-suggestion" data-prompt="Add a subterranean storage cellar below the existing cabin with barrels and cobblestone walls" data-style="rustic">Add Subterranean Cellar</button>
+      </div>
+    </div>
+
+    <!-- Chat History Stream -->
+    <div id="assistant-chat-history" class="chat-history-stream">
+      <div class="chat-message message-architect">
+        <div class="message-meta">🏛 System 2 Master Architect</div>
+        <div class="message-body">
+          Greetings! I am CivQuest's Master Architect. Describe any architectural structure, tavern, armory, watchtower, or basement cellar you wish to construct. I will compile valid voxel layers and immediately stream them into your 2D grid and 3D isometric canvas.
+        </div>
+      </div>
+    </div>
+
+    <!-- Status indicator when thinking -->
+    <div id="assistant-loading" class="assistant-loading-indicator hidden">
+      <div class="spinner"></div>
+      <span>Reasoning with System 2 and synthesizing blueprint layers...</span>
+    </div>
+
+    <!-- Prompt Input Form -->
+    <div class="drawer-input-area">
+      <div class="drawer-input-row">
+        <label for="assistant-style-select">Style:</label>
+        <select id="assistant-style-select" class="control-select">
+          <option value="frontier">Frontier</option>
+          <option value="nordic">Nordic</option>
+          <option value="stone">Stone Masonry</option>
+          <option value="rustic">Rustic</option>
+        </select>
+      </div>
+      <textarea id="assistant-prompt-input" rows="3" placeholder="Describe building... e.g. 'Build a cozy 7x5 frontier tavern with oak planks, spruce log pillars, a cellar, and a front porch'"></textarea>
+      <div class="drawer-btn-row">
+        <button id="btn-send-assistant" class="btn btn-primary btn-draft">Draft Blueprint &amp; Render</button>
+      </div>
+    </div>
+  </aside>
+
   <footer class="app-footer">
-    <span>CivQuest Studio v1.0.0 &bull; Port 8765 &bull; Go Multi-Process Orchestrator</span>
+    <span>CivQuest Studio v1.0.0 &bull; Port 8765 &bull; Go Multi-Process Orchestrator &bull; System 2 Master Architect</span>
   </footer>
 
+  <!-- Modular Scripts -->
+  <script src="canvas.js"></script>
+  <script src="grid.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

@@ -1,0 +1,384 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>CivQuest // Tactical Agent Viewer</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <!-- Top Navigation & Control Bar -->
+  <header class="app-header">
+    <div class="header-left">
+      <div class="logo-mark">CQ</div>
+      <div class="brand">
+        <h1>CIVQUEST // AGENT VIEWER</h1>
+        <div class="sub">Tactical Telemetry & Cognitive State Monitor</div>
+      </div>
+    </div>
+
+    <div class="header-center">
+      <div class="agent-selector-wrapper">
+        <label for="agent-select" class="selector-label">AGENT:</label>
+        <select id="agent-select">
+          <option value="">Scanning for agents...</option>
+        </select>
+        <button id="btn-refresh" class="btn btn-secondary" title="Refresh agent roster">↻</button>
+      </div>
+    </div>
+
+    <div class="header-right">
+      <div class="connection-status">
+        <span id="ws-pulse" class="pulse-indicator offline"></span>
+        <span id="status-badge" class="status-badge offline">OFFLINE</span>
+      </div>
+    </div>
+  </header>
+
+  <!-- Agent Summary Header Bar -->
+  <section class="agent-header-bar" id="agent-header-bar">
+    <div class="header-stat">
+      <span class="label">AGENT ID</span>
+      <span class="val" id="hdr-agent-id">--</span>
+    </div>
+    <div class="header-stat">
+      <span class="label">CLAN</span>
+      <span class="val" id="hdr-clan">--</span>
+    </div>
+    <div class="header-stat">
+      <span class="label">PROFESSION</span>
+      <span class="val highlight" id="hdr-profession">--</span>
+    </div>
+    <div class="header-stat">
+      <span class="label">HOBBY</span>
+      <span class="val" id="hdr-hobby">--</span>
+    </div>
+    <div class="header-stat">
+      <span class="label">PID</span>
+      <span class="val" id="hdr-pid">--</span>
+    </div>
+    <div class="header-stat">
+      <span class="label">UPTIME</span>
+      <span class="val" id="hdr-uptime">--</span>
+    </div>
+    <div class="header-stat">
+      <span class="label">MEMORY RSS</span>
+      <span class="val" id="hdr-rss">--</span>
+    </div>
+    <div class="header-stat">
+      <span class="label">FRAME LATENCY</span>
+      <span class="val" id="hdr-latency">--</span>
+    </div>
+  </section>
+
+  <!-- Main Tactical Dashboard Grid -->
+  <main class="dashboard-grid">
+
+    <!-- Panel 1: HTPDA State Stack Breadcrumbs -->
+    <section class="card span-full" id="panel-htpda">
+      <div class="card-header">
+        <div class="card-title">
+          <span class="icon">☵</span> HTPDA STATE STACK & PREEMPTION PIPELINE
+        </div>
+        <div class="card-meta">
+          <span class="badge" id="stack-depth-badge">Stack Depth: 0</span>
+        </div>
+      </div>
+      <div class="card-body">
+        <div class="breadcrumbs-container" id="breadcrumbs-container">
+          <span class="breadcrumb-item base">Stage: <strong id="bc-stage">STANDBY</strong></span>
+          <span class="breadcrumb-sep">›</span>
+          <span class="breadcrumb-item routine">Routine: <strong id="bc-routine">STANDBY</strong></span>
+        </div>
+        <div class="preemption-details" id="preemption-details">
+          <span class="label">Transition Reason:</span>
+          <span class="val" id="transition-reason">Awaiting live telemetry frame...</span>
+        </div>
+      </div>
+    </section>
+
+    <!-- Panel 2: Circadian Shift Clock -->
+    <section class="card" id="panel-circadian">
+      <div class="card-header">
+        <div class="card-title">
+          <span class="icon">⏰</span> CIRCADIAN SHIFT CLOCK
+        </div>
+        <div class="card-meta">
+          <span class="badge" id="circadian-shift-badge">FIRST SHIFT</span>
+        </div>
+      </div>
+      <div class="card-body">
+        <div class="clock-display">
+          <div class="clock-digital">
+            <span class="mc-time" id="mc-digital-time">06:00</span>
+            <span class="mc-day" id="mc-day-count">Day 1</span>
+          </div>
+          <div class="clock-ticks">
+            <span id="mc-ticks">Tick 0 / 24,000</span>
+          </div>
+        </div>
+
+        <!-- Shift Progression Visual Meter -->
+        <div class="shift-meter-container">
+          <div class="shift-progress-track">
+            <div class="shift-segment dawn" title="Dawn (23000-1000)">Dawn</div>
+            <div class="shift-segment work" title="Work (1000-11000)">Work</div>
+            <div class="shift-segment tavern" title="Tavern Social (11000-13000)">Tavern</div>
+            <div class="shift-segment rest" title="Rest & Sleep (13000-23000)">Rest</div>
+            <div class="shift-cursor" id="shift-cursor"></div>
+          </div>
+        </div>
+
+        <div class="circadian-metrics">
+          <div class="metric-row">
+            <span class="label">Environment Weather:</span>
+            <span class="val" id="circadian-weather">CLEAR ☀️</span>
+          </div>
+          <div class="metric-row">
+            <span class="label">Tavern Social Window:</span>
+            <span class="val" id="circadian-tavern">INACTIVE</span>
+          </div>
+          <div class="metric-row">
+            <span class="label">Dusk / Night State:</span>
+            <span class="val" id="circadian-dusk">DAYLIGHT</span>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Panel 3: Settler Vitals -->
+    <section class="card" id="panel-vitals">
+      <div class="card-header">
+        <div class="card-title">
+          <span class="icon">♥</span> SETTLER VITALS & SPATIAL POSE
+        </div>
+        <div class="card-meta">
+          <span class="badge badge-armor" id="armor-rating-badge">🛡️ 0 / 20 Armor</span>
+        </div>
+      </div>
+      <div class="card-body">
+        <!-- Health Bar -->
+        <div class="vital-bar-group">
+          <div class="bar-header">
+            <span class="bar-label">HEALTH</span>
+            <span class="bar-val" id="health-val">20.0 / 20.0 HP</span>
+          </div>
+          <div class="progress-bar">
+            <div class="progress-fill health" id="health-bar" style="width: 100%;"></div>
+          </div>
+        </div>
+
+        <!-- Hunger & Saturation -->
+        <div class="vital-bar-group">
+          <div class="bar-header">
+            <span class="bar-label">FOOD & SATURATION</span>
+            <span class="bar-val" id="food-val">20 / 20 (Sat: 5.0)</span>
+          </div>
+          <div class="progress-bar">
+            <div class="progress-fill food" id="food-bar" style="width: 100%;"></div>
+          </div>
+        </div>
+
+        <!-- Stamina -->
+        <div class="vital-bar-group">
+          <div class="bar-header">
+            <span class="bar-label">SPRINT STAMINA</span>
+            <span class="bar-val" id="stamina-val">100.0%</span>
+          </div>
+          <div class="progress-bar">
+            <div class="progress-fill stamina" id="stamina-bar" style="width: 100%;"></div>
+          </div>
+        </div>
+
+        <!-- Spatial Coordinates & Yaw/Pitch -->
+        <div class="spatial-grid">
+          <div class="spatial-stat">
+            <span class="label">COORDINATES</span>
+            <span class="val mono" id="pos-coords">X: 0.0, Y: 0.0, Z: 0.0</span>
+          </div>
+          <div class="spatial-stat">
+            <span class="label">FACING POSE</span>
+            <span class="val mono" id="pos-facing">Yaw: 0.0° (S), Pitch: 0.0°</span>
+          </div>
+          <div class="spatial-stat">
+            <span class="label">BIOME</span>
+            <span class="val" id="env-biome">minecraft:plains</span>
+          </div>
+          <div class="spatial-stat">
+            <span class="label">NAVIGATION</span>
+            <span class="val highlight" id="nav-state">IDLE</span>
+          </div>
+        </div>
+
+        <!-- Utility Scores Radar / Mini-Meters -->
+        <div class="utility-scores-container">
+          <div class="section-subtitle">System 1 Utility Scores</div>
+          <div class="utility-row">
+            <span class="u-label">Hunger:</span>
+            <div class="u-bar-track"><div class="u-bar-fill" id="u-hunger" style="width: 0%;"></div></div>
+            <span class="u-val" id="u-hunger-val">0.00</span>
+          </div>
+          <div class="utility-row">
+            <span class="u-label">Threat:</span>
+            <div class="u-bar-track"><div class="u-bar-fill danger" id="u-threat" style="width: 0%;"></div></div>
+            <span class="u-val" id="u-threat-val">0.00</span>
+          </div>
+          <div class="utility-row">
+            <span class="u-label">Confidence:</span>
+            <div class="u-bar-track"><div class="u-bar-fill success" id="u-confidence" style="width: 50%;"></div></div>
+            <span class="u-val" id="u-confidence-val">0.50</span>
+          </div>
+          <div class="utility-row">
+            <span class="u-label">Exploration:</span>
+            <div class="u-bar-track"><div class="u-bar-fill" id="u-explore" style="width: 20%;"></div></div>
+            <span class="u-val" id="u-explore-val">0.20</span>
+          </div>
+          <div class="utility-row">
+            <span class="u-label">Sleep Need:</span>
+            <div class="u-bar-track"><div class="u-bar-fill warning" id="u-sleep" style="width: 10%;"></div></div>
+            <span class="u-val" id="u-sleep-val">0.10</span>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Panel 4: Equipment & Inventory Matrix -->
+    <section class="card span-full" id="panel-inventory">
+      <div class="card-header">
+        <div class="card-title">
+          <span class="icon">🎒</span> EQUIPMENT & INVENTORY MATRIX
+        </div>
+        <div class="card-meta">
+          <span class="badge" id="inv-count-badge">0 / 36 slots</span>
+        </div>
+      </div>
+      <div class="card-body inventory-layout">
+        <!-- Armor & Offhand Row -->
+        <div class="equipment-column">
+          <div class="section-subtitle">Equipped Armor & Offhand</div>
+          <div class="equipment-slots">
+            <div class="inv-slot armor-slot" id="slot-39" data-slot="39" title="Helmet (Slot 39)">
+              <span class="slot-placeholder">🪖</span>
+            </div>
+            <div class="inv-slot armor-slot" id="slot-38" data-slot="38" title="Chestplate (Slot 38)">
+              <span class="slot-placeholder">👕</span>
+            </div>
+            <div class="inv-slot armor-slot" id="slot-37" data-slot="37" title="Leggings (Slot 37)">
+              <span class="slot-placeholder">👖</span>
+            </div>
+            <div class="inv-slot armor-slot" id="slot-36" data-slot="36" title="Boots (Slot 36)">
+              <span class="slot-placeholder">🥾</span>
+            </div>
+            <div class="inv-slot offhand-slot" id="slot-40" data-slot="40" title="Off-Hand (Slot 40)">
+              <span class="slot-placeholder">🛡️</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Main 27-slot Storage + 9-slot Hotbar -->
+        <div class="storage-matrix">
+          <div class="section-subtitle">Main Storage (Slots 9-35)</div>
+          <div class="slots-grid main-storage" id="main-storage-grid">
+            <!-- 27 slots generated via JS -->
+          </div>
+
+          <div class="section-subtitle hotbar-title">Hotbar & Main Hand (Slots 0-8)</div>
+          <div class="slots-grid hotbar" id="hotbar-grid">
+            <!-- 9 hotbar slots generated via JS -->
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Panel 5: FactGraph Blackboard -->
+    <section class="card" id="panel-blackboard">
+      <div class="card-header">
+        <div class="card-title">
+          <span class="icon">📋</span> FACTGRAPH BLACKBOARD
+        </div>
+        <div class="card-meta">
+          <input type="text" id="blackboard-search" placeholder="Filter facts..." class="search-input">
+          <span class="badge" id="facts-count-badge">0 Facts</span>
+        </div>
+      </div>
+      <div class="card-body">
+        <div class="facts-list" id="facts-list">
+          <div class="empty-state">No facts asserted on blackboard</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Panel 6: System 2 Reflections -->
+    <section class="card" id="panel-reflections">
+      <div class="card-header">
+        <div class="card-title">
+          <span class="icon">🧠</span> SYSTEM 2 DELIBERATIVE REFLECTIONS
+        </div>
+        <div class="card-meta">
+          <span class="badge badge-purple" id="llm-requests-badge">LLM Reqs: 0</span>
+        </div>
+      </div>
+      <div class="card-body reflections-body">
+        <!-- Goal Hierarchy -->
+        <div class="reflection-block">
+          <div class="section-subtitle">Synthesized Strategic Goals</div>
+          <div class="goals-container">
+            <div class="goal-item">
+              <span class="goal-tag immediate">IMMEDIATE</span>
+              <span class="goal-text" id="goal-immediate">None</span>
+            </div>
+            <div class="goal-item">
+              <span class="goal-tag short">SHORT-TERM</span>
+              <span class="goal-text" id="goal-short">None</span>
+            </div>
+            <div class="goal-item">
+              <span class="goal-tag long">LONG-TERM</span>
+              <span class="goal-text" id="goal-long">None</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Latest Contemplation / Reflective Memory -->
+        <div class="reflection-block">
+          <div class="section-subtitle">Latest Contemplation Reflection</div>
+          <blockquote class="reflection-quote" id="reflection-contemplation">
+            No reflective memories recorded yet. System 2 contemplates during twilight tavern social and dawn prep.
+          </blockquote>
+        </div>
+
+        <!-- Latest Dialogue & Speech -->
+        <div class="reflection-block">
+          <div class="section-subtitle">Recent Utterance & Dialogue</div>
+          <div class="dialogue-box" id="reflection-dialogue">
+            No recent dialogue exchanges.
+          </div>
+        </div>
+
+        <!-- Chronicler Book Page -->
+        <div class="reflection-block">
+          <div class="section-subtitle">Chronicler Annals Excerpt</div>
+          <div class="chronicle-box" id="reflection-chronicle">
+            Chronicler has not recorded annals entries yet.
+          </div>
+        </div>
+      </div>
+    </section>
+
+  </main>
+
+  <!-- Item Details Tooltip -->
+  <div id="item-tooltip" class="tooltip hidden">
+    <div class="tooltip-title" id="tt-name">Item Name</div>
+    <div class="tooltip-id" id="tt-id">minecraft:item_id</div>
+    <div class="tooltip-meta" id="tt-count">Count: 1</div>
+    <div class="tooltip-meta" id="tt-durability">Durability: 100/100</div>
+  </div>
+
+  <footer class="app-footer">
+    <span>CivQuest Settlement Engine // Autonomous FakePlayer Agent Monitor</span>
+    <span>Port 8766 // WebSocket Telemetry at 280ms Frame Interval</span>
+  </footer>
+
+  <script src="app.js"></script>
+</body>
+</html>

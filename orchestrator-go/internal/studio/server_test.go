@@ -7,6 +7,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -17,6 +18,7 @@ import (
 	"golang.org/x/net/websocket"
 
 	"github.com/btposey/civquest/orchestrator-go/internal/blueprints"
+	"github.com/btposey/civquest/orchestrator-go/internal/system2"
 	"github.com/btposey/civquest/orchestrator-go/internal/xdg"
 )
 
@@ -631,14 +633,20 @@ func TestServer_StaticAndSPA(t *testing.T) {
 		t.Errorf("expected status 200 for style.css, got %d", cssResp.StatusCode)
 	}
 
-	// 3. JS asset
-	jsResp, err := http.Get(srvURL + "/app.js")
-	if err != nil {
-		t.Fatalf("GET /app.js failed: %v", err)
-	}
-	defer jsResp.Body.Close()
-	if jsResp.StatusCode != http.StatusOK {
-		t.Errorf("expected status 200 for app.js, got %d", jsResp.StatusCode)
+	// 3. JS assets
+	for _, jsAsset := range []string{"/app.js", "/canvas.js", "/grid.js"} {
+		jsResp, err := http.Get(srvURL + jsAsset)
+		if err != nil {
+			t.Fatalf("GET %s failed: %v", jsAsset, err)
+		}
+		if jsResp.StatusCode != http.StatusOK {
+			t.Errorf("expected status 200 for %s, got %d", jsAsset, jsResp.StatusCode)
+		}
+		body, _ := io.ReadAll(jsResp.Body)
+		jsResp.Body.Close()
+		if len(body) == 0 {
+			t.Errorf("expected non-empty body for %s", jsAsset)
+		}
 	}
 
 	// 4. Unknown route falls back to index.html for SPA client-side routing
@@ -650,6 +658,148 @@ func TestServer_StaticAndSPA(t *testing.T) {
 	spaBody, _ := io.ReadAll(spaResp.Body)
 	if !strings.Contains(string(spaBody), "CivQuest Blueprint Studio") {
 		t.Errorf("expected SPA fallback to index.html, got: %s", string(spaBody)[:min(100, len(spaBody))])
+	}
+}
+
+func TestServer_AssistantDraft(t *testing.T) {
+	srv, srvURL := setupTestServer(t)
+
+	// 1. Invalid method (GET)
+	getResp, err := http.Get(srvURL + "/api/assistant/draft")
+	if err != nil {
+		t.Fatalf("GET /api/assistant/draft failed: %v", err)
+	}
+	getResp.Body.Close()
+	if getResp.StatusCode != http.StatusMethodNotAllowed {
+		t.Errorf("expected 405 Method Not Allowed, got %d", getResp.StatusCode)
+	}
+
+	// 2. Empty prompt
+	emptyReq := map[string]string{"prompt": ""}
+	emptyBody, _ := json.Marshal(emptyReq)
+	badResp, err := http.Post(srvURL+"/api/assistant/draft", "application/json", strings.NewReader(string(emptyBody)))
+	if err != nil {
+		t.Fatalf("POST empty prompt failed: %v", err)
+	}
+	badResp.Body.Close()
+	if badResp.StatusCode != http.StatusBadRequest {
+		t.Errorf("expected 400 Bad Request for empty prompt, got %d", badResp.StatusCode)
+	}
+
+	// 3. Fallback procedural synthesis of frontier tavern with cellar & porch
+	req := AssistantDraftRequest{
+		Prompt: "Build a cozy 7x5 frontier tavern with oak planks, spruce log pillars, a cellar, and a front porch",
+		Style:  "frontier",
+	}
+	reqBytes, _ := json.Marshal(req)
+	resp, err := http.Post(srvURL+"/api/assistant/draft", "application/json", strings.NewReader(string(reqBytes)))
+	if err != nil {
+		t.Fatalf("POST /api/assistant/draft failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("expected 200 OK, got %d: %s", resp.StatusCode, string(body))
+	}
+
+	var drafted blueprints.Blueprint
+	if err := json.NewDecoder(resp.Body).Decode(&drafted); err != nil {
+		t.Fatalf("failed to decode drafted blueprint: %v", err)
+	}
+
+	if err := drafted.Validate(); err != nil {
+		t.Fatalf("drafted blueprint failed validation: %v", err)
+	}
+
+	if drafted.Purpose != blueprints.PurposeTavern {
+		t.Errorf("expected purpose TAVERN, got %q", drafted.Purpose)
+	}
+	if drafted.Dimensions.Width != 7 || drafted.Dimensions.Length != 5 {
+		t.Errorf("expected dimensions 7x5, got %dx%d", drafted.Dimensions.Width, drafted.Dimensions.Length)
+	}
+	if drafted.Dimensions.MinY != -1 {
+		t.Errorf("expected MinY -1 for tavern with cellar, got %d", drafted.Dimensions.MinY)
+	}
+	if drafted.Excavation <= 0 {
+		t.Errorf("expected excavation > 0 for cellar level, got %d", drafted.Excavation)
+	}
+
+	// Check that cellar layer exists
+	foundCellar := false
+	for _, l := range drafted.Layers {
+		if l.Y == -1 {
+			foundCellar = true
+			break
+		}
+	}
+	if !foundCellar {
+		t.Error("expected layer with Y=-1 in drafted blueprint")
+	}
+
+	// 4. Test with System 2 LLM Client attached to mock gateway
+	mockGateway := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		mockResp := system2.ChatCompletionResponse{
+			Choices: []system2.ChatCompletionChoice{
+				{
+					Message: system2.ChatMessage{
+						Role: "assistant",
+						Content: `{
+							"name": "LLM Nordic Mead Hall",
+							"purpose": "TAVERN",
+							"style": "nordic",
+							"dimensions": { "width": 5, "height": 3, "length": 5, "min_y": 0 },
+							"palette": {
+								"p": "minecraft:oak_planks",
+								"l": "minecraft:spruce_log[axis=y]"
+							},
+							"layers": [
+								{ "y": 0, "grid": ["lpppl", "ppppp", "ppppp", "ppppp", "lpppl"] }
+							]
+						}`,
+					},
+				},
+			},
+		}
+		_ = json.NewEncoder(w).Encode(mockResp)
+	}))
+	defer mockGateway.Close()
+
+	llmClient, err := system2.NewClientWithConfig(
+		xdg.LLMGatewayConfig{BaseURL: mockGateway.URL},
+		xdg.InferenceGovernorConfig{MaxConcurrentLLMRequests: 2},
+	)
+	if err != nil {
+		t.Fatalf("creating test LLM client: %v", err)
+	}
+
+	srv.cfg.LLMClient = llmClient
+	srv.cfg.ArchitectService = system2.NewArchitectService(llmClient)
+
+	llmReq := AssistantDraftRequest{
+		Prompt: "Design an authentic Nordic mead hall",
+		Style:  "nordic",
+	}
+	llmReqBytes, _ := json.Marshal(llmReq)
+	llmResp, err := http.Post(srvURL+"/api/assistant/draft", "application/json", strings.NewReader(string(llmReqBytes)))
+	if err != nil {
+		t.Fatalf("POST /api/assistant/draft with LLM failed: %v", err)
+	}
+	defer llmResp.Body.Close()
+
+	if llmResp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(llmResp.Body)
+		t.Fatalf("expected status 200 from LLM draft, got %d: %s", llmResp.StatusCode, string(body))
+	}
+
+	var llmBP blueprints.Blueprint
+	if err := json.NewDecoder(llmResp.Body).Decode(&llmBP); err != nil {
+		t.Fatalf("failed decoding LLM blueprint: %v", err)
+	}
+
+	if llmBP.Name != "LLM Nordic Mead Hall" {
+		t.Errorf("expected name 'LLM Nordic Mead Hall', got %q", llmBP.Name)
 	}
 }
 

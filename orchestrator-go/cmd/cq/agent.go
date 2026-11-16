@@ -47,6 +47,7 @@ of process-isolated autonomous FakePlayer agent avatars.`,
 	agentCmd.AddCommand(newAgentStartClanCmd())
 	agentCmd.AddCommand(newAgentLogsCmd())
 	agentCmd.AddCommand(newAgentSkillCmd())
+	agentCmd.AddCommand(newAgentViewerCmd())
 
 	return agentCmd
 }

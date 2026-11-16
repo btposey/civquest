@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 
@@ -149,6 +150,103 @@ func TestQuadrant_AscendingYOrder(t *testing.T) {
 				t.Errorf("expected blueprint block not to be marked as temporary scaffold")
 			}
 		}
+	}
+}
+
+// TestQuadrant_SubterraneanBasementPartition verifies that blueprints with subterranean levels (MinY < 0)
+// partition bottom-up starting at negative Y layers and accurately preserve directional block properties.
+func TestQuadrant_SubterraneanBasementPartition(t *testing.T) {
+	bp := &Blueprint{
+		ID:      "cellar_tavern",
+		Name:    "Cellar Tavern",
+		Purpose: PurposeTavern,
+		Dimensions: Dimensions{
+			Width:  4,
+			Height: 4,
+			Length: 4,
+			MinY:   -2, // Basements at Y = -2 and Y = -1, ground at Y = 0, roof at Y = 1
+		},
+		Palette: map[int]string{
+			1: "minecraft:cobblestone",
+			2: "minecraft:spruce_planks",
+			3: "minecraft:spruce_stairs[facing=north,half=bottom]",
+		},
+		Layers: []Layer{
+			{
+				Y: -2,
+				Matrix: [][]int{
+					{1, 1, 1, 1},
+					{1, 0, 0, 1},
+					{1, 0, 0, 1},
+					{1, 1, 1, 1},
+				},
+			},
+			{
+				Y: -1,
+				Matrix: [][]int{
+					{1, 1, 1, 1},
+					{1, 0, 0, 1},
+					{1, 0, 0, 1},
+					{1, 1, 1, 1},
+				},
+			},
+			{
+				Y: 0,
+				Matrix: [][]int{
+					{2, 2, 2, 2},
+					{2, 0, 0, 2},
+					{2, 0, 0, 2},
+					{2, 2, 2, 2},
+				},
+			},
+			{
+				Y: 1,
+				Matrix: [][]int{
+					{3, 3, 3, 3},
+					{3, 0, 0, 3},
+					{3, 0, 0, 3},
+					{3, 3, 3, 3},
+				},
+			},
+		},
+	}
+
+	vm, err := bp.ToVoxelMatrix()
+	if err != nil {
+		t.Fatalf("ToVoxelMatrix failed: %v", err)
+	}
+
+	anchorY := 64
+	partitioned := PartitionBlueprintWithAnchor(vm, 100, anchorY, 200)
+
+	totalBlocks := 0
+	for q, intents := range partitioned {
+		totalBlocks += len(intents)
+		prevY := int32(-9999)
+		for _, it := range intents {
+			if it.TargetVoxel.Y < prevY {
+				t.Errorf("quadrant %s violated bottom-up order: got Y=%d after Y=%d", q, it.TargetVoxel.Y, prevY)
+			}
+			prevY = it.TargetVoxel.Y
+
+			// Verify anchor offset correctly applied to negative MinY
+			expectedMinWorldY := int32(anchorY + bp.Dimensions.MinY)
+			if it.TargetVoxel.Y < expectedMinWorldY {
+				t.Errorf("target voxel Y=%d below expected minimum world Y=%d", it.TargetVoxel.Y, expectedMinWorldY)
+			}
+
+			// Verify stairs preserve directional facing and half properties
+			if strings.Contains(it.BlockStateString, "stairs") {
+				if !strings.Contains(it.BlockStateString, "facing=north") || !strings.Contains(it.BlockStateString, "half=bottom") {
+					t.Errorf("stairs lost directional properties: %s", it.BlockStateString)
+				}
+			}
+		}
+	}
+
+	// 12 cobblestone at Y=-2, 12 cobblestone at Y=-1, 12 planks at Y=0, 12 stairs at Y=1 = 48 blocks total
+	if totalBlocks != 48 {
+		t.Fatalf("expected 48 total blocks partitioned, got %d", totalBlocks)
 	}
 }
 

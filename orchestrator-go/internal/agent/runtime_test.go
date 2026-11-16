@@ -560,6 +560,14 @@ func TestRuntime_EnrichedSocketTelemetryAndTiming(t *testing.T) {
 		t.Errorf("expected positive exploration score, got %f", resp.UtilityScores.Exploration)
 	}
 
+	// Verify enriched viewer telemetry fields
+	if resp.TimeOfDay != 6000 {
+		t.Errorf("expected TimeOfDay 6000, got %d", resp.TimeOfDay)
+	}
+	if resp.MaxHealth != 20.0 {
+		t.Errorf("expected MaxHealth 20.0, got %f", resp.MaxHealth)
+	}
+
 	cancel()
 	_ = <-runErrCh
 }

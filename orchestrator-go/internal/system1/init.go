@@ -26,4 +26,5 @@ func RegisterDefaultEvaluatorsAndSkills() {
 	DefaultRegistry.RegisterSkill(NewRoadPavingSkill())
 	DefaultRegistry.RegisterSkill(NewCivicPatrolSkill())
 	DefaultRegistry.RegisterSkill(NewFrontierScoutingSkill())
+	DefaultRegistry.RegisterSkill(NewConstructionSkill())
 }

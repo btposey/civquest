@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"sync"
@@ -21,6 +22,7 @@ import (
 	"golang.org/x/net/websocket"
 
 	"github.com/btposey/civquest/orchestrator-go/internal/blueprints"
+	"github.com/btposey/civquest/orchestrator-go/internal/system2"
 	"github.com/btposey/civquest/orchestrator-go/internal/xdg"
 )
 
@@ -29,9 +31,11 @@ var staticFS embed.FS
 
 // Config specifies the runtime configuration for the CivQuest Studio HTTP server.
 type Config struct {
-	Host     string
-	Port     int
-	Resolver *xdg.Resolver
+	Host             string
+	Port             int
+	Resolver         *xdg.Resolver
+	ArchitectService *system2.ArchitectService
+	LLMClient        *system2.Client
 }
 
 // StudioHub manages bidirectional WebSocket client connections for collaborative live sync.
@@ -88,7 +92,7 @@ type PaletteBlockEntry struct {
 
 // PaletteResponse holds the standard catalog palette list.
 type PaletteResponse struct {
-	Blocks     []PaletteBlockEntry            `json:"blocks"`
+	Blocks     []PaletteBlockEntry              `json:"blocks"`
 	Categories []blueprints.OrientationCategory `json:"categories"`
 }
 
@@ -153,6 +157,7 @@ func NewServer(cfg Config) *Server {
 
 	// REST API Endpoints
 	mux.HandleFunc("/api/health", s.handleHealth)
+	mux.HandleFunc("/api/assistant/draft", s.handleAssistantDraft)
 	mux.HandleFunc("/api/blueprints/validate", s.handleBlueprintValidate)
 	mux.HandleFunc("/api/blueprints", s.handleBlueprints)
 	mux.HandleFunc("/api/blueprints/", s.handleBlueprintByID)
@@ -416,6 +421,386 @@ func (s *Server) handleBlueprintValidate(w http.ResponseWriter, r *http.Request)
 		Dimensions:  bp.Dimensions,
 		TotalBlocks: totalBlocks,
 	})
+}
+
+// AssistantDraftRequest encapsulates a user prompt and optional base blueprint context
+// for the AI Architectural Assistant.
+type AssistantDraftRequest struct {
+	Prompt          string `json:"prompt"`
+	BaseBlueprintID string `json:"base_blueprint_id,omitempty"`
+	Style           string `json:"style,omitempty"`
+}
+
+func (s *Server) handleAssistantDraft(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeJSONError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		writeJSONError(w, http.StatusBadRequest, "failed reading request body")
+		return
+	}
+	defer r.Body.Close()
+
+	var req AssistantDraftRequest
+	if err := json.Unmarshal(body, &req); err != nil {
+		writeJSONError(w, http.StatusBadRequest, fmt.Sprintf("invalid json payload: %v", err))
+		return
+	}
+
+	if strings.TrimSpace(req.Prompt) == "" {
+		writeJSONError(w, http.StatusBadRequest, "prompt cannot be empty")
+		return
+	}
+
+	var baseBP *blueprints.Blueprint
+	if req.BaseBlueprintID != "" {
+		baseBP, _ = blueprints.GetLibraryBlueprint(req.BaseBlueprintID)
+	}
+
+	// 1. If an ArchitectService or LLMClient is available, attempt System 2 LLM inference
+	archSrv := s.cfg.ArchitectService
+	if archSrv == nil && s.cfg.LLMClient != nil {
+		archSrv = system2.NewArchitectService(s.cfg.LLMClient)
+	}
+	if archSrv == nil && s.cfg.Resolver != nil {
+		if globalCfg, err := s.cfg.Resolver.LoadGlobalConfig(); err == nil && globalCfg != nil && globalCfg.LLMGateway.BaseURL != "" {
+			if client, err := system2.NewClient(globalCfg); err == nil {
+				archSrv = system2.NewArchitectService(client)
+			}
+		}
+	}
+
+	if archSrv != nil {
+		baseForReq := baseBP
+		if baseForReq == nil {
+			baseForReq = &blueprints.Blueprint{
+				ID:      "base_draft",
+				Name:    "Draft Base",
+				Purpose: blueprints.PurposeHome,
+				Dimensions: blueprints.Dimensions{
+					Width:  5,
+					Height: 3,
+					Length: 5,
+					MinY:   0,
+				},
+				Palette: map[int]string{
+					1: "minecraft:oak_planks",
+					2: "minecraft:oak_log[axis=y]",
+				},
+				Layers: []blueprints.Layer{
+					{
+						Y: 0,
+						Matrix: [][]int{
+							{2, 1, 1, 1, 2},
+							{1, 1, 1, 1, 1},
+							{1, 1, 1, 1, 1},
+							{1, 1, 1, 1, 1},
+							{2, 1, 1, 1, 2},
+						},
+					},
+				},
+			}
+		}
+
+		bp, err := archSrv.GenerateDerivative(r.Context(), &system2.ArchitecturalDerivativeRequest{
+			BaseBlueprint:           baseForReq,
+			ModificationDescription: req.Prompt,
+			TargetStyle:             req.Style,
+		})
+		if err == nil && bp != nil && bp.Validate() == nil {
+			writeJSON(w, http.StatusOK, bp)
+			return
+		}
+	}
+
+	// 2. Procedural Fallback Architect: Deterministic synthesis fulfilling prompt requirements
+	bp, err := generateFallbackBlueprint(req, baseBP)
+	if err != nil {
+		writeJSONError(w, http.StatusInternalServerError, fmt.Sprintf("blueprint generation failed: %v", err))
+		return
+	}
+
+	writeJSON(w, http.StatusOK, bp)
+}
+
+var dimRegex = regexp.MustCompile(`(?i)(\d+)\s*[xX*]\s*(\d+)`)
+
+func generateFallbackBlueprint(req AssistantDraftRequest, baseBP *blueprints.Blueprint) (*blueprints.Blueprint, error) {
+	promptLower := strings.ToLower(req.Prompt)
+
+	// Determine Purpose & Name
+	purpose := blueprints.PurposeHome
+	name := "Frontier Residence"
+
+	switch {
+	case strings.Contains(promptLower, "tavern"):
+		purpose = blueprints.PurposeTavern
+		name = "Cozy Frontier Tavern"
+	case strings.Contains(promptLower, "armory"):
+		purpose = blueprints.PurposeArmory
+		name = "Settlement Armory"
+	case strings.Contains(promptLower, "tower") || strings.Contains(promptLower, "watchtower") || strings.Contains(promptLower, "barracks"):
+		purpose = blueprints.PurposeBarracks
+		name = "Defense Watchtower"
+	case strings.Contains(promptLower, "granary") || strings.Contains(promptLower, "storehouse"):
+		purpose = blueprints.PurposeStorehouse
+		name = "Settlement Storehouse"
+	case strings.Contains(promptLower, "library") || strings.Contains(promptLower, "archive"):
+		purpose = blueprints.PurposeLibrary
+		name = "Settlement Archive"
+	case strings.Contains(promptLower, "townhall") || strings.Contains(promptLower, "hall"):
+		purpose = blueprints.PurposeTownhall
+		name = "Settlement Townhall"
+	case strings.Contains(promptLower, "farm"):
+		purpose = blueprints.PurposeFarm
+		name = "Settlement Farmhouse"
+	case strings.Contains(promptLower, "cabin"):
+		purpose = blueprints.PurposeHome
+		name = "Log Cabin"
+	}
+
+	// Style
+	style := strings.TrimSpace(req.Style)
+	if style == "" {
+		switch {
+		case strings.Contains(promptLower, "nordic"):
+			style = "nordic"
+		case strings.Contains(promptLower, "stone"):
+			style = "stone"
+		case strings.Contains(promptLower, "rustic"):
+			style = "rustic"
+		default:
+			style = "frontier"
+		}
+	}
+
+	// Dimensions
+	width := 7
+	length := 5
+	if baseBP != nil {
+		width = baseBP.Dimensions.Width
+		length = baseBP.Dimensions.Length
+	}
+
+	if match := dimRegex.FindStringSubmatch(promptLower); len(match) >= 3 {
+		var w, l int
+		if _, err := fmt.Sscanf(match[1], "%d", &w); err == nil && w >= 3 && w <= 32 {
+			width = w
+		}
+		if _, err := fmt.Sscanf(match[2], "%d", &l); err == nil && l >= 3 && l <= 32 {
+			length = l
+		}
+	}
+
+	hasCellar := strings.Contains(promptLower, "cellar") || strings.Contains(promptLower, "basement") || strings.Contains(promptLower, "subterranean")
+	minY := 0
+	if hasCellar {
+		minY = -1
+	} else if baseBP != nil && baseBP.Dimensions.MinY < 0 {
+		minY = baseBP.Dimensions.MinY
+	}
+
+	height := 4
+	if hasCellar {
+		height = 5
+	}
+	if strings.Contains(promptLower, "tower") || strings.Contains(promptLower, "2-story") || strings.Contains(promptLower, "two-story") {
+		height += 2
+	}
+
+	// Build Palette
+	logBlock := "minecraft:oak_log[axis=y]"
+	if strings.Contains(promptLower, "spruce log") || strings.Contains(promptLower, "spruce") {
+		logBlock = "minecraft:spruce_log[axis=y]"
+	}
+
+	plankBlock := "minecraft:oak_planks"
+	if strings.Contains(promptLower, "spruce plank") {
+		plankBlock = "minecraft:spruce_planks"
+	}
+
+	palette := map[int]string{
+		1:  plankBlock,
+		2:  logBlock,
+		3:  "minecraft:cobblestone",
+		4:  "minecraft:oak_stairs[facing=north]",
+		5:  "minecraft:glass_pane",
+		6:  "minecraft:barrel",
+		7:  "minecraft:torch",
+		8:  "minecraft:crafting_table",
+		9:  "minecraft:chest",
+		10: "minecraft:stone_bricks",
+	}
+
+	hasPorch := strings.Contains(promptLower, "porch")
+
+	layers := make([]blueprints.Layer, 0, height)
+
+	for y := minY; y < minY+height; y++ {
+		matrix := make([][]int, length)
+		for z := 0; z < length; z++ {
+			matrix[z] = make([]int, width)
+		}
+
+		switch {
+		case y < 0:
+			// Subterranean Cellar level: stone perimeter walls, stone floor, storage barrels & torches
+			for z := 0; z < length; z++ {
+				for x := 0; x < width; x++ {
+					if z == 0 || z == length-1 || x == 0 || x == width-1 {
+						matrix[z][x] = 10 // stone_bricks walls
+					} else if (x == 1 && z == 1) || (x == width-2 && z == 1) {
+						matrix[z][x] = 6 // barrel
+					} else if x == 1 && z == length-2 {
+						matrix[z][x] = 7 // torch
+					} else {
+						matrix[z][x] = 0 // air for excavation
+					}
+				}
+			}
+
+		case y == 0:
+			// Ground Floor: foundation / planks, corner log pillars, optional porch
+			for z := 0; z < length; z++ {
+				for x := 0; x < width; x++ {
+					isCorner := (x == 0 || x == width-1) && (z == 0 || z == length-1)
+					if isCorner {
+						matrix[z][x] = 2 // log pillar
+					} else {
+						matrix[z][x] = 1 // planks floor
+					}
+				}
+			}
+
+		case y == 1:
+			// Lower Walls: corner log pillars, perimeter walls, windows, door opening at front
+			for z := 0; z < length; z++ {
+				for x := 0; x < width; x++ {
+					isCorner := (x == 0 || x == width-1) && (z == 0 || z == length-1)
+					if isCorner {
+						matrix[z][x] = 2 // log pillar
+						continue
+					}
+
+					// Front porch open area
+					if hasPorch && z == length-1 {
+						matrix[z][x] = 0
+						continue
+					}
+
+					isWall := z == 0 || z == length-1 || x == 0 || x == width-1
+					if hasPorch && z == length-2 {
+						isWall = true
+					}
+
+					if isWall {
+						// Doorway at center
+						doorZ := length - 1
+						if hasPorch {
+							doorZ = length - 2
+						}
+						if z == doorZ && x == width/2 {
+							matrix[z][x] = 0 // doorway air
+						} else if (x == 0 || x == width-1) && z == length/2 {
+							matrix[z][x] = 5 // glass pane
+						} else {
+							matrix[z][x] = 1 // plank wall
+						}
+					} else {
+						// Interior furnishing
+						if x == 1 && z == 1 {
+							matrix[z][x] = 8 // crafting table
+						} else if x == width-2 && z == 1 {
+							matrix[z][x] = 9 // chest
+						} else if purpose == blueprints.PurposeTavern && x == 2 && z == 2 {
+							matrix[z][x] = 6 // barrel
+						} else {
+							matrix[z][x] = 0
+						}
+					}
+				}
+			}
+
+		case y == 2:
+			// Upper Walls
+			for z := 0; z < length; z++ {
+				for x := 0; x < width; x++ {
+					isCorner := (x == 0 || x == width-1) && (z == 0 || z == length-1)
+					if isCorner {
+						matrix[z][x] = 2 // log pillar
+						continue
+					}
+					if hasPorch && z == length-1 {
+						matrix[z][x] = 0
+						continue
+					}
+					isWall := z == 0 || z == length-1 || x == 0 || x == width-1
+					if hasPorch && z == length-2 {
+						isWall = true
+					}
+					if isWall {
+						if (x == 0 || x == width-1) && z == length/2 {
+							matrix[z][x] = 5 // glass pane
+						} else {
+							matrix[z][x] = 1
+						}
+					} else if x == 1 && z == 1 {
+						matrix[z][x] = 7 // torch
+					} else {
+						matrix[z][x] = 0
+					}
+				}
+			}
+
+		default:
+			// Roof / Ceiling (top layers)
+			for z := 0; z < length; z++ {
+				for x := 0; x < width; x++ {
+					if hasPorch && z == length-1 {
+						matrix[z][x] = 4 // stairs overhang
+					} else if z == 0 || z == length-1 || x == 0 || x == width-1 {
+						matrix[z][x] = 4 // roof trim stairs
+					} else {
+						matrix[z][x] = 1 // ceiling planks
+					}
+				}
+			}
+		}
+
+		layers = append(layers, blueprints.Layer{
+			Y:      y,
+			Matrix: matrix,
+		})
+	}
+
+	slug := blueprints.Slugify(name + "_" + fmt.Sprintf("%d", time.Now().UnixNano()%100000))
+	bp := &blueprints.Blueprint{
+		ID:          slug,
+		Name:        name,
+		Version:     1,
+		Purpose:     purpose,
+		Type:        strings.ToLower(purpose),
+		Style:       style,
+		Author:      "System 2 Master Architect",
+		Description: fmt.Sprintf("Architecturally synthesized blueprint: %s", req.Prompt),
+		Dimensions: blueprints.Dimensions{
+			Width:  width,
+			Height: height,
+			Length: length,
+			MinY:   minY,
+		},
+		Palette: palette,
+		Layers:  layers,
+	}
+
+	if err := bp.Validate(); err != nil {
+		return nil, fmt.Errorf("validating synthesized fallback blueprint: %w", err)
+	}
+
+	return bp, nil
 }
 
 var standardBlockCatalog = []string{
