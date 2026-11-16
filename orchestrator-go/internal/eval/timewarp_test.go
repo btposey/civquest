@@ -35,8 +35,13 @@ func TestTimeWarp_Performance_24000TicksUnderOneSecond(t *testing.T) {
 
 	t.Logf("Executed %d world ticks in %v (%.2f ticks/ms)", totalTicks, elapsed, float64(totalTicks)/float64(elapsed.Milliseconds()))
 
-	if elapsed >= 1*time.Second {
-		t.Fatalf("PERFORMANCE VIOLATION: 24,000 ticks took %v (must execute in < 1.0 second)", elapsed)
+	threshold := 1 * time.Second
+	// In -race builds, Go memory access instrumentation adds ~4-5x overhead
+	if raceDetectorEnabled {
+		threshold = 5 * time.Second
+	}
+	if elapsed >= threshold {
+		t.Fatalf("PERFORMANCE VIOLATION: 24,000 ticks took %v (must execute in < %v)", elapsed, threshold)
 	}
 }
 

@@ -27,11 +27,12 @@ type Evaluator interface {
 
 // SkillContext provides operational context for skill execution.
 type SkillContext struct {
-	AgentID string
-	Frame   *civquestv1.TelemetryFrame
-	Config  *xdg.AgentIdentityConfig
-	State   *AgentState
-	CivicDB *db.CivicRegistryDB
+	AgentID   string
+	Frame     *civquestv1.TelemetryFrame
+	Config    *xdg.AgentIdentityConfig
+	State     *AgentState
+	CivicDB   *db.CivicRegistryDB
+	SafeNodes []db.MapNode
 }
 
 // Skill defines a modular behavior skill activated by preconditions on the FactGraph.
@@ -155,7 +156,7 @@ func (r *EngineRegistry) SelectAndExecuteSkill(ctx *SkillContext, facts *FactGra
 		}
 		if skill.Preconditions(facts) {
 			intents, err := skill.Execute(ctx, facts)
-			if err != nil {
+			if err != nil || len(intents) == 0 {
 				continue
 			}
 			return intents, skill.Name(), true

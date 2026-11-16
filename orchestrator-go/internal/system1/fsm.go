@@ -37,7 +37,13 @@ type FSMContext struct {
 
 // HostilesPresent checks if any hostile mobs are within perception range.
 func (c *FSMContext) HostilesPresent() bool {
-	if c == nil || c.Frame == nil {
+	if c == nil {
+		return false
+	}
+	if c.Facts != nil {
+		return c.Facts.GetBool("threat.hostiles_present")
+	}
+	if c.Frame == nil {
 		return false
 	}
 	for _, e := range c.Frame.VisibleEntities {
@@ -50,7 +56,13 @@ func (c *FSMContext) HostilesPresent() bool {
 
 // DamageTaken checks if the agent took damage in the current frame.
 func (c *FSMContext) DamageTaken() bool {
-	if c == nil || c.Frame == nil {
+	if c == nil {
+		return false
+	}
+	if c.Facts != nil {
+		return c.Facts.GetBool("threat.damage_taken")
+	}
+	if c.Frame == nil {
 		return false
 	}
 	return c.Frame.LastDamageTaken != nil
@@ -58,7 +70,13 @@ func (c *FSMContext) DamageTaken() bool {
 
 // IsHealthCritical checks if HP <= 35% max HP.
 func (c *FSMContext) IsHealthCritical() bool {
-	if c == nil || c.Frame == nil || c.Frame.Status == nil {
+	if c == nil {
+		return false
+	}
+	if c.Facts != nil {
+		return c.Facts.GetBool("vitals.is_health_critical")
+	}
+	if c.Frame == nil || c.Frame.Status == nil {
 		return false
 	}
 	maxHP := float64(c.Frame.Status.MaxHealth)
@@ -70,7 +88,13 @@ func (c *FSMContext) IsHealthCritical() bool {
 
 // IsOnFire checks if the agent is burning.
 func (c *FSMContext) IsOnFire() bool {
-	if c == nil || c.Frame == nil || c.Frame.Status == nil {
+	if c == nil {
+		return false
+	}
+	if c.Facts != nil {
+		return c.Facts.GetBool("vitals.is_on_fire")
+	}
+	if c.Frame == nil || c.Frame.Status == nil {
 		return false
 	}
 	return c.Frame.Status.IsOnFire
@@ -78,7 +102,13 @@ func (c *FSMContext) IsOnFire() bool {
 
 // IsCriticalHunger checks if hunger <= 6 and edible food exists.
 func (c *FSMContext) IsCriticalHunger() bool {
-	if c == nil || c.Frame == nil || c.Frame.Status == nil {
+	if c == nil {
+		return false
+	}
+	if c.Facts != nil {
+		return c.Facts.GetBool("vitals.is_critical_hunger")
+	}
+	if c.Frame == nil || c.Frame.Status == nil {
 		return false
 	}
 	if c.Frame.Status.FoodLevel <= 6 {
@@ -91,7 +121,13 @@ func (c *FSMContext) IsCriticalHunger() bool {
 
 // ShouldPanic checks if combat panic rules trigger.
 func (c *FSMContext) ShouldPanic() bool {
-	if c == nil || c.Frame == nil || c.Frame.Status == nil {
+	if c == nil {
+		return false
+	}
+	if c.Facts != nil {
+		return c.Facts.GetBool("threat.should_panic")
+	}
+	if c.Frame == nil || c.Frame.Status == nil {
 		return false
 	}
 	bravery := 0.5
@@ -116,11 +152,17 @@ func (c *FSMContext) ShouldPanic() bool {
 
 // IsEmergency evaluates whether any high-priority emergency condition is active.
 func (c *FSMContext) IsEmergency() bool {
+	if c != nil && c.Facts != nil {
+		return !c.Facts.GetBool("threat.threats_cleared")
+	}
 	return c.HostilesPresent() || c.DamageTaken() || c.IsHealthCritical() || c.IsOnFire() || c.IsCriticalHunger() || c.ShouldPanic()
 }
 
 // ThreatsCleared evaluates whether all hostiles, panic, critical health, and critical hunger issues have cleared.
 func (c *FSMContext) ThreatsCleared() bool {
+	if c != nil && c.Facts != nil {
+		return c.Facts.GetBool("threat.threats_cleared")
+	}
 	return !c.HostilesPresent() && !c.DamageTaken() && !c.IsHealthCritical() && !c.IsOnFire() && !c.IsCriticalHunger() && !c.ShouldPanic()
 }
 
@@ -201,7 +243,13 @@ func (c *FSMContext) IsEstablishingNewSettlement() bool {
 
 // IsSleeping checks if agent status reports sleeping.
 func (c *FSMContext) IsSleeping() bool {
-	if c == nil || c.Frame == nil || c.Frame.Status == nil {
+	if c == nil {
+		return false
+	}
+	if c.Facts != nil {
+		return c.Facts.GetBool("vitals.is_sleeping")
+	}
+	if c.Frame == nil || c.Frame.Status == nil {
 		return false
 	}
 	return c.Frame.Status.IsSleeping
@@ -405,8 +453,44 @@ func (h *BootstrapStateHandler) OnTick(ctx *FSMContext) []FSMIntent {
 		return intents
 	}
 
-	// Biological needs (eating, sleep, wake)
-	needsIntents := EvaluateBiologicalNeeds(ctx.AgentID, ctx.Frame, ctx.State)
+	if ctx.Facts == nil {
+		evalCtx := &EvaluatorContext{
+			AgentID:   ctx.AgentID,
+			Frame:     ctx.Frame,
+			Config:    ctx.Config,
+			State:     ctx.State,
+			CivicDB:   ctx.CivicDB,
+			SafeNodes: ctx.SafeNodes,
+		}
+		ctx.Facts = DefaultRegistry.EvaluateAll(evalCtx)
+	}
+
+	// Biological needs (eating, sleep, wake) evaluated via DefaultRegistry / BiologicalNeedsSkill
+	skillCtx := &SkillContext{
+		AgentID:   ctx.AgentID,
+		Frame:     ctx.Frame,
+		Config:    ctx.Config,
+		State:     ctx.State,
+		CivicDB:   ctx.CivicDB,
+		SafeNodes: ctx.SafeNodes,
+	}
+	var needsIntents []*civquestv1.AgentIntent
+	if skill, ok := DefaultRegistry.GetSkill("biological_needs"); ok && skill != nil {
+		if skill.Preconditions(ctx.Facts) {
+			if si, err := skill.Execute(skillCtx, ctx.Facts); err == nil {
+				needsIntents = si
+			}
+		}
+	} else {
+		bioSkill := NewBiologicalNeedsSkill()
+		if bioSkill.Preconditions(ctx.Facts) {
+			if si, err := bioSkill.Execute(skillCtx, ctx.Facts); err == nil {
+				needsIntents = si
+			}
+		} else {
+			needsIntents = EvaluateBiologicalNeeds(ctx.AgentID, ctx.Frame, ctx.State)
+		}
+	}
 	for _, ni := range needsIntents {
 		if ni.GetUseItem() != nil && ni.GetUseItem().IsEatingOrDrinking {
 			intents = append(intents, FSMIntent{Intent: ni, Priority: true})
@@ -465,8 +549,44 @@ func (h *SettlementStateHandler) OnTick(ctx *FSMContext) []FSMIntent {
 		return intents
 	}
 
-	// Biological needs (eating, sleep, wake)
-	needsIntents := EvaluateBiologicalNeeds(ctx.AgentID, ctx.Frame, ctx.State)
+	if ctx.Facts == nil {
+		evalCtx := &EvaluatorContext{
+			AgentID:   ctx.AgentID,
+			Frame:     ctx.Frame,
+			Config:    ctx.Config,
+			State:     ctx.State,
+			CivicDB:   ctx.CivicDB,
+			SafeNodes: ctx.SafeNodes,
+		}
+		ctx.Facts = DefaultRegistry.EvaluateAll(evalCtx)
+	}
+
+	// Biological needs (eating, sleep, wake) evaluated via DefaultRegistry / BiologicalNeedsSkill
+	skillCtx := &SkillContext{
+		AgentID:   ctx.AgentID,
+		Frame:     ctx.Frame,
+		Config:    ctx.Config,
+		State:     ctx.State,
+		CivicDB:   ctx.CivicDB,
+		SafeNodes: ctx.SafeNodes,
+	}
+	var needsIntents []*civquestv1.AgentIntent
+	if skill, ok := DefaultRegistry.GetSkill("biological_needs"); ok && skill != nil {
+		if skill.Preconditions(ctx.Facts) {
+			if si, err := skill.Execute(skillCtx, ctx.Facts); err == nil {
+				needsIntents = si
+			}
+		}
+	} else {
+		bioSkill := NewBiologicalNeedsSkill()
+		if bioSkill.Preconditions(ctx.Facts) {
+			if si, err := bioSkill.Execute(skillCtx, ctx.Facts); err == nil {
+				needsIntents = si
+			}
+		} else {
+			needsIntents = EvaluateBiologicalNeeds(ctx.AgentID, ctx.Frame, ctx.State)
+		}
+	}
 	for _, ni := range needsIntents {
 		if ni.GetUseItem() != nil && ni.GetUseItem().IsEatingOrDrinking {
 			intents = append(intents, FSMIntent{Intent: ni, Priority: true})
@@ -707,37 +827,58 @@ func (h *EmergencyStateHandler) OnTick(ctx *FSMContext) []FSMIntent {
 		return intents
 	}
 
-	bravery := 0.5
-	if ctx.Config != nil {
-		bravery = ctx.Config.Traits.Bravery
-	}
-
-	hasShield := ctx.HasShield
-	hasWeapon := ctx.HasWeapon
-	weaponSlot := ctx.WeaponSlot
-	if !hasShield && !hasWeapon && ctx.Frame != nil && ctx.Frame.Status != nil && len(ctx.Frame.Status.Inventory) > 0 {
-		hasShield, hasWeapon, weaponSlot = ScanInventoryCombatItems(ctx.Frame.Status.Inventory)
-	}
-
-	rCtx := ReflexContext{
-		AgentID:    ctx.AgentID,
-		Bravery:    bravery,
-		SafeNodes:  ctx.SafeNodes,
-		Frame:      ctx.Frame,
-		CanEat:     ctx.CanEat,
-		HasShield:  hasShield,
-		HasWeapon:  hasWeapon,
-		WeaponSlot: weaponSlot,
-	}
-
-	combatResult := EvaluateReflexes(rCtx)
-	if combatResult.ShouldAct {
-		for _, intent := range combatResult.Intents {
-			intents = append(intents, FSMIntent{
-				Intent:   intent,
-				Priority: true,
-			})
+	if ctx.Facts == nil {
+		evalCtx := &EvaluatorContext{
+			AgentID:   ctx.AgentID,
+			Frame:     ctx.Frame,
+			Config:    ctx.Config,
+			State:     ctx.State,
+			CivicDB:   ctx.CivicDB,
+			SafeNodes: ctx.SafeNodes,
 		}
+		ctx.Facts = DefaultRegistry.EvaluateAll(evalCtx)
+	}
+
+	skillCtx := &SkillContext{
+		AgentID:   ctx.AgentID,
+		Frame:     ctx.Frame,
+		Config:    ctx.Config,
+		State:     ctx.State,
+		CivicDB:   ctx.CivicDB,
+		SafeNodes: ctx.SafeNodes,
+	}
+
+	var skillIntents []*civquestv1.AgentIntent
+	if skill, ok := DefaultRegistry.GetSkill("combat_defense"); ok && skill != nil {
+		if skill.Preconditions(ctx.Facts) {
+			si, err := skill.Execute(skillCtx, ctx.Facts)
+			if err == nil {
+				skillIntents = si
+			}
+		}
+	}
+
+	if len(skillIntents) == 0 {
+		combatSkill := NewCombatDefenseSkill()
+		if combatSkill.Preconditions(ctx.Facts) {
+			si, err := combatSkill.Execute(skillCtx, ctx.Facts)
+			if err == nil {
+				skillIntents = si
+			}
+		} else {
+			// Fallback direct execution
+			si, err := combatSkill.Execute(skillCtx, ctx.Facts)
+			if err == nil {
+				skillIntents = si
+			}
+		}
+	}
+
+	for _, intent := range skillIntents {
+		intents = append(intents, FSMIntent{
+			Intent:   intent,
+			Priority: true,
+		})
 	}
 
 	return intents
@@ -1156,7 +1297,7 @@ func (fsm *AgentFSM) Tick(ctx *FSMContext) FSMResult {
 		return FSMResult{Stage: StageBootstrap, Routine: RoutineDawnPrep, State: StageBootstrap}
 	}
 
-	if ctx != nil && ctx.Facts == nil {
+	if ctx != nil {
 		evalCtx := &EvaluatorContext{
 			AgentID:   ctx.AgentID,
 			Frame:     ctx.Frame,
