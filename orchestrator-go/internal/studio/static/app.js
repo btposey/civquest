@@ -20,10 +20,11 @@ document.addEventListener("DOMContentLoaded", () => {
   loadTaxonomy();
   loadAgents();
 
-  // Initialize Canvas & Grid Editor
+  // Initialize Canvas, Grid Editor & New Blueprint Modal
   initCanvasAndGrid();
   initAssistantDrawer();
   initEditorControls();
+  initNewBlueprintModal();
 });
 
 // Tab Navigation
@@ -232,6 +233,7 @@ function loadBlueprintIntoStudio(bp) {
   }
 
   updateHeaderInfo(bp);
+  renderBlockPreview();
 }
 
 function updateHeaderInfo(bp) {
@@ -359,15 +361,18 @@ function initEditorControls() {
     });
   }
 
-  // Quick Palette Chips
+  // Quick Palette Chips (Taxonomy & Utility)
   const chips = document.querySelectorAll(".quick-palette-chips .palette-chip");
   chips.forEach(chip => {
     chip.addEventListener("click", () => {
-      chips.forEach(c => c.classList.remove("active"));
+      document.querySelectorAll(".quick-palette-chips .palette-chip").forEach(c => c.classList.remove("active"));
       chip.classList.add("active");
       const blockId = chip.dataset.id;
       if (blockId === "air") {
-        if (window.StudioState.gridEditor) window.StudioState.gridEditor.activeTool = "erase";
+        if (window.StudioState.gridEditor) {
+          window.StudioState.gridEditor.activeTool = "erase";
+          window.StudioState.gridEditor.selectedBlockId = "air";
+        }
         if (btnErase) btnErase.click();
       } else {
         if (window.StudioState.gridEditor) {
@@ -376,8 +381,25 @@ function initEditorControls() {
         }
         if (btnPlace) btnPlace.click();
         const sel = document.getElementById("palette-block-select");
-        if (sel) sel.value = blockId;
+        if (sel) {
+          let found = false;
+          for (let i = 0; i < sel.options.length; i++) {
+            if (sel.options[i].value === blockId) {
+              sel.selectedIndex = i;
+              found = true;
+              break;
+            }
+          }
+          if (!found) {
+            const opt = document.createElement("option");
+            opt.value = blockId;
+            opt.textContent = blockId;
+            sel.appendChild(opt);
+            sel.value = blockId;
+          }
+        }
       }
+      renderBlockPreview();
     });
   });
 
@@ -393,6 +415,7 @@ function initEditorControls() {
         window.StudioState.gridEditor.orientation.facing = e.target.value;
         window.StudioState.gridEditor.showRotationFlash();
       }
+      renderBlockPreview();
     });
   }
 
@@ -402,6 +425,7 @@ function initEditorControls() {
         window.StudioState.gridEditor.orientation.axis = e.target.value;
         window.StudioState.gridEditor.showRotationFlash();
       }
+      renderBlockPreview();
     });
   }
 
@@ -410,6 +434,7 @@ function initEditorControls() {
       if (window.StudioState.gridEditor) {
         window.StudioState.gridEditor.orientation.half = e.target.value;
       }
+      renderBlockPreview();
     });
   }
 
@@ -418,6 +443,7 @@ function initEditorControls() {
       if (window.StudioState.gridEditor) {
         window.StudioState.gridEditor.rotateClockwise90();
       }
+      renderBlockPreview();
     });
   }
 
@@ -427,6 +453,7 @@ function initEditorControls() {
     if (selFacing && o.facing) selFacing.value = o.facing;
     if (selAxis && o.axis) selAxis.value = o.axis;
     if (selHalf && o.half) selHalf.value = o.half;
+    renderBlockPreview();
   });
 
   // Action Buttons
@@ -811,17 +838,44 @@ async function loadPalette() {
 
     if (blockSelect) {
       blockSelect.innerHTML = "";
+
+      // Taxonomy Group
+      const taxGroup = document.createElement("optgroup");
+      taxGroup.label = "🏷 Generic Taxonomy Tags (Mod-Safe)";
+      const taxonomyTags = [
+        "#minecraft:planks", "#minecraft:logs", "#minecraft:stairs", "#minecraft:slabs",
+        "#minecraft:doors", "#minecraft:trapdoors", "#minecraft:fences",
+        "#c:stones", "#c:cobblestones", "#minecraft:stone_bricks",
+        "#c:glass_blocks", "#c:glass_panes", "#minecraft:beds", "#minecraft:light_sources"
+      ];
+      taxonomyTags.forEach(tag => {
+        const opt = document.createElement("option");
+        opt.value = tag;
+        opt.textContent = `${tag}`;
+        taxGroup.appendChild(opt);
+      });
+      blockSelect.appendChild(taxGroup);
+
+      // Concrete Catalog Group
+      const catGroup = document.createElement("optgroup");
+      catGroup.label = "🧱 Concrete Catalog Blocks";
       blocks.forEach(b => {
         const opt = document.createElement("option");
         opt.value = b.id;
         opt.textContent = `${b.id.replace("minecraft:", "")} (${b.category || "none"})`;
-        blockSelect.appendChild(opt);
+        catGroup.appendChild(opt);
       });
+      blockSelect.appendChild(catGroup);
 
       blockSelect.addEventListener("change", (e) => {
         if (window.StudioState.gridEditor) {
           window.StudioState.gridEditor.selectedBlockId = e.target.value;
+          // Synchronize active chip if any
+          document.querySelectorAll(".quick-palette-chips .palette-chip").forEach(c => {
+            c.classList.toggle("active", c.dataset.id === e.target.value);
+          });
         }
+        renderBlockPreview();
       });
     }
 
@@ -1026,3 +1080,284 @@ function escapeHTML(str) {
     .replace(/"/g, "&quot;")
     .replace(/'/g, "&#039;");
 }
+
+// =============================================================================
+// Create New Blueprint Modal Dialog
+// =============================================================================
+function initNewBlueprintModal() {
+  const modal = document.getElementById("modal-new-blueprint");
+  const btnOpen = document.getElementById("btn-new-blueprint");
+  const btnClose = document.getElementById("btn-close-new-bp-modal");
+  const btnCancel = document.getElementById("btn-cancel-new-bp");
+  const form = document.getElementById("form-new-blueprint");
+
+  const openModal = () => {
+    if (modal) modal.classList.remove("hidden");
+  };
+
+  const closeModal = () => {
+    if (modal) modal.classList.add("hidden");
+  };
+
+  if (btnOpen) btnOpen.addEventListener("click", openModal);
+  if (btnClose) btnClose.addEventListener("click", closeModal);
+  if (btnCancel) btnCancel.addEventListener("click", closeModal);
+
+  if (modal) {
+    modal.addEventListener("click", (e) => {
+      if (e.target === modal) closeModal();
+    });
+  }
+
+  if (form) {
+    form.addEventListener("submit", (e) => {
+      e.preventDefault();
+
+      const name = document.getElementById("new-bp-name").value.trim() || "Custom Structure";
+      const purpose = document.getElementById("new-bp-purpose").value || "HOME";
+      const style = document.getElementById("new-bp-style").value || "frontier";
+      const width = parseInt(document.getElementById("new-bp-width").value, 10) || 9;
+      const length = parseInt(document.getElementById("new-bp-length").value, 10) || 7;
+      const height = parseInt(document.getElementById("new-bp-height").value, 10) || 5;
+      const minY = parseInt(document.getElementById("new-bp-miny").value, 10) || 0;
+
+      // Construct empty blueprint with initialized layers from minY to minY + height - 1
+      const slug = "bp_" + name.toLowerCase().replace(/[^a-z0-9_]/g, "_") + "_" + Date.now().toString(36);
+      const layers = [];
+      for (let y = minY; y < minY + height; y++) {
+        const matrix = [];
+        for (let z = 0; z < length; z++) {
+          matrix.push(new Array(width).fill(0));
+        }
+        layers.push({ y, matrix });
+      }
+
+      const newBp = {
+        id: slug,
+        name: name,
+        version: 1,
+        purpose: purpose,
+        type: purpose.toLowerCase(),
+        style: style,
+        dimensions: {
+          width: width,
+          height: height,
+          length: length,
+          min_y: minY
+        },
+        palette: {
+          1: "#minecraft:planks",
+          2: "#minecraft:logs[axis=y]",
+          3: "#c:stones",
+          4: "#minecraft:stairs[facing=north]",
+          5: "#c:glass_panes",
+          6: "minecraft:torch"
+        },
+        layers: layers
+      };
+
+      // Load into Studio State, 2D Grid & 3D Isometric View
+      loadBlueprintIntoStudio(newBp);
+
+      // Switch to Editor Tab and enable immediate editing
+      const editorTab = document.querySelector('[data-tab="tab-editor"]');
+      if (editorTab) {
+        editorTab.click();
+      }
+
+      closeModal();
+    });
+  }
+}
+
+// =============================================================================
+// Selected Block Isometric Preview with Thin Yellow Direction Arrow
+// =============================================================================
+function renderBlockPreview() {
+  const canvas = document.getElementById("block-preview-canvas");
+  if (!canvas) return;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) return;
+
+  const w = canvas.width;
+  const h = canvas.height;
+  ctx.clearRect(0, 0, w, h);
+
+  const blockId = (window.StudioState.gridEditor && window.StudioState.gridEditor.selectedBlockId)
+    ? window.StudioState.gridEditor.selectedBlockId
+    : "#minecraft:planks";
+  const orientation = (window.StudioState.gridEditor && window.StudioState.gridEditor.orientation)
+    ? window.StudioState.gridEditor.orientation
+    : { facing: "north", axis: "y", half: "bottom" };
+
+  const nameEl = document.getElementById("preview-block-name");
+  if (nameEl) nameEl.textContent = blockId;
+
+  const subEl = document.getElementById("preview-orientation-label");
+  const cat = window.StudioState.gridEditor
+    ? window.StudioState.gridEditor.getOrientationCategory(blockId)
+    : "none";
+
+  if (subEl) {
+    if (cat === "axis") {
+      subEl.textContent = `Axis: ${orientation.axis.toUpperCase()} [R]`;
+    } else if (cat === "horizontal" || cat === "6way") {
+      subEl.textContent = `Facing: ${orientation.facing.toUpperCase()} [R]`;
+    } else if (cat === "slab") {
+      subEl.textContent = `Half: ${orientation.half.toUpperCase()}`;
+    } else {
+      subEl.textContent = `Default Orientation`;
+    }
+  }
+
+  // Air / Eraser rendering
+  if (blockId === "air") {
+    ctx.strokeStyle = "rgba(239, 68, 68, 0.75)";
+    ctx.lineWidth = 2.5;
+    ctx.beginPath();
+    ctx.arc(w / 2, h / 2, 22, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(w / 2 - 15, h / 2 - 15);
+    ctx.lineTo(w / 2 + 15, h / 2 + 15);
+    ctx.stroke();
+    return;
+  }
+
+  // Draw isometric voxel cube
+  const cx = w / 2;
+  const cy = 34;
+  const hw = 34;
+  const hh = 17;
+  const vh = 28;
+
+  const baseColor = window.StudioState.isoCanvas
+    ? window.StudioState.isoCanvas.resolveColor(blockId)
+    : "#c68a4c";
+
+  const adjustColor = (color, percent) => {
+    if (window.StudioState.isoCanvas) return window.StudioState.isoCanvas.adjustColor(color, percent);
+    return color;
+  };
+
+  const topShade = adjustColor(baseColor, 20);
+  const leftShade = adjustColor(baseColor, -12);
+  const rightShade = adjustColor(baseColor, -26);
+
+  // 1. Top Face (Rhombus)
+  ctx.beginPath();
+  ctx.moveTo(cx, cy - hh);
+  ctx.lineTo(cx + hw, cy);
+  ctx.lineTo(cx, cy + hh);
+  ctx.lineTo(cx - hw, cy);
+  ctx.closePath();
+  ctx.fillStyle = topShade;
+  ctx.fill();
+  ctx.strokeStyle = "rgba(0, 0, 0, 0.4)";
+  ctx.lineWidth = 1;
+  ctx.stroke();
+
+  // 2. Left Face
+  ctx.beginPath();
+  ctx.moveTo(cx - hw, cy);
+  ctx.lineTo(cx, cy + hh);
+  ctx.lineTo(cx, cy + hh + vh);
+  ctx.lineTo(cx - hw, cy + vh);
+  ctx.closePath();
+  ctx.fillStyle = leftShade;
+  ctx.fill();
+  ctx.stroke();
+
+  // 3. Right Face
+  ctx.beginPath();
+  ctx.moveTo(cx, cy + hh);
+  ctx.lineTo(cx + hw, cy);
+  ctx.lineTo(cx + hw, cy + vh);
+  ctx.lineTo(cx, cy + hh + vh);
+  ctx.closePath();
+  ctx.fillStyle = rightShade;
+  ctx.fill();
+  ctx.stroke();
+
+  // 4. Directional Thin Yellow Arrow indicating active horizontal orientation:
+  // "Draw a thin yellow arrow on the block preview indicating its active horizontal orientation
+  // (facing = North, South, East, West; or axis = X/Z for logs). Up and Down are implicit and do not need to be rendered."
+  const drawThinYellowArrow = (angle, isDouble = false) => {
+    ctx.save();
+    ctx.translate(cx, cy);
+
+    ctx.strokeStyle = "#facc15"; // Thin crisp yellow
+    ctx.fillStyle = "#facc15";
+    ctx.lineWidth = 2.2;
+    ctx.lineCap = "round";
+
+    const cosA = Math.cos(angle);
+    const sinA = Math.sin(angle);
+    const len = 15;
+
+    ctx.beginPath();
+    if (isDouble) {
+      ctx.moveTo(-cosA * len, -sinA * len);
+      ctx.lineTo(cosA * len, sinA * len);
+    } else {
+      ctx.moveTo(-cosA * 8, -sinA * 8);
+      ctx.lineTo(cosA * len, sinA * len);
+    }
+    ctx.stroke();
+
+    // Arrowhead at forward tip
+    const tipX = cosA * len;
+    const tipY = sinA * len;
+    const barbLen = 6.5;
+    const barbAngle1 = angle + Math.PI * 0.82;
+    const barbAngle2 = angle - Math.PI * 0.82;
+
+    ctx.beginPath();
+    ctx.moveTo(tipX + Math.cos(barbAngle1) * barbLen, tipY + Math.sin(barbAngle1) * barbLen);
+    ctx.lineTo(tipX, tipY);
+    ctx.lineTo(tipX + Math.cos(barbAngle2) * barbLen, tipY + Math.sin(barbAngle2) * barbLen);
+    ctx.stroke();
+
+    // If double-ended (horizontal log axis), arrowhead at reverse tip
+    if (isDouble) {
+      const bTipX = -cosA * len;
+      const bTipY = -sinA * len;
+      const bAngle1 = angle + Math.PI * 0.18;
+      const bAngle2 = angle - Math.PI * 0.18;
+
+      ctx.beginPath();
+      ctx.moveTo(bTipX + Math.cos(bAngle1) * barbLen, bTipY + Math.sin(bAngle1) * barbLen);
+      ctx.lineTo(bTipX, bTipY);
+      ctx.lineTo(bTipX + Math.cos(bAngle2) * barbLen, bTipY + Math.sin(bAngle2) * barbLen);
+      ctx.stroke();
+    }
+
+    ctx.restore();
+  };
+
+  // Isometric angle mappings:
+  // North (-Z): (+hw, -hh) -> Math.atan2(-hh, hw)
+  // South (+Z): (-hw, +hh) -> Math.atan2(hh, -hw)
+  // East (+X): (+hw, +hh) -> Math.atan2(hh, hw)
+  // West (-X): (-hw, -hh) -> Math.atan2(-hh, -hw)
+  const isHorizontalFacing = (cat === "horizontal" || cat === "6way" || blockId.includes("stair") || blockId.includes("door"));
+  const isAxis = (cat === "axis" || blockId.includes("log") || blockId.includes("pillar"));
+
+  if (isHorizontalFacing) {
+    let angle = Math.atan2(-hh, hw); // default north
+    if (orientation.facing === "south") angle = Math.atan2(hh, -hw);
+    else if (orientation.facing === "east") angle = Math.atan2(hh, hw);
+    else if (orientation.facing === "west") angle = Math.atan2(-hh, -hw);
+    drawThinYellowArrow(angle, false);
+  } else if (isAxis) {
+    if (orientation.axis === "x") {
+      // Horizontal X (East-West)
+      drawThinYellowArrow(Math.atan2(hh, hw), true);
+    } else if (orientation.axis === "z") {
+      // Horizontal Z (North-South)
+      drawThinYellowArrow(Math.atan2(-hh, hw), true);
+    }
+    // axis === "y": Up and Down are implicit and do not need to be rendered.
+  }
+}
+

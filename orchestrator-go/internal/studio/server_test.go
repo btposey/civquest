@@ -619,8 +619,29 @@ func TestServer_StaticAndSPA(t *testing.T) {
 	defer resp.Body.Close()
 
 	body, _ := io.ReadAll(resp.Body)
-	if !strings.Contains(string(body), "CivQuest Blueprint Studio") {
-		t.Errorf("expected index.html content at /, got: %s", string(body)[:min(100, len(body))])
+	bodyStr := string(body)
+	if !strings.Contains(bodyStr, "CivQuest Blueprint Studio") {
+		t.Errorf("expected index.html content at /, got: %s", bodyStr[:min(100, len(bodyStr))])
+	}
+
+	// Verify New Blueprint Modal elements
+	for _, expected := range []string{
+		"modal-new-blueprint", "new-bp-name", "new-bp-purpose",
+		"new-bp-width", "new-bp-length", "new-bp-height", "new-bp-miny", "new-bp-style",
+	} {
+		if !strings.Contains(bodyStr, expected) {
+			t.Errorf("expected index.html to contain %q", expected)
+		}
+	}
+
+	// Verify Tri-Pane Layout & Block Preview elements
+	for _, expected := range []string{
+		"studio-tri-layout", "left-palette-pane", "block-preview-canvas",
+		"taxonomy-palette-chips", "#minecraft:planks", "#minecraft:logs",
+	} {
+		if !strings.Contains(bodyStr, expected) {
+			t.Errorf("expected index.html to contain %q", expected)
+		}
 	}
 
 	// 2. CSS asset
@@ -646,6 +667,19 @@ func TestServer_StaticAndSPA(t *testing.T) {
 		jsResp.Body.Close()
 		if len(body) == 0 {
 			t.Errorf("expected non-empty body for %s", jsAsset)
+		}
+
+		if jsAsset == "/walkthrough.js" {
+			jsStr := string(body)
+			if !strings.Contains(jsStr, "mat4LookAt") || !strings.Contains(jsStr, "render2DFallback") {
+				t.Errorf("expected walkthrough.js to contain mat4LookAt and render2DFallback")
+			}
+		}
+		if jsAsset == "/canvas.js" {
+			jsStr := string(body)
+			if !strings.Contains(jsStr, "drawGroundPerimeterArrows") || !strings.Contains(jsStr, "renderFatArrow") {
+				t.Errorf("expected canvas.js to contain drawGroundPerimeterArrows and renderFatArrow")
+			}
 		}
 	}
 

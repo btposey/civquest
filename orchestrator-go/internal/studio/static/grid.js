@@ -1,6 +1,7 @@
 // CivQuest Blueprint Studio - 2D Layer Matrix Grid Editor
 // Provides horizontal ground plane grid editing with signed elevation stepper (including subterranean Y < 0),
-// onion-skinning ghost guides for Y-1 layer, orientation controls with 'R' hotkey, and real-time BOM calculation.
+// onion-skinning ghost guides for Y-1 layer, orientation controls with 'R' hotkey,
+// semi-transparent fat ordinal direction arrows (N, S, W, E), and real-time BOM calculation.
 
 class LayerGridEditor {
   constructor(containerId, options = {}) {
@@ -139,7 +140,7 @@ class LayerGridEditor {
     // 3. Rotation (0-15): 90 degrees is +4 steps
     this.orientation.rotation = (this.orientation.rotation + 4) % 16;
 
-    // Dispatch DOM update event for UI controls
+    // Dispatch DOM update event for UI controls & block preview
     const event = new CustomEvent("orientation-changed", { detail: this.orientation });
     window.dispatchEvent(event);
 
@@ -177,19 +178,20 @@ class LayerGridEditor {
 
   getOrientationCategory(blockId) {
     if (!blockId) return "none";
-    if (blockId.includes("_log") || blockId.includes("pillar") || blockId.includes("basalt") || blockId.includes("hay_block")) {
+    const clean = blockId.toLowerCase();
+    if (clean.includes("_log") || clean.includes("pillar") || clean.includes("basalt") || clean.includes("hay_block") || clean.includes(":logs")) {
       return "axis";
     }
-    if (blockId.includes("_stairs") || blockId.includes("_door") || blockId.includes("_fence_gate")) {
+    if (clean.includes("_stairs") || clean.includes("_door") || clean.includes("_fence_gate") || clean.includes(":stairs") || clean.includes(":doors")) {
       return "horizontal";
     }
-    if (blockId.includes("_slab")) {
+    if (clean.includes("_slab") || clean.includes(":slabs")) {
       return "slab";
     }
-    if (blockId.includes("sign") || blockId.includes("banner")) {
+    if (clean.includes("sign") || clean.includes("banner")) {
       return "rotation";
     }
-    if (blockId.includes("piston") || blockId.includes("dispenser") || blockId.includes("dropper") || blockId.includes("observer")) {
+    if (clean.includes("piston") || clean.includes("dispenser") || clean.includes("dropper") || clean.includes("observer")) {
       return "6way";
     }
     return "none";
@@ -209,19 +211,34 @@ class LayerGridEditor {
     const prevLayer = this.onionSkinning ? this.findLayer(this.activeY - 1) : null;
     const palette = this.blueprint.palette || {};
 
-    // Grid Wrapper with X and Z coordinate rulers
+    // Grid Wrapper with Ordinal NSWE Direction Indicators
     const gridWrap = document.createElement("div");
     gridWrap.className = "layer-grid-wrapper";
+
+    // NORTH Indicator Bar (Top: -Z)
+    const northBar = document.createElement("div");
+    northBar.className = "grid-ordinal-bar ordinal-north";
+    northBar.innerHTML = `<span class="ordinal-fat-arrow">▲</span> <strong class="ordinal-bold-label">N</strong> <span class="ordinal-sub">NORTH (-Z)</span>`;
+    gridWrap.appendChild(northBar);
+
+    const gridCenterRow = document.createElement("div");
+    gridCenterRow.className = "grid-middle-row";
+
+    // WEST Indicator Bar (Left: -X)
+    const westBar = document.createElement("div");
+    westBar.className = "grid-ordinal-bar ordinal-west";
+    westBar.innerHTML = `<span class="ordinal-fat-arrow">◄</span><strong class="ordinal-bold-label">W</strong><span class="ordinal-sub">(-X)</span>`;
+    gridCenterRow.appendChild(westBar);
 
     const table = document.createElement("table");
     table.className = "layer-grid-table";
     table.addEventListener("contextmenu", (e) => e.preventDefault());
 
-    // Header Row (X Axis coordinates)
+    // Header Row (X Axis coordinates: West -> East)
     const headerRow = document.createElement("tr");
     const cornerTh = document.createElement("th");
     cornerTh.className = "grid-axis-corner";
-    cornerTh.textContent = "Z \\ X";
+    cornerTh.innerHTML = `Z \\ X`;
     headerRow.appendChild(cornerTh);
 
     for (let x = 0; x < dims.width; x++) {
@@ -232,7 +249,7 @@ class LayerGridEditor {
     }
     table.appendChild(headerRow);
 
-    // Matrix Rows (Z Axis)
+    // Matrix Rows (Z Axis: North -> South)
     for (let z = 0; z < dims.length; z++) {
       const tr = document.createElement("tr");
       const zLabel = document.createElement("th");
@@ -302,7 +319,22 @@ class LayerGridEditor {
       table.appendChild(tr);
     }
 
-    gridWrap.appendChild(table);
+    gridCenterRow.appendChild(table);
+
+    // EAST Indicator Bar (Right: +X)
+    const eastBar = document.createElement("div");
+    eastBar.className = "grid-ordinal-bar ordinal-east";
+    eastBar.innerHTML = `<span class="ordinal-fat-arrow">►</span><strong class="ordinal-bold-label">E</strong><span class="ordinal-sub">(+X)</span>`;
+    gridCenterRow.appendChild(eastBar);
+
+    gridWrap.appendChild(gridCenterRow);
+
+    // SOUTH Indicator Bar (Bottom: +Z)
+    const southBar = document.createElement("div");
+    southBar.className = "grid-ordinal-bar ordinal-south";
+    southBar.innerHTML = `<span class="ordinal-fat-arrow">▼</span> <strong class="ordinal-bold-label">S</strong> <span class="ordinal-sub">SOUTH (+Z)</span>`;
+    gridWrap.appendChild(southBar);
+
     this.container.appendChild(gridWrap);
 
     // Update subterranean badge visibility
@@ -396,7 +428,6 @@ class LayerGridEditor {
               totalBlocks++;
             }
             if (isSubterranean) {
-              // Subterranean excavation volume includes all hollow and interior volume
               excavation++;
             }
           }
@@ -467,7 +498,7 @@ class LayerGridEditor {
 
   formatShortBlockName(state) {
     if (!state) return "";
-    const clean = state.split("[")[0].replace("minecraft:", "").replace("#minecraft:", "");
+    let clean = state.split("[")[0].replace("minecraft:", "").replace("#minecraft:", "").replace("#c:", "").replace("#", "");
     const parts = clean.split("_");
     if (parts.length > 2) {
       return parts.map(p => p[0].toUpperCase()).join("");
@@ -477,15 +508,21 @@ class LayerGridEditor {
 
   resolveCellColor(state) {
     if (!state) return "#334155";
-    const clean = state.split("[")[0].replace("minecraft:", "");
+    let clean = state.split("[")[0].replace("minecraft:", "").replace("#minecraft:", "").replace("#c:", "").replace("#", "").toLowerCase();
     if (clean.includes("plank")) return "#7c5228";
-    if (clean.includes("log")) return "#4a3219";
-    if (clean.includes("stone") || clean.includes("cobble")) return "#52525b";
+    if (clean.includes("log") || clean.includes("wood")) return "#4a3219";
+    if (clean.includes("cobble")) return "#52525b";
+    if (clean.includes("stone_brick")) return "#4b5563";
+    if (clean.includes("stone")) return "#64748b";
     if (clean.includes("deepslate")) return "#27272a";
     if (clean.includes("glass")) return "#0369a1";
     if (clean.includes("brick")) return "#7f1d1d";
-    if (clean.includes("torch") || clean.includes("lantern")) return "#b45309";
+    if (clean.includes("torch") || clean.includes("lantern") || clean.includes("light")) return "#b45309";
     if (clean.includes("barrel") || clean.includes("chest")) return "#854d0e";
+    if (clean.includes("stair")) return "#7c5228";
+    if (clean.includes("slab")) return "#7c5228";
+    if (clean.includes("door") || clean.includes("trapdoor") || clean.includes("fence")) return "#5c3d1e";
+    if (clean.includes("bed")) return "#991b1b";
     return "#3f3f46";
   }
 

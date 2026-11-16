@@ -44,15 +44,19 @@
         <p class="placeholder-text">Loading blueprints...</p>
       </div>
       <div id="blueprint-detail-modal" class="modal hidden">
-        <div class="modal-content">
-          <span class="close-modal">&times;</span>
-          <h3 id="modal-title">Blueprint Details</h3>
-          <pre id="modal-json" class="code-block"></pre>
+        <div class="modal-dialog">
+          <div class="modal-header">
+            <h3 id="modal-title">Blueprint Details</h3>
+            <span class="close-modal">&times;</span>
+          </div>
+          <div class="modal-body">
+            <pre id="modal-json" class="code-block"></pre>
+          </div>
         </div>
       </div>
     </section>
 
-    <!-- Editor & 2D/3D Canvas Tab -->
+    <!-- Editor & 2D/3D Canvas Tab (3-Pane Layout) -->
     <section id="tab-editor" class="tab-pane">
       <div class="editor-header-bar">
         <div class="editor-title-group">
@@ -94,10 +98,107 @@
         </div>
       </div>
 
-      <!-- Main Dual-Pane Studio Layout -->
-      <div class="studio-dual-layout">
-        <!-- Left Pane: 2D Layer Matrix Grid Editor -->
-        <div class="pane-column left-pane">
+      <!-- Main Tri-Pane Studio Layout: [ Palette & Preview (Left) | 2D Grid (Center) | 3D Isometric View (Right) ] -->
+      <div class="studio-tri-layout">
+        <!-- Left Pane: Palette & Block Orientation Preview -->
+        <div class="pane-column left-palette-pane">
+          <div class="column-header">
+            <h3>Palette &amp; Orientation</h3>
+            <span id="orientation-indicator" class="orientation-pill">Facing: NORTH [R]</span>
+          </div>
+
+          <!-- Isometric Selected Block Preview Canvas -->
+          <div class="block-preview-card">
+            <div class="preview-canvas-wrap">
+              <canvas id="block-preview-canvas" width="120" height="96"></canvas>
+            </div>
+            <div class="preview-readout">
+              <span id="preview-block-name" class="preview-name">minecraft:oak_planks</span>
+              <span id="preview-orientation-label" class="preview-sub">Orientation: Default</span>
+            </div>
+          </div>
+
+          <!-- Direction & State Controls -->
+          <div class="orientation-controls-box">
+            <div class="control-row">
+              <div class="control-group">
+                <label for="orient-facing">Facing (N/S/E/W):</label>
+                <select id="orient-facing" class="control-select">
+                  <option value="north">North (-Z)</option>
+                  <option value="east">East (+X)</option>
+                  <option value="south">South (+Z)</option>
+                  <option value="west">West (-X)</option>
+                </select>
+              </div>
+
+              <div class="control-group">
+                <label for="orient-axis">Axis (Pillars):</label>
+                <select id="orient-axis" class="control-select">
+                  <option value="y">Y (Vertical)</option>
+                  <option value="x">X (Horizontal)</option>
+                  <option value="z">Z (Depth)</option>
+                </select>
+              </div>
+            </div>
+
+            <div class="control-row">
+              <div class="control-group">
+                <label for="orient-half">Half (Slabs/Stairs):</label>
+                <select id="orient-half" class="control-select">
+                  <option value="bottom">Bottom</option>
+                  <option value="top">Top</option>
+                </select>
+              </div>
+
+              <div class="control-group btn-rotate-wrap">
+                <label>&nbsp;</label>
+                <button id="btn-rotate-block" class="btn btn-sm btn-rotate" title="Press 'R' hotkey to rotate clockwise 90 degrees">
+                  Rotate 90&deg; [R]
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <!-- Taxonomy-Driven Palette Section -->
+          <div class="palette-catalog-box">
+            <div class="palette-section-title">Generic Taxonomy Tags (Mod-Safe)</div>
+            <div class="quick-palette-chips" id="taxonomy-palette-chips">
+              <button class="palette-chip active" data-id="#minecraft:planks" title="Generic Planks">#planks</button>
+              <button class="palette-chip" data-id="#minecraft:logs" title="Generic Logs (3-Axis)">#logs</button>
+              <button class="palette-chip" data-id="#minecraft:stairs" title="Generic Stairs (Directional)">#stairs</button>
+              <button class="palette-chip" data-id="#minecraft:slabs" title="Generic Slabs">#slabs</button>
+              <button class="palette-chip" data-id="#minecraft:doors" title="Generic Doors">#doors</button>
+              <button class="palette-chip" data-id="#minecraft:trapdoors" title="Generic Trapdoors">#trapdoors</button>
+              <button class="palette-chip" data-id="#minecraft:fences" title="Generic Fences">#fences</button>
+              <button class="palette-chip" data-id="#c:stones" title="Generic Stones">#stones</button>
+              <button class="palette-chip" data-id="#c:cobblestones" title="Generic Cobblestone">#cobblestones</button>
+              <button class="palette-chip" data-id="#minecraft:stone_bricks" title="Generic Stone Bricks">#stone_bricks</button>
+              <button class="palette-chip" data-id="#c:glass_blocks" title="Generic Glass Blocks">#glass_blocks</button>
+              <button class="palette-chip" data-id="#c:glass_panes" title="Generic Glass Panes">#glass_panes</button>
+              <button class="palette-chip" data-id="#minecraft:beds" title="Generic Beds">#beds</button>
+              <button class="palette-chip" data-id="#minecraft:light_sources" title="Generic Light Sources">#lights</button>
+            </div>
+
+            <div class="palette-section-title">Common Utilities &amp; Furniture</div>
+            <div class="quick-palette-chips" id="utility-palette-chips">
+              <button class="palette-chip" data-id="minecraft:chest" title="Storage Chest">Chest</button>
+              <button class="palette-chip" data-id="minecraft:crafting_table" title="Crafting Table">Craft Table</button>
+              <button class="palette-chip" data-id="minecraft:furnace" title="Furnace">Furnace</button>
+              <button class="palette-chip" data-id="minecraft:barrel" title="Storage Barrel">Barrel</button>
+              <button class="palette-chip" data-id="minecraft:ladder" title="Ladder">Ladder</button>
+              <button class="palette-chip" data-id="minecraft:torch" title="Torch">Torch</button>
+              <button class="palette-chip chip-erase" data-id="air" title="Eraser / Air">Air (Erase)</button>
+            </div>
+
+            <div class="control-group" style="margin-top:0.6rem">
+              <label for="palette-block-select">Catalog Block Selector:</label>
+              <select id="palette-block-select" class="control-select"></select>
+            </div>
+          </div>
+        </div>
+
+        <!-- Center Pane: 2D Layer Matrix Grid Editor -->
+        <div class="pane-column center-grid-pane">
           <div class="column-header">
             <h3>2D Layer Matrix Editor (Top-Down X/Z Plane)</h3>
             <span id="grid-cursor-readout" class="cursor-pill">Cursor: X=0, Z=0</span>
@@ -106,88 +207,24 @@
           <div id="layer-grid-container" class="grid-scroll-box">
             <p class="placeholder-text">Loading 2D layer matrix...</p>
           </div>
-
-          <!-- Mini Palette & Orientation Picker -->
-          <div class="palette-picker-box">
-            <div class="palette-picker-header">
-              <span class="picker-title">Active Block &amp; Directional Orientation</span>
-              <span id="orientation-indicator" class="orientation-pill">Facing: NORTH | Axis: y [R]</span>
-            </div>
-
-            <!-- Quick Selection Block Chips -->
-            <div class="quick-palette-chips" id="quick-palette-chips">
-              <button class="palette-chip active" data-id="minecraft:oak_planks" title="Oak Planks">Oak Planks</button>
-              <button class="palette-chip" data-id="minecraft:spruce_log" title="Spruce Log">Spruce Log</button>
-              <button class="palette-chip" data-id="minecraft:cobblestone" title="Cobblestone">Cobblestone</button>
-              <button class="palette-chip" data-id="minecraft:stone_bricks" title="Stone Bricks">Stone Bricks</button>
-              <button class="palette-chip" data-id="minecraft:oak_stairs" title="Oak Stairs">Oak Stairs</button>
-              <button class="palette-chip" data-id="minecraft:glass_pane" title="Glass Pane">Glass Pane</button>
-              <button class="palette-chip" data-id="minecraft:barrel" title="Storage Barrel">Barrel</button>
-              <button class="palette-chip" data-id="minecraft:torch" title="Torch">Torch</button>
-              <button class="palette-chip" data-id="minecraft:crafting_table" title="Crafting Table">Craft Table</button>
-              <button class="palette-chip" data-id="minecraft:chest" title="Chest">Chest</button>
-              <button class="palette-chip chip-erase" data-id="air" title="Eraser / Air">Air (Erase)</button>
-            </div>
-
-            <div class="orientation-controls-row">
-              <div class="control-group">
-                <label for="palette-block-select">Catalog Block:</label>
-                <select id="palette-block-select" class="control-select"></select>
-              </div>
-
-              <div class="control-group">
-                <label for="orient-facing">Facing:</label>
-                <select id="orient-facing" class="control-select">
-                  <option value="north">North</option>
-                  <option value="east">East</option>
-                  <option value="south">South</option>
-                  <option value="west">West</option>
-                </select>
-              </div>
-
-              <div class="control-group">
-                <label for="orient-axis">Axis:</label>
-                <select id="orient-axis" class="control-select">
-                  <option value="y">Y (Vertical)</option>
-                  <option value="x">X (Horizontal)</option>
-                  <option value="z">Z (Depth)</option>
-                </select>
-              </div>
-
-              <div class="control-group">
-                <label for="orient-half">Half:</label>
-                <select id="orient-half" class="control-select">
-                  <option value="bottom">Bottom</option>
-                  <option value="top">Top</option>
-                </select>
-              </div>
-
-              <div class="control-group">
-                <button id="btn-rotate-block" class="btn btn-sm btn-rotate" title="Press 'R' hotkey to rotate clockwise 90 degrees">
-                  Rotate 90&deg; [R]
-                </button>
-              </div>
-            </div>
-          </div>
         </div>
 
         <!-- Right Pane: HTML5 Canvas Isometric 2.5D Renderer & Real-time BOM -->
-        <div class="pane-column right-pane">
+        <div class="pane-column right-canvas-pane">
           <div class="column-header">
-            <h3>HTML5 Canvas Isometric 3D Voxel View</h3>
+            <h3>Isometric 3D Voxel View</h3>
             <div class="header-actions-inline">
               <button id="btn-walkthrough-header" class="btn btn-sm btn-primary" title="First-person 3D walkthrough with WASD and mouse look">🚶 3D Walkthrough</button>
-              <span class="xray-hint">Hover cursor across canvas for interior X-Ray</span>
             </div>
           </div>
 
           <div class="canvas-viewport-box" id="canvas-viewport-container">
-            <canvas id="isometric-canvas" width="620" height="420"></canvas>
-            <canvas id="walkthrough-canvas" width="620" height="420" class="hidden"></canvas>
+            <canvas id="isometric-canvas" width="560" height="400"></canvas>
+            <canvas id="walkthrough-canvas" width="560" height="400" class="hidden"></canvas>
             <div id="walkthrough-hud" class="walkthrough-hud hidden">
               <div class="hud-top">
                 <span class="hud-title">🚶 3D Walkthrough Mode</span>
-                <span class="hud-hint">WASD: Move | Mouse: Look | Space/Shift: Up/Down | ESC: Exit Walkthrough</span>
+                <span class="hud-hint">WASD: Move | Mouse: Look | Space/Shift: Up/Down | ESC: Exit</span>
                 <button id="btn-exit-walkthrough" class="btn btn-sm btn-exit">Exit (ESC)</button>
               </div>
               <div class="walkthrough-crosshair">+</div>
@@ -293,6 +330,83 @@
       </div>
     </section>
   </main>
+
+  <!-- Create New Blueprint Modal Dialog -->
+  <div id="modal-new-blueprint" class="modal hidden">
+    <div class="modal-dialog">
+      <div class="modal-header">
+        <h3>Create New Architectural Blueprint</h3>
+        <button type="button" id="btn-close-new-bp-modal" class="close-modal">&times;</button>
+      </div>
+      <form id="form-new-blueprint" class="modal-form">
+        <div class="modal-body">
+          <div class="form-group">
+            <label for="new-bp-name">Structure Name:</label>
+            <input type="text" id="new-bp-name" class="form-input" value="Custom Structure" required>
+          </div>
+
+          <div class="form-row">
+            <div class="form-group">
+              <label for="new-bp-purpose">Purpose:</label>
+              <select id="new-bp-purpose" class="control-select">
+                <option value="HOME">HOME</option>
+                <option value="STOREHOUSE">STOREHOUSE</option>
+                <option value="TAVERN">TAVERN</option>
+                <option value="ARMORY">ARMORY</option>
+                <option value="FARM">FARM</option>
+                <option value="WORKSHOP">WORKSHOP</option>
+                <option value="LIBRARY">LIBRARY</option>
+                <option value="TOWNHALL">TOWNHALL</option>
+                <option value="BARRACKS">BARRACKS</option>
+                <option value="SHELTER">SHELTER</option>
+              </select>
+            </div>
+
+            <div class="form-group">
+              <label for="new-bp-style">Style:</label>
+              <select id="new-bp-style" class="control-select">
+                <option value="frontier">Frontier</option>
+                <option value="nordic">Nordic</option>
+                <option value="stone">Stone</option>
+                <option value="rustic">Rustic</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="form-section-title">Structure Dimensions (Voxel Grid Extents)</div>
+          <div class="form-row form-row-4">
+            <div class="form-group">
+              <label for="new-bp-width">Width (X):</label>
+              <input type="number" id="new-bp-width" class="form-input" min="3" max="64" value="9" required>
+            </div>
+
+            <div class="form-group">
+              <label for="new-bp-length">Length (Z):</label>
+              <input type="number" id="new-bp-length" class="form-input" min="3" max="64" value="7" required>
+            </div>
+
+            <div class="form-group">
+              <label for="new-bp-height">Height (Y):</label>
+              <input type="number" id="new-bp-height" class="form-input" min="1" max="32" value="5" required>
+            </div>
+
+            <div class="form-group">
+              <label for="new-bp-miny">Min Y (Offset):</label>
+              <input type="number" id="new-bp-miny" class="form-input" min="-10" max="0" value="0" required>
+            </div>
+          </div>
+          <div class="form-hint">
+            💡 <em>Negative Min Y values (e.g. -1 to -10) represent subterranean basement levels and activate excavation tracking.</em>
+          </div>
+        </div>
+
+        <div class="modal-footer">
+          <button type="button" id="btn-cancel-new-bp" class="btn">Cancel</button>
+          <button type="submit" class="btn btn-primary">Create Blueprint &amp; Open Editor</button>
+        </div>
+      </form>
+    </div>
+  </div>
 
   <!-- AI Architectural Assistant Chat Drawer (cq-imw.7) -->
   <aside id="ai-assistant-drawer" class="assistant-drawer hidden">

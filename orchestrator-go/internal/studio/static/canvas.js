@@ -1,5 +1,6 @@
 // CivQuest Blueprint Studio - HTML5 Canvas Isometric 2.5D Voxel Renderer
-// Implements depth sorting, directional shading (top/left/right), and dynamic mouseover X-Ray wall ghosting.
+// Implements depth sorting, directional shading (top/left/right), dynamic mouseover X-Ray wall ghosting,
+// and semi-transparent fat ordinal direction arrows (N, S, W, E) along the ground perimeter.
 
 class IsometricCanvas {
   constructor(canvasId) {
@@ -47,6 +48,7 @@ class IsometricCanvas {
       "minecraft:furnace": "#545454",
       "minecraft:red_bed": "#c0392b",
       "minecraft:oak_door": "#8d6439",
+      "minecraft:spruce_door": "#684826",
       "minecraft:ladder": "#b28a50",
       "minecraft:hay_block": "#a59728"
     };
@@ -65,7 +67,7 @@ class IsometricCanvas {
       this.render();
     });
 
-    this.canvas.addEventListener("mousemove", (e) => {
+    this.canvas.addEventListener("mousemove", () => {
       if (!this.isHovering) {
         this.isHovering = true;
         this.render();
@@ -108,7 +110,7 @@ class IsometricCanvas {
 
     // Calculate dynamic tile sizes based on bounding box
     const spanXZ = Math.max(dims.width + dims.length, 6);
-    let tileWidth = Math.floor(Math.min(36, (width * 0.75) / spanXZ));
+    let tileWidth = Math.floor(Math.min(36, (width * 0.70) / spanXZ));
     tileWidth = Math.max(16, Math.min(tileWidth, 42));
     const tileHeight = Math.floor(tileWidth / 2);
     const voxelHeight = Math.floor(tileHeight * 1.25);
@@ -117,8 +119,11 @@ class IsometricCanvas {
     const originX = width / 2 + ((dims.length - dims.width) * tileWidth) / 4;
     const originY = height / 2 - ((dims.width + dims.length) * tileHeight) / 4 + (dims.height * voxelHeight) / 3;
 
-    // Draw Ground Plane / Foundation reference grid at Y = 0
+    // 1. Draw Ground Plane grid at Y = 0
     this.drawGroundGrid(ctx, originX, originY, dims, minY, tileWidth, tileHeight, voxelHeight);
+
+    // 2. Draw Semi-Transparent Fat Ordinal Direction Arrows (N, S, W, E) on Ground Plane
+    this.drawGroundPerimeterArrows(ctx, originX, originY, dims, minY, tileWidth, tileHeight, voxelHeight);
 
     // Collect all voxels
     const voxels = [];
@@ -177,7 +182,7 @@ class IsometricCanvas {
                      (v.y >= maxY - 1 && (v.blockState.includes("stairs") || v.blockState.includes("slab"))) ||
                      (v.y >= minY + dims.height - 1);
 
-      // In X-Ray mode, completely hide front walls and roof elements to leave interior 100% unobstructed
+      // In X-Ray mode, completely hide front walls and roof elements to leave interior unobstructed
       if (isXRayActive && (isFrontWall || isRoof)) {
         continue;
       }
@@ -190,7 +195,7 @@ class IsometricCanvas {
 
       ctx.save();
       if (isGlass) {
-        ctx.globalAlpha = 0.5;
+        ctx.globalAlpha = 0.55;
       } else {
         ctx.globalAlpha = 1.0;
       }
@@ -198,6 +203,9 @@ class IsometricCanvas {
       this.drawVoxelCube(ctx, isoX, isoY, tileWidth, tileHeight, voxelHeight, baseColor, false);
       ctx.restore();
     }
+
+    // 3. Draw Corner Isometric Compass HUD
+    this.drawCompassWidget(ctx, width - 48, 48);
 
     // Overlay Status Legend
     ctx.fillStyle = isXRayActive ? "#38bdf8" : "#94a3b8";
@@ -249,6 +257,137 @@ class IsometricCanvas {
     ctx.restore();
   }
 
+  // Draw semi-transparent fat arrows with bold 'N', 'S', 'W', 'E' labels around ground perimeter
+  drawGroundPerimeterArrows(ctx, originX, originY, dims, minY, tileWidth, tileHeight, voxelHeight) {
+    ctx.save();
+
+    const hw = tileWidth / 2;
+    const hh = tileHeight / 2;
+    const groundIsoOffset = (0 - minY) * voxelHeight;
+
+    // North: -Z direction -> screen vector (+hw, -hh), angle = Math.atan2(-hh, hw)
+    const nAngle = Math.atan2(-hh, hw);
+    const nMidX = originX + (dims.width / 2.0 - 0) * hw;
+    const nMidY = originY + (dims.width / 2.0 + 0) * hh - groundIsoOffset;
+    const nDist = Math.max(26, hw * 1.15);
+    const nPosX = nMidX + Math.cos(nAngle) * nDist;
+    const nPosY = nMidY + Math.sin(nAngle) * nDist;
+    this.renderFatArrow(ctx, nPosX, nPosY, nAngle, "N", "rgba(56, 189, 248, 0.55)", "rgba(56, 189, 248, 0.95)");
+
+    // South: +Z direction -> screen vector (-hw, +hh), angle = Math.atan2(hh, -hw)
+    const sAngle = Math.atan2(hh, -hw);
+    const sMidX = originX + (dims.width / 2.0 - dims.length) * hw;
+    const sMidY = originY + (dims.width / 2.0 + dims.length) * hh - groundIsoOffset;
+    const sDist = Math.max(26, hw * 1.15);
+    const sPosX = sMidX + Math.cos(sAngle) * sDist;
+    const sPosY = sMidY + Math.sin(sAngle) * sDist;
+    this.renderFatArrow(ctx, sPosX, sPosY, sAngle, "S", "rgba(56, 189, 248, 0.55)", "rgba(56, 189, 248, 0.95)");
+
+    // East: +X direction -> screen vector (+hw, +hh), angle = Math.atan2(hh, hw)
+    const eAngle = Math.atan2(hh, hw);
+    const eMidX = originX + (dims.width - dims.length / 2.0) * hw;
+    const eMidY = originY + (dims.width + dims.length / 2.0) * hh - groundIsoOffset;
+    const eDist = Math.max(26, hw * 1.15);
+    const ePosX = eMidX + Math.cos(eAngle) * eDist;
+    const ePosY = eMidY + Math.sin(eAngle) * eDist;
+    this.renderFatArrow(ctx, ePosX, ePosY, eAngle, "E", "rgba(56, 189, 248, 0.55)", "rgba(56, 189, 248, 0.95)");
+
+    // West: -X direction -> screen vector (-hw, -hh), angle = Math.atan2(-hh, -hw)
+    const wAngle = Math.atan2(-hh, -hw);
+    const wMidX = originX + (0 - dims.length / 2.0) * hw;
+    const wMidY = originY + (0 + dims.length / 2.0) * hh - groundIsoOffset;
+    const wDist = Math.max(26, hw * 1.15);
+    const wPosX = wMidX + Math.cos(wAngle) * wDist;
+    const wPosY = wMidY + Math.sin(wAngle) * wDist;
+    this.renderFatArrow(ctx, wPosX, wPosY, wAngle, "W", "rgba(56, 189, 248, 0.55)", "rgba(56, 189, 248, 0.95)");
+
+    ctx.restore();
+  }
+
+  // Helper to render a stylized semi-transparent fat arrow with bold label
+  renderFatArrow(ctx, x, y, angle, label, fillColor, strokeColor) {
+    ctx.save();
+    ctx.translate(x, y);
+
+    // Draw rotated fat arrow
+    ctx.save();
+    ctx.rotate(angle);
+    ctx.beginPath();
+    ctx.moveTo(18, 0);       // Tip
+    ctx.lineTo(6, -9);       // Top barb
+    ctx.lineTo(6, -4);       // Top notch
+    ctx.lineTo(-12, -4);     // Top rear
+    ctx.lineTo(-12, 4);      // Bottom rear
+    ctx.lineTo(6, 4);        // Bottom notch
+    ctx.lineTo(6, 9);        // Bottom barb
+    ctx.closePath();
+
+    ctx.fillStyle = fillColor;
+    ctx.fill();
+    ctx.strokeStyle = strokeColor;
+    ctx.lineWidth = 1.6;
+    ctx.stroke();
+    ctx.restore();
+
+    // Draw upright bold ordinal letter label with glowing pill badge
+    ctx.beginPath();
+    ctx.arc(0, 0, 9, 0, Math.PI * 2);
+    ctx.fillStyle = "rgba(15, 23, 42, 0.85)";
+    ctx.fill();
+    ctx.strokeStyle = strokeColor;
+    ctx.lineWidth = 1.2;
+    ctx.stroke();
+
+    ctx.fillStyle = "#ffffff";
+    ctx.font = "bold 11px sans-serif";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillText(label, 0, 0);
+
+    ctx.restore();
+  }
+
+  // Draw miniature isometric compass widget in canvas corner
+  drawCompassWidget(ctx, cx, cy) {
+    ctx.save();
+    ctx.beginPath();
+    ctx.arc(cx, cy, 26, 0, Math.PI * 2);
+    ctx.fillStyle = "rgba(15, 23, 42, 0.75)";
+    ctx.fill();
+    ctx.strokeStyle = "rgba(56, 189, 248, 0.35)";
+    ctx.lineWidth = 1;
+    ctx.stroke();
+
+    const hw = 16;
+    const hh = 8;
+    const dirs = [
+      { label: "N", angle: Math.atan2(-hh, hw), color: "#38bdf8" },
+      { label: "S", angle: Math.atan2(hh, -hw), color: "#94a3b8" },
+      { label: "E", angle: Math.atan2(hh, hw), color: "#94a3b8" },
+      { label: "W", angle: Math.atan2(-hh, -hw), color: "#94a3b8" }
+    ];
+
+    for (const d of dirs) {
+      const px = cx + Math.cos(d.angle) * 17;
+      const py = cy + Math.sin(d.angle) * 17;
+
+      ctx.beginPath();
+      ctx.moveTo(cx, cy);
+      ctx.lineTo(px, py);
+      ctx.strokeStyle = d.color;
+      ctx.lineWidth = d.label === "N" ? 2 : 1;
+      ctx.stroke();
+
+      ctx.fillStyle = d.color;
+      ctx.font = "bold 9px sans-serif";
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.fillText(d.label, cx + Math.cos(d.angle) * 22, cy + Math.sin(d.angle) * 22);
+    }
+
+    ctx.restore();
+  }
+
   drawVoxelCube(ctx, isoX, isoY, tileWidth, tileHeight, voxelHeight, baseColor, isGhost) {
     const hw = tileWidth / 2;
     const hh = tileHeight / 2;
@@ -295,10 +434,28 @@ class IsometricCanvas {
 
   resolveColor(blockState) {
     if (!blockState) return "#808080";
-    const cleanId = blockState.split("[")[0].trim().toLowerCase();
+    let cleanId = blockState.split("[")[0].trim().toLowerCase();
+    if (cleanId.startsWith("#")) cleanId = cleanId.substring(1);
+
     if (this.blockColors[cleanId]) {
       return this.blockColors[cleanId];
     }
+
+    // Taxonomy tag fallbacks
+    if (cleanId.includes("plank")) return "#c68a4c";
+    if (cleanId.includes("log") || cleanId.includes("wood")) return "#6d5032";
+    if (cleanId.includes("stair")) return "#c68a4c";
+    if (cleanId.includes("slab")) return "#c68a4c";
+    if (cleanId.includes("door") || cleanId.includes("trapdoor") || cleanId.includes("fence")) return "#8d6439";
+    if (cleanId.includes("cobble")) return "#6b6b6b";
+    if (cleanId.includes("stone_brick")) return "#787878";
+    if (cleanId.includes("stone")) return "#808080";
+    if (cleanId.includes("deepslate")) return "#3b3b44";
+    if (cleanId.includes("glass")) return "#a5d8f3";
+    if (cleanId.includes("torch") || cleanId.includes("light")) return "#f39c12";
+    if (cleanId.includes("bed")) return "#c0392b";
+    if (cleanId.includes("chest") || cleanId.includes("barrel")) return "#87572b";
+
     // Deterministic hash color fallback
     let hash = 0;
     for (let i = 0; i < cleanId.length; i++) {
