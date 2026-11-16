@@ -403,9 +403,11 @@ func defaultTransitionRules() []TransitionRule {
 			Description: "Dawn awakening; starting daily exploration and duties",
 		},
 		{
-			FromState:   StateRest,
-			ToState:     StateShelter,
-			Condition:   func(c *FSMContext) bool { return c.IsDuskOrNight() && !c.IsShelterComplete() && !c.HasAssignedBed() && !c.IsSleeping() },
+			FromState: StateRest,
+			ToState:   StateShelter,
+			Condition: func(c *FSMContext) bool {
+				return c.IsDuskOrNight() && !c.IsShelterComplete() && !c.HasAssignedBed() && !c.IsSleeping()
+			},
 			Description: "Rest interrupted and no bed available; seeking outpost shelter",
 		},
 	}
@@ -509,9 +511,19 @@ func (h *ExploreStateHandler) OnTick(ctx *FSMContext) []FSMIntent {
 		}
 	}
 
-	// Autonomous exploration & terrain navigation
+	// Autonomous exploration & terrain navigation (Scouting for Explorers, Patrol for citizens)
 	if len(ctx.Frame.IncomingChats) == 0 && ctx.Frame.PendingTrade == nil {
-		if exploreIntent := EvaluateExploration(ctx.AgentID, ctx.Frame, ctx.Config, ctx.State); exploreIntent != nil {
+		prof := "UNASSIGNED"
+		if ctx.Config != nil {
+			prof = strings.ToUpper(strings.TrimSpace(ctx.Config.Profession))
+		}
+		var exploreIntent *civquestv1.AgentIntent
+		if prof == "EXPLORER" || prof == "TRAILBLAZER" || prof == "SCOUT" {
+			exploreIntent = EvaluateScouting(ctx.AgentID, ctx.Frame, ctx.Config, ctx.State)
+		} else {
+			exploreIntent = EvaluatePatrol(ctx.AgentID, ctx.Frame, ctx.Config, ctx.State)
+		}
+		if exploreIntent != nil {
 			intents = append(intents, FSMIntent{Intent: exploreIntent, Priority: false})
 		}
 	}
