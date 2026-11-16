@@ -3140,6 +3140,7 @@ func (r *AgentRuntime) evaluateSystem1Reflexes(frame *civquestv1.TelemetryFrame)
 		HasShield:      hasShield,
 		HasWeapon:      hasWeapon,
 		WeaponSlot:     weaponSlot,
+		CivicDB:        r.civicRegistryDB,
 	}
 
 	// Execute formal HFSM tick

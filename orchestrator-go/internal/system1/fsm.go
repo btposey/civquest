@@ -31,6 +31,7 @@ type FSMContext struct {
 	HasShield      bool
 	HasWeapon      bool
 	WeaponSlot     int32
+	CivicDB        *db.CivicRegistryDB
 }
 
 // HostilesPresent checks if any hostile mobs are within perception range.
@@ -527,8 +528,27 @@ func (h *SettlementStateHandler) OnTick(ctx *FSMContext) []FSMIntent {
 				intents = append(intents, FSMIntent{Intent: patrolIntent, Priority: false})
 			}
 		}
+	case RoutineArmoryMaintenance:
+		if len(ctx.Frame.IncomingChats) == 0 && ctx.Frame.PendingTrade == nil {
+			if armoryIntent := EvaluateArmoryMaintenance(ctx.AgentID, ctx.Frame, ctx.Config, ctx.State, ctx.CivicDB); armoryIntent != nil {
+				intents = append(intents, FSMIntent{Intent: armoryIntent, Priority: false})
+			} else {
+				if ctx.State != nil {
+					ctx.State.SetArmoryMaintenanceNeeded(false)
+				}
+				if patrolIntent := EvaluatePatrol(ctx.AgentID, ctx.Frame, ctx.Config, ctx.State); patrolIntent != nil {
+					intents = append(intents, FSMIntent{Intent: patrolIntent, Priority: false})
+				}
+			}
+		}
 	case RoutineSecondaryHobby:
 		if len(ctx.Frame.IncomingChats) == 0 && ctx.Frame.PendingTrade == nil {
+			if ctx.Config != nil && ctx.Config.EffectiveShift() == xdg.ShiftThird && ctx.State != nil && ctx.State.IsArmoryMaintenanceNeeded() {
+				if armoryIntent := EvaluateArmoryMaintenance(ctx.AgentID, ctx.Frame, ctx.Config, ctx.State, ctx.CivicDB); armoryIntent != nil {
+					intents = append(intents, FSMIntent{Intent: armoryIntent, Priority: false})
+					return intents
+				}
+			}
 			if patrolIntent := EvaluatePatrol(ctx.AgentID, ctx.Frame, ctx.Config, ctx.State); patrolIntent != nil {
 				intents = append(intents, FSMIntent{Intent: patrolIntent, Priority: false})
 			}

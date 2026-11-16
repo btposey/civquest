@@ -61,6 +61,8 @@ const (
 	RoutineSleep Routine = "SLEEP"
 	// RoutineCivicPatrol represents perimeter security and landmark watches.
 	RoutineCivicPatrol Routine = "CIVIC_PATROL"
+	// RoutineArmoryMaintenance represents off-watch armory maintenance and munitions crafting.
+	RoutineArmoryMaintenance Routine = "ARMORY_MAINTENANCE"
 	// RoutineCamp represents camping with player companion during evening/night, overriding tavern and bed return.
 	RoutineCamp Routine = "CAMP"
 	// RoutineDead represents terminal permadeath cessation of all operational routines.
@@ -101,6 +103,7 @@ type AgentState struct {
 	CurrentRoutine            RoutineState
 	FSMState                  State
 	PrimaryDutyBlocked        bool
+	armoryMaintenanceNeeded   bool
 	companionActive           bool
 	civicPatrolActive         bool
 	lastEatingTick            int64
@@ -141,8 +144,9 @@ func NewAgentState() *AgentState {
 		stage:          StageBootstrap,
 		routine:        RoutineDawnPrep,
 		CurrentRoutine: RoutineDawnPrep,
-		FSMState:       StageBootstrap,
-		PavingTracker:  NewRoadPavingTracker(DefaultPavingCapacity, DefaultPavingThreshold),
+		FSMState:                  StageBootstrap,
+		armoryMaintenanceNeeded:   true,
+		PavingTracker:             NewRoadPavingTracker(DefaultPavingCapacity, DefaultPavingThreshold),
 		goals: GoalHierarchy{
 			ImmediateGoal: "GATHER_TIMBER: Gather 4 logs and craft basic wooden tools",
 			ShortTermGoal: "ESTABLISH_OUTPOST_CHAIN: Advance frontier and establish safe day-night outposts with tools & light",
@@ -204,6 +208,27 @@ func (s *AgentState) IsPrimaryDutyBlocked() bool {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return s.PrimaryDutyBlocked
+}
+
+// SetArmoryMaintenanceNeeded updates whether armory maintenance chores are needed.
+func (s *AgentState) SetArmoryMaintenanceNeeded(needed bool) {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.armoryMaintenanceNeeded = needed
+}
+
+// IsArmoryMaintenanceNeeded returns whether armory maintenance chores are needed.
+// Defaults to true for 3rd shift guards unless explicitly satisfied or cleared.
+func (s *AgentState) IsArmoryMaintenanceNeeded() bool {
+	if s == nil {
+		return false
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.armoryMaintenanceNeeded
 }
 
 // Stage returns the currently active Tier 1 macro strategic stage.

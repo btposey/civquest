@@ -325,3 +325,71 @@ func TestEvaluateUtility_CompanionCampingOverride(t *testing.T) {
 		t.Errorf("expected utility 0.85, got %v", decNight.Utility)
 	}
 }
+
+func TestEvaluateUtility_ThirdShiftArmoryMaintenance(t *testing.T) {
+	guardCfg := &xdg.AgentIdentityConfig{
+		Name:           "NightWatchman",
+		Profession:     "GUARD",
+		SecondaryHobby: "FLETCHER",
+		Shift:          xdg.ShiftThird,
+	}
+
+	state := NewAgentState()
+
+	// 1. Chores needed (default state):
+	// Ticks 10000-11000 (pre-tavern afternoon waking hour) -> RoutineArmoryMaintenance
+	frameAfternoon := &civquestv1.TelemetryFrame{
+		TimeOfDay: 10500,
+		WorldTick: 1000,
+		Status: &civquestv1.AgentStatus{
+			Health:    20,
+			MaxHealth: 20,
+			FoodLevel: 20,
+		},
+	}
+	decAfternoon := EvaluateUtility(frameAfternoon, guardCfg, state)
+	if decAfternoon.State != RoutineArmoryMaintenance {
+		t.Fatalf("expected RoutineArmoryMaintenance at 10500 with chores needed, got %s", decAfternoon.State)
+	}
+	if decAfternoon.Reason != "maintaining settlement armory and crafting munitions" {
+		t.Errorf("unexpected reason: %s", decAfternoon.Reason)
+	}
+
+	// Ticks 1000-2000 (post-dawn off-watch waking hour) -> RoutineArmoryMaintenance
+	framePostDawn := &civquestv1.TelemetryFrame{
+		TimeOfDay: 1500,
+		WorldTick: 2000,
+		Status: &civquestv1.AgentStatus{
+			Health:    20,
+			MaxHealth: 20,
+			FoodLevel: 20,
+		},
+	}
+	decPostDawn := EvaluateUtility(framePostDawn, guardCfg, state)
+	if decPostDawn.State != RoutineArmoryMaintenance {
+		t.Fatalf("expected RoutineArmoryMaintenance at 1500 with chores needed, got %s", decPostDawn.State)
+	}
+	if decPostDawn.Reason != "maintaining settlement armory and crafting munitions" {
+		t.Errorf("unexpected reason: %s", decPostDawn.Reason)
+	}
+
+	// 2. Chores complete / quotas satisfied -> transitions to RoutineSecondaryHobby
+	state.SetArmoryMaintenanceNeeded(false)
+
+	decAfternoonHobby := EvaluateUtility(frameAfternoon, guardCfg, state)
+	if decAfternoonHobby.State != RoutineSecondaryHobby {
+		t.Fatalf("expected RoutineSecondaryHobby at 10500 when chores complete, got %s", decAfternoonHobby.State)
+	}
+	if decAfternoonHobby.Reason != "armory quotas satisfied; practicing secondary hobby" {
+		t.Errorf("unexpected reason: %s", decAfternoonHobby.Reason)
+	}
+
+	decPostDawnHobby := EvaluateUtility(framePostDawn, guardCfg, state)
+	if decPostDawnHobby.State != RoutineSecondaryHobby {
+		t.Fatalf("expected RoutineSecondaryHobby at 1500 when chores complete, got %s", decPostDawnHobby.State)
+	}
+	if decPostDawnHobby.Reason != "armory quotas satisfied; practicing secondary hobby" {
+		t.Errorf("unexpected reason: %s", decPostDawnHobby.Reason)
+	}
+}
+

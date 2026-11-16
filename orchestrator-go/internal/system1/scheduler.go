@@ -200,8 +200,18 @@ func ComputeCircadianRoutine(
 			}
 			return RoutineCivicPatrol
 		}
-		// [23500, 2000): RoutineDawnPrep ("dawn watch debrief and morning handover to 1st shift")
-		if tod >= 23500 || tod < 2000 {
+		// [23500, 1000): RoutineDawnPrep ("dawn watch debrief and morning handover to 1st shift")
+		if tod >= 23500 || tod < 1000 {
+			return RoutineDawnPrep
+		}
+		// [1000, 2000): Post-dawn off-watch waking hour after dawn handover
+		if tod >= 1000 && tod < 2000 {
+			if state != nil && state.IsArmoryMaintenanceNeeded() {
+				return RoutineArmoryMaintenance
+			}
+			if state != nil && !state.IsArmoryMaintenanceNeeded() {
+				return RoutineSecondaryHobby
+			}
 			return RoutineDawnPrep
 		}
 		// [2000, 10000): RoutineSleep ("daytime sleep during safe daylight hours")
@@ -211,7 +221,10 @@ func ComputeCircadianRoutine(
 			}
 			return RoutineSleep
 		}
-		// [10000, 11000): RoutineSecondaryHobby ("waking, equipment maintenance, and personal hobby")
+		// [10000, 11000): Pre-tavern afternoon waking hour
+		if state != nil && state.IsArmoryMaintenanceNeeded() {
+			return RoutineArmoryMaintenance
+		}
 		return RoutineSecondaryHobby
 	}
 
@@ -330,8 +343,40 @@ func EvaluateCircadianRoutine(
 			}
 		}
 
-		// [23500, 2000): RoutineDawnPrep ("dawn watch debrief and morning handover to 1st shift")
-		if tod >= 23500 || tod < 2000 {
+		// [23500, 1000): RoutineDawnPrep ("dawn watch debrief and morning handover to 1st shift")
+		if tod >= 23500 || tod < 1000 {
+			return &UtilityDecision{
+				State:      RoutineDawnPrep,
+				Utility:    0.75,
+				Profession: profession,
+				Hobby:      hobby,
+				Reason:     "dawn watch debrief and morning handover to 1st shift",
+				TimeOfDay:  tod,
+			}
+		}
+
+		// [1000, 2000): Post-dawn off-watch waking hour after dawn handover
+		if tod >= 1000 && tod < 2000 {
+			if state != nil && state.IsArmoryMaintenanceNeeded() {
+				return &UtilityDecision{
+					State:      RoutineArmoryMaintenance,
+					Utility:    0.75,
+					Profession: profession,
+					Hobby:      hobby,
+					Reason:     "maintaining settlement armory and crafting munitions",
+					TimeOfDay:  tod,
+				}
+			}
+			if state != nil && !state.IsArmoryMaintenanceNeeded() {
+				return &UtilityDecision{
+					State:      RoutineSecondaryHobby,
+					Utility:    0.70,
+					Profession: profession,
+					Hobby:      hobby,
+					Reason:     "armory quotas satisfied; practicing secondary hobby",
+					TimeOfDay:  tod,
+				}
+			}
 			return &UtilityDecision{
 				State:      RoutineDawnPrep,
 				Utility:    0.75,
@@ -364,13 +409,27 @@ func EvaluateCircadianRoutine(
 			}
 		}
 
-		// [10000, 11000): RoutineSecondaryHobby ("waking, equipment maintenance, and personal hobby")
+		// [10000, 11000): Pre-tavern afternoon waking hour
+		if state != nil && state.IsArmoryMaintenanceNeeded() {
+			return &UtilityDecision{
+				State:      RoutineArmoryMaintenance,
+				Utility:    0.70,
+				Profession: profession,
+				Hobby:      hobby,
+				Reason:     "maintaining settlement armory and crafting munitions",
+				TimeOfDay:  tod,
+			}
+		}
+		reason := "waking, equipment maintenance, and personal hobby"
+		if state != nil && !state.IsArmoryMaintenanceNeeded() {
+			reason = "armory quotas satisfied; practicing secondary hobby"
+		}
 		return &UtilityDecision{
 			State:      RoutineSecondaryHobby,
 			Utility:    0.70,
 			Profession: profession,
 			Hobby:      hobby,
-			Reason:     "waking, equipment maintenance, and personal hobby",
+			Reason:     reason,
 			TimeOfDay:  tod,
 		}
 	}

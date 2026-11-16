@@ -272,6 +272,14 @@ func (c *CivicRegistryDB) initSchema(ctx context.Context) error {
 
 	CREATE INDEX IF NOT EXISTS idx_civic_edicts_clan ON civic_edicts(clan_id);
 	CREATE INDEX IF NOT EXISTS idx_civic_edicts_status ON civic_edicts(status);
+
+	CREATE TABLE IF NOT EXISTS settlement_settlers (
+		agent_id TEXT PRIMARY KEY,
+		clan_id TEXT NOT NULL,
+		profession TEXT NOT NULL DEFAULT '',
+		registered_tick INTEGER NOT NULL DEFAULT 0
+	);
+	CREATE INDEX IF NOT EXISTS idx_settlement_settlers_clan ON settlement_settlers(clan_id);
 	`
 	_, err := c.db.ExecContext(ctx, schema)
 	return err
@@ -1209,4 +1217,80 @@ func (c *CivicRegistryDB) ListZonesByTypeContext(ctx context.Context, zoneType s
 		zones = append(zones, &z)
 	}
 	return zones, rows.Err()
+}
+
+// -----------------------------------------------------------------------------
+// Settler Population Operations
+// -----------------------------------------------------------------------------
+
+// RegisterSettler registers an agent as an active settler of the settlement clan.
+func (c *CivicRegistryDB) RegisterSettler(agentID, profession string, worldTick int64) error {
+	return c.RegisterSettlerContext(context.Background(), agentID, profession, worldTick)
+}
+
+// RegisterSettlerContext registers an agent as an active settler with context.
+func (c *CivicRegistryDB) RegisterSettlerContext(ctx context.Context, agentID, profession string, worldTick int64) error {
+	if agentID == "" {
+		return errors.New("agent_id cannot be empty")
+	}
+	c.writeMu.Lock()
+	defer c.writeMu.Unlock()
+
+	c.mu.RLock()
+	if c.isClosed {
+		c.mu.RUnlock()
+		return ErrClosed
+	}
+	c.mu.RUnlock()
+
+	query := `
+		INSERT INTO settlement_settlers (agent_id, clan_id, profession, registered_tick)
+		VALUES (?, ?, ?, ?)
+		ON CONFLICT(agent_id) DO UPDATE SET
+			clan_id = excluded.clan_id,
+			profession = excluded.profession,
+			registered_tick = excluded.registered_tick;
+	`
+	_, err := c.db.ExecContext(ctx, query, agentID, c.clanID, profession, worldTick)
+	if err != nil {
+		return fmt.Errorf("registering settler: %w", err)
+	}
+	return nil
+}
+
+// GetSettlementPopulation retrieves the count of active settlers in the clan.
+// It checks settlement_settlers first; if empty, it falls back to distinct agent IDs
+// in functional_zones, civic_votes, and clan_governance.
+func (c *CivicRegistryDB) GetSettlementPopulation() (int, error) {
+	return c.GetSettlementPopulationContext(context.Background())
+}
+
+// GetSettlementPopulationContext retrieves the count of active settlers with context.
+func (c *CivicRegistryDB) GetSettlementPopulationContext(ctx context.Context) (int, error) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	if c.isClosed {
+		return 0, ErrClosed
+	}
+
+	var count int
+	err := c.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM settlement_settlers WHERE clan_id = ?;`, c.clanID).Scan(&count)
+	if err == nil && count > 0 {
+		return count, nil
+	}
+
+	query := `
+		SELECT COUNT(DISTINCT agent_id) FROM (
+			SELECT owner_agent_id AS agent_id FROM functional_zones WHERE owner_agent_id != ''
+			UNION
+			SELECT agent_id FROM civic_votes WHERE agent_id != ''
+			UNION
+			SELECT leader_agent_id AS agent_id FROM clan_governance WHERE leader_agent_id != ''
+		);
+	`
+	err = c.db.QueryRowContext(ctx, query).Scan(&count)
+	if err != nil {
+		return 0, fmt.Errorf("querying settlement population: %w", err)
+	}
+	return count, nil
 }

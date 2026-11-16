@@ -1043,3 +1043,103 @@ func BenchmarkTwoTierHFSM_ShiftWorkAndPDA(b *testing.B) {
 		_ = res.Routine
 	}
 }
+
+func TestTwoTierHFSM_ArmoryMaintenanceRoutine(t *testing.T) {
+	fsm := NewAgentFSM(StageSettlement, nil)
+	state := NewAgentState()
+	state.SetAssignedBed(&civquestv1.BlockPosProto{X: 0, Y: 64, Z: 0})
+	state.SetStageAndRoutine(StageSettlement, RoutineArmoryMaintenance)
+
+	cfg := &xdg.AgentIdentityConfig{
+		Name:       "SentryGarrick",
+		Profession: "GUARD",
+		Shift:      xdg.ShiftThird,
+	}
+
+	// 1. Agent has feathers, sticks, flint -> should emit craft intent for arrows
+	frame := &civquestv1.TelemetryFrame{
+		WorldTick: 500,
+		TimeOfDay: 10500,
+		Status: &civquestv1.AgentStatus{
+			Position:        &civquestv1.Vec3{X: 10, Y: 64, Z: 10},
+			Health:          20,
+			MaxHealth:       20,
+			FoodLevel:       20,
+			NavigationState: civquestv1.NavigationState_NAVIGATION_STATE_IDLE,
+			Inventory: []*civquestv1.ItemStackProto{
+				{Slot: 0, ItemId: "minecraft:iron_axe", Count: 1},
+				{Slot: 1, ItemId: "minecraft:iron_sword", Count: 1},
+				{Slot: 2, ItemId: "minecraft:torch", Count: 8},
+				{Slot: 3, ItemId: "minecraft:feather", Count: 4},
+				{Slot: 4, ItemId: "minecraft:stick", Count: 4},
+				{Slot: 5, ItemId: "minecraft:flint", Count: 4},
+			},
+		},
+	}
+
+	ctx := &FSMContext{
+		AgentID: "SentryGarrick",
+		Frame:   frame,
+		State:   state,
+		Config:  cfg,
+	}
+
+	res := fsm.Tick(ctx)
+	if len(res.Intents) == 0 {
+		t.Fatalf("expected emitted intents during RoutineArmoryMaintenance, got 0")
+	}
+
+	var foundCraft bool
+	for _, it := range res.Intents {
+		if it.Intent != nil && it.Intent.GetCraftItem() != nil && it.Intent.GetCraftItem().RecipeId == "minecraft:arrow" {
+			foundCraft = true
+			break
+		}
+	}
+	if !foundCraft {
+		t.Fatalf("expected CraftItem intent for minecraft:arrow, got %+v", res.Intents)
+	}
+
+	// 2. When armory quotas are satisfied, no craft intent emitted and armoryMaintenanceNeeded becomes false
+	state.SetLastCraftTick(500)
+	frameSufficient := &civquestv1.TelemetryFrame{
+		WorldTick: 550,
+		TimeOfDay: 10550,
+		Status: &civquestv1.AgentStatus{
+			Position:        &civquestv1.Vec3{X: 10, Y: 64, Z: 10},
+			Health:          20,
+			MaxHealth:       20,
+			FoodLevel:       20,
+			NavigationState: civquestv1.NavigationState_NAVIGATION_STATE_IDLE,
+			Inventory: []*civquestv1.ItemStackProto{
+				{Slot: 0, ItemId: "minecraft:iron_axe", Count: 1},
+				{Slot: 1, ItemId: "minecraft:torch", Count: 8},
+				{Slot: 2, ItemId: "minecraft:iron_sword", Count: 1},
+				{Slot: 3, ItemId: "minecraft:bow", Count: 1},
+				{Slot: 4, ItemId: "minecraft:iron_helmet", Count: 1},
+				{Slot: 5, ItemId: "minecraft:iron_chestplate", Count: 1},
+				{Slot: 6, ItemId: "minecraft:iron_leggings", Count: 1},
+				{Slot: 7, ItemId: "minecraft:iron_boots", Count: 1},
+				{Slot: 8, ItemId: "minecraft:arrow", Count: 32},
+				{Slot: 9, ItemId: "minecraft:tnt", Count: 4},
+			},
+		},
+	}
+	ctxSufficient := &FSMContext{
+		AgentID: "SentryGarrick",
+		Frame:   frameSufficient,
+		State:   state,
+		Config:  cfg,
+	}
+
+	resSufficient := fsm.Tick(ctxSufficient)
+	for _, it := range resSufficient.Intents {
+		if it.Intent != nil && it.Intent.GetCraftItem() != nil {
+			t.Fatalf("did not expect CraftItem intent when armory is sufficient, got %+v", it)
+		}
+	}
+	if state.IsArmoryMaintenanceNeeded() {
+		t.Errorf("expected IsArmoryMaintenanceNeeded to be false after sufficient check")
+	}
+}
+
