@@ -6,25 +6,67 @@ import (
 	civquestv1 "github.com/btposey/civquest/orchestrator-go/internal/proto/v1"
 )
 
-// RoutineState represents the high-level daily routine bracket for an agent.
-type RoutineState string
+// Stage represents the Tier 1 macro strategic stage of an agent in the Two-Tier HFSM.
+type Stage string
+
+const (
+	// StageEmergency represents active lethal threats, fleeing, combat panic, or critical survival reflexes.
+	StageEmergency Stage = "EMERGENCY"
+	// StageBootstrap represents initial survival kit acquisition, timber harvesting, basic tool crafting, starter shelter materials.
+	StageBootstrap Stage = "BOOTSTRAP"
+	// StageSettlement represents established clan settlement living, daily profession routines, and civic duties.
+	StageSettlement Stage = "SETTLEMENT"
+	// StageColonize represents founding a new frontier settlement node.
+	StageColonize Stage = "COLONIZE"
+)
+
+// State is an alias for Stage, preserving backward compatibility with legacy FSM code.
+type State = Stage
+
+const (
+	StateEmergency  State = StageEmergency
+	StateBootstrap  State = StageBootstrap
+	StateSettlement State = StageSettlement
+	StateColonize   State = StageColonize
+
+	// Backward compatibility aliases for legacy states
+	StateExplore State = StageSettlement
+	StateShelter State = "SHELTER"
+	StateRest    State = "REST"
+)
+
+// Routine represents the Tier 2 circadian operational routine of an agent.
+type Routine string
+
+// RoutineState is an alias for Routine, preserving backward compatibility.
+type RoutineState = Routine
 
 const (
 	// RoutineEmergency represents critical survival reflex overrides (U = 1.0).
-	RoutineEmergency RoutineState = "EMERGENCY"
-	// RoutinePrimaryDuty represents primary profession duties during ticks 1000–8000.
-	RoutinePrimaryDuty RoutineState = "PRIMARY_DUTY"
-	// RoutineSecondaryHobby represents hobby gathering and practice during ticks 8000–11000.
-	RoutineSecondaryHobby RoutineState = "SECONDARY_HOBBY"
-	// RoutineTavernSocial represents tavern gathering and rumor sharing during ticks 11000–13000.
-	RoutineTavernSocial RoutineState = "TAVERN_SOCIAL"
-	// RoutineSleep represents navigating to assigned bed and sleeping during ticks 13000–23500.
-	RoutineSleep RoutineState = "SLEEP"
-	// RoutineDawnAwakening represents waking up, breakfast, and morning prep during ticks 23500–1000.
-	RoutineDawnAwakening RoutineState = "DAWN_AWAKENING"
+	RoutineEmergency Routine = "EMERGENCY"
+	// RoutineDawnPrep represents morning awakening, breakfast, equipment check during ticks 23500–1000.
+	RoutineDawnPrep Routine = "DAWN_PREP"
+	// RoutineDawnAwakening is a backward compatibility alias for RoutineDawnPrep.
+	RoutineDawnAwakening Routine = RoutineDawnPrep
+	// RoutinePrimaryDuty represents scheduled vocational work (farming, building, mining, ranching, chronicler, trading) during ticks 1000–8000.
+	RoutinePrimaryDuty Routine = "PRIMARY_DUTY"
+	// RoutineSecondaryHobby represents off-shift artisanal crafting, botany, tool sharpening during ticks 8000–11000.
+	RoutineSecondaryHobby Routine = "SECONDARY_HOBBY"
+	// RoutineTavernSocial represents evening hearth gathering, trade, rumors, civic assemblies during ticks 11000–13000.
+	RoutineTavernSocial Routine = "TAVERN_SOCIAL"
+	// RoutineSleep represents nighttime rest in bed/shelter, System 2 contemplation during ticks 13000–23500.
+	RoutineSleep Routine = "SLEEP"
+	// RoutineCivicPatrol represents perimeter security and landmark watches.
+	RoutineCivicPatrol Routine = "CIVIC_PATROL"
 	// RoutineCamp represents camping with player companion during evening/night, overriding tavern and bed return.
-	RoutineCamp RoutineState = "CAMP"
+	RoutineCamp Routine = "CAMP"
 )
+
+// StateTuple encapsulates the unified (Stage, Routine) state of an agent in the Two-Tier HFSM.
+type StateTuple struct {
+	Stage   Stage   `json:"stage"`
+	Routine Routine `json:"routine"`
+}
 
 // UtilityDecision encapsulates the output of daily utility scheduling.
 type UtilityDecision struct {
@@ -46,25 +88,28 @@ type GoalHierarchy struct {
 
 // AgentState tracks volatile in-memory System 1 agent routine, needs, and paving state.
 type AgentState struct {
-	mu                     sync.RWMutex
-	AssignedBed            *civquestv1.BlockPosProto
-	ShelterPos             *civquestv1.BlockPosProto
-	CurrentRoutine         RoutineState
-	FSMState               State
-	PrimaryDutyBlocked     bool
-	companionActive        bool
-	lastEatingTick         int64
-	lastSleepAttemptTick   int64
-	lastShelterPlaceTick   int64
-	lastShelterTimeoutTick int64
-	lastBootstrapTimeoutTick int64
+	mu                        sync.RWMutex
+	AssignedBed               *civquestv1.BlockPosProto
+	ShelterPos                *civquestv1.BlockPosProto
+	stage                     Stage
+	routine                   Routine
+	CurrentRoutine            RoutineState
+	FSMState                  State
+	PrimaryDutyBlocked        bool
+	companionActive           bool
+	civicPatrolActive         bool
+	lastEatingTick            int64
+	lastSleepAttemptTick      int64
+	lastShelterPlaceTick      int64
+	lastShelterTimeoutTick    int64
+	lastBootstrapTimeoutTick  int64
 	establishingNewSettlement bool
-	shelterBlocksPlaced    int
-	ShelterBuildPhase      int
-	ShelterBuildIndex      int
-	lastHarvestTick        int64
-	lastCraftTick          int64
-	PavingTracker          *RoadPavingTracker
+	shelterBlocksPlaced       int
+	ShelterBuildPhase         int
+	ShelterBuildIndex         int
+	lastHarvestTick           int64
+	lastCraftTick             int64
+	PavingTracker             *RoadPavingTracker
 
 	// Autonomous exploration, forward outposts & topological mapping state
 	homeOrigin              *civquestv1.Vec3
@@ -88,8 +133,10 @@ type AgentState struct {
 // NewAgentState creates an initialized AgentState.
 func NewAgentState() *AgentState {
 	return &AgentState{
-		CurrentRoutine: RoutineDawnAwakening,
-		FSMState:       StateBootstrap,
+		stage:          StageBootstrap,
+		routine:        RoutineDawnPrep,
+		CurrentRoutine: RoutineDawnPrep,
+		FSMState:       StageBootstrap,
 		PavingTracker:  NewRoadPavingTracker(DefaultPavingCapacity, DefaultPavingThreshold),
 		goals: GoalHierarchy{
 			ImmediateGoal: "GATHER_TIMBER: Gather 4 logs and craft basic wooden tools",
@@ -154,47 +201,116 @@ func (s *AgentState) IsPrimaryDutyBlocked() bool {
 	return s.PrimaryDutyBlocked
 }
 
-// GetCurrentRoutine returns the currently active routine state.
-func (s *AgentState) GetCurrentRoutine() RoutineState {
+// Stage returns the currently active Tier 1 macro strategic stage.
+func (s *AgentState) Stage() Stage {
 	if s == nil {
-		return RoutineDawnAwakening
+		return StageBootstrap
 	}
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	return s.CurrentRoutine
+	if s.stage == "" {
+		if s.FSMState != "" {
+			return s.FSMState
+		}
+		return StageBootstrap
+	}
+	return s.stage
 }
 
-// SetCurrentRoutine sets the active routine state.
-func (s *AgentState) SetCurrentRoutine(r RoutineState) {
+// SetStage updates the active Tier 1 macro strategic stage.
+func (s *AgentState) SetStage(st Stage) {
 	if s == nil {
 		return
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.stage = st
+	s.FSMState = st
+}
+
+// Routine returns the currently active Tier 2 circadian operational routine.
+func (s *AgentState) Routine() Routine {
+	if s == nil {
+		return RoutineDawnPrep
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if s.routine == "" {
+		if s.CurrentRoutine != "" {
+			return s.CurrentRoutine
+		}
+		return RoutineDawnPrep
+	}
+	return s.routine
+}
+
+// SetRoutine updates the active Tier 2 circadian operational routine.
+func (s *AgentState) SetRoutine(r Routine) {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.routine = r
 	s.CurrentRoutine = r
 }
 
-// GetFSMState returns the active formal System 1 HFSM state.
-func (s *AgentState) GetFSMState() State {
-	if s == nil {
-		return StateBootstrap
-	}
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	if s.FSMState == "" {
-		return StateBootstrap
-	}
-	return s.FSMState
-}
-
-// SetFSMState updates the active formal System 1 HFSM state.
-func (s *AgentState) SetFSMState(st State) {
+// SetStageAndRoutine updates both Tier 1 stage and Tier 2 routine atomically under a single lock,
+// guaranteeing zero desynchronization between macro strategy and operational routines.
+func (s *AgentState) SetStageAndRoutine(st Stage, r Routine) {
 	if s == nil {
 		return
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.stage = st
 	s.FSMState = st
+	s.routine = r
+	s.CurrentRoutine = r
+}
+
+// Tuple returns the unified (Stage, Routine) state tuple.
+func (s *AgentState) Tuple() StateTuple {
+	if s == nil {
+		return StateTuple{Stage: StageBootstrap, Routine: RoutineDawnPrep}
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	st := s.stage
+	if st == "" {
+		st = s.FSMState
+		if st == "" {
+			st = StageBootstrap
+		}
+	}
+	r := s.routine
+	if r == "" {
+		r = s.CurrentRoutine
+		if r == "" {
+			r = RoutineDawnPrep
+		}
+	}
+	return StateTuple{Stage: st, Routine: r}
+}
+
+// GetCurrentRoutine returns the currently active routine state (backward compatibility).
+func (s *AgentState) GetCurrentRoutine() RoutineState {
+	return s.Routine()
+}
+
+// SetCurrentRoutine sets the active routine state (backward compatibility).
+func (s *AgentState) SetCurrentRoutine(r RoutineState) {
+	s.SetRoutine(r)
+}
+
+// GetFSMState returns the active formal System 1 HFSM state (backward compatibility).
+func (s *AgentState) GetFSMState() State {
+	return s.Stage()
+}
+
+// SetFSMState updates the active formal System 1 HFSM state (backward compatibility).
+func (s *AgentState) SetFSMState(st State) {
+	s.SetStage(st)
 }
 
 // GetLastEatingTick safely returns the world tick of the last consumption event.
@@ -255,6 +371,26 @@ func (s *AgentState) SetCompanionActive(active bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.companionActive = active
+}
+
+// IsCivicPatrolActive returns whether civic patrol / sentry duty is currently active.
+func (s *AgentState) IsCivicPatrolActive() bool {
+	if s == nil {
+		return false
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.civicPatrolActive
+}
+
+// SetCivicPatrolActive sets whether civic patrol / sentry duty is active.
+func (s *AgentState) SetCivicPatrolActive(active bool) {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.civicPatrolActive = active
 }
 
 // GetShelterPos returns a defensive copy of the agent's known shelter position.
@@ -699,4 +835,3 @@ func (s *AgentState) SetLastHeadingRad(rad float64) {
 	defer s.mu.Unlock()
 	s.lastHeadingRad = rad
 }
-

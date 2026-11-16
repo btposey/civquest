@@ -18,13 +18,13 @@ func TestFSM_InitialState(t *testing.T) {
 
 func TestFSM_StateTransitions(t *testing.T) {
 	var transitions []string
-	fsm := NewAgentFSM(StateBootstrap, func(from, to State, reason string) {
+	fsm := NewAgentFSM(StageBootstrap, func(from, to State, reason string) {
 		transitions = append(transitions, string(from)+"->"+string(to))
 	})
 
 	state := NewAgentState()
 
-	// 1. In Bootstrap, with survival kit (axe, sword, torch) in daylight -> transitions to EXPLORE
+	// 1. In Bootstrap, with survival kit (axe, sword, torch) in daylight -> transitions to SETTLEMENT
 	ctx := &FSMContext{
 		AgentID: "fsm_test_agent",
 		State:   state,
@@ -47,16 +47,23 @@ func TestFSM_StateTransitions(t *testing.T) {
 	}
 
 	res := fsm.Tick(ctx)
-	if res.State != StateExplore {
-		t.Fatalf("expected state %s after acquiring survival kit, got %s", StateExplore, res.State)
+	if res.Stage != StageSettlement {
+		t.Fatalf("expected stage %s after acquiring survival kit, got %s", StageSettlement, res.Stage)
+	}
+	if res.Routine != RoutinePrimaryDuty {
+		t.Fatalf("expected routine %s during work hours, got %s", RoutinePrimaryDuty, res.Routine)
+	}
+	if state.Stage() != StageSettlement || state.Routine() != RoutinePrimaryDuty {
+		t.Fatalf("desync between FSM (%s, %s) and State (%s, %s)",
+			res.Stage, res.Routine, state.Stage(), state.Routine())
 	}
 
-	// 2. Hostile mob appears -> transitions to EMERGENCY
+	// 2. Creeper appears -> transitions to EMERGENCY
 	ctx.Frame.WorldTick = 105
 	ctx.Frame.VisibleEntities = []*civquestv1.VisibleEntity{
 		{
 			EntityId:   101,
-			EntityType: "minecraft:zombie",
+			EntityType: "minecraft:creeper",
 			IsHostile:  true,
 			Distance:   3.0,
 			Position:   &civquestv1.Vec3{X: 3, Y: 64, Z: 3},
@@ -64,45 +71,77 @@ func TestFSM_StateTransitions(t *testing.T) {
 	}
 
 	res = fsm.Tick(ctx)
-	if res.State != StateEmergency {
-		t.Fatalf("expected state %s when hostile appears, got %s", StateEmergency, res.State)
+	if res.Stage != StageEmergency {
+		t.Fatalf("expected stage %s when creeper appears, got %s", StageEmergency, res.Stage)
+	}
+	if res.Routine != RoutineEmergency {
+		t.Fatalf("expected routine %s during emergency, got %s", RoutineEmergency, res.Routine)
+	}
+	if state.Stage() != StageEmergency || state.Routine() != RoutineEmergency {
+		t.Fatalf("desync between FSM (%s, %s) and State (%s, %s)",
+			res.Stage, res.Routine, state.Stage(), state.Routine())
 	}
 
-	// 3. Hostile disappears, day time -> transitions back to EXPLORE
+	// 3. Creeper disappears, daylight -> transitions back to SETTLEMENT
 	ctx.Frame.WorldTick = 110
 	ctx.Frame.VisibleEntities = nil
 
 	res = fsm.Tick(ctx)
-	if res.State != StateExplore {
-		t.Fatalf("expected state %s when hostile cleared, got %s", StateExplore, res.State)
+	if res.Stage != StageSettlement {
+		t.Fatalf("expected stage %s when creeper cleared, got %s", StageSettlement, res.Stage)
+	}
+	if res.Routine != RoutinePrimaryDuty {
+		t.Fatalf("expected routine %s during work hours, got %s", RoutinePrimaryDuty, res.Routine)
 	}
 
-	// 4. Dusk falls (time_of_day = 12500) and no bed -> transitions to SHELTER
+	// 4. Founding new settlement site -> transitions to COLONIZE
+	state.SetEstablishingNewSettlement(true)
+	ctx.Frame.WorldTick = 115
+	res = fsm.Tick(ctx)
+	if res.Stage != StageColonize {
+		t.Fatalf("expected stage %s when founding new settlement, got %s", StageColonize, res.Stage)
+	}
+
+	// 5. Colonization complete -> transitions back to SETTLEMENT
+	state.SetEstablishingNewSettlement(false)
 	ctx.Frame.WorldTick = 120
-	ctx.Frame.TimeOfDay = 12500
-
 	res = fsm.Tick(ctx)
-	if res.State != StateShelter {
-		t.Fatalf("expected state %s at dusk without bed, got %s", StateShelter, res.State)
+	if res.Stage != StageSettlement {
+		t.Fatalf("expected stage %s when colonization complete, got %s", StageSettlement, res.Stage)
 	}
 
-	// 5. Shelter complete at night -> transitions to REST
+	// 6. Circadian routine progression within StageSettlement
+	// Dusk (12000) -> Tavern Social
 	ctx.Frame.WorldTick = 130
-	ctx.Frame.TimeOfDay = 14000
-	state.SetShelterBlocksPlaced(blueprints.CabinTotalBlocks)
-
+	ctx.Frame.TimeOfDay = 12000
 	res = fsm.Tick(ctx)
-	if res.State != StateRest {
-		t.Fatalf("expected state %s at night when shelter complete, got %s", StateRest, res.State)
+	if res.Stage != StageSettlement {
+		t.Fatalf("expected stage %s at dusk, got %s", StageSettlement, res.Stage)
+	}
+	if res.Routine != RoutineTavernSocial {
+		t.Fatalf("expected routine %s at dusk, got %s", RoutineTavernSocial, res.Routine)
 	}
 
-	// 6. Dawn arrives (time_of_day = 23600), agent not sleeping -> transitions to EXPLORE
+	// Night (15000) -> Sleep
 	ctx.Frame.WorldTick = 140
-	ctx.Frame.TimeOfDay = 23600
-
+	ctx.Frame.TimeOfDay = 15000
 	res = fsm.Tick(ctx)
-	if res.State != StateExplore {
-		t.Fatalf("expected state %s at dawn, got %s", StateExplore, res.State)
+	if res.Stage != StageSettlement {
+		t.Fatalf("expected stage %s at night, got %s", StageSettlement, res.Stage)
+	}
+	if res.Routine != RoutineSleep {
+		t.Fatalf("expected routine %s at night, got %s", RoutineSleep, res.Routine)
+	}
+
+	// Dawn (23600) -> Dawn Prep
+	ctx.Frame.WorldTick = 150
+	ctx.Frame.TimeOfDay = 23600
+	res = fsm.Tick(ctx)
+	if res.Stage != StageSettlement {
+		t.Fatalf("expected stage %s at dawn, got %s", StageSettlement, res.Stage)
+	}
+	if res.Routine != RoutineDawnPrep {
+		t.Fatalf("expected routine %s at dawn, got %s", RoutineDawnPrep, res.Routine)
 	}
 }
 
@@ -484,8 +523,8 @@ func TestFSM_BootstrapStaysInBootstrapUntilKitCollected(t *testing.T) {
 	}
 }
 
-func TestFSM_ExploreTransitionsToBootstrapWhenEstablishingNewSettlement(t *testing.T) {
-	fsm := NewAgentFSM(StateExplore, nil)
+func TestFSM_SettlementTransitionsToColonizeWhenEstablishingNewSettlement(t *testing.T) {
+	fsm := NewAgentFSM(StageSettlement, nil)
 	state := NewAgentState()
 
 	ctx := &FSMContext{
@@ -509,19 +548,19 @@ func TestFSM_ExploreTransitionsToBootstrapWhenEstablishingNewSettlement(t *testi
 		},
 	}
 
-	// Initially exploring
+	// Initially in Settlement living
 	res0 := fsm.Tick(ctx)
-	if res0.State != StateExplore {
-		t.Fatalf("expected state %s, got %s", StateExplore, res0.State)
+	if res0.Stage != StageSettlement {
+		t.Fatalf("expected stage %s, got %s", StageSettlement, res0.Stage)
 	}
 
 	// Arrived at new settlement site -> Flag founding of new settlement node!
 	state.SetEstablishingNewSettlement(true)
 	ctx.Frame.WorldTick = 501
 	res1 := fsm.Tick(ctx)
-	if res1.State != StateBootstrap {
+	if res1.Stage != StageColonize {
 		t.Fatalf("expected transition from %s to %s when establishing new settlement, got %s",
-			StateExplore, StateBootstrap, res1.State)
+			StageSettlement, StageColonize, res1.Stage)
 	}
 	if !res1.Transitioned {
 		t.Fatalf("expected Transitioned=true on settlement founding")

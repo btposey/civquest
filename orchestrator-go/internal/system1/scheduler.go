@@ -52,7 +52,7 @@ func EvaluateUtility(frame *civquestv1.TelemetryFrame, agentCfg *xdg.AgentIdenti
 			TimeOfDay:  frame.TimeOfDay,
 		}
 		if state != nil {
-			state.SetCurrentRoutine(RoutineEmergency)
+			state.SetStageAndRoutine(StageEmergency, RoutineEmergency)
 		}
 		return decision
 	}
@@ -69,7 +69,7 @@ func EvaluateUtility(frame *civquestv1.TelemetryFrame, agentCfg *xdg.AgentIdenti
 			TimeOfDay:  frame.TimeOfDay,
 		}
 		if state != nil {
-			state.SetCurrentRoutine(RoutineEmergency)
+			state.SetStageAndRoutine(StageEmergency, RoutineEmergency)
 		}
 		return decision
 	}
@@ -89,7 +89,7 @@ func EvaluateUtility(frame *civquestv1.TelemetryFrame, agentCfg *xdg.AgentIdenti
 				TimeOfDay:  frame.TimeOfDay,
 			}
 			if state != nil {
-				state.SetCurrentRoutine(RoutineEmergency)
+				state.SetStageAndRoutine(StageEmergency, RoutineEmergency)
 			}
 			return decision
 		}
@@ -148,122 +148,211 @@ func EvaluateUtility(frame *civquestv1.TelemetryFrame, agentCfg *xdg.AgentIdenti
 			TimeOfDay:  frame.TimeOfDay,
 		}
 		if state != nil {
-			state.SetCurrentRoutine(RoutineEmergency)
+			state.SetStageAndRoutine(StageEmergency, RoutineEmergency)
 		}
 		return decision
 	}
 
 	// ==================== 2. DAILY ROUTINE UTILITY BRACKETS ====================
-	tod := ((frame.TimeOfDay % 24000) + 24000) % 24000
-	var decision *UtilityDecision
+	decision := EvaluateCircadianRoutine(frame.TimeOfDay, frame.Weather, agentCfg, state)
+	decision.WorldTick = frame.WorldTick
+	decision.Profession = profession
+	decision.Hobby = hobby
+
+	if state != nil {
+		state.SetRoutine(decision.State)
+	}
+
+	return decision
+}
+
+// ComputeCircadianRoutine calculates the Tier 2 circadian routine deterministically without heap allocations.
+func ComputeCircadianRoutine(
+	timeOfDay int64,
+	weather civquestv1.Weather,
+	agentCfg *xdg.AgentIdentityConfig,
+	state *AgentState,
+) Routine {
+	tod := ((timeOfDay % 24000) + 24000) % 24000
+
+	if weather == civquestv1.Weather_WEATHER_THUNDER {
+		return RoutineSleep
+	}
+
+	if tod >= 23500 || tod < 1000 {
+		return RoutineDawnPrep
+	}
+
+	if tod >= 1000 && tod < 8000 {
+		if state != nil && state.IsCivicPatrolActive() {
+			return RoutineCivicPatrol
+		}
+		if agentCfg != nil {
+			profUpper := strings.ToUpper(strings.TrimSpace(agentCfg.Profession))
+			if (profUpper == "GUARD" || profUpper == "PATROL" || profUpper == "WATCHMAN" || profUpper == "SENTRY" || profUpper == "WARRIOR") &&
+				state != nil && state.IsCivicPatrolActive() {
+				return RoutineCivicPatrol
+			}
+		}
+		if state != nil && state.IsPrimaryDutyBlocked() {
+			return RoutineSecondaryHobby
+		}
+		return RoutinePrimaryDuty
+	}
+
+	if tod >= 8000 && tod < 11000 {
+		return RoutineSecondaryHobby
+	}
+
+	if tod >= 11000 && tod < 13000 {
+		if state != nil && state.IsCompanionActive() {
+			return RoutineCamp
+		}
+		return RoutineTavernSocial
+	}
+
+	if state != nil && state.IsCompanionActive() {
+		return RoutineCamp
+	}
+
+	return RoutineSleep
+}
+
+// EvaluateCircadianRoutine evaluates time of day, weather, and vocational traits to produce
+// a deterministic Tier 2 Circadian Operational Routine decision with utility weighting in <1ms without token costs.
+func EvaluateCircadianRoutine(
+	timeOfDay int64,
+	weather civquestv1.Weather,
+	agentCfg *xdg.AgentIdentityConfig,
+	state *AgentState,
+) *UtilityDecision {
+	profession := "UNASSIGNED"
+	hobby := "NONE"
+	if agentCfg != nil {
+		if agentCfg.Profession != "" {
+			profession = agentCfg.Profession
+		}
+		if agentCfg.SecondaryHobby != "" {
+			hobby = agentCfg.SecondaryHobby
+		}
+	}
+
+	tod := ((timeOfDay % 24000) + 24000) % 24000
+
+	// Check if profession is assigned to civic patrol / perimeter sentry duties
+	isGuardOrPatrol := false
+	profUpper := strings.ToUpper(strings.TrimSpace(profession))
+	if profUpper == "GUARD" || profUpper == "PATROL" || profUpper == "WATCHMAN" || profUpper == "SENTRY" || profUpper == "WARRIOR" {
+		isGuardOrPatrol = true
+	}
 
 	// Sleeping during thunderstorm override (synchronized with EvaluateSleep in needs.go)
-	if frame.Weather == civquestv1.Weather_WEATHER_THUNDER {
-		decision = &UtilityDecision{
+	if weather == civquestv1.Weather_WEATHER_THUNDER {
+		return &UtilityDecision{
 			State:      RoutineSleep,
 			Utility:    0.90,
 			Profession: profession,
 			Hobby:      hobby,
 			Reason:     "sleeping through thunderstorm",
-			WorldTick:  frame.WorldTick,
 			TimeOfDay:  tod,
 		}
-	} else if tod >= 23500 || tod < 1000 {
+	}
+
+	if tod >= 23500 || tod < 1000 {
 		// Dawn Awakening (Ticks 23500–1000)
-		decision = &UtilityDecision{
-			State:      RoutineDawnAwakening,
+		return &UtilityDecision{
+			State:      RoutineDawnPrep,
 			Utility:    0.80,
 			Profession: profession,
 			Hobby:      hobby,
 			Reason:     "dawn awakening and morning routine",
-			WorldTick:  frame.WorldTick,
 			TimeOfDay:  tod,
 		}
-	} else if tod >= 1000 && tod < 8000 {
+	}
+
+	if tod >= 1000 && tod < 8000 {
 		// Primary Duty (Ticks 1000–8000)
+		if (isGuardOrPatrol && state != nil && state.IsCivicPatrolActive()) || (state != nil && state.IsCivicPatrolActive()) {
+			return &UtilityDecision{
+				State:      RoutineCivicPatrol,
+				Utility:    0.75,
+				Profession: profession,
+				Hobby:      hobby,
+				Reason:     "performing scheduled perimeter security and landmark watch",
+				TimeOfDay:  tod,
+			}
+		}
 		if state != nil && state.IsPrimaryDutyBlocked() {
-			decision = &UtilityDecision{
+			return &UtilityDecision{
 				State:      RoutineSecondaryHobby,
 				Utility:    0.70,
 				Profession: profession,
 				Hobby:      hobby,
 				Reason:     "primary duty blocked; falling back to secondary hobby",
-				WorldTick:  frame.WorldTick,
-				TimeOfDay:  tod,
-			}
-		} else {
-			decision = &UtilityDecision{
-				State:      RoutinePrimaryDuty,
-				Utility:    0.75,
-				Profession: profession,
-				Hobby:      hobby,
-				Reason:     "executing primary profession duties",
-				WorldTick:  frame.WorldTick,
 				TimeOfDay:  tod,
 			}
 		}
-	} else if tod >= 8000 && tod < 11000 {
+		return &UtilityDecision{
+			State:      RoutinePrimaryDuty,
+			Utility:    0.75,
+			Profession: profession,
+			Hobby:      hobby,
+			Reason:     "executing primary profession duties",
+			TimeOfDay:  tod,
+		}
+	}
+
+	if tod >= 8000 && tod < 11000 {
 		// Secondary Hobby (Ticks 8000–11000)
-		decision = &UtilityDecision{
+		return &UtilityDecision{
 			State:      RoutineSecondaryHobby,
 			Utility:    0.70,
 			Profession: profession,
 			Hobby:      hobby,
 			Reason:     "gathering and practicing secondary hobby",
-			WorldTick:  frame.WorldTick,
 			TimeOfDay:  tod,
 		}
-	} else if tod >= 11000 && tod < 13000 {
+	}
+
+	if tod >= 11000 && tod < 13000 {
 		// Tavern Social (Ticks 11000–13000)
 		if state != nil && state.IsCompanionActive() {
-			decision = &UtilityDecision{
+			return &UtilityDecision{
 				State:      RoutineCamp,
 				Utility:    0.85,
 				Profession: profession,
 				Hobby:      hobby,
 				Reason:     "camping with player companion, overriding tavern return",
-				WorldTick:  frame.WorldTick,
-				TimeOfDay:  tod,
-			}
-		} else {
-			decision = &UtilityDecision{
-				State:      RoutineTavernSocial,
-				Utility:    0.65,
-				Profession: profession,
-				Hobby:      hobby,
-				Reason:     "gathering at tavern for social relaxation",
-				WorldTick:  frame.WorldTick,
 				TimeOfDay:  tod,
 			}
 		}
-	} else {
-		// Sleep (Ticks 13000–23500)
-		if state != nil && state.IsCompanionActive() {
-			decision = &UtilityDecision{
-				State:      RoutineCamp,
-				Utility:    0.85,
-				Profession: profession,
-				Hobby:      hobby,
-				Reason:     "camping and resting with player companion, overriding village bed routine",
-				WorldTick:  frame.WorldTick,
-				TimeOfDay:  tod,
-			}
-		} else {
-			decision = &UtilityDecision{
-				State:      RoutineSleep,
-				Utility:    0.90,
-				Profession: profession,
-				Hobby:      hobby,
-				Reason:     "navigating to assigned bed and sleeping through the night",
-				WorldTick:  frame.WorldTick,
-				TimeOfDay:  tod,
-			}
+		return &UtilityDecision{
+			State:      RoutineTavernSocial,
+			Utility:    0.65,
+			Profession: profession,
+			Hobby:      hobby,
+			Reason:     "gathering at tavern for social relaxation",
+			TimeOfDay:  tod,
 		}
 	}
 
-	if state != nil {
-		state.SetCurrentRoutine(decision.State)
+	// Sleep (Ticks 13000–23500)
+	if state != nil && state.IsCompanionActive() {
+		return &UtilityDecision{
+			State:      RoutineCamp,
+			Utility:    0.85,
+			Profession: profession,
+			Hobby:      hobby,
+			Reason:     "camping and resting with player companion, overriding village bed routine",
+			TimeOfDay:  tod,
+		}
 	}
-
-	return decision
+	return &UtilityDecision{
+		State:      RoutineSleep,
+		Utility:    0.90,
+		Profession: profession,
+		Hobby:      hobby,
+		Reason:     "navigating to assigned bed and sleeping through the night",
+		TimeOfDay:  tod,
+	}
 }

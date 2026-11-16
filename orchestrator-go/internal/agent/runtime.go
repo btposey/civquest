@@ -660,14 +660,35 @@ func (r *AgentRuntime) SetAssignedBed(pos *civquestv1.BlockPosProto) {
 	}
 }
 
-// CurrentRoutine returns the current System 1 routine state.
-func (r *AgentRuntime) CurrentRoutine() system1.RoutineState {
+// Stage returns the active Tier 1 macro strategic stage.
+func (r *AgentRuntime) Stage() system1.Stage {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
-	if r.system1State == nil {
-		return system1.RoutineDawnAwakening
+	if r.agentFSM != nil {
+		return r.agentFSM.CurrentStage()
 	}
-	return r.system1State.GetCurrentRoutine()
+	if r.system1State != nil {
+		return r.system1State.Stage()
+	}
+	return system1.StageBootstrap
+}
+
+// Routine returns the active Tier 2 circadian operational routine.
+func (r *AgentRuntime) Routine() system1.Routine {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	if r.agentFSM != nil {
+		return r.agentFSM.CurrentRoutine()
+	}
+	if r.system1State != nil {
+		return r.system1State.Routine()
+	}
+	return system1.RoutineDawnPrep
+}
+
+// CurrentRoutine returns the current System 1 routine state (backward compatibility).
+func (r *AgentRuntime) CurrentRoutine() system1.RoutineState {
+	return r.Routine()
 }
 
 // AgentFSM returns the System 1 Hierarchical Finite State Machine instance.
@@ -677,17 +698,9 @@ func (r *AgentRuntime) AgentFSM() *system1.AgentFSM {
 	return r.agentFSM
 }
 
-// FSMState returns the active formal System 1 HFSM state.
+// FSMState returns the active formal System 1 HFSM state (backward compatibility).
 func (r *AgentRuntime) FSMState() system1.State {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-	if r.agentFSM != nil {
-		return r.agentFSM.CurrentState()
-	}
-	if r.system1State != nil {
-		return r.system1State.GetFSMState()
-	}
-	return system1.StateBootstrap
+	return r.Stage()
 }
 
 // IsCompanionActive returns true if the agent is actively accompanying a player as a bonded companion.

@@ -10,22 +10,6 @@ import (
 	"github.com/btposey/civquest/orchestrator-go/internal/xdg"
 )
 
-// State represents the explicit formal HFSM state of an agent in System 1.
-type State string
-
-const (
-	// StateBootstrap represents the initial survival kit phase (gathering timber, crafting tools, making light).
-	StateBootstrap State = "BOOTSTRAP"
-	// StateExplore represents autonomous frontier scouting, routine tasks, and road paving.
-	StateExplore State = "EXPLORE"
-	// StateShelter represents seeking or constructing emergency night outpost shelter.
-	StateShelter State = "SHELTER"
-	// StateEmergency represents critical combat, fleeing, damage survival, or panic overrides.
-	StateEmergency State = "EMERGENCY"
-	// StateRest represents sleeping in bed or resting through the night until dawn.
-	StateRest State = "REST"
-)
-
 // FSMIntent encapsulates an emitted intent alongside its priority classification.
 type FSMIntent struct {
 	Intent   *civquestv1.AgentIntent
@@ -251,164 +235,155 @@ type StateHandler interface {
 	OnExit(ctx *FSMContext, to State)
 }
 
-// TransitionRule defines a directed edge in the HFSM transition graph evaluated in priority order.
-type TransitionRule struct {
-	FromState   State
-	ToState     State
+// StageTransitionRule defines a directed edge for Tier 1 macro stage transitions evaluated in priority order.
+type StageTransitionRule struct {
+	FromStage   Stage
+	ToStage     Stage
 	Condition   func(ctx *FSMContext) bool
 	Description string
 }
 
-func defaultTransitionRules() []TransitionRule {
-	return []TransitionRule{
-		// Priority 1: EMERGENCY Preemption from all non-emergency states
+// TransitionRule is an alias for StageTransitionRule, preserving backward compatibility.
+type TransitionRule = StageTransitionRule
+
+func defaultTransitionRules() []StageTransitionRule {
+	return []StageTransitionRule{
+		// Priority 1: EMERGENCY Preemption from all non-emergency stages
 		{
-			FromState:   StateBootstrap,
-			ToState:     StateEmergency,
+			FromStage:   StageBootstrap,
+			ToStage:     StageEmergency,
 			Condition:   func(c *FSMContext) bool { return c.IsEmergency() },
 			Description: "Hostile threat, damage, or critical vitals detected during bootstrap",
 		},
 		{
-			FromState:   StateExplore,
-			ToState:     StateEmergency,
+			FromStage:   StageSettlement,
+			ToStage:     StageEmergency,
 			Condition:   func(c *FSMContext) bool { return c.IsEmergency() },
-			Description: "Hostile threat, damage, or critical vitals detected during exploration",
+			Description: "Hostile threat, damage, or critical vitals detected during settlement living",
 		},
 		{
-			FromState:   StateShelter,
-			ToState:     StateEmergency,
+			FromStage:   StageColonize,
+			ToStage:     StageEmergency,
+			Condition:   func(c *FSMContext) bool { return c.IsEmergency() },
+			Description: "Hostile threat, damage, or critical vitals detected during colonization",
+		},
+		{
+			FromStage:   StateShelter,
+			ToStage:     StageEmergency,
 			Condition:   func(c *FSMContext) bool { return c.IsEmergency() },
 			Description: "Hostile threat or damage detected; preempting shelter construction",
 		},
 		{
-			FromState:   StateRest,
-			ToState:     StateEmergency,
+			FromStage:   StateRest,
+			ToStage:     StageEmergency,
 			Condition:   func(c *FSMContext) bool { return c.IsEmergency() },
 			Description: "Hostile threat or damage detected while resting; waking to defend or flee",
 		},
 
 		// Priority 2: Transitions OUT of EMERGENCY (Strictly guarded by ThreatsCleared)
 		{
-			FromState: StateEmergency,
-			ToState:   StateRest,
+			FromStage: StageEmergency,
+			ToStage:   StageColonize,
 			Condition: func(c *FSMContext) bool {
-				return c.ThreatsCleared() && c.IsNight() && (c.HasAssignedBed() || c.IsSleeping() || c.IsShelterComplete())
+				return c.ThreatsCleared() && c.IsEstablishingNewSettlement()
 			},
-			Description: "Threats cleared and vitals stable; returning to bed/shelter rest",
+			Description: "Threats cleared; resuming settlement colonization",
 		},
 		{
-			FromState: StateEmergency,
-			ToState:   StateShelter,
+			FromStage: StageEmergency,
+			ToStage:   StageBootstrap,
 			Condition: func(c *FSMContext) bool {
-				return c.ThreatsCleared() && c.IsDuskOrNight() && !c.IsShelterComplete() && !c.HasAssignedBed()
+				return c.ThreatsCleared() && !c.HasSurvivalKit()
 			},
-			Description: "Threats cleared at dusk/night; seeking or fortifying outpost shelter",
+			Description: "Threats cleared; resuming bootstrap tool gathering",
 		},
 		{
-			FromState: StateEmergency,
-			ToState:   StateBootstrap,
+			FromStage: StageEmergency,
+			ToStage:   StageSettlement,
 			Condition: func(c *FSMContext) bool {
-				return c.ThreatsCleared() && c.IsDawnOrDay() && !c.HasSurvivalKit()
+				return c.ThreatsCleared() && c.HasSurvivalKit() && !c.IsEstablishingNewSettlement()
 			},
-			Description: "Threats cleared in daylight; resuming bootstrap tool gathering",
-		},
-		{
-			FromState: StateEmergency,
-			ToState:   StateExplore,
-			Condition: func(c *FSMContext) bool {
-				return c.ThreatsCleared() && c.IsDawnOrDay() && c.HasSurvivalKit()
-			},
-			Description: "Threats cleared in daylight; resuming frontier exploration",
+			Description: "Threats cleared; resuming established settlement living",
 		},
 
 		// Priority 3: Transitions from BOOTSTRAP
 		{
-			FromState:   StateBootstrap,
-			ToState:     StateShelter,
-			Condition:   func(c *FSMContext) bool { return c.IsDuskOrNight() },
-			Description: "Dusk/night approaching during bootstrap; seeking immediate shelter",
+			FromStage:   StageBootstrap,
+			ToStage:     StageColonize,
+			Condition:   func(c *FSMContext) bool { return c.HasSurvivalKit() && c.IsEstablishingNewSettlement() },
+			Description: "Survival kit acquired; advancing to colonization",
 		},
 		{
-			FromState:   StateBootstrap,
-			ToState:     StateExplore,
+			FromStage:   StageBootstrap,
+			ToStage:     StageSettlement,
 			Condition:   func(c *FSMContext) bool { return c.HasSurvivalKit() && !c.IsEstablishingNewSettlement() },
-			Description: "Survival kit acquired (axe, sword, light); advancing to exploration",
+			Description: "Survival kit acquired (axe, sword, light); advancing to settlement living",
 		},
 
-		// Priority 4: Transitions from EXPLORE
+		// Priority 4: Transitions from SETTLEMENT
 		{
-			FromState:   StateExplore,
-			ToState:     StateRest,
-			Condition:   func(c *FSMContext) bool { return c.IsNight() && c.HasAssignedBed() },
-			Description: "Night fallen; navigating to assigned bed to sleep",
-		},
-		{
-			FromState:   StateExplore,
-			ToState:     StateShelter,
-			Condition:   func(c *FSMContext) bool { return c.IsDuskOrNight() && !c.HasAssignedBed() && !c.IsShelterOnCooldown() },
-			Description: "Dusk/night approaching with no bed; constructing outpost shelter",
-		},
-		{
-			FromState:   StateExplore,
-			ToState:     StateBootstrap,
+			FromStage:   StageSettlement,
+			ToStage:     StageColonize,
 			Condition:   func(c *FSMContext) bool { return c.IsEstablishingNewSettlement() },
-			Description: "Founding new settlement node; restarting local bootstrap cycle",
+			Description: "Founding new settlement node; advancing to colonization",
 		},
 		{
-			FromState:   StateExplore,
-			ToState:     StateBootstrap,
+			FromStage:   StageSettlement,
+			ToStage:     StageBootstrap,
 			Condition:   func(c *FSMContext) bool { return c.IsDawnOrDay() && !c.HasSurvivalKit() },
 			Description: "Survival kit broken or missing; reverting to bootstrap",
 		},
 
-		// Priority 5: Transitions from SHELTER
+		// Priority 5: Transitions from COLONIZE
 		{
-			FromState: StateShelter,
-			ToState:   StateRest,
-			Condition: func(c *FSMContext) bool {
-				return c.IsNight() && (c.HasAssignedBed() || c.IsShelterComplete() || c.IsSleeping())
-			},
-			Description: "Shelter completed or bed reached; resting through the night",
+			FromStage:   StageColonize,
+			ToStage:     StageSettlement,
+			Condition:   func(c *FSMContext) bool { return !c.IsEstablishingNewSettlement() && c.HasSurvivalKit() },
+			Description: "Colonization complete and kit secured; transitioning to settlement living",
 		},
 		{
-			FromState:   StateShelter,
-			ToState:     StateBootstrap,
+			FromStage:   StageColonize,
+			ToStage:     StageBootstrap,
+			Condition:   func(c *FSMContext) bool { return !c.IsEstablishingNewSettlement() && !c.HasSurvivalKit() },
+			Description: "Colony site cancelled or tools broken; reverting to bootstrap",
+		},
+		{
+			FromStage:   StageColonize,
+			ToStage:     StageBootstrap,
+			Condition:   func(c *FSMContext) bool { return c.IsDawnOrDay() && !c.HasSurvivalKit() },
+			Description: "Survival kit broken or missing; reverting to bootstrap",
+		},
+
+		// Priority 6: Legacy transitions from SHELTER and REST (backward compatibility)
+		{
+			FromStage:   StateShelter,
+			ToStage:     StageSettlement,
+			Condition:   func(c *FSMContext) bool { return c.IsDawnOrDay() && c.HasSurvivalKit() },
+			Description: "Dawn arrived; resuming settlement exploration and duties",
+		},
+		{
+			FromStage:   StateShelter,
+			ToStage:     StageBootstrap,
 			Condition:   func(c *FSMContext) bool { return c.IsDawnOrDay() && !c.HasSurvivalKit() },
 			Description: "Dawn arrived; resuming bootstrap survival crafting",
 		},
 		{
-			FromState:   StateShelter,
-			ToState:     StateExplore,
-			Condition:   func(c *FSMContext) bool { return c.IsDawnOrDay() && c.HasSurvivalKit() },
-			Description: "Dawn arrived; resuming frontier exploration",
-		},
-		{
-			FromState:   StateShelter,
-			ToState:     StateExplore,
+			FromStage:   StateShelter,
+			ToStage:     StageSettlement,
 			Condition:   func(c *FSMContext) bool { return c.IsStuckInState(600) },
-			Description: "Shelter construction timed out/stuck; falling back to explore",
+			Description: "Shelter construction timed out/stuck; falling back to settlement",
 		},
-
-		// Priority 6: Transitions from REST
 		{
-			FromState:   StateRest,
-			ToState:     StateBootstrap,
+			FromStage:   StateRest,
+			ToStage:     StageSettlement,
+			Condition:   func(c *FSMContext) bool { return c.IsDawnOrDay() && c.HasSurvivalKit() && !c.IsSleeping() },
+			Description: "Dawn awakening; starting daily settlement duties",
+		},
+		{
+			FromStage:   StateRest,
+			ToStage:     StageBootstrap,
 			Condition:   func(c *FSMContext) bool { return c.IsDawnOrDay() && !c.HasSurvivalKit() && !c.IsSleeping() },
 			Description: "Dawn awakening; starting survival kit bootstrap",
-		},
-		{
-			FromState:   StateRest,
-			ToState:     StateExplore,
-			Condition:   func(c *FSMContext) bool { return c.IsDawnOrDay() && c.HasSurvivalKit() && !c.IsSleeping() },
-			Description: "Dawn awakening; starting daily exploration and duties",
-		},
-		{
-			FromState: StateRest,
-			ToState:   StateShelter,
-			Condition: func(c *FSMContext) bool {
-				return c.IsDuskOrNight() && !c.IsShelterComplete() && !c.HasAssignedBed() && !c.IsSleeping()
-			},
-			Description: "Rest interrupted and no bed available; seeking outpost shelter",
 		},
 	}
 }
@@ -416,7 +391,7 @@ func defaultTransitionRules() []TransitionRule {
 // BootstrapStateHandler handles survival kit bootstrap goals.
 type BootstrapStateHandler struct{}
 
-func (h *BootstrapStateHandler) Name() State { return StateBootstrap }
+func (h *BootstrapStateHandler) Name() State { return StageBootstrap }
 func (h *BootstrapStateHandler) Guard(ctx *FSMContext) bool {
 	return true
 }
@@ -428,11 +403,6 @@ func (h *BootstrapStateHandler) OnTick(ctx *FSMContext) []FSMIntent {
 		return intents
 	}
 
-	// Synchronize daily routine schedule with time of day
-	if utilRes := EvaluateUtility(ctx.Frame, ctx.Config, ctx.State); utilRes != nil && utilRes.State != "" && ctx.State != nil {
-		ctx.State.SetCurrentRoutine(utilRes.State)
-	}
-
 	// Biological needs (eating, sleep, wake)
 	needsIntents := EvaluateBiologicalNeeds(ctx.AgentID, ctx.Frame, ctx.State)
 	for _, ni := range needsIntents {
@@ -457,8 +427,15 @@ func (h *BootstrapStateHandler) OnTick(ctx *FSMContext) []FSMIntent {
 		}
 	}
 
-	// Bootstrap timber and tool crafting (only if not busy with incoming chats/trade)
-	if len(ctx.Frame.IncomingChats) == 0 && ctx.Frame.PendingTrade == nil {
+	// In dusk/night with no bed: prioritize shelter construction
+	if (ctx.IsDuskOrNight() || (ctx.State != nil && ctx.State.Routine() == RoutineSleep)) && !ctx.HasAssignedBed() && !ctx.IsShelterComplete() {
+		if len(ctx.Frame.IncomingChats) == 0 && ctx.Frame.PendingTrade == nil {
+			if shelterIntent := EvaluateShelterGoals(ctx.AgentID, ctx.Frame, ctx.Config, ctx.State); shelterIntent != nil {
+				intents = append(intents, FSMIntent{Intent: shelterIntent, Priority: false})
+			}
+		}
+	} else if len(ctx.Frame.IncomingChats) == 0 && ctx.Frame.PendingTrade == nil {
+		// Bootstrap timber and tool crafting (only if not busy with incoming chats/trade)
 		if bootstrapIntent := EvaluateBootstrapGoals(ctx.AgentID, ctx.Frame, ctx.Config, ctx.State); bootstrapIntent != nil {
 			intents = append(intents, FSMIntent{Intent: bootstrapIntent, Priority: false})
 		}
@@ -467,24 +444,23 @@ func (h *BootstrapStateHandler) OnTick(ctx *FSMContext) []FSMIntent {
 	return intents
 }
 
-// ExploreStateHandler handles daytime exploration, duties, and road paving.
-type ExploreStateHandler struct{}
+// SettlementStateHandler handles established settlement living, vocational duties, hobbies, and social routines.
+type SettlementStateHandler struct{}
 
-func (h *ExploreStateHandler) Name() State { return StateExplore }
-func (h *ExploreStateHandler) Guard(ctx *FSMContext) bool {
+func (h *SettlementStateHandler) Name() State { return StageSettlement }
+func (h *SettlementStateHandler) Guard(ctx *FSMContext) bool {
 	return true
 }
-func (h *ExploreStateHandler) OnEntry(ctx *FSMContext, from State) {}
-func (h *ExploreStateHandler) OnExit(ctx *FSMContext, to State)    {}
-func (h *ExploreStateHandler) OnTick(ctx *FSMContext) []FSMIntent {
+func (h *SettlementStateHandler) OnEntry(ctx *FSMContext, from State) {}
+func (h *SettlementStateHandler) OnExit(ctx *FSMContext, to State) {
+	if ctx != nil && ctx.State != nil && ctx.Frame != nil && to == StageSettlement {
+		ctx.State.SetLastShelterTimeoutTick(ctx.Frame.WorldTick)
+	}
+}
+func (h *SettlementStateHandler) OnTick(ctx *FSMContext) []FSMIntent {
 	var intents []FSMIntent
 	if ctx == nil || ctx.Frame == nil || ctx.Frame.Status == nil {
 		return intents
-	}
-
-	// Synchronize daily routine schedule with time of day
-	if utilRes := EvaluateUtility(ctx.Frame, ctx.Config, ctx.State); utilRes != nil && utilRes.State != "" && ctx.State != nil {
-		ctx.State.SetCurrentRoutine(utilRes.State)
 	}
 
 	// Biological needs (eating, sleep, wake)
@@ -511,27 +487,124 @@ func (h *ExploreStateHandler) OnTick(ctx *FSMContext) []FSMIntent {
 		}
 	}
 
-	// Autonomous exploration & terrain navigation (Scouting for Explorers, Patrol for citizens)
-	if len(ctx.Frame.IncomingChats) == 0 && ctx.Frame.PendingTrade == nil {
-		prof := "UNASSIGNED"
-		if ctx.Config != nil {
-			prof = strings.ToUpper(strings.TrimSpace(ctx.Config.Profession))
+	routine := RoutinePrimaryDuty
+	if ctx.State != nil {
+		routine = ctx.State.Routine()
+	}
+
+	// In dusk/night without an assigned bed: prioritize outpost shelter construction
+	if (ctx.IsDuskOrNight() || routine == RoutineSleep) && !ctx.HasAssignedBed() && !ctx.IsShelterComplete() && !ctx.IsShelterOnCooldown() {
+		if len(ctx.Frame.IncomingChats) == 0 && ctx.Frame.PendingTrade == nil {
+			if shelterIntent := EvaluateShelterGoals(ctx.AgentID, ctx.Frame, ctx.Config, ctx.State); shelterIntent != nil {
+				intents = append(intents, FSMIntent{Intent: shelterIntent, Priority: false})
+				return intents
+			}
 		}
-		var exploreIntent *civquestv1.AgentIntent
-		if prof == "EXPLORER" || prof == "TRAILBLAZER" || prof == "SCOUT" {
-			exploreIntent = EvaluateScouting(ctx.AgentID, ctx.Frame, ctx.Config, ctx.State)
-		} else {
-			exploreIntent = EvaluatePatrol(ctx.AgentID, ctx.Frame, ctx.Config, ctx.State)
+	}
+
+	switch routine {
+	case RoutineSleep:
+		// Sleeping in bed or resting inside shelter handled by biological needs
+	case RoutinePrimaryDuty:
+		if len(ctx.Frame.IncomingChats) == 0 && ctx.Frame.PendingTrade == nil {
+			prof := "UNASSIGNED"
+			if ctx.Config != nil {
+				prof = strings.ToUpper(strings.TrimSpace(ctx.Config.Profession))
+			}
+			var exploreIntent *civquestv1.AgentIntent
+			if prof == "EXPLORER" || prof == "TRAILBLAZER" || prof == "SCOUT" {
+				exploreIntent = EvaluateScouting(ctx.AgentID, ctx.Frame, ctx.Config, ctx.State)
+			} else {
+				exploreIntent = EvaluatePatrol(ctx.AgentID, ctx.Frame, ctx.Config, ctx.State)
+			}
+			if exploreIntent != nil {
+				intents = append(intents, FSMIntent{Intent: exploreIntent, Priority: false})
+			}
 		}
-		if exploreIntent != nil {
-			intents = append(intents, FSMIntent{Intent: exploreIntent, Priority: false})
+	case RoutineCivicPatrol:
+		if len(ctx.Frame.IncomingChats) == 0 && ctx.Frame.PendingTrade == nil {
+			if patrolIntent := EvaluatePatrol(ctx.AgentID, ctx.Frame, ctx.Config, ctx.State); patrolIntent != nil {
+				intents = append(intents, FSMIntent{Intent: patrolIntent, Priority: false})
+			}
+		}
+	case RoutineSecondaryHobby:
+		if len(ctx.Frame.IncomingChats) == 0 && ctx.Frame.PendingTrade == nil {
+			if patrolIntent := EvaluatePatrol(ctx.AgentID, ctx.Frame, ctx.Config, ctx.State); patrolIntent != nil {
+				intents = append(intents, FSMIntent{Intent: patrolIntent, Priority: false})
+			}
 		}
 	}
 
 	return intents
 }
 
-// ShelterStateHandler handles dusk/night outpost shelter construction.
+// ExploreStateHandler is a backward-compatible alias for SettlementStateHandler.
+type ExploreStateHandler = SettlementStateHandler
+
+// ColonizeStateHandler handles establishing and building a new frontier settlement node.
+type ColonizeStateHandler struct{}
+
+func (h *ColonizeStateHandler) Name() State { return StageColonize }
+func (h *ColonizeStateHandler) Guard(ctx *FSMContext) bool {
+	return true
+}
+func (h *ColonizeStateHandler) OnEntry(ctx *FSMContext, from State) {}
+func (h *ColonizeStateHandler) OnExit(ctx *FSMContext, to State)    {}
+func (h *ColonizeStateHandler) OnTick(ctx *FSMContext) []FSMIntent {
+	var intents []FSMIntent
+	if ctx == nil || ctx.Frame == nil || ctx.Frame.Status == nil {
+		return intents
+	}
+
+	// Biological needs (eating, sleep, wake)
+	needsIntents := EvaluateBiologicalNeeds(ctx.AgentID, ctx.Frame, ctx.State)
+	for _, ni := range needsIntents {
+		if ni.GetUseItem() != nil && ni.GetUseItem().IsEatingOrDrinking {
+			intents = append(intents, FSMIntent{Intent: ni, Priority: true})
+		} else {
+			intents = append(intents, FSMIntent{Intent: ni, Priority: false})
+		}
+	}
+
+	// Road paving
+	if !ctx.Frame.Status.IsSleeping && ctx.PavingTracker != nil &&
+		ctx.Frame.Status.NavigationState != civquestv1.NavigationState_NAVIGATION_STATE_STUCK &&
+		!ctx.Frame.Status.NavigationEnclosed {
+		if ctx.State != nil && ctx.PavingTracker.GetHomeOrigin() == nil {
+			if home := ctx.State.GetHomeOrigin(); home != nil {
+				ctx.PavingTracker.SetHomeOrigin(home)
+			}
+		}
+		if paveIntent := ctx.PavingTracker.EvaluatePaving(ctx.AgentID, ctx.Frame); paveIntent != nil {
+			intents = append(intents, FSMIntent{Intent: paveIntent, Priority: false})
+		}
+	}
+
+	routine := RoutinePrimaryDuty
+	if ctx.State != nil {
+		routine = ctx.State.Routine()
+	}
+
+	if (ctx.IsDuskOrNight() || routine == RoutineSleep) && !ctx.HasAssignedBed() && !ctx.IsShelterComplete() && !ctx.IsShelterOnCooldown() {
+		if len(ctx.Frame.IncomingChats) == 0 && ctx.Frame.PendingTrade == nil {
+			if shelterIntent := EvaluateShelterGoals(ctx.AgentID, ctx.Frame, ctx.Config, ctx.State); shelterIntent != nil {
+				intents = append(intents, FSMIntent{Intent: shelterIntent, Priority: false})
+				return intents
+			}
+		}
+	} else if len(ctx.Frame.IncomingChats) == 0 && ctx.Frame.PendingTrade == nil {
+		// Colonization duties: harvest timber, establish core starter shelter, scout perimeter
+		if bootstrapIntent := EvaluateBootstrapGoals(ctx.AgentID, ctx.Frame, ctx.Config, ctx.State); bootstrapIntent != nil {
+			intents = append(intents, FSMIntent{Intent: bootstrapIntent, Priority: false})
+		} else if patrolIntent := EvaluatePatrol(ctx.AgentID, ctx.Frame, ctx.Config, ctx.State); patrolIntent != nil {
+			intents = append(intents, FSMIntent{Intent: patrolIntent, Priority: false})
+		}
+	}
+
+	return intents
+}
+
+// ShelterStateHandler handles dusk/night outpost shelter construction (legacy support).
 type ShelterStateHandler struct{}
 
 func (h *ShelterStateHandler) Name() State { return StateShelter }
@@ -540,7 +613,7 @@ func (h *ShelterStateHandler) Guard(ctx *FSMContext) bool {
 }
 func (h *ShelterStateHandler) OnEntry(ctx *FSMContext, from State) {}
 func (h *ShelterStateHandler) OnExit(ctx *FSMContext, to State) {
-	if ctx != nil && ctx.State != nil && ctx.Frame != nil && to == StateExplore {
+	if ctx != nil && ctx.State != nil && ctx.Frame != nil && to == StageSettlement {
 		ctx.State.SetLastShelterTimeoutTick(ctx.Frame.WorldTick)
 	}
 }
@@ -573,7 +646,7 @@ func (h *ShelterStateHandler) OnTick(ctx *FSMContext) []FSMIntent {
 // EmergencyStateHandler handles reactive combat, fleeing, and survival reflexes.
 type EmergencyStateHandler struct{}
 
-func (h *EmergencyStateHandler) Name() State { return StateEmergency }
+func (h *EmergencyStateHandler) Name() State { return StageEmergency }
 func (h *EmergencyStateHandler) Guard(ctx *FSMContext) bool {
 	return true
 }
@@ -621,7 +694,7 @@ func (h *EmergencyStateHandler) OnTick(ctx *FSMContext) []FSMIntent {
 	return intents
 }
 
-// RestStateHandler handles sleeping in bed or safe resting through the night.
+// RestStateHandler handles sleeping in bed or safe resting through the night (legacy support).
 type RestStateHandler struct{}
 
 func (h *RestStateHandler) Name() State { return StateRest }
@@ -637,7 +710,7 @@ func (h *RestStateHandler) Guard(ctx *FSMContext) bool {
 }
 func (h *RestStateHandler) OnEntry(ctx *FSMContext, from State) {
 	if ctx != nil && ctx.State != nil {
-		ctx.State.SetCurrentRoutine(RoutineSleep)
+		ctx.State.SetRoutine(RoutineSleep)
 	}
 }
 func (h *RestStateHandler) OnExit(ctx *FSMContext, to State) {}
@@ -660,45 +733,60 @@ func (h *RestStateHandler) OnTick(ctx *FSMContext) []FSMIntent {
 	return intents
 }
 
-// FSMResult encapsulates the output of an FSM tick.
+// FSMResult encapsulates the output of an FSM tick in the Two-Tier HFSM.
 type FSMResult struct {
-	State            State
-	PreviousState    State
-	Transitioned     bool
-	TransitionReason string
-	Intents          []FSMIntent
-	GoalHierarchy    *GoalHierarchy
-	CombatResult     *ReflexResult
+	Stage               Stage
+	Routine             Routine
+	PreviousStage       Stage
+	PreviousRoutine     Routine
+	StageTransitioned   bool
+	RoutineTransitioned bool
+	Transitioned        bool
+	State               State // Backward compatibility alias for Stage
+	PreviousState       State // Backward compatibility alias for PreviousStage
+	TransitionReason    string
+	Intents             []FSMIntent
+	GoalHierarchy       *GoalHierarchy
+	CombatResult        *ReflexResult
 }
 
-// AgentFSM manages the formal Hierarchical Finite State Machine for System 1.
+// AgentFSM manages the formal Two-Tier Hierarchical Finite State Machine for System 1.
 type AgentFSM struct {
-	mu               sync.RWMutex
-	currentState     State
-	previousState    State
-	stateEnteredTick int64
-	stuckTicks       int64
-	lastPos          *civquestv1.Vec3
-	handlers         map[State]StateHandler
-	transitions      []TransitionRule
-	onTransition     func(from, to State, reason string)
+	mu                  sync.RWMutex
+	currentStage        Stage
+	previousStage       Stage
+	currentRoutine      Routine
+	previousRoutine     Routine
+	stateEnteredTick    int64
+	routineEnteredTick  int64
+	stuckTicks          int64
+	lastPos             *civquestv1.Vec3
+	handlers            map[Stage]StateHandler
+	transitions         []StageTransitionRule
+	onStageTransition   func(from, to Stage, reason string)
+	onRoutineTransition func(from, to Routine, reason string)
 }
 
 // NewAgentFSM constructs an initialized AgentFSM with default state handlers and transition table.
 func NewAgentFSM(initial State, onTransition func(from, to State, reason string)) *AgentFSM {
 	if initial == "" {
-		initial = StateBootstrap
+		initial = StageBootstrap
 	}
 	fsm := &AgentFSM{
-		currentState: initial,
-		handlers:     make(map[State]StateHandler),
-		transitions:  defaultTransitionRules(),
-		onTransition: onTransition,
+		currentStage:      initial,
+		currentRoutine:    RoutineDawnPrep,
+		handlers:          make(map[Stage]StateHandler),
+		transitions:       defaultTransitionRules(),
+		onStageTransition: onTransition,
+	}
+	if initial == StageEmergency {
+		fsm.currentRoutine = RoutineEmergency
 	}
 	fsm.RegisterHandler(&BootstrapStateHandler{})
-	fsm.RegisterHandler(&ExploreStateHandler{})
-	fsm.RegisterHandler(&ShelterStateHandler{})
+	fsm.RegisterHandler(&SettlementStateHandler{})
+	fsm.RegisterHandler(&ColonizeStateHandler{})
 	fsm.RegisterHandler(&EmergencyStateHandler{})
+	fsm.RegisterHandler(&ShelterStateHandler{})
 	fsm.RegisterHandler(&RestStateHandler{})
 	return fsm
 }
@@ -713,24 +801,64 @@ func (fsm *AgentFSM) RegisterHandler(handler StateHandler) {
 	fsm.handlers[handler.Name()] = handler
 }
 
-// CurrentState returns the active state.
-func (fsm *AgentFSM) CurrentState() State {
+// CurrentStage returns the active Tier 1 macro strategic stage.
+func (fsm *AgentFSM) CurrentStage() Stage {
 	if fsm == nil {
-		return StateBootstrap
+		return StageBootstrap
 	}
 	fsm.mu.RLock()
 	defer fsm.mu.RUnlock()
-	return fsm.currentState
+	return fsm.currentStage
 }
 
-// PreviousState returns the previous state before the last transition.
-func (fsm *AgentFSM) PreviousState() State {
+// PreviousStage returns the previous Tier 1 macro strategic stage.
+func (fsm *AgentFSM) PreviousStage() Stage {
 	if fsm == nil {
-		return StateBootstrap
+		return StageBootstrap
 	}
 	fsm.mu.RLock()
 	defer fsm.mu.RUnlock()
-	return fsm.previousState
+	return fsm.previousStage
+}
+
+// CurrentRoutine returns the active Tier 2 circadian operational routine.
+func (fsm *AgentFSM) CurrentRoutine() Routine {
+	if fsm == nil {
+		return RoutineDawnPrep
+	}
+	fsm.mu.RLock()
+	defer fsm.mu.RUnlock()
+	return fsm.currentRoutine
+}
+
+// PreviousRoutine returns the previous Tier 2 circadian operational routine.
+func (fsm *AgentFSM) PreviousRoutine() Routine {
+	if fsm == nil {
+		return RoutineDawnPrep
+	}
+	fsm.mu.RLock()
+	defer fsm.mu.RUnlock()
+	return fsm.previousRoutine
+}
+
+// CurrentState returns the active state (alias for CurrentStage for backward compatibility).
+func (fsm *AgentFSM) CurrentState() State {
+	return fsm.CurrentStage()
+}
+
+// PreviousState returns the previous state (alias for PreviousStage for backward compatibility).
+func (fsm *AgentFSM) PreviousState() State {
+	return fsm.PreviousStage()
+}
+
+// StateTuple returns the unified (Stage, Routine) tuple.
+func (fsm *AgentFSM) StateTuple() StateTuple {
+	if fsm == nil {
+		return StateTuple{Stage: StageBootstrap, Routine: RoutineDawnPrep}
+	}
+	fsm.mu.RLock()
+	defer fsm.mu.RUnlock()
+	return StateTuple{Stage: fsm.currentStage, Routine: fsm.currentRoutine}
 }
 
 // TransitionTo forces a state transition if the target state's guard allows it.
@@ -741,7 +869,12 @@ func (fsm *AgentFSM) TransitionTo(target State, reason string, ctx *FSMContext) 
 	fsm.mu.Lock()
 	defer fsm.mu.Unlock()
 
-	if fsm.currentState == target {
+	if fsm.currentStage == target {
+		return false
+	}
+
+	// Invariant: Non-emergency target is rejected if emergency conditions are active
+	if target != StageEmergency && ctx != nil && ctx.IsEmergency() {
 		return false
 	}
 
@@ -750,48 +883,63 @@ func (fsm *AgentFSM) TransitionTo(target State, reason string, ctx *FSMContext) 
 		return false
 	}
 
-	fromState := fsm.currentState
-	if currentHandler, exists := fsm.handlers[fromState]; exists && ctx != nil {
+	fromStage := fsm.currentStage
+	if currentHandler, exists := fsm.handlers[fromStage]; exists && ctx != nil {
 		currentHandler.OnExit(ctx, target)
 	}
 
-	fsm.previousState = fromState
-	fsm.currentState = target
+	fsm.previousStage = fromStage
+	fsm.currentStage = target
 	if ctx != nil && ctx.Frame != nil {
 		fsm.stateEnteredTick = ctx.Frame.WorldTick
 	}
 	fsm.stuckTicks = 0
 
-	if targetHandler != nil && ctx != nil {
-		targetHandler.OnEntry(ctx, fromState)
+	if target == StageEmergency {
+		fsm.previousRoutine = fsm.currentRoutine
+		fsm.currentRoutine = RoutineEmergency
+	} else if ctx != nil && ctx.Frame != nil {
+		newR := ComputeCircadianRoutine(ctx.Frame.TimeOfDay, ctx.Frame.Weather, ctx.Config, ctx.State)
+		if newR != "" {
+			fsm.previousRoutine = fsm.currentRoutine
+			fsm.currentRoutine = newR
+		}
 	}
 
-	if fsm.onTransition != nil {
-		fsm.onTransition(fromState, target, reason)
+	if targetHandler != nil && ctx != nil {
+		targetHandler.OnEntry(ctx, fromStage)
+	}
+
+	if fsm.onStageTransition != nil {
+		fsm.onStageTransition(fromStage, target, reason)
 	}
 
 	if ctx != nil && ctx.State != nil {
-		ctx.State.SetFSMState(target)
+		ctx.State.SetStageAndRoutine(target, fsm.currentRoutine)
 	}
 
 	return true
 }
 
-// Tick executes a single 5 Hz evaluation cycle of the FSM.
+// Tick executes a single 5 Hz evaluation cycle of the formal Two-Tier HFSM.
 func (fsm *AgentFSM) Tick(ctx *FSMContext) FSMResult {
 	if fsm == nil {
-		return FSMResult{State: StateBootstrap}
+		return FSMResult{Stage: StageBootstrap, Routine: RoutineDawnPrep, State: StageBootstrap}
 	}
 
 	fsm.mu.Lock()
 	defer fsm.mu.Unlock()
 
 	worldTick := int64(0)
+	tod := int64(0)
+	var weather civquestv1.Weather
 	if ctx != nil && ctx.Frame != nil {
 		worldTick = ctx.Frame.WorldTick
+		tod = ctx.Frame.TimeOfDay
+		weather = ctx.Frame.Weather
 	}
 
-	// Track position & stuckness
+	// 1. Track position & stuckness
 	if ctx != nil && ctx.Frame != nil && ctx.Frame.Status != nil && ctx.Frame.Status.Position != nil {
 		pos := ctx.Frame.Status.Position
 		if fsm.lastPos != nil {
@@ -836,81 +984,92 @@ func (fsm *AgentFSM) Tick(ctx *FSMContext) FSMResult {
 		}
 	}
 
-	// 1. Evaluate Transition Table in Priority Order
-	transitioned := false
+	// 2. Evaluate Tier 1 Macro Stage Transitions
+	stageTransitioned := false
 	var transitionReason string
 	for _, rule := range fsm.transitions {
-		if rule.FromState == fsm.currentState && rule.Condition(ctx) {
-			targetHandler, ok := fsm.handlers[rule.ToState]
+		if rule.FromStage == fsm.currentStage && rule.Condition(ctx) {
+			targetHandler, ok := fsm.handlers[rule.ToStage]
 			if !ok || targetHandler.Guard(ctx) {
-				fromState := fsm.currentState
-				toState := rule.ToState
+				fromStage := fsm.currentStage
+				toStage := rule.ToStage
 
-				if currentHandler, exists := fsm.handlers[fromState]; exists && ctx != nil {
-					currentHandler.OnExit(ctx, toState)
+				if currentHandler, exists := fsm.handlers[fromStage]; exists && ctx != nil {
+					currentHandler.OnExit(ctx, toStage)
 				}
 
-				fsm.previousState = fromState
-				fsm.currentState = toState
+				fsm.previousStage = fromStage
+				fsm.currentStage = toStage
 				fsm.stateEnteredTick = worldTick
 				fsm.stuckTicks = 0
 				if ctx != nil {
 					ctx.TimeInState = 0
 					ctx.StuckTicks = 0
 				}
-				transitioned = true
+				stageTransitioned = true
 				transitionReason = rule.Description
 
 				if targetHandler != nil && ctx != nil {
-					targetHandler.OnEntry(ctx, fromState)
+					targetHandler.OnEntry(ctx, fromStage)
 				}
 
-				if fsm.onTransition != nil {
-					fsm.onTransition(fromState, toState, rule.Description)
-				}
-
-				if ctx != nil && ctx.State != nil {
-					ctx.State.SetFSMState(toState)
-					switch toState {
-					case StateEmergency:
-						ctx.State.SetCurrentRoutine(RoutineEmergency)
-					case StateRest:
-						ctx.State.SetCurrentRoutine(RoutineSleep)
-					case StateShelter:
-						if ctx.State.IsCompanionActive() {
-							ctx.State.SetCurrentRoutine(RoutineCamp)
-						} else {
-							ctx.State.SetCurrentRoutine(RoutineSleep)
-						}
-					case StateBootstrap, StateExplore:
-						utilRes := EvaluateUtility(ctx.Frame, ctx.Config, ctx.State)
-						if utilRes != nil && utilRes.State != "" {
-							ctx.State.SetCurrentRoutine(utilRes.State)
-						}
-					}
+				if fsm.onStageTransition != nil {
+					fsm.onStageTransition(fromStage, toStage, rule.Description)
 				}
 				break
 			}
 		}
 	}
 
-	// 2. Execute OnTick for the active state
+	// 3. Evaluate Tier 2 Circadian Operational Routine
+	var newRoutine Routine
+	if fsm.currentStage == StageEmergency {
+		newRoutine = RoutineEmergency
+	} else {
+		newRoutine = ComputeCircadianRoutine(tod, weather, ctx.Config, ctx.State)
+	}
+
+	routineTransitioned := false
+	if newRoutine != fsm.currentRoutine {
+		prevR := fsm.currentRoutine
+		fsm.previousRoutine = prevR
+		fsm.currentRoutine = newRoutine
+		fsm.routineEnteredTick = worldTick
+		routineTransitioned = true
+		if fsm.onRoutineTransition != nil {
+			fsm.onRoutineTransition(prevR, newRoutine, "circadian schedule progression")
+		}
+	}
+
+	// 4. Synchronize AgentState atomically
+	if ctx != nil && ctx.State != nil {
+		ctx.State.SetStageAndRoutine(fsm.currentStage, fsm.currentRoutine)
+	}
+
+	// 5. Execute OnTick for the active Stage handler
 	var intents []FSMIntent
-	if handler, exists := fsm.handlers[fsm.currentState]; exists && ctx != nil {
+	if handler, exists := fsm.handlers[fsm.currentStage]; exists && ctx != nil {
 		intents = handler.OnTick(ctx)
 	}
 
+	// 6. Evaluate Goals
 	var goals GoalHierarchy
 	if ctx != nil {
 		goals = EvaluateGoals(ctx.Frame, ctx.Config, ctx.State)
 	}
 
 	return FSMResult{
-		State:            fsm.currentState,
-		PreviousState:    fsm.previousState,
-		Transitioned:     transitioned,
-		TransitionReason: transitionReason,
-		Intents:          intents,
-		GoalHierarchy:    &goals,
+		Stage:               fsm.currentStage,
+		Routine:             fsm.currentRoutine,
+		PreviousStage:       fsm.previousStage,
+		PreviousRoutine:     fsm.previousRoutine,
+		StageTransitioned:   stageTransitioned,
+		RoutineTransitioned: routineTransitioned,
+		Transitioned:        stageTransitioned || routineTransitioned,
+		State:               fsm.currentStage,
+		PreviousState:       fsm.previousStage,
+		TransitionReason:    transitionReason,
+		Intents:             intents,
+		GoalHierarchy:       &goals,
 	}
 }
