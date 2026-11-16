@@ -168,6 +168,11 @@ func (c *FSMContext) ThreatsCleared() bool {
 
 // HasSurvivalKit returns true if the agent holds an axe, weapon/sword, and light source.
 func (c *FSMContext) HasSurvivalKit() bool {
+	if c != nil && c.Facts != nil {
+		if _, exists := c.Facts.Get("bootstrap.has_kit"); exists {
+			return c.Facts.GetBool("bootstrap.has_kit")
+		}
+	}
 	if c == nil || c.Frame == nil || c.Frame.Status == nil {
 		return false
 	}
@@ -176,6 +181,11 @@ func (c *FSMContext) HasSurvivalKit() bool {
 
 // IsDuskOrNight returns true if current time is dusk, night, or thunderstorm.
 func (c *FSMContext) IsDuskOrNight() bool {
+	if c != nil && c.Facts != nil {
+		if _, exists := c.Facts.Get("circadian.is_dusk_or_night"); exists {
+			return c.Facts.GetBool("circadian.is_dusk_or_night")
+		}
+	}
 	if c == nil || c.Frame == nil {
 		return false
 	}
@@ -202,6 +212,11 @@ func (c *FSMContext) IsDawnOrDay() bool {
 
 // HasAssignedBed returns true if state has an assigned bed.
 func (c *FSMContext) HasAssignedBed() bool {
+	if c != nil && c.Facts != nil {
+		if _, exists := c.Facts.Get("shelter.has_bed"); exists {
+			return c.Facts.GetBool("shelter.has_bed")
+		}
+	}
 	if c == nil || c.State == nil {
 		return false
 	}
@@ -210,6 +225,11 @@ func (c *FSMContext) HasAssignedBed() bool {
 
 // IsShelterComplete checks if all shelter walls have been placed or shelter pos secured.
 func (c *FSMContext) IsShelterComplete() bool {
+	if c != nil && c.Facts != nil {
+		if _, exists := c.Facts.Get("shelter.complete"); exists {
+			return c.Facts.GetBool("shelter.complete")
+		}
+	}
 	if c == nil || c.State == nil {
 		return false
 	}
@@ -219,6 +239,11 @@ func (c *FSMContext) IsShelterComplete() bool {
 
 // IsShelterOnCooldown checks if shelter construction is on backoff cooldown after a stuck timeout.
 func (c *FSMContext) IsShelterOnCooldown() bool {
+	if c != nil && c.Facts != nil {
+		if _, exists := c.Facts.Get("shelter.on_cooldown"); exists {
+			return c.Facts.GetBool("shelter.on_cooldown")
+		}
+	}
 	if c == nil || c.State == nil || c.Frame == nil {
 		return false
 	}
@@ -227,6 +252,11 @@ func (c *FSMContext) IsShelterOnCooldown() bool {
 
 // IsBootstrapOnCooldown checks if bootstrap retry is on backoff cooldown after a timeout.
 func (c *FSMContext) IsBootstrapOnCooldown() bool {
+	if c != nil && c.Facts != nil {
+		if _, exists := c.Facts.Get("bootstrap.on_cooldown"); exists {
+			return c.Facts.GetBool("bootstrap.on_cooldown")
+		}
+	}
 	if c == nil || c.State == nil || c.Frame == nil {
 		return false
 	}
@@ -513,17 +543,28 @@ func (h *BootstrapStateHandler) OnTick(ctx *FSMContext) []FSMIntent {
 		}
 	}
 
-	// In dusk/night with no bed: prioritize shelter construction
-	if (ctx.IsDuskOrNight() || (ctx.State != nil && ctx.State.Routine() == RoutineSleep)) && !ctx.HasAssignedBed() && !ctx.IsShelterComplete() {
-		if len(ctx.Frame.IncomingChats) == 0 && ctx.Frame.PendingTrade == nil {
-			if shelterIntent := EvaluateShelterGoals(ctx.AgentID, ctx.Frame, ctx.Config, ctx.State); shelterIntent != nil {
+	// In dusk/night with no bed: prioritize shelter construction, otherwise bootstrap
+	if len(ctx.Frame.IncomingChats) == 0 && ctx.Frame.PendingTrade == nil {
+		if (ctx.IsDuskOrNight() || (ctx.State != nil && ctx.State.Routine() == RoutineSleep)) && !ctx.HasAssignedBed() && !ctx.IsShelterComplete() {
+			if skillIntents, _, ok := DefaultRegistry.SelectAndExecuteSkill(skillCtx, ctx.Facts, "shelter"); ok && len(skillIntents) > 0 {
+				for _, si := range skillIntents {
+					if si != nil {
+						intents = append(intents, FSMIntent{Intent: si, Priority: false})
+					}
+				}
+			} else if shelterIntent := EvaluateShelterGoals(ctx.AgentID, ctx.Frame, ctx.Config, ctx.State); shelterIntent != nil {
 				intents = append(intents, FSMIntent{Intent: shelterIntent, Priority: false})
 			}
-		}
-	} else if len(ctx.Frame.IncomingChats) == 0 && ctx.Frame.PendingTrade == nil {
-		// Bootstrap timber and tool crafting (only if not busy with incoming chats/trade)
-		if bootstrapIntent := EvaluateBootstrapGoals(ctx.AgentID, ctx.Frame, ctx.Config, ctx.State); bootstrapIntent != nil {
-			intents = append(intents, FSMIntent{Intent: bootstrapIntent, Priority: false})
+		} else if !ctx.IsDuskOrNight() && (ctx.State == nil || ctx.State.Routine() != RoutineSleep) {
+			if skillIntents, _, ok := DefaultRegistry.SelectAndExecuteSkill(skillCtx, ctx.Facts, "bootstrap"); ok && len(skillIntents) > 0 {
+				for _, si := range skillIntents {
+					if si != nil {
+						intents = append(intents, FSMIntent{Intent: si, Priority: false})
+					}
+				}
+			} else if bootstrapIntent := EvaluateBootstrapGoals(ctx.AgentID, ctx.Frame, ctx.Config, ctx.State); bootstrapIntent != nil {
+				intents = append(intents, FSMIntent{Intent: bootstrapIntent, Priority: false})
+			}
 		}
 	}
 
@@ -792,8 +833,38 @@ func (h *ShelterStateHandler) OnTick(ctx *FSMContext) []FSMIntent {
 		return intents
 	}
 
-	// Biological needs (eating, sleep, wake)
-	needsIntents := EvaluateBiologicalNeeds(ctx.AgentID, ctx.Frame, ctx.State)
+	if ctx.Facts == nil {
+		evalCtx := &EvaluatorContext{
+			AgentID:   ctx.AgentID,
+			Frame:     ctx.Frame,
+			Config:    ctx.Config,
+			State:     ctx.State,
+			CivicDB:   ctx.CivicDB,
+			SafeNodes: ctx.SafeNodes,
+		}
+		ctx.Facts = DefaultRegistry.EvaluateAll(evalCtx)
+	}
+
+	skillCtx := &SkillContext{
+		AgentID:   ctx.AgentID,
+		Frame:     ctx.Frame,
+		Config:    ctx.Config,
+		State:     ctx.State,
+		CivicDB:   ctx.CivicDB,
+		SafeNodes: ctx.SafeNodes,
+	}
+
+	// Biological needs (eating, sleep, wake) evaluated via DefaultRegistry / BiologicalNeedsSkill
+	var needsIntents []*civquestv1.AgentIntent
+	if skill, ok := DefaultRegistry.GetSkill("biological_needs"); ok && skill != nil {
+		if skill.Preconditions(ctx.Facts) {
+			if si, err := skill.Execute(skillCtx, ctx.Facts); err == nil {
+				needsIntents = si
+			}
+		}
+	} else {
+		needsIntents = EvaluateBiologicalNeeds(ctx.AgentID, ctx.Frame, ctx.State)
+	}
 	for _, ni := range needsIntents {
 		if ni.GetUseItem() != nil && ni.GetUseItem().IsEatingOrDrinking {
 			intents = append(intents, FSMIntent{Intent: ni, Priority: true})
@@ -802,9 +873,15 @@ func (h *ShelterStateHandler) OnTick(ctx *FSMContext) []FSMIntent {
 		}
 	}
 
-	// Shelter building and campfire placement (only if not busy with chat/trade)
+	// Shelter construction (only if not busy with chat/trade)
 	if len(ctx.Frame.IncomingChats) == 0 && ctx.Frame.PendingTrade == nil {
-		if shelterIntent := EvaluateShelterGoals(ctx.AgentID, ctx.Frame, ctx.Config, ctx.State); shelterIntent != nil {
+		if skillIntents, _, ok := DefaultRegistry.SelectAndExecuteSkill(skillCtx, ctx.Facts, "shelter"); ok && len(skillIntents) > 0 {
+			for _, si := range skillIntents {
+				if si != nil {
+					intents = append(intents, FSMIntent{Intent: si, Priority: false})
+				}
+			}
+		} else if shelterIntent := EvaluateShelterGoals(ctx.AgentID, ctx.Frame, ctx.Config, ctx.State); shelterIntent != nil {
 			intents = append(intents, FSMIntent{Intent: shelterIntent, Priority: false})
 		}
 	}

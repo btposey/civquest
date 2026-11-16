@@ -53,11 +53,13 @@ func (e *CircadianEvaluator) Evaluate(ctx *EvaluatorContext, graph *FactGraph) e
 	}
 
 	isTavern := normTod >= 11000 && normTod < 13000
+	isDuskOrNight := (weather == civquestv1.Weather_WEATHER_THUNDER) || (normTod >= 11000 && normTod < 23500)
 
 	graph.SetInt("circadian.time_of_day", "Circadian", int(normTod), fmt.Sprintf("Time of day is %d ticks", normTod))
 	graph.SetString("circadian.shift", "Circadian", string(shift), fmt.Sprintf("Active shift: %s", shift))
 	graph.SetString("circadian.routine", "Circadian", string(routine), fmt.Sprintf("Scheduled routine: %s", routine))
 	graph.SetBool("circadian.is_tavern_social", "Circadian", isTavern, fmt.Sprintf("Tavern social hour active: %t", isTavern))
+	graph.SetBool("circadian.is_dusk_or_night", "Circadian", isDuskOrNight, fmt.Sprintf("Dusk or night active: %t", isDuskOrNight))
 
 	return nil
 }

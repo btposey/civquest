@@ -135,7 +135,8 @@ func (r *EngineRegistry) EvaluateAll(ctx *EvaluatorContext) *FactGraph {
 
 // SelectAndExecuteSkill inspects registered skills in registration order, checks preconditions,
 // and executes the first skill whose preconditions are satisfied.
-func (r *EngineRegistry) SelectAndExecuteSkill(ctx *SkillContext, facts *FactGraph) ([]*civquestv1.AgentIntent, string, bool) {
+// If categories are provided, only skills matching one of the categories will be considered.
+func (r *EngineRegistry) SelectAndExecuteSkill(ctx *SkillContext, facts *FactGraph, categories ...string) ([]*civquestv1.AgentIntent, string, bool) {
 	if r == nil || facts == nil {
 		return nil, "", false
 	}
@@ -149,9 +150,17 @@ func (r *EngineRegistry) SelectAndExecuteSkill(ctx *SkillContext, facts *FactGra
 	}
 	r.mu.RUnlock()
 
+	catFilter := make(map[string]bool, len(categories))
+	for _, c := range categories {
+		catFilter[c] = true
+	}
+
 	for _, name := range order {
 		skill, ok := skills[name]
 		if !ok || skill == nil {
+			continue
+		}
+		if len(catFilter) > 0 && !catFilter[skill.Category()] {
 			continue
 		}
 		if skill.Preconditions(facts) {
@@ -193,8 +202,8 @@ func EvaluateAll(ctx *EvaluatorContext) *FactGraph {
 }
 
 // SelectAndExecuteSkill evaluates skills on DefaultRegistry.
-func SelectAndExecuteSkill(ctx *SkillContext, facts *FactGraph) ([]*civquestv1.AgentIntent, string, bool) {
-	return DefaultRegistry.SelectAndExecuteSkill(ctx, facts)
+func SelectAndExecuteSkill(ctx *SkillContext, facts *FactGraph, categories ...string) ([]*civquestv1.AgentIntent, string, bool) {
+	return DefaultRegistry.SelectAndExecuteSkill(ctx, facts, categories...)
 }
 
 // GetEvaluator retrieves an evaluator by name from DefaultRegistry.
