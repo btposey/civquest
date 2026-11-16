@@ -392,4 +392,3 @@ func TestEvaluateUtility_ThirdShiftArmoryMaintenance(t *testing.T) {
 		t.Errorf("unexpected reason: %s", decPostDawnHobby.Reason)
 	}
 }
-

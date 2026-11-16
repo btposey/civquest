@@ -10,12 +10,13 @@ import (
 
 // EvaluatorContext provides afferent sensory, state, and civic data for evaluators.
 type EvaluatorContext struct {
-	AgentID   string
-	Frame     *civquestv1.TelemetryFrame
-	Config    *xdg.AgentIdentityConfig
-	State     *AgentState
-	CivicDB   *db.CivicRegistryDB
-	SafeNodes []db.MapNode
+	AgentID       string
+	Frame         *civquestv1.TelemetryFrame
+	Config        *xdg.AgentIdentityConfig
+	State         *AgentState
+	CivicDB       *db.CivicRegistryDB
+	SafeNodes     []db.MapNode
+	PavingTracker *RoadPavingTracker
 }
 
 // Evaluator defines a modular sensory and environmental evaluator producing facts.
@@ -27,12 +28,13 @@ type Evaluator interface {
 
 // SkillContext provides operational context for skill execution.
 type SkillContext struct {
-	AgentID   string
-	Frame     *civquestv1.TelemetryFrame
-	Config    *xdg.AgentIdentityConfig
-	State     *AgentState
-	CivicDB   *db.CivicRegistryDB
-	SafeNodes []db.MapNode
+	AgentID       string
+	Frame         *civquestv1.TelemetryFrame
+	Config        *xdg.AgentIdentityConfig
+	State         *AgentState
+	CivicDB       *db.CivicRegistryDB
+	SafeNodes     []db.MapNode
+	PavingTracker *RoadPavingTracker
 }
 
 // Skill defines a modular behavior skill activated by preconditions on the FactGraph.

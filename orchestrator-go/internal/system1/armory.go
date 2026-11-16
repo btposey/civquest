@@ -168,7 +168,7 @@ func CheckArmorySufficiencyWithQuotas(inventory []*civquestv1.ItemStackProto, ci
 	stock := ScanArmoryStock(inventory, civicDB)
 
 	// 1. Weapons: swords >= N, bows >= N, or total weapons >= 2*N
-	if stock.TotalWeapons() < (quotas.Swords + quotas.Bows) || (stock.Swords < quotas.Swords && stock.Bows < quotas.Bows) {
+	if stock.TotalWeapons() < (quotas.Swords+quotas.Bows) || (stock.Swords < quotas.Swords && stock.Bows < quotas.Bows) {
 		return false, CategoryWeapons
 	}
 
@@ -274,7 +274,7 @@ func EvaluateArmoryMaintenance(
 	quotas := ComputeArmoryQuotas(pop)
 	stock := ScanArmoryStock(frame.Status.Inventory, civicDB)
 
-	needsWeapons := stock.TotalWeapons() < (quotas.Swords + quotas.Bows) || (stock.Swords < quotas.Swords && stock.Bows < quotas.Bows)
+	needsWeapons := stock.TotalWeapons() < (quotas.Swords+quotas.Bows) || (stock.Swords < quotas.Swords && stock.Bows < quotas.Bows)
 	hasCompleteArmor := stock.Helmets >= quotas.Helmets && stock.Chestplates >= quotas.Chestplates &&
 		stock.Leggings >= quotas.Leggings && stock.Boots >= quotas.Boots
 	needsArmor := !hasCompleteArmor && stock.TotalArmor() < 4*quotas.Population

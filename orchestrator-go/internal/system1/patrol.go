@@ -105,6 +105,16 @@ func EvaluatePatrol(
 	return evaluatePatrolLocked(agentID, frame, pos, state, cfg)
 }
 
+// EvaluateCivicPatrol is an alias for EvaluatePatrol.
+func EvaluateCivicPatrol(
+	agentID string,
+	frame *civquestv1.TelemetryFrame,
+	cfg *xdg.AgentIdentityConfig,
+	state *AgentState,
+) *civquestv1.AgentIntent {
+	return EvaluatePatrol(agentID, frame, cfg, state)
+}
+
 // EvaluatePatrolDirect evaluates patrol with explicit position under locked state.
 func EvaluatePatrolDirect(
 	agentID string,

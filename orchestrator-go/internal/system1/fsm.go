@@ -485,24 +485,26 @@ func (h *BootstrapStateHandler) OnTick(ctx *FSMContext) []FSMIntent {
 
 	if ctx.Facts == nil {
 		evalCtx := &EvaluatorContext{
-			AgentID:   ctx.AgentID,
-			Frame:     ctx.Frame,
-			Config:    ctx.Config,
-			State:     ctx.State,
-			CivicDB:   ctx.CivicDB,
-			SafeNodes: ctx.SafeNodes,
+			AgentID:       ctx.AgentID,
+			Frame:         ctx.Frame,
+			Config:        ctx.Config,
+			State:         ctx.State,
+			CivicDB:       ctx.CivicDB,
+			SafeNodes:     ctx.SafeNodes,
+			PavingTracker: ctx.PavingTracker,
 		}
 		ctx.Facts = DefaultRegistry.EvaluateAll(evalCtx)
 	}
 
 	// Biological needs (eating, sleep, wake) evaluated via DefaultRegistry / BiologicalNeedsSkill
 	skillCtx := &SkillContext{
-		AgentID:   ctx.AgentID,
-		Frame:     ctx.Frame,
-		Config:    ctx.Config,
-		State:     ctx.State,
-		CivicDB:   ctx.CivicDB,
-		SafeNodes: ctx.SafeNodes,
+		AgentID:       ctx.AgentID,
+		Frame:         ctx.Frame,
+		Config:        ctx.Config,
+		State:         ctx.State,
+		CivicDB:       ctx.CivicDB,
+		SafeNodes:     ctx.SafeNodes,
+		PavingTracker: ctx.PavingTracker,
 	}
 	var needsIntents []*civquestv1.AgentIntent
 	if skill, ok := DefaultRegistry.GetSkill("biological_needs"); ok && skill != nil {
@@ -592,24 +594,26 @@ func (h *SettlementStateHandler) OnTick(ctx *FSMContext) []FSMIntent {
 
 	if ctx.Facts == nil {
 		evalCtx := &EvaluatorContext{
-			AgentID:   ctx.AgentID,
-			Frame:     ctx.Frame,
-			Config:    ctx.Config,
-			State:     ctx.State,
-			CivicDB:   ctx.CivicDB,
-			SafeNodes: ctx.SafeNodes,
+			AgentID:       ctx.AgentID,
+			Frame:         ctx.Frame,
+			Config:        ctx.Config,
+			State:         ctx.State,
+			CivicDB:       ctx.CivicDB,
+			SafeNodes:     ctx.SafeNodes,
+			PavingTracker: ctx.PavingTracker,
 		}
 		ctx.Facts = DefaultRegistry.EvaluateAll(evalCtx)
 	}
 
 	// Biological needs (eating, sleep, wake) evaluated via DefaultRegistry / BiologicalNeedsSkill
 	skillCtx := &SkillContext{
-		AgentID:   ctx.AgentID,
-		Frame:     ctx.Frame,
-		Config:    ctx.Config,
-		State:     ctx.State,
-		CivicDB:   ctx.CivicDB,
-		SafeNodes: ctx.SafeNodes,
+		AgentID:       ctx.AgentID,
+		Frame:         ctx.Frame,
+		Config:        ctx.Config,
+		State:         ctx.State,
+		CivicDB:       ctx.CivicDB,
+		SafeNodes:     ctx.SafeNodes,
+		PavingTracker: ctx.PavingTracker,
 	}
 	var needsIntents []*civquestv1.AgentIntent
 	if skill, ok := DefaultRegistry.GetSkill("biological_needs"); ok && skill != nil {
@@ -637,7 +641,13 @@ func (h *SettlementStateHandler) OnTick(ctx *FSMContext) []FSMIntent {
 	}
 
 	// Road paving
-	if !ctx.Frame.Status.IsSleeping && ctx.PavingTracker != nil &&
+	if skillIntents, _, ok := DefaultRegistry.SelectAndExecuteSkill(skillCtx, ctx.Facts, "infrastructure"); ok && len(skillIntents) > 0 {
+		for _, si := range skillIntents {
+			if si != nil {
+				intents = append(intents, FSMIntent{Intent: si, Priority: false})
+			}
+		}
+	} else if !ctx.Frame.Status.IsSleeping && ctx.PavingTracker != nil &&
 		ctx.Frame.Status.NavigationState != civquestv1.NavigationState_NAVIGATION_STATE_STUCK &&
 		!ctx.Frame.Status.NavigationEnclosed {
 		if ctx.State != nil && ctx.PavingTracker.GetHomeOrigin() == nil {
@@ -670,23 +680,37 @@ func (h *SettlementStateHandler) OnTick(ctx *FSMContext) []FSMIntent {
 		// Sleeping in bed or resting inside shelter handled by biological needs
 	case RoutinePrimaryDuty:
 		if len(ctx.Frame.IncomingChats) == 0 && ctx.Frame.PendingTrade == nil {
-			prof := "UNASSIGNED"
-			if ctx.Config != nil {
-				prof = strings.ToUpper(strings.TrimSpace(ctx.Config.Profession))
-			}
-			var exploreIntent *civquestv1.AgentIntent
-			if prof == "EXPLORER" || prof == "TRAILBLAZER" || prof == "SCOUT" {
-				exploreIntent = EvaluateScouting(ctx.AgentID, ctx.Frame, ctx.Config, ctx.State)
+			if skillIntents, _, ok := DefaultRegistry.SelectAndExecuteSkill(skillCtx, ctx.Facts, "security", "exploration"); ok && len(skillIntents) > 0 {
+				for _, si := range skillIntents {
+					if si != nil {
+						intents = append(intents, FSMIntent{Intent: si, Priority: false})
+					}
+				}
 			} else {
-				exploreIntent = EvaluatePatrol(ctx.AgentID, ctx.Frame, ctx.Config, ctx.State)
-			}
-			if exploreIntent != nil {
-				intents = append(intents, FSMIntent{Intent: exploreIntent, Priority: false})
+				prof := "UNASSIGNED"
+				if ctx.Config != nil {
+					prof = strings.ToUpper(strings.TrimSpace(ctx.Config.Profession))
+				}
+				var exploreIntent *civquestv1.AgentIntent
+				if prof == "EXPLORER" || prof == "TRAILBLAZER" || prof == "SCOUT" {
+					exploreIntent = EvaluateScouting(ctx.AgentID, ctx.Frame, ctx.Config, ctx.State)
+				} else {
+					exploreIntent = EvaluatePatrol(ctx.AgentID, ctx.Frame, ctx.Config, ctx.State)
+				}
+				if exploreIntent != nil {
+					intents = append(intents, FSMIntent{Intent: exploreIntent, Priority: false})
+				}
 			}
 		}
 	case RoutineCivicPatrol:
 		if len(ctx.Frame.IncomingChats) == 0 && ctx.Frame.PendingTrade == nil {
-			if patrolIntent := EvaluatePatrol(ctx.AgentID, ctx.Frame, ctx.Config, ctx.State); patrolIntent != nil {
+			if skillIntents, _, ok := DefaultRegistry.SelectAndExecuteSkill(skillCtx, ctx.Facts, "security", "exploration"); ok && len(skillIntents) > 0 {
+				for _, si := range skillIntents {
+					if si != nil {
+						intents = append(intents, FSMIntent{Intent: si, Priority: false})
+					}
+				}
+			} else if patrolIntent := EvaluatePatrol(ctx.AgentID, ctx.Frame, ctx.Config, ctx.State); patrolIntent != nil {
 				intents = append(intents, FSMIntent{Intent: patrolIntent, Priority: false})
 			}
 		}
@@ -766,6 +790,29 @@ func (h *ColonizeStateHandler) OnTick(ctx *FSMContext) []FSMIntent {
 		return intents
 	}
 
+	if ctx.Facts == nil {
+		evalCtx := &EvaluatorContext{
+			AgentID:       ctx.AgentID,
+			Frame:         ctx.Frame,
+			Config:        ctx.Config,
+			State:         ctx.State,
+			CivicDB:       ctx.CivicDB,
+			SafeNodes:     ctx.SafeNodes,
+			PavingTracker: ctx.PavingTracker,
+		}
+		ctx.Facts = DefaultRegistry.EvaluateAll(evalCtx)
+	}
+
+	skillCtx := &SkillContext{
+		AgentID:       ctx.AgentID,
+		Frame:         ctx.Frame,
+		Config:        ctx.Config,
+		State:         ctx.State,
+		CivicDB:       ctx.CivicDB,
+		SafeNodes:     ctx.SafeNodes,
+		PavingTracker: ctx.PavingTracker,
+	}
+
 	// Biological needs (eating, sleep, wake)
 	needsIntents := EvaluateBiologicalNeeds(ctx.AgentID, ctx.Frame, ctx.State)
 	for _, ni := range needsIntents {
@@ -777,7 +824,13 @@ func (h *ColonizeStateHandler) OnTick(ctx *FSMContext) []FSMIntent {
 	}
 
 	// Road paving
-	if !ctx.Frame.Status.IsSleeping && ctx.PavingTracker != nil &&
+	if skillIntents, _, ok := DefaultRegistry.SelectAndExecuteSkill(skillCtx, ctx.Facts, "infrastructure"); ok && len(skillIntents) > 0 {
+		for _, si := range skillIntents {
+			if si != nil {
+				intents = append(intents, FSMIntent{Intent: si, Priority: false})
+			}
+		}
+	} else if !ctx.Frame.Status.IsSleeping && ctx.PavingTracker != nil &&
 		ctx.Frame.Status.NavigationState != civquestv1.NavigationState_NAVIGATION_STATE_STUCK &&
 		!ctx.Frame.Status.NavigationEnclosed {
 		if ctx.State != nil && ctx.PavingTracker.GetHomeOrigin() == nil {
@@ -806,6 +859,12 @@ func (h *ColonizeStateHandler) OnTick(ctx *FSMContext) []FSMIntent {
 		// Colonization duties: harvest timber, establish core starter shelter, scout perimeter
 		if bootstrapIntent := EvaluateBootstrapGoals(ctx.AgentID, ctx.Frame, ctx.Config, ctx.State); bootstrapIntent != nil {
 			intents = append(intents, FSMIntent{Intent: bootstrapIntent, Priority: false})
+		} else if skillIntents, _, ok := DefaultRegistry.SelectAndExecuteSkill(skillCtx, ctx.Facts, "exploration"); ok && len(skillIntents) > 0 {
+			for _, si := range skillIntents {
+				if si != nil {
+					intents = append(intents, FSMIntent{Intent: si, Priority: false})
+				}
+			}
 		} else if patrolIntent := EvaluatePatrol(ctx.AgentID, ctx.Frame, ctx.Config, ctx.State); patrolIntent != nil {
 			intents = append(intents, FSMIntent{Intent: patrolIntent, Priority: false})
 		}
@@ -835,23 +894,25 @@ func (h *ShelterStateHandler) OnTick(ctx *FSMContext) []FSMIntent {
 
 	if ctx.Facts == nil {
 		evalCtx := &EvaluatorContext{
-			AgentID:   ctx.AgentID,
-			Frame:     ctx.Frame,
-			Config:    ctx.Config,
-			State:     ctx.State,
-			CivicDB:   ctx.CivicDB,
-			SafeNodes: ctx.SafeNodes,
+			AgentID:       ctx.AgentID,
+			Frame:         ctx.Frame,
+			Config:        ctx.Config,
+			State:         ctx.State,
+			CivicDB:       ctx.CivicDB,
+			SafeNodes:     ctx.SafeNodes,
+			PavingTracker: ctx.PavingTracker,
 		}
 		ctx.Facts = DefaultRegistry.EvaluateAll(evalCtx)
 	}
 
 	skillCtx := &SkillContext{
-		AgentID:   ctx.AgentID,
-		Frame:     ctx.Frame,
-		Config:    ctx.Config,
-		State:     ctx.State,
-		CivicDB:   ctx.CivicDB,
-		SafeNodes: ctx.SafeNodes,
+		AgentID:       ctx.AgentID,
+		Frame:         ctx.Frame,
+		Config:        ctx.Config,
+		State:         ctx.State,
+		CivicDB:       ctx.CivicDB,
+		SafeNodes:     ctx.SafeNodes,
+		PavingTracker: ctx.PavingTracker,
 	}
 
 	// Biological needs (eating, sleep, wake) evaluated via DefaultRegistry / BiologicalNeedsSkill
@@ -906,23 +967,25 @@ func (h *EmergencyStateHandler) OnTick(ctx *FSMContext) []FSMIntent {
 
 	if ctx.Facts == nil {
 		evalCtx := &EvaluatorContext{
-			AgentID:   ctx.AgentID,
-			Frame:     ctx.Frame,
-			Config:    ctx.Config,
-			State:     ctx.State,
-			CivicDB:   ctx.CivicDB,
-			SafeNodes: ctx.SafeNodes,
+			AgentID:       ctx.AgentID,
+			Frame:         ctx.Frame,
+			Config:        ctx.Config,
+			State:         ctx.State,
+			CivicDB:       ctx.CivicDB,
+			SafeNodes:     ctx.SafeNodes,
+			PavingTracker: ctx.PavingTracker,
 		}
 		ctx.Facts = DefaultRegistry.EvaluateAll(evalCtx)
 	}
 
 	skillCtx := &SkillContext{
-		AgentID:   ctx.AgentID,
-		Frame:     ctx.Frame,
-		Config:    ctx.Config,
-		State:     ctx.State,
-		CivicDB:   ctx.CivicDB,
-		SafeNodes: ctx.SafeNodes,
+		AgentID:       ctx.AgentID,
+		Frame:         ctx.Frame,
+		Config:        ctx.Config,
+		State:         ctx.State,
+		CivicDB:       ctx.CivicDB,
+		SafeNodes:     ctx.SafeNodes,
+		PavingTracker: ctx.PavingTracker,
 	}
 
 	var skillIntents []*civquestv1.AgentIntent
@@ -1376,12 +1439,13 @@ func (fsm *AgentFSM) Tick(ctx *FSMContext) FSMResult {
 
 	if ctx != nil {
 		evalCtx := &EvaluatorContext{
-			AgentID:   ctx.AgentID,
-			Frame:     ctx.Frame,
-			Config:    ctx.Config,
-			State:     ctx.State,
-			CivicDB:   ctx.CivicDB,
-			SafeNodes: ctx.SafeNodes,
+			AgentID:       ctx.AgentID,
+			Frame:         ctx.Frame,
+			Config:        ctx.Config,
+			State:         ctx.State,
+			CivicDB:       ctx.CivicDB,
+			SafeNodes:     ctx.SafeNodes,
+			PavingTracker: ctx.PavingTracker,
 		}
 		ctx.Facts = DefaultRegistry.EvaluateAll(evalCtx)
 	}

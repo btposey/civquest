@@ -118,6 +118,16 @@ func EvaluateScouting(
 	return evaluateScoutingLocked(agentID, frame, pos, state, cfg)
 }
 
+// EvaluateFrontierScouting is an alias for EvaluateScouting.
+func EvaluateFrontierScouting(
+	agentID string,
+	frame *civquestv1.TelemetryFrame,
+	cfg *xdg.AgentIdentityConfig,
+	state *AgentState,
+) *civquestv1.AgentIntent {
+	return EvaluateScouting(agentID, frame, cfg, state)
+}
+
 // EvaluateScoutingDirect evaluates scouting with explicit position under locked state.
 func EvaluateScoutingDirect(
 	agentID string,

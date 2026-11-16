@@ -1142,4 +1142,3 @@ func TestTwoTierHFSM_ArmoryMaintenanceRoutine(t *testing.T) {
 		t.Errorf("expected IsArmoryMaintenanceNeeded to be false after sufficient check")
 	}
 }
-

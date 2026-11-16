@@ -106,6 +106,8 @@ type AgentState struct {
 	armoryMaintenanceNeeded   bool
 	companionActive           bool
 	civicPatrolActive         bool
+	patrolWaypoints           []*civquestv1.Vec3
+	patrolWaypointIndex       int
 	lastEatingTick            int64
 	lastSleepAttemptTick      int64
 	lastShelterPlaceTick      int64
@@ -141,12 +143,12 @@ type AgentState struct {
 // NewAgentState creates an initialized AgentState.
 func NewAgentState() *AgentState {
 	return &AgentState{
-		stage:          StageBootstrap,
-		routine:        RoutineDawnPrep,
-		CurrentRoutine: RoutineDawnPrep,
-		FSMState:                  StageBootstrap,
-		armoryMaintenanceNeeded:   true,
-		PavingTracker:             NewRoadPavingTracker(DefaultPavingCapacity, DefaultPavingThreshold),
+		stage:                   StageBootstrap,
+		routine:                 RoutineDawnPrep,
+		CurrentRoutine:          RoutineDawnPrep,
+		FSMState:                StageBootstrap,
+		armoryMaintenanceNeeded: true,
+		PavingTracker:           NewRoadPavingTracker(DefaultPavingCapacity, DefaultPavingThreshold),
 		goals: GoalHierarchy{
 			ImmediateGoal: "GATHER_TIMBER: Gather 4 logs and craft basic wooden tools",
 			ShortTermGoal: "ESTABLISH_OUTPOST_CHAIN: Advance frontier and establish safe day-night outposts with tools & light",
@@ -864,4 +866,95 @@ func (s *AgentState) SetLastHeadingRad(rad float64) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.lastHeadingRad = rad
+}
+
+// GetExploreStepIndex returns the exploration/patrol step index.
+func (s *AgentState) GetExploreStepIndex() int {
+	if s == nil {
+		return 0
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.exploreStepIndex
+}
+
+// SetExploreStepIndex sets the exploration/patrol step index.
+func (s *AgentState) SetExploreStepIndex(idx int) {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.exploreStepIndex = idx
+}
+
+// GetPatrolWaypoints returns a defensive copy of configured patrol waypoints.
+func (s *AgentState) GetPatrolWaypoints() []*civquestv1.Vec3 {
+	if s == nil {
+		return nil
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	out := make([]*civquestv1.Vec3, len(s.patrolWaypoints))
+	for i, p := range s.patrolWaypoints {
+		if p != nil {
+			out[i] = &civquestv1.Vec3{X: p.X, Y: p.Y, Z: p.Z}
+		}
+	}
+	return out
+}
+
+// SetPatrolWaypoints sets configured patrol waypoints.
+func (s *AgentState) SetPatrolWaypoints(waypoints []*civquestv1.Vec3) {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.patrolWaypoints = make([]*civquestv1.Vec3, len(waypoints))
+	for i, p := range waypoints {
+		if p != nil {
+			s.patrolWaypoints[i] = &civquestv1.Vec3{X: p.X, Y: p.Y, Z: p.Z}
+		}
+	}
+}
+
+// GetPatrolWaypointIndex returns the current patrol waypoint index.
+func (s *AgentState) GetPatrolWaypointIndex() int {
+	if s == nil {
+		return 0
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.patrolWaypointIndex
+}
+
+// SetPatrolWaypointIndex sets the current patrol waypoint index.
+func (s *AgentState) SetPatrolWaypointIndex(idx int) {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.patrolWaypointIndex = idx
+}
+
+// GetPavingTracker returns the agent's RoadPavingTracker.
+func (s *AgentState) GetPavingTracker() *RoadPavingTracker {
+	if s == nil {
+		return nil
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.PavingTracker
+}
+
+// SetPavingTracker sets the agent's RoadPavingTracker.
+func (s *AgentState) SetPavingTracker(t *RoadPavingTracker) {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.PavingTracker = t
 }
