@@ -8,7 +8,7 @@ In CivQuest, settlements evolve through autonomous construction of civic and dom
 
 Furthermore, players need an intuitive, tactile authoring tool to design multi-story structures without wrestling with external modding utilities or heavy web frameworks. When blueprints are authored, autonomous agents must be able to:
 1. Discover and categorize designs by civic purpose (`SHELTER`, `HOME`, `LIBRARY`, `TOWNHALL`, `TAVERN`, `ARMORY`, `FARM`).
-2. Reason about material feasibility by calculating a Bill of Materials (BOM) against communal granary reserves.
+2. Reason about material feasibility by calculating a Bill of Materials (BOM) against communal storehouse reserves.
 3. Derive architectural variations using System 2 LLMs (e.g., adding an armory annex to a tavern).
 4. Autonomously construct the physical structure bottom-up using ADR-010 Spatial Quadrant Partitioning.
 
@@ -65,7 +65,7 @@ To enable System 2 LLMs to inspect, reason about, and mutate blueprints without 
 ```
 
 ### 4. System 2 Deliberative Reasoning & Derivative Generation
-- **`BlueprintEvaluator` (ADR-020)**: Compares the structure's `bom` against the settlement's `civic_registry.db` granary reserves, emitting facts: `blueprint.affordable` and `blueprint.missing_materials`.
+- **`BlueprintEvaluator` (ADR-020)**: Compares the structure's `bom` against the settlement's `civic_registry.db` storehouse reserves, emitting facts: `blueprint.affordable` and `blueprint.missing_materials`.
 - **Purpose Selection**: Agents evaluate immediate civic needs (e.g., lack of communal space $\to$ query library for `purpose == "TAVERN"`).
 - **LLM Mutation & Derivatives**: System 2 prompts receive the compact ASCII layer representation, allowing the LLM to generate architectural adaptations (e.g., adding an armory wing or expanding living quarters) while guaranteeing geometric validity.
 
