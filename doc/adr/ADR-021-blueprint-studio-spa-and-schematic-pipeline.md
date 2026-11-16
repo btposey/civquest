@@ -24,8 +24,9 @@ The Blueprint Studio is delivered as a zero-dependency Single-Page Application (
 Minecraft defines **$Y$ as vertical elevation** and **$(X, Z)$ as the horizontal ground plane**:
 - **2D Layer Grid Editor**:
   - Displays the $(X, Z)$ horizontal plane while looking down from above.
-  - An elevation slider steps through vertical layers $Y \in [0, H-1]$.
-  - **Onion-Skinning**: Layer $Y-1$ (underlying foundation/walls) is rendered as a semi-transparent, cyan/grey blueprint outline beneath the active layer, providing visual alignment for load-bearing walls, stairwells, and doorways.
+  - An elevation slider steps through vertical layers with signed elevation coordinates: $Y = 0$ represents the surface ground grade, $Y > 0$ represents above-ground stories, and $Y < 0$ represents subterranean basement/cellar levels.
+  - **Basement Excavation Invariant**: Any negative elevation layer ($Y < 0$) signals subterranean space. All voxels inside the layer's outer perimeter marked as interior/air are automatically flagged as an **Excavation Zone**. The construction pipeline dispatches mining intents to hollow out the basement before structural floor and wall placement.
+  - **Onion-Skinning**: Layer $Y-1$ (underlying foundation/walls) is rendered as a semi-transparent, cyan/grey blueprint outline beneath the active layer, providing visual alignment for load-bearing walls, stairwells, and doorways. In basement layers, the overlying ground layer ($Y=0$) or adjacent depth serves as the excavation perimeter guide.
 - **HTML5 Canvas 2.5D Isometric Renderer**:
   - Real-time dimetric projection ($30^\circ$ isometric grid, 2:1 aspect ratio) updating instantaneously as blocks are placed or erased.
   - **Interactive X-Ray Wall Ghosting**: When the user moves their mouse cursor across the face of the isometric view, front-facing exterior walls (camera-adjacent South and East facades) drop to $15\%$ opacity with wireframe contours, revealing interior rooms, staircases, chests, and beds. When the mouse leaves the canvas, full solid exterior occlusion is restored.
@@ -68,7 +69,13 @@ To enable System 2 LLMs to inspect, reason about, and mutate blueprints without 
 - **Purpose Selection**: Agents evaluate immediate civic needs (e.g., lack of communal space $\to$ query library for `purpose == "TAVERN"`).
 - **LLM Mutation & Derivatives**: System 2 prompts receive the compact ASCII layer representation, allowing the LLM to generate architectural adaptations (e.g., adding an armory wing or expanding living quarters) while guaranteeing geometric validity.
 
-### 5. ADR-010 Autonomous Construction Pipeline
+### 5. AI Architectural Assistant Chat Interface
+The Blueprint Studio includes an interactive conversational sidebar connected to the local inference gateway (Ollama/vLLM) via `POST /api/assistant/draft`:
+- **Natural Language Drafting**: Users describe desired structures in plain English (e.g., *"Draft a rustic 2-story tavern with a ground-floor bar counter, fireplace on the north wall, and 3 guest bedrooms upstairs"*).
+- **Instant Canvas Projection**: The LLM generates validated blueprint JSON/ASCII-slices that load directly into the 2D layer grid and HTML5 isometric canvas for immediate visual inspection.
+- **Iterative Conversational Refinements**: Users can converse iteratively to adjust the design (e.g., *"Add a 2-block chimney on the roof"* or *"Expand the ground floor by 2 blocks on the east for a weapon rack"*), with the LLM mutating the active blueprint in real time.
+
+### 6. ADR-010 Autonomous Construction Pipeline
 Blueprints compile directly into the **Spatial Quadrant Partitioning** pipeline:
 - Partitioned into $NW, NE, SW, SE$ quadrant work queues.
 - Scheduled bottom-up ($Y_{\text{min}} \to Y_{\text{max}}$) via `ConstructionSkill` emitting `AgentIntent_PlaceBlock` so builders construct foundations before upper floors and never entrap themselves.
