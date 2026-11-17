@@ -752,23 +752,85 @@ func TestServer_AssistantDraft(t *testing.T) {
 	if drafted.Dimensions.Width != 7 || drafted.Dimensions.Length != 5 {
 		t.Errorf("expected dimensions 7x5, got %dx%d", drafted.Dimensions.Width, drafted.Dimensions.Length)
 	}
-	if drafted.Dimensions.MinY != -1 {
-		t.Errorf("expected MinY -1 for tavern with cellar, got %d", drafted.Dimensions.MinY)
+	if drafted.Dimensions.MinY != -2 {
+		t.Errorf("expected MinY -2 for tavern with 2-block standing clearance cellar, got %d", drafted.Dimensions.MinY)
 	}
 	if drafted.Excavation <= 0 {
 		t.Errorf("expected excavation > 0 for cellar level, got %d", drafted.Excavation)
 	}
 
-	// Check that cellar layer exists
-	foundCellar := false
+	// Check that cellar layers Y=-2 and Y=-1 exist (providing 2 blocks of vertical standing clearance)
+	foundCellarMinus1 := false
+	foundCellarMinus2 := false
+	var ladderX, ladderZ int
+	foundLadder := false
+
+	// Check layer Y=0 for ladder opening
 	for _, l := range drafted.Layers {
 		if l.Y == -1 {
-			foundCellar = true
-			break
+			foundCellarMinus1 = true
+		}
+		if l.Y == -2 {
+			foundCellarMinus2 = true
+		}
+		if l.Y == 0 {
+			for z, row := range l.Matrix {
+				for x, palIdx := range row {
+					if palIdx > 0 && strings.Contains(drafted.Palette[palIdx], "ladder") {
+						ladderX = x
+						ladderZ = z
+						foundLadder = true
+					}
+				}
+			}
 		}
 	}
-	if !foundCellar {
-		t.Error("expected layer with Y=-1 in drafted blueprint")
+	if !foundCellarMinus1 || !foundCellarMinus2 {
+		t.Errorf("expected subterranean layers Y=-1 (%v) and Y=-2 (%v) for 2-block clearance cellar", foundCellarMinus1, foundCellarMinus2)
+	}
+	if !foundLadder {
+		t.Errorf("expected ladder opening at Y=0 descending to cellar")
+	} else {
+		// Verify ladder descends through Y=-1 and Y=-2
+		for _, l := range drafted.Layers {
+			if l.Y == -1 || l.Y == -2 {
+				palIdx := l.Matrix[ladderZ][ladderX]
+				if palIdx == 0 || !strings.Contains(drafted.Palette[palIdx], "ladder") {
+					t.Errorf("expected ladder at layer Y=%d at (%d, %d)", l.Y, ladderX, ladderZ)
+				}
+			}
+			// Verify 2 vertical blocks of standing clearance over ladder opening at Y=1 and Y=2
+			if l.Y == 1 || l.Y == 2 {
+				palIdx := l.Matrix[ladderZ][ladderX]
+				if palIdx != 0 {
+					t.Errorf("expected air (0) clearance over ladder opening at Y=%d at (%d, %d), got %d (%s)",
+						l.Y, ladderX, ladderZ, palIdx, drafted.Palette[palIdx])
+				}
+			}
+		}
+	}
+
+	// Verify Exterior Door has 2 vertical blocks of non-solid clearance (at Y=1 and Y=2) and solid lintel at Y=3
+	doorZ := drafted.Dimensions.Length - 1
+	if strings.Contains(drafted.Description, "porch") || drafted.Layers[0].Matrix[drafted.Dimensions.Length-1][0] == 0 {
+		doorZ = drafted.Dimensions.Length - 2
+	}
+	doorX := drafted.Dimensions.Width / 2
+	for _, l := range drafted.Layers {
+		if l.Y == 1 || l.Y == 2 {
+			palIdx := l.Matrix[doorZ][doorX]
+			state := drafted.Palette[palIdx]
+			if palIdx == 0 || !strings.Contains(state, "door") {
+				t.Errorf("expected door block at Y=%d at (%d, %d), got palIdx=%d (%s)", l.Y, doorX, doorZ, palIdx, state)
+			}
+		}
+		if l.Y == 3 {
+			palIdx := l.Matrix[doorZ][doorX]
+			state := drafted.Palette[palIdx]
+			if palIdx == 0 || strings.Contains(state, "door") {
+				t.Errorf("expected solid lintel above door at Y=3 at (%d, %d), got palIdx=%d (%s)", doorX, doorZ, palIdx, state)
+			}
+		}
 	}
 
 	// 4. Test with System 2 LLM Client attached to mock gateway
@@ -882,6 +944,63 @@ func TestServer_AssistantDraft(t *testing.T) {
 	}
 	if !foundBed || !foundChest || !foundCrafting {
 		t.Errorf("expected palette to contain bed (%v), chest (%v), crafting table (%v)", foundBed, foundChest, foundCrafting)
+	}
+
+	// Verify Interior Divider Door has 2 vertical blocks of non-solid clearance (at Y=1 and Y=2) and solid lintel at Y=3
+	dividerX := multiBP.Dimensions.Width / 2
+	interiorDoorZ := multiBP.Dimensions.Length / 2
+	for _, l := range multiBP.Layers {
+		if l.Y == 1 || l.Y == 2 {
+			palIdx := l.Matrix[interiorDoorZ][dividerX]
+			state := multiBP.Palette[palIdx]
+			if palIdx == 0 || !strings.Contains(state, "door") {
+				t.Errorf("expected interior door block at Y=%d at divider (%d, %d), got palIdx=%d (%s)", l.Y, dividerX, interiorDoorZ, palIdx, state)
+			}
+		}
+		if l.Y == 3 {
+			palIdx := l.Matrix[interiorDoorZ][dividerX]
+			state := multiBP.Palette[palIdx]
+			if palIdx == 0 || strings.Contains(state, "door") {
+				t.Errorf("expected solid lintel above interior door at Y=3 at divider (%d, %d), got palIdx=%d (%s)", dividerX, interiorDoorZ, palIdx, state)
+			}
+		}
+	}
+
+	// Verify Bed occupies 2 contiguous voxels oriented NS (head and foot)
+	foundBedHead := false
+	foundBedFoot := false
+	for _, l := range multiBP.Layers {
+		if l.Y == 1 {
+			for z, row := range l.Matrix {
+				for x, palIdx := range row {
+					if palIdx > 0 {
+						state := multiBP.Palette[palIdx]
+						if strings.Contains(state, "bed") {
+							if strings.Contains(state, "part=head") {
+								foundBedHead = true
+							}
+							if strings.Contains(state, "part=foot") {
+								foundBedFoot = true
+							}
+						}
+					}
+					_ = z
+					_ = x
+				}
+			}
+		}
+	}
+	if !foundBedHead || !foundBedFoot {
+		t.Errorf("expected 2-voxel bed with matching head (%v) and foot (%v)", foundBedHead, foundBedFoot)
+	}
+
+	// Verify BOM accounting: paired 2-block bed counts as 1 bed in BOM, and 2-block doors count as 1 door item each
+	bom := multiBP.CalculateBOM()
+	if bom["minecraft:red_bed"] != 1 {
+		t.Errorf("expected exactly 1 red_bed in BOM, got %d", bom["minecraft:red_bed"])
+	}
+	if bom["minecraft:oak_door"] != 2 { // 1 exterior door + 1 interior divider door = 2 doors
+		t.Errorf("expected exactly 2 oak_door items in BOM (1 exterior + 1 interior), got %d", bom["minecraft:oak_door"])
 	}
 
 	// 6. Test LLM failure / invalid JSON seamlessly falls back to procedural architect

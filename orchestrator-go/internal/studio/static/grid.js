@@ -271,8 +271,38 @@ class LayerGridEditor {
           const shortName = this.formatShortBlockName(state);
           td.classList.add("grid-cell-filled");
           td.style.backgroundColor = this.resolveCellColor(state);
-          td.textContent = shortName;
           td.title = `(${x}, ${this.activeY}, ${z}): ${state} [Click to change, Right-click to erase]`;
+
+          const clean = state.toLowerCase();
+          if (clean.includes("bed")) {
+            const facing = (state.match(/facing=([a-z]+)/)?.[1]) || "north";
+            const isHead = state.includes("part=head");
+            const isFoot = state.includes("part=foot");
+
+            if (isHead) {
+              td.classList.add("grid-cell-bed-head", `bed-head-${facing}`);
+              td.innerHTML = `<span class="bed-pillow-accent"></span><span style="font-size:0.68rem; font-weight:bold; position:relative; z-index:3;">Head</span>`;
+            } else if (isFoot) {
+              td.classList.add("grid-cell-bed-foot", `bed-foot-${facing}`);
+              td.innerHTML = `<span style="font-size:0.68rem; font-weight:bold; position:relative; z-index:3;">Foot</span>`;
+            } else {
+              td.textContent = shortName;
+            }
+          } else if (clean.includes("door") && !clean.includes("trapdoor")) {
+            const isLower = state.includes("half=lower");
+            const isUpper = state.includes("half=upper");
+            if (isLower) {
+              td.classList.add("grid-cell-door-lower");
+              td.innerHTML = `<span style="font-size:0.65rem; font-weight:bold;">🚪 Lower</span>`;
+            } else if (isUpper) {
+              td.classList.add("grid-cell-door-upper");
+              td.innerHTML = `<span style="font-size:0.65rem; font-weight:bold;">🚪 Upper</span>`;
+            } else {
+              td.textContent = shortName;
+            }
+          } else {
+            td.textContent = shortName;
+          }
         } else {
           // Check Onion Skinning: Underneath layer Y-1
           let hasGhostGuide = false;
@@ -364,32 +394,110 @@ class LayerGridEditor {
     return this.blueprint.layers.find(l => l.y === y) || null;
   }
 
-  placeBlock(x, z) {
-    const layer = this.ensureLayer(this.activeY);
-    const blockState = this.getEffectiveBlockState();
+  isBedBlock(blockId) {
+    if (!blockId) return false;
+    const clean = blockId.toLowerCase();
+    return clean.includes("bed") || clean.includes(":beds");
+  }
 
+  isDoorBlock(blockId) {
+    if (!blockId) return false;
+    const clean = blockId.toLowerCase();
+    return (clean.includes("door") || clean.includes(":doors")) && !clean.includes("trapdoor");
+  }
+
+  getOrAllocatePaletteIndex(blockState) {
     if (!this.blueprint.palette) {
       this.blueprint.palette = {};
     }
-
-    // Find existing palette index or allocate new one
-    let targetIdx = 0;
     for (const [idxStr, state] of Object.entries(this.blueprint.palette)) {
       if (state === blockState) {
-        targetIdx = parseInt(idxStr, 10);
-        break;
+        return parseInt(idxStr, 10);
       }
+    }
+    let maxIdx = 0;
+    for (const idxStr of Object.keys(this.blueprint.palette)) {
+      const val = parseInt(idxStr, 10);
+      if (!isNaN(val) && val > maxIdx) maxIdx = val;
+    }
+    const targetIdx = maxIdx + 1;
+    this.blueprint.palette[targetIdx] = blockState;
+    return targetIdx;
+  }
+
+  placeBlock(x, z) {
+    const dims = this.blueprint.dimensions;
+
+    // 1. Bed Multi-Block Placement (Occupies 2 horizontal voxels: Foot at (x, z), Head at adjacent)
+    if (this.isBedBlock(this.selectedBlockId)) {
+      let baseId = this.selectedBlockId;
+      if (baseId.startsWith("#") || baseId === "bed") {
+        baseId = "minecraft:red_bed";
+      }
+      const facing = this.orientation.facing;
+      let headX = x;
+      let headZ = z;
+
+      if (facing === "north") headZ = z - 1;
+      else if (facing === "south") headZ = z + 1;
+      else if (facing === "west") headX = x - 1;
+      else if (facing === "east") headX = x + 1;
+
+      if (headX < 0 || headX >= dims.width || headZ < 0 || headZ >= dims.length) {
+        console.warn(`[Studio] Bed placement out of bounds: head (${headX}, ${headZ}) exceeds dimensions ${dims.width}x${dims.length}`);
+        return;
+      }
+
+      const footState = `${baseId}[facing=${facing},part=foot]`;
+      const headState = `${baseId}[facing=${facing},part=head]`;
+
+      const footIdx = this.getOrAllocatePaletteIndex(footState);
+      const headIdx = this.getOrAllocatePaletteIndex(headState);
+
+      const layer = this.ensureLayer(this.activeY);
+      layer.matrix[z][x] = footIdx;
+      layer.matrix[headZ][headX] = headIdx;
+
+      this.recalculateStats();
+      this.render();
+      this.onUpdateCallback(this.blueprint, this.activeY);
+      return;
     }
 
-    if (targetIdx === 0) {
-      let maxIdx = 0;
-      for (const idxStr of Object.keys(this.blueprint.palette)) {
-        const val = parseInt(idxStr, 10);
-        if (!isNaN(val) && val > maxIdx) maxIdx = val;
+    // 2. Door Multi-Block Placement (Occupies 2 vertical voxels: Lower at Y, Upper at Y+1)
+    if (this.isDoorBlock(this.selectedBlockId)) {
+      let baseId = this.selectedBlockId;
+      if (baseId.startsWith("#") || baseId === "door") {
+        baseId = "minecraft:oak_door";
       }
-      targetIdx = maxIdx + 1;
-      this.blueprint.palette[targetIdx] = blockState;
+      const facing = this.orientation.facing;
+      const lowerState = `${baseId}[facing=${facing},half=lower]`;
+      const upperState = `${baseId}[facing=${facing},half=upper]`;
+
+      const lowerIdx = this.getOrAllocatePaletteIndex(lowerState);
+      const upperIdx = this.getOrAllocatePaletteIndex(upperState);
+
+      const minY = dims.min_y !== undefined ? dims.min_y : 0;
+      if (this.activeY + 1 >= minY + dims.height) {
+        dims.height = (this.activeY + 1 - minY) + 1;
+      }
+
+      const layerLower = this.ensureLayer(this.activeY);
+      const layerUpper = this.ensureLayer(this.activeY + 1);
+
+      layerLower.matrix[z][x] = lowerIdx;
+      layerUpper.matrix[z][x] = upperIdx;
+
+      this.recalculateStats();
+      this.render();
+      this.onUpdateCallback(this.blueprint, this.activeY);
+      return;
     }
+
+    // 3. Standard Single-Voxel Block Placement
+    const layer = this.ensureLayer(this.activeY);
+    const blockState = this.getEffectiveBlockState();
+    const targetIdx = this.getOrAllocatePaletteIndex(blockState);
 
     layer.matrix[z][x] = targetIdx;
     this.recalculateStats();
@@ -399,6 +507,82 @@ class LayerGridEditor {
 
   eraseBlock(x, z) {
     const layer = this.ensureLayer(this.activeY);
+    const palIdx = layer.matrix[z][x];
+    const palette = this.blueprint.palette || {};
+    const state = palette[palIdx] || "";
+    const clean = state.toLowerCase();
+
+    // 1. Bed partner erase: clearing head or foot automatically clears partner voxel
+    if (clean.includes("bed")) {
+      let facing = "north";
+      const mFacing = state.match(/facing=([a-z]+)/);
+      if (mFacing) facing = mFacing[1];
+
+      const isHead = state.includes("part=head");
+      const isFoot = state.includes("part=foot");
+
+      let partnerX = x;
+      let partnerZ = z;
+
+      if (isFoot) {
+        if (facing === "north") partnerZ = z - 1;
+        else if (facing === "south") partnerZ = z + 1;
+        else if (facing === "west") partnerX = x - 1;
+        else if (facing === "east") partnerX = x + 1;
+      } else if (isHead) {
+        if (facing === "north") partnerZ = z + 1;
+        else if (facing === "south") partnerZ = z - 1;
+        else if (facing === "west") partnerX = x + 1;
+        else if (facing === "east") partnerX = x - 1;
+      }
+
+      const dims = this.blueprint.dimensions;
+      if (partnerX >= 0 && partnerX < dims.width && partnerZ >= 0 && partnerZ < dims.length) {
+        const partnerIdx = layer.matrix[partnerZ][partnerX];
+        const partnerState = palette[partnerIdx] || "";
+        if (partnerState.toLowerCase().includes("bed")) {
+          layer.matrix[partnerZ][partnerX] = 0;
+        }
+      }
+    }
+
+    // 2. Door vertical partner erase: clearing lower or upper clears partner voxel on Y+1 or Y-1
+    if (clean.includes("door") && !clean.includes("trapdoor")) {
+      const isLower = state.includes("half=lower");
+      const isUpper = state.includes("half=upper");
+
+      if (isLower) {
+        const upperLayer = this.findLayer(this.activeY + 1);
+        if (upperLayer && upperLayer.matrix && upperLayer.matrix[z]) {
+          const upperIdx = upperLayer.matrix[z][x];
+          const upperState = palette[upperIdx] || "";
+          if (upperState.toLowerCase().includes("door")) {
+            upperLayer.matrix[z][x] = 0;
+          }
+        }
+      } else if (isUpper) {
+        const lowerLayer = this.findLayer(this.activeY - 1);
+        if (lowerLayer && lowerLayer.matrix && lowerLayer.matrix[z]) {
+          const lowerIdx = lowerLayer.matrix[z][x];
+          const lowerState = palette[lowerIdx] || "";
+          if (lowerState.toLowerCase().includes("door")) {
+            lowerLayer.matrix[z][x] = 0;
+          }
+        }
+      } else {
+        for (const delta of [1, -1]) {
+          const adjLayer = this.findLayer(this.activeY + delta);
+          if (adjLayer && adjLayer.matrix && adjLayer.matrix[z]) {
+            const adjIdx = adjLayer.matrix[z][x];
+            const adjState = palette[adjIdx] || "";
+            if (adjState.toLowerCase().includes("door")) {
+              adjLayer.matrix[z][x] = 0;
+            }
+          }
+        }
+      }
+    }
+
     layer.matrix[z][x] = 0;
     this.recalculateStats();
     this.render();
@@ -407,7 +591,7 @@ class LayerGridEditor {
 
   recalculateStats() {
     if (!this.blueprint) return;
-    const bom = {};
+    const rawCounts = {};
     let totalBlocks = 0;
     let excavation = 0;
 
@@ -424,7 +608,9 @@ class LayerGridEditor {
             const idx = row[x];
             if (idx > 0 && palette[idx]) {
               const state = palette[idx];
-              bom[state] = (bom[state] || 0) + 1;
+              // Normalize state to base item ID for canonical BOM accounting
+              const baseItem = state.split("[")[0].trim();
+              rawCounts[baseItem] = (rawCounts[baseItem] || 0) + 1;
               totalBlocks++;
             }
             if (isSubterranean) {
@@ -432,6 +618,17 @@ class LayerGridEditor {
             }
           }
         }
+      }
+    }
+
+    // BOM Accounting: Paired 2-block bed (head+foot) and 2-block door (lower+upper) count as 1 item in BOM
+    const bom = {};
+    for (const [baseItem, count] of Object.entries(rawCounts)) {
+      const clean = baseItem.toLowerCase();
+      if ((clean.includes("door") && !clean.includes("trapdoor")) || clean.includes("bed")) {
+        bom[baseItem] = Math.ceil(count / 2);
+      } else {
+        bom[baseItem] = count;
       }
     }
 

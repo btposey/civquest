@@ -641,12 +641,12 @@ func generateFallbackBlueprint(req AssistantDraftRequest, baseBP *blueprints.Blu
 
 	minY := 0
 	if hasCellar {
-		minY = -1
+		minY = -2
 	} else if baseBP != nil && baseBP.Dimensions.MinY < 0 {
 		minY = baseBP.Dimensions.MinY
 	}
 
-	wallHeight := 3 // Y=0 floor, Y=1 lower wall, Y=2 upper wall
+	wallHeight := 4 // Y=0 floor, Y=1, 2, 3 interior walls (comfortable 3 vertical blocks clearance)
 	if strings.Contains(promptLower, "tower") || strings.Contains(promptLower, "2-story") || strings.Contains(promptLower, "two-story") {
 		wallHeight += 2
 	}
@@ -656,10 +656,12 @@ func generateFallbackBlueprint(req AssistantDraftRequest, baseBP *blueprints.Blu
 		roofLayersCount = 2
 	}
 
-	totalHeight := wallHeight + roofLayersCount
-	if hasCellar {
-		totalHeight += 1
+	subterraneanCount := 0
+	if minY < 0 {
+		subterraneanCount = -minY
 	}
+
+	totalHeight := subterraneanCount + wallHeight + roofLayersCount
 
 	// Build Palette
 	logBlock := "minecraft:oak_log[axis=y]"
@@ -674,9 +676,13 @@ func generateFallbackBlueprint(req AssistantDraftRequest, baseBP *blueprints.Blu
 
 	stairsNorth := "minecraft:oak_stairs[facing=north]"
 	stairsSouth := "minecraft:oak_stairs[facing=south]"
+	doorLower := "minecraft:oak_door[facing=south,half=lower]"
+	doorUpper := "minecraft:oak_door[facing=south,half=upper]"
 	if strings.Contains(promptLower, "spruce") {
 		stairsNorth = "minecraft:spruce_stairs[facing=north]"
 		stairsSouth = "minecraft:spruce_stairs[facing=south]"
+		doorLower = "minecraft:spruce_door[facing=south,half=lower]"
+		doorUpper = "minecraft:spruce_door[facing=south,half=upper]"
 	}
 
 	palette := map[int]string{
@@ -690,14 +696,31 @@ func generateFallbackBlueprint(req AssistantDraftRequest, baseBP *blueprints.Blu
 		8:  "minecraft:crafting_table",
 		9:  "minecraft:chest",
 		10: "minecraft:stone_bricks",
-		11: "minecraft:red_bed",
+		11: "minecraft:red_bed[facing=north,part=foot]",
 		12: "minecraft:furnace",
-		13: "minecraft:oak_door",
+		13: doorLower,
 		14: stairsSouth,
+		15: "minecraft:ladder[facing=south]",
+		16: doorUpper,
+		17: "minecraft:red_bed[facing=north,part=head]",
 	}
 
 	dividerX := width / 2
 	doorZ := length / 2
+
+	frontWallZ := length - 1
+	if hasPorch {
+		frontWallZ = length - 2
+	}
+
+	ladderX := 1
+	ladderZ := length - 2
+	if hasPorch && ladderZ >= frontWallZ {
+		ladderZ = frontWallZ - 1
+	}
+	if ladderZ < 1 {
+		ladderZ = 1
+	}
 
 	layers := make([]blueprints.Layer, 0, totalHeight)
 
@@ -709,17 +732,19 @@ func generateFallbackBlueprint(req AssistantDraftRequest, baseBP *blueprints.Blu
 
 		switch {
 		case y < 0:
-			// Subterranean Cellar level: stone perimeter walls, storage barrels & torches
+			// Subterranean Cellar level: at least 2 vertical blocks standing clearance (Y=-2 and Y=-1)
 			for z := 0; z < length; z++ {
 				for x := 0; x < width; x++ {
 					if z == 0 || z == length-1 || x == 0 || x == width-1 {
 						matrix[z][x] = 10 // stone_bricks walls
-					} else if (x == 1 && z == 1) || (x == width-2 && z == 1) || (x == width-2 && z == length-2) {
-						matrix[z][x] = 6 // barrel
-					} else if x == 1 && z == length-2 {
-						matrix[z][x] = 7 // torch
+					} else if hasCellar && x == ladderX && z == ladderZ {
+						matrix[z][x] = 15 // ladder descending shaft
+					} else if y == minY && ((x == 1 && z == 1) || (x == width-2 && z == 1) || (x == width-2 && z == length-2)) {
+						matrix[z][x] = 6 // storage barrel on cellar floor
+					} else if y == -1 && x == width-2 && z == length/2 {
+						matrix[z][x] = 7 // wall torch lighting
 					} else {
-						matrix[z][x] = 0 // air for excavation
+						matrix[z][x] = 0 // air for excavation and 2-block standing clearance
 					}
 				}
 			}
@@ -728,6 +753,10 @@ func generateFallbackBlueprint(req AssistantDraftRequest, baseBP *blueprints.Blu
 			// Ground Floor: foundation / planks, corner log pillars, divider pillar if multi-room
 			for z := 0; z < length; z++ {
 				for x := 0; x < width; x++ {
+					if hasCellar && x == ladderX && z == ladderZ {
+						matrix[z][x] = 15 // dedicated 1-block descent opening with ladder
+						continue
+					}
 					isCorner := (x == 0 || x == width-1) && (z == 0 || z == length-1)
 					isDivPillar := hasDivision && (x == dividerX) && (z == 0 || z == length-1)
 					if isCorner || isDivPillar {
@@ -739,9 +768,15 @@ func generateFallbackBlueprint(req AssistantDraftRequest, baseBP *blueprints.Blu
 			}
 
 		case y >= 1 && y < wallHeight:
-			// Wall Layers: Y=1 lower wall with doors & windows; Y=2 upper wall
+			// Wall Layers: Y=1 lower wall with doors & windows; Y=2 mid wall; Y=3 upper wall/lintels
 			for z := 0; z < length; z++ {
 				for x := 0; x < width; x++ {
+					// 2 vertical blocks of clearance over the ladder/shaft at Y=1 and Y=2 (and air at Y=3)
+					if hasCellar && x == ladderX && z == ladderZ {
+						matrix[z][x] = 0 // unobstructed standing clearance over ladder opening
+						continue
+					}
+
 					isCorner := (x == 0 || x == width-1) && (z == 0 || z == length-1)
 					if isCorner {
 						matrix[z][x] = 2 // log pillar
@@ -760,10 +795,6 @@ func generateFallbackBlueprint(req AssistantDraftRequest, baseBP *blueprints.Blu
 					}
 
 					if isOuterWall {
-						frontWallZ := length - 1
-						if hasPorch {
-							frontWallZ = length - 2
-						}
 						mainDoorX := width / 2
 						if hasDivision {
 							mainDoorX = dividerX + (width-dividerX)/2
@@ -771,14 +802,26 @@ func generateFallbackBlueprint(req AssistantDraftRequest, baseBP *blueprints.Blu
 
 						if z == frontWallZ && x == mainDoorX {
 							if y == 1 {
-								matrix[z][x] = 13 // oak door opening
+								matrix[z][x] = 13 // oak_door lower half
+							} else if y == 2 {
+								matrix[z][x] = 16 // oak_door upper half (2-block clearance)
+							} else if y == 3 {
+								matrix[z][x] = 1 // plank lintel above 2-block doorway
 							} else {
-								matrix[z][x] = 1 // plank lintel above door
+								matrix[z][x] = 1 // plank wall
 							}
 						} else if (x == 0 || x == width-1) && z == length/2 {
-							matrix[z][x] = 5 // glass pane
+							if y == 1 || y == 2 {
+								matrix[z][x] = 5 // glass pane
+							} else {
+								matrix[z][x] = 1 // plank lintel above window
+							}
 						} else if z == 0 && (x == width/4 || x == 3*width/4) {
-							matrix[z][x] = 5 // glass pane
+							if y == 1 || y == 2 {
+								matrix[z][x] = 5 // glass pane
+							} else {
+								matrix[z][x] = 1 // plank lintel above window
+							}
 						} else {
 							matrix[z][x] = 1 // plank wall
 						}
@@ -789,9 +832,13 @@ func generateFallbackBlueprint(req AssistantDraftRequest, baseBP *blueprints.Blu
 					if hasDivision && x == dividerX {
 						if z == doorZ {
 							if y == 1 {
-								matrix[z][x] = 13 // interior door opening
+								matrix[z][x] = 13 // interior door lower half
+							} else if y == 2 {
+								matrix[z][x] = 16 // interior door upper half (2-block clearance)
+							} else if y == 3 {
+								matrix[z][x] = 1 // plank lintel above interior doorway
 							} else {
-								matrix[z][x] = 1 // plank above interior door
+								matrix[z][x] = 1 // plank divider wall
 							}
 						} else {
 							matrix[z][x] = 1 // plank divider wall
@@ -802,11 +849,11 @@ func generateFallbackBlueprint(req AssistantDraftRequest, baseBP *blueprints.Blu
 					// Furnishings
 					if y == 1 {
 						if hasDivision {
-							// Room 1 (Left / Bedroom): bed, chest
-							if x == 1 && z == 1 {
-								matrix[z][x] = 11 // red_bed
-							} else if x == 1 && z == 2 && length > 4 {
-								matrix[z][x] = 11 // bed foot
+							// Room 1 (Left / Bedroom): bed occupying 2 contiguous voxels oriented NS (foot at z=2, head at z=1), chest
+							if x == 1 && z == 2 && length > 3 {
+								matrix[z][x] = 11 // red_bed[facing=north,part=foot]
+							} else if x == 1 && z == 1 {
+								matrix[z][x] = 17 // red_bed[facing=north,part=head]
 							} else if x == dividerX-1 && z == 1 {
 								matrix[z][x] = 9 // chest
 							}
@@ -816,7 +863,7 @@ func generateFallbackBlueprint(req AssistantDraftRequest, baseBP *blueprints.Blu
 								matrix[z][x] = 8 // crafting table
 							} else if x == width-2 && z == 2 && length > 4 {
 								matrix[z][x] = 12 // furnace
-							} else if x == width-2 && z == length-2 {
+							} else if x == width-2 && z == length-2 && (!hasPorch || z < frontWallZ) {
 								matrix[z][x] = 6 // barrel
 							} else if x == dividerX+1 && z == 1 {
 								matrix[z][x] = 9 // chest
@@ -827,10 +874,21 @@ func generateFallbackBlueprint(req AssistantDraftRequest, baseBP *blueprints.Blu
 								matrix[z][x] = 8 // crafting table
 							} else if x == width-2 && z == 1 {
 								matrix[z][x] = 9 // chest
-							} else if x == 1 && z == length-2 {
-								matrix[z][x] = 11 // red_bed
-							} else if x == width-2 && z == length-2 {
+							} else if x == width-2 && z == length-2 && (!hasPorch || z < frontWallZ) {
 								matrix[z][x] = 6 // barrel
+							} else if hasCellar && ladderX == 1 && (ladderZ == length-2 || ladderZ == length-3) {
+								// When cellar ladder is in the back corner, place bed in available contiguous interior voxels
+								if x == 1 && z == 2 && length > 3 {
+									matrix[z][x] = 11 // red_bed foot
+								} else if x == 2 && z == 2 {
+									matrix[z][x] = 17 // red_bed head
+								}
+							} else {
+								if x == 1 && z == length-2 && (!hasPorch || z < frontWallZ) {
+									matrix[z][x] = 11 // red_bed foot
+								} else if x == 1 && z == length-3 && length > 4 {
+									matrix[z][x] = 17 // red_bed head
+								}
 							}
 						}
 					} else if y == 2 {
@@ -841,10 +899,11 @@ func generateFallbackBlueprint(req AssistantDraftRequest, baseBP *blueprints.Blu
 							} else if x == dividerX+(width-dividerX)/2 && z == 1 {
 								matrix[z][x] = 7 // torch in workshop
 							}
-						} else if x == 1 && z == 1 {
+						} else if x == width/2 && z == 1 {
 							matrix[z][x] = 7 // torch
 						}
 					}
+					// Note: At y == 3, interior blocks remain 0 (air) providing comfortable 3-block ceiling height
 				}
 			}
 

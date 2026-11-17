@@ -309,6 +309,17 @@ func (b *Blueprint) CalculateBOM() map[string]int {
 		}
 	}
 
+	// 3. Multi-block items accounting:
+	// In Minecraft, a bed occupies 2 horizontal voxels (head + foot) and a door occupies 2 vertical voxels (lower + upper).
+	// A paired 2-block bed or 2-block door registers as 1 item in the BOM, not 2.
+	for item, count := range bom {
+		if (strings.HasSuffix(item, "_door") && !strings.HasSuffix(item, "_trapdoor")) ||
+			item == "minecraft:iron_door" || strings.Contains(item, ":doors") ||
+			strings.HasSuffix(item, "_bed") || strings.Contains(item, ":beds") {
+			bom[item] = (count + 1) / 2
+		}
+	}
+
 	b.BOM = bom
 	return bom
 }

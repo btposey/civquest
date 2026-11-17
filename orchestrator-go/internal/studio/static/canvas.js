@@ -200,7 +200,7 @@ class IsometricCanvas {
         ctx.globalAlpha = 1.0;
       }
 
-      this.drawVoxelCube(ctx, isoX, isoY, tileWidth, tileHeight, voxelHeight, baseColor, false);
+      this.drawVoxelCube(ctx, isoX, isoY, tileWidth, tileHeight, voxelHeight, baseColor, false, v.blockState);
       ctx.restore();
     }
 
@@ -388,7 +388,7 @@ class IsometricCanvas {
     ctx.restore();
   }
 
-  drawVoxelCube(ctx, isoX, isoY, tileWidth, tileHeight, voxelHeight, baseColor, isGhost) {
+  drawVoxelCube(ctx, isoX, isoY, tileWidth, tileHeight, voxelHeight, baseColor, isGhost, blockState = "") {
     const hw = tileWidth / 2;
     const hh = tileHeight / 2;
 
@@ -408,6 +408,23 @@ class IsometricCanvas {
     ctx.strokeStyle = isGhost ? "rgba(255, 255, 255, 0.45)" : "rgba(0, 0, 0, 0.35)";
     ctx.lineWidth = isGhost ? 1.2 : 0.8;
     ctx.stroke();
+
+    // Pillow Accent on Bed Head
+    if (blockState && blockState.includes("bed") && (blockState.includes("part=head") || blockState.includes("head"))) {
+      ctx.save();
+      ctx.beginPath();
+      ctx.moveTo(isoX, isoY + 2);
+      ctx.lineTo(isoX + hw * 0.58, isoY + hh * 0.58);
+      ctx.lineTo(isoX, isoY + tileHeight * 0.58);
+      ctx.lineTo(isoX - hw * 0.58, isoY + hh * 0.58);
+      ctx.closePath();
+      ctx.fillStyle = "rgba(248, 250, 252, 0.92)";
+      ctx.fill();
+      ctx.strokeStyle = "rgba(203, 213, 225, 0.9)";
+      ctx.lineWidth = 0.9;
+      ctx.stroke();
+      ctx.restore();
+    }
 
     // 2. Left Face
     ctx.beginPath();
@@ -430,6 +447,39 @@ class IsometricCanvas {
     ctx.fillStyle = rightShade;
     ctx.fill();
     ctx.stroke();
+
+    // Door Panel / Window accents on Right/Front Face
+    if (blockState && blockState.includes("door") && !blockState.includes("trapdoor")) {
+      ctx.save();
+      if (blockState.includes("half=upper")) {
+        // Upper Door: Window pane glass accent
+        ctx.beginPath();
+        ctx.moveTo(isoX + 2, isoY + tileHeight + 2);
+        ctx.lineTo(isoX + hw * 0.7, isoY + hh * 0.7 + tileHeight * 0.3);
+        ctx.lineTo(isoX + hw * 0.7, isoY + hh * 0.7 + tileHeight * 0.3 + voxelHeight * 0.45);
+        ctx.lineTo(isoX + 2, isoY + tileHeight + 2 + voxelHeight * 0.45);
+        ctx.closePath();
+        ctx.fillStyle = "rgba(186, 230, 253, 0.75)";
+        ctx.fill();
+        ctx.strokeStyle = "rgba(56, 189, 248, 0.9)";
+        ctx.lineWidth = 0.8;
+        ctx.stroke();
+      } else {
+        // Lower Door: Recessed bottom panel
+        ctx.beginPath();
+        ctx.moveTo(isoX + 2, isoY + tileHeight + 3);
+        ctx.lineTo(isoX + hw * 0.7, isoY + hh * 0.7 + tileHeight * 0.3);
+        ctx.lineTo(isoX + hw * 0.7, isoY + hh * 0.7 + tileHeight * 0.3 + voxelHeight * 0.45);
+        ctx.lineTo(isoX + 2, isoY + tileHeight + 3 + voxelHeight * 0.45);
+        ctx.closePath();
+        ctx.fillStyle = "rgba(67, 40, 24, 0.55)";
+        ctx.fill();
+        ctx.strokeStyle = "rgba(35, 18, 10, 0.7)";
+        ctx.lineWidth = 0.8;
+        ctx.stroke();
+      }
+      ctx.restore();
+    }
   }
 
   resolveColor(blockState) {

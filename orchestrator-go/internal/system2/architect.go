@@ -68,7 +68,8 @@ Strict Rules:
 3. Every layer's 'grid' must have exactly 'length' rows, and each row must have exactly 'width' characters.
 4. Total layers must match 'dimensions.height'.
 5. If subterranean levels exist (Y < 0), set 'dimensions.min_y' accordingly.
-6. Return ONLY the JSON object. Do not wrap in extra prose.`
+6. Return ONLY the JSON object. Do not wrap in extra prose.
+7. Player Clearance: Minecraft humanoid entities are 1.8 blocks tall and require at least 2 full vertical blocks of standing clearance. All doorways, portals, hallways, and subterranean cellars/basements MUST provide at least 2 vertical blocks of unobstructed space (door or air). Doorways must span 2 vertical blocks. Cellars must have at least 2 vertical layers of interior standing space, connected to the ground floor via a ladder or staircase shaft.`
 }
 
 // BuildArchitectDerivativeUserPrompt formats the base blueprint ASCII slices and modification

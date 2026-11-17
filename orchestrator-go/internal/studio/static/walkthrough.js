@@ -52,14 +52,21 @@
     if (cleanId.includes("log") || cleanId.includes("wood")) return [0.43, 0.31, 0.20];
     if (cleanId.includes("stair")) return [0.75, 0.52, 0.28];
     if (cleanId.includes("slab")) return [0.75, 0.52, 0.28];
-    if (cleanId.includes("door") || cleanId.includes("trapdoor") || cleanId.includes("fence")) return [0.55, 0.39, 0.22];
+    if (cleanId.includes("door") && !cleanId.includes("trapdoor")) {
+      if (blockState.includes("half=upper")) return [0.65, 0.48, 0.32];
+      return [0.55, 0.39, 0.22];
+    }
+    if (cleanId.includes("trapdoor") || cleanId.includes("fence")) return [0.55, 0.39, 0.22];
     if (cleanId.includes("cobble")) return [0.42, 0.42, 0.42];
     if (cleanId.includes("stone_brick")) return [0.47, 0.47, 0.47];
     if (cleanId.includes("stone")) return [0.50, 0.50, 0.50];
     if (cleanId.includes("deepslate")) return [0.23, 0.23, 0.27];
     if (cleanId.includes("glass")) return [0.65, 0.85, 0.95];
     if (cleanId.includes("torch") || cleanId.includes("light")) return [0.95, 0.61, 0.07];
-    if (cleanId.includes("bed")) return [0.75, 0.22, 0.17];
+    if (cleanId.includes("bed")) {
+      if (blockState.includes("part=head")) return [0.82, 0.24, 0.18];
+      return [0.75, 0.22, 0.17];
+    }
     if (cleanId.includes("chest") || cleanId.includes("barrel")) return [0.58, 0.38, 0.17];
 
     // Deterministic hash color fallback
@@ -408,9 +415,13 @@
 
         // Top Face (+Y)
         if (!hasBlock(x, y + 1, z)) {
+          let topR = r, topG = g, topB = b;
+          if (v.state && v.state.includes("bed") && (v.state.includes("part=head") || v.state.includes("head"))) {
+            topR = 0.94; topG = 0.94; topB = 0.96; // Pillow shading on bed head
+          }
           addFace(
             [x, y + 1, z], [x, y + 1, z + 1], [x + 1, y + 1, z + 1], [x + 1, y + 1, z],
-            r, g, b, 1.0
+            topR, topG, topB, 1.0
           );
         }
 

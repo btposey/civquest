@@ -648,6 +648,139 @@ textarea#blueprint-input {
   font-style: italic;
 }
 
+/* 2-Voxel Bed Unified Border & Pillow Styles */
+.grid-cell-bed-head {
+  position: relative !important;
+  background-color: #991b1b !important;
+  color: #ffffff !important;
+}
+
+.grid-cell-bed-foot {
+  position: relative !important;
+  background-color: #7f1d1d !important;
+  color: #fca5a5 !important;
+}
+
+.bed-pillow-accent {
+  position: absolute;
+  background: #f8fafc;
+  border-radius: 2px;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
+  pointer-events: none;
+  z-index: 2;
+}
+
+.bed-head-north .bed-pillow-accent {
+  top: 3px;
+  left: 6px;
+  right: 6px;
+  height: 9px;
+}
+
+.bed-head-south .bed-pillow-accent {
+  bottom: 3px;
+  left: 6px;
+  right: 6px;
+  height: 9px;
+}
+
+.bed-head-west .bed-pillow-accent {
+  left: 3px;
+  top: 6px;
+  bottom: 6px;
+  width: 9px;
+}
+
+.bed-head-east .bed-pillow-accent {
+  right: 3px;
+  top: 6px;
+  bottom: 6px;
+  width: 9px;
+}
+
+.bed-head-north {
+  border-bottom: none !important;
+  border-top: 2px solid #f59e0b !important;
+  border-left: 2px solid #f59e0b !important;
+  border-right: 2px solid #f59e0b !important;
+  border-top-left-radius: 4px;
+  border-top-right-radius: 4px;
+}
+
+.bed-foot-north {
+  border-top: none !important;
+  border-bottom: 2px solid #f59e0b !important;
+  border-left: 2px solid #f59e0b !important;
+  border-right: 2px solid #f59e0b !important;
+  border-bottom-left-radius: 4px;
+  border-bottom-right-radius: 4px;
+}
+
+.bed-head-south {
+  border-top: none !important;
+  border-bottom: 2px solid #f59e0b !important;
+  border-left: 2px solid #f59e0b !important;
+  border-right: 2px solid #f59e0b !important;
+  border-bottom-left-radius: 4px;
+  border-bottom-right-radius: 4px;
+}
+
+.bed-foot-south {
+  border-bottom: none !important;
+  border-top: 2px solid #f59e0b !important;
+  border-left: 2px solid #f59e0b !important;
+  border-right: 2px solid #f59e0b !important;
+  border-top-left-radius: 4px;
+  border-top-right-radius: 4px;
+}
+
+.bed-head-west {
+  border-right: none !important;
+  border-left: 2px solid #f59e0b !important;
+  border-top: 2px solid #f59e0b !important;
+  border-bottom: 2px solid #f59e0b !important;
+  border-top-left-radius: 4px;
+  border-bottom-left-radius: 4px;
+}
+
+.bed-foot-west {
+  border-left: none !important;
+  border-right: 2px solid #f59e0b !important;
+  border-top: 2px solid #f59e0b !important;
+  border-bottom: 2px solid #f59e0b !important;
+  border-top-right-radius: 4px;
+  border-bottom-right-radius: 4px;
+}
+
+.bed-head-east {
+  border-left: none !important;
+  border-right: 2px solid #f59e0b !important;
+  border-top: 2px solid #f59e0b !important;
+  border-bottom: 2px solid #f59e0b !important;
+  border-top-right-radius: 4px;
+  border-bottom-right-radius: 4px;
+}
+
+.bed-foot-east {
+  border-right: none !important;
+  border-left: 2px solid #f59e0b !important;
+  border-top: 2px solid #f59e0b !important;
+  border-bottom: 2px solid #f59e0b !important;
+  border-top-left-radius: 4px;
+  border-bottom-left-radius: 4px;
+}
+
+/* 2-Voxel Door Multi-Layer Indicators */
+.grid-cell-door-lower {
+  border: 2px solid #b45309 !important;
+  background-color: #5c3d1e !important;
+}
+
+.grid-cell-door-upper {
+  border: 2px dashed #38bdf8 !important;
+  background-color: #451a03 !important;
+}
+
 /* 2D Grid Ordinal Direction Bars (N, S, W, E) */
 .layer-grid-wrapper {
   display: flex;

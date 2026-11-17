@@ -375,5 +375,61 @@ func TestCalculateCabinStepBack(t *testing.T) {
 	}
 }
 
+func TestBlueprint_MultiBlockBOMAccounting(t *testing.T) {
+	bp := &Blueprint{
+		ID:      "test_multiblock",
+		Name:    "Test Multiblock",
+		Purpose: PurposeHome,
+		Dimensions: Dimensions{
+			Width:  3,
+			Height: 2,
+			Length: 3,
+			MinY:   0,
+		},
+		Palette: map[int]string{
+			1: "minecraft:oak_door[facing=south,half=lower]",
+			2: "minecraft:oak_door[facing=south,half=upper]",
+			3: "minecraft:red_bed[facing=north,part=foot]",
+			4: "minecraft:red_bed[facing=north,part=head]",
+			5: "minecraft:oak_trapdoor[facing=north]",
+		},
+		Layers: []Layer{
+			{
+				Y: 0,
+				Matrix: [][]int{
+					{1, 3, 5},
+					{0, 4, 0},
+					{0, 0, 0},
+				},
+			},
+			{
+				Y: 1,
+				Matrix: [][]int{
+					{2, 0, 0},
+					{0, 0, 0},
+					{0, 0, 0},
+				},
+			},
+		},
+	}
+
+	bom := bp.CalculateBOM()
+
+	// 2 door voxels (lower + upper) must register as 1 door item in BOM
+	if bom["minecraft:oak_door"] != 1 {
+		t.Errorf("expected 1 oak_door item in BOM for paired lower+upper voxels, got %d", bom["minecraft:oak_door"])
+	}
+
+	// 2 bed voxels (foot + head) must register as 1 bed item in BOM
+	if bom["minecraft:red_bed"] != 1 {
+		t.Errorf("expected 1 red_bed item in BOM for paired foot+head voxels, got %d", bom["minecraft:red_bed"])
+	}
+
+	// 1 trapdoor must register as 1 item in BOM (not halved)
+	if bom["minecraft:oak_trapdoor"] != 1 {
+		t.Errorf("expected 1 oak_trapdoor item in BOM, got %d", bom["minecraft:oak_trapdoor"])
+	}
+}
+
 // Silence unused import in test if needed
 var _ = os.PathSeparator

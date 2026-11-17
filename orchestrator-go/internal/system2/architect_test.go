@@ -63,6 +63,12 @@ func TestArchitect_PromptGeneration(t *testing.T) {
 	if !strings.Contains(sysPrompt, "Master Architect") {
 		t.Errorf("expected Master Architect in system prompt")
 	}
+	if !strings.Contains(sysPrompt, "Player Clearance") || !strings.Contains(sysPrompt, "1.8 blocks") {
+		t.Errorf("expected Rule 7 (Player Clearance: 1.8 blocks) in system prompt")
+	}
+	if !strings.Contains(sysPrompt, "2 vertical blocks") {
+		t.Errorf("expected 2 vertical blocks standing clearance in system prompt")
+	}
 
 	userPrompt, err := BuildArchitectDerivativeUserPrompt(req)
 	if err != nil {
