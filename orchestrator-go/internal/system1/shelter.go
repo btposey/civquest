@@ -450,17 +450,27 @@ func findNearestReliableHabitationPOI(pos *civquestv1.Vec3, state *AgentState, p
 	if si == nil {
 		return nil
 	}
+	agentLayer := ClassifyElevationLayer(pos.Y, 64.0)
 	if preferredBlock != "" {
-		if poi := si.FindNearestPOI(pos, POICategoryHabitation, preferredBlock, 64.0, ElevationSurface); poi != nil && poi.Reliability >= 0.5 {
+		if poi := si.FindNearestPOI(pos, POICategoryHabitation, preferredBlock, 64.0, agentLayer); poi != nil && poi.Reliability >= 0.5 {
+			return poi
+		}
+		if poi := si.FindNearestPOI(pos, POICategoryHabitation, preferredBlock, 64.0, ""); poi != nil && poi.Reliability >= 0.5 {
 			return poi
 		}
 		return nil
 	}
-	bedPOI := si.FindNearestPOI(pos, POICategoryHabitation, "bed", 64.0, ElevationSurface)
+	bedPOI := si.FindNearestPOI(pos, POICategoryHabitation, "bed", 64.0, agentLayer)
+	if bedPOI == nil {
+		bedPOI = si.FindNearestPOI(pos, POICategoryHabitation, "bed", 64.0, "")
+	}
 	if bedPOI != nil && bedPOI.Reliability < 0.5 {
 		bedPOI = nil
 	}
-	campPOI := si.FindNearestPOI(pos, POICategoryHabitation, "campfire", 64.0, ElevationSurface)
+	campPOI := si.FindNearestPOI(pos, POICategoryHabitation, "campfire", 64.0, agentLayer)
+	if campPOI == nil {
+		campPOI = si.FindNearestPOI(pos, POICategoryHabitation, "campfire", 64.0, "")
+	}
 	if campPOI != nil && campPOI.Reliability < 0.5 {
 		campPOI = nil
 	}

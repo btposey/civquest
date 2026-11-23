@@ -667,3 +667,62 @@ func TestSpatialIndex_DecayPOIReliabilityReturn(t *testing.T) {
 		t.Fatalf("expected found=false for non_existent POI")
 	}
 }
+
+// TestSpatialIndex_CorridorIntersectionAndPortalPOI verifies ADR-026 methods:
+// FindNearestCorridorIntersection, FindPortalPOI, and HasCorridorBetween.
+func TestSpatialIndex_CorridorIntersectionAndPortalPOI(t *testing.T) {
+	si := NewSpatialIndex()
+
+	// 1. Test HasCorridorBetween
+	si.UpsertCorridor(db.TrailCorridor{
+		ID:            "corr_a_b",
+		FromPOIID:     "poi_alpha",
+		ToPOIID:       "poi_beta",
+		WaypointsJSON: `[[10.0, 64.0, 10.0], [20.0, 64.0, 10.0], [30.0, 64.0, 10.0]]`,
+		TotalDistance: 20.0,
+		IsPaved:       true,
+		TraverseCount: 3,
+	})
+
+	if !si.HasCorridorBetween("poi_alpha", "poi_beta") {
+		t.Errorf("expected HasCorridorBetween(alpha, beta) = true")
+	}
+	if !si.HasCorridorBetween("poi_beta", "poi_alpha") {
+		t.Errorf("expected reverse HasCorridorBetween(beta, alpha) = true")
+	}
+	if si.HasCorridorBetween("poi_alpha", "poi_gamma") {
+		t.Errorf("expected HasCorridorBetween(alpha, gamma) = false")
+	}
+
+	// 2. Test FindNearestCorridorIntersection
+	queryPos := &civquestv1.Vec3{X: 19.5, Y: 64.0, Z: 10.5}
+	corr, idx, wp, dist := si.FindNearestCorridorIntersection(queryPos, 10.0)
+	if corr == nil || corr.ID != "corr_a_b" {
+		t.Fatalf("expected corr_a_b, got %+v", corr)
+	}
+	if idx != 1 {
+		t.Errorf("expected nearest waypoint index 1, got %d", idx)
+	}
+	if wp == nil || wp.X != 20.0 {
+		t.Errorf("expected waypoint (20, 64, 10), got %+v", wp)
+	}
+	if dist > 1.0 {
+		t.Errorf("expected dist <= 1.0, got %f", dist)
+	}
+
+	// 3. Test FindPortalPOI
+	si.UpsertPOI(db.AgentPOI{
+		POIID:       "portal_campfire",
+		Category:    POICategorySettlement,
+		BlockID:     "minecraft:campfire",
+		X:           15.5,
+		Y:           64.0,
+		Z:           10.5,
+		Reliability: 1.0,
+		IsActive:    true,
+	})
+	portal := si.FindPortalPOI(queryPos, 16.0)
+	if portal == nil || portal.POIID != "portal_campfire" {
+		t.Fatalf("expected portal_campfire, got %+v", portal)
+	}
+}

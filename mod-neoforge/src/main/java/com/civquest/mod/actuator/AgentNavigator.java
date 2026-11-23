@@ -754,8 +754,14 @@ public class AgentNavigator {
 
         if (cliffAhead) {
             moveSpeed = 0.0;
-        } else if (path.isEmpty() && horizontalDist < 2.0) {
-            moveSpeed *= Math.max(0.25, horizontalDist / 2.0);
+        } else if (path.isEmpty()) {
+            double arrivalRange = Math.max(1.5, (double) this.arrivalTolerance);
+            if (horizontalDist <= arrivalRange) {
+                moveSpeed *= Math.max(0.25, horizontalDist / arrivalRange);
+            } else if (level != null) {
+                // ADR-026: In-world navigation with no local path to distant/unreachable target - stop driving into walls/ceilings
+                moveSpeed = 0.0;
+            }
         }
 
         double absYawDiff = Math.abs(yawDiff);

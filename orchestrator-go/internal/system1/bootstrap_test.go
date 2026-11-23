@@ -1135,3 +1135,86 @@ func TestPioneerGenesis_SettlementNucleationLifecycle(t *testing.T) {
 		t.Errorf("expected bootstrap.nucleation_locked=false after hearth established")
 	}
 }
+
+// TestHierarchicalPathfinding_UndergroundRejectsDistantSurfaceTreeWithoutCorridor verifies ADR-026:
+// An underground agent at Y=58 does not target a surface tree at Y=96 unless an established
+// TrailCorridor connects them, preventing solid wall/ceiling grinding.
+func TestHierarchicalPathfinding_UndergroundRejectsDistantSurfaceTreeWithoutCorridor(t *testing.T) {
+	state := NewAgentState()
+	si := state.SpatialIndex()
+
+	treePOI := db.AgentPOI{
+		POIID:          FormatPOIID(POICategoryResource, 10, 96, 20),
+		Category:       POICategoryResource,
+		BlockID:        "minecraft:oak_log",
+		X:              10.5,
+		Y:              96.0,
+		Z:              20.5,
+		AccessX:        10.5,
+		AccessY:        96.0,
+		AccessZ:        19.5,
+		ElevationLayer: ElevationSurface,
+		Reliability:    1.0,
+		IsActive:       true,
+	}
+	si.UpsertPOI(treePOI)
+
+	// Agent inside underground dugout at Y=58 (ElevationDugout)
+	undergroundPos := &civquestv1.Vec3{X: 10.0, Y: 58.0, Z: 20.0}
+	frame := &civquestv1.TelemetryFrame{
+		WorldTick: 50,
+		Status: &civquestv1.AgentStatus{
+			Position: undergroundPos,
+		},
+	}
+
+	// 1. Without corridor: findNearestTreeTrunk MUST NOT return the surface tree
+	targetLog, recalledPOI := findNearestTreeTrunk("Able", frame, undergroundPos, state)
+	if targetLog != nil {
+		t.Fatalf("expected nil targetLog underground without visible blocks, got %+v", targetLog)
+	}
+	if recalledPOI != nil {
+		t.Fatalf("ADR-026 VIOLATION: underground agent recalled distant surface tree without corridor: %+v", recalledPOI)
+	}
+
+	// 2. Add an established TrailCorridor connecting the dugout shelter to the surface tree
+	dugoutPOIID := FormatPOIID(POICategoryHabitation, 10, 58, 20)
+	state.HabitTrailTracker().SetOriginPOI(dugoutPOIID, undergroundPos)
+
+	waypoints := []*civquestv1.Vec3{
+		{X: 10.0, Y: 58.0, Z: 20.0},
+		{X: 10.0, Y: 64.0, Z: 20.0},
+		{X: 10.0, Y: 96.0, Z: 19.5},
+	}
+	wpJSON, _ := EncodeWaypointsJSON(waypoints)
+	si.UpsertCorridor(db.TrailCorridor{
+		ID:            "corridor_dugout_to_tree",
+		FromPOIID:     dugoutPOIID,
+		ToPOIID:       treePOI.POIID,
+		WaypointsJSON: wpJSON,
+		TotalDistance: 45.0,
+		IsPaved:       true,
+		TraverseCount: 5,
+	})
+
+	// 3. With corridor connecting origin to tree: now recalled tree is reachable via trail
+	_, recalledWithCorridor := findNearestTreeTrunk("Able", frame, undergroundPos, state)
+	if recalledWithCorridor == nil || recalledWithCorridor.POIID != treePOI.POIID {
+		t.Fatalf("expected recalledTreePOI %s with established corridor, got %+v", treePOI.POIID, recalledWithCorridor)
+	}
+
+	// 4. Verify evaluateBootstrapStage navigates along corridor waypoints
+	cfg := xdg.DefaultAgentIdentityConfig("Able")
+	frame.Status.Inventory = []*civquestv1.ItemStackProto{} // lacks timber
+	frame.Status.NavigationState = civquestv1.NavigationState_NAVIGATION_STATE_IDLE
+
+	intent := EvaluateBootstrapGoals("Able", frame, cfg, state)
+	if intent == nil || intent.GetNavigate() == nil || intent.GetNavigate().Target == nil {
+		t.Fatalf("expected corridor NavigateIntent, got %+v", intent)
+	}
+	// Initial corridor target must be W_0 (10, 58, 20)
+	target := intent.GetNavigate().Target
+	if target.X != 10.0 || target.Y != 58.0 || target.Z != 20.0 {
+		t.Fatalf("expected first waypoint (10, 58, 20), got (%v, %v, %v)", target.X, target.Y, target.Z)
+	}
+}

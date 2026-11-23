@@ -299,10 +299,26 @@ func evaluateBootstrapGoalsLocked(
 		}
 	}
 
-	// ADR-022: If no reachable crafting table is visible in the frustum, query SpatialIndex.
+	// ADR-022 / ADR-026: If no reachable crafting table is visible in the frustum, query SpatialIndex.
 	if nearestCraftingTable == nil && state != nil {
 		if si := state.SpatialIndexLocked(); si != nil {
-			if poi := si.FindNearestPOI(pos, POICategoryWorkstation, "minecraft:crafting_table", 64.0, ElevationSurface); poi != nil && poi.Reliability >= 0.5 {
+			agentLayer := ClassifyElevationLayer(pos.Y, 64.0)
+			poi := si.FindNearestPOI(pos, POICategoryWorkstation, "minecraft:crafting_table", 64.0, agentLayer)
+			if poi == nil && (agentLayer == ElevationDugout || agentLayer == ElevationUnderground) {
+				// If underground without a local table, only target surface workstation if connected by a corridor
+				originID := ""
+				if tracker := state.HabitTrailTrackerLocked(); tracker != nil {
+					originID = tracker.CurrentOriginPOIID()
+				}
+				if surfacePOI := si.FindNearestPOI(pos, POICategoryWorkstation, "minecraft:crafting_table", 64.0, ElevationSurface); surfacePOI != nil {
+					if originID != "" && si.HasCorridorBetween(originID, surfacePOI.POIID) {
+						poi = surfacePOI
+					}
+				}
+			} else if poi == nil {
+				poi = si.FindNearestPOI(pos, POICategoryWorkstation, "minecraft:crafting_table", 64.0, "")
+			}
+			if poi != nil && poi.Reliability >= 0.5 {
 				bpos := poiBlockPos(poi)
 				if !state.IsWorkstationUnreachableLocked(bpos.X, bpos.Y, bpos.Z, frame.WorldTick) {
 					dx := poi.X - pos.X
@@ -488,6 +504,29 @@ func evaluateBootstrapGoalsLocked(
 			}
 			state.navigatingToPOI = true
 			if navState != civquestv1.NavigationState_NAVIGATION_STATE_PATHING {
+				// ADR-026: Hierarchical Trail-Intersection Pathfinding:
+				// If a corridor exists connecting the origin/trail to the destination POI,
+				// traverse sequential corridor waypoints instead of direct Euclidean line-of-sight.
+				if tracker := state.HabitTrailTrackerLocked(); tracker != nil {
+					originID := tracker.CurrentOriginPOIID()
+					si := state.SpatialIndexLocked()
+					if originID != "" && si != nil {
+						if corridor, ok := si.GetCorridor(originID, recalledTreePOI.POIID); ok && corridor != nil {
+							if !tracker.IsNavigatingCorridor() {
+								intent, err := tracker.StartCorridorNavigation(agentID, corridor, poiAccessTarget(recalledTreePOI))
+								if err == nil && intent != nil {
+									return intent
+								}
+							}
+						}
+					}
+					if tracker.IsNavigatingCorridor() {
+						if intent, stepped := tracker.UpdateNavigation(pos, navState); stepped && intent != nil {
+							return intent
+						}
+					}
+				}
+
 				if state.lastBootstrapNavTick == 0 || frame.WorldTick < state.lastBootstrapNavTick || frame.WorldTick-state.lastBootstrapNavTick >= 40 {
 					state.lastBootstrapNavTick = frame.WorldTick
 					return &civquestv1.AgentIntent{
@@ -602,9 +641,29 @@ func findNearestTreeTrunk(agentID string, frame *civquestv1.TelemetryFrame, pos 
 	if len(byColumn) == 0 {
 		if state != nil {
 			if si := state.SpatialIndexLocked(); si != nil {
+				// ADR-026: Prohibit agents from pathfinding toward distant surface targets while underground.
+				// If the agent is inside a dugout or underground, only query for a recalled timber stand if:
+				// 1. The agent is on the surface (pos.Y >= 64.0 and layer == ElevationSurface), OR
+				// 2. A trail corridor connects the current origin to the target.
+				agentLayer := ClassifyElevationLayer(pos.Y, 64.0)
+				isUnderground := agentLayer == ElevationDugout || agentLayer == ElevationUnderground
+
 				if poi := si.FindNearestPOI(pos, POICategoryResource, "log", 64.0, ElevationSurface); poi != nil && poi.Reliability >= 0.5 {
 					bpos := poiBlockPos(poi)
 					if !state.IsTreeOnCooldownLocked(bpos.X, bpos.Z, frame.WorldTick) {
+						if isUnderground {
+							originID := ""
+							if tracker := state.HabitTrailTrackerLocked(); tracker != nil {
+								originID = tracker.CurrentOriginPOIID()
+							}
+							hasCorridor := false
+							if originID != "" {
+								hasCorridor = si.HasCorridorBetween(originID, poi.POIID)
+							}
+							if !hasCorridor {
+								return nil, nil
+							}
+						}
 						return nil, poi
 					}
 				}

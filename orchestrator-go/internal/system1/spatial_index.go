@@ -967,3 +967,83 @@ func (si *SpatialIndex) AllCorridors() []*db.TrailCorridor {
 	})
 	return res
 }
+
+// HasCorridorBetween checks whether a direct or reverse TrailCorridor connects two POIs.
+func (si *SpatialIndex) HasCorridorBetween(fromPOIID, toPOIID string) bool {
+	if si == nil || fromPOIID == "" || toPOIID == "" {
+		return false
+	}
+	si.mu.RLock()
+	defer si.mu.RUnlock()
+	if _, ok := si.corridorsByEndpoints[[2]string{fromPOIID, toPOIID}]; ok {
+		return true
+	}
+	if _, ok := si.corridorsByEndpoints[[2]string{toPOIID, fromPOIID}]; ok {
+		return true
+	}
+	return false
+}
+
+// FindNearestCorridorIntersection locates the closest waypoint on any known TrailCorridor
+// within maxDist of pos, returning the corridor, the waypoint index, the waypoint coords, and the distance.
+func (si *SpatialIndex) FindNearestCorridorIntersection(pos *civquestv1.Vec3, maxDist float64) (*db.TrailCorridor, int, *civquestv1.Vec3, float64) {
+	if si == nil || pos == nil {
+		return nil, -1, nil, 0
+	}
+	si.mu.RLock()
+	defer si.mu.RUnlock()
+
+	var bestCorridor *db.TrailCorridor
+	var bestWP *civquestv1.Vec3
+	bestIdx := -1
+	bestDist := maxDist
+	if bestDist <= 0 {
+		bestDist = 32.0
+	}
+
+	for _, c := range si.corridorsByID {
+		if c == nil || c.WaypointsJSON == "" {
+			continue
+		}
+		waypoints, err := DecodeWaypointsJSON(c.WaypointsJSON)
+		if err != nil || len(waypoints) == 0 {
+			continue
+		}
+		for idx, wp := range waypoints {
+			if wp == nil {
+				continue
+			}
+			d := Distance3D(pos, wp)
+			if d < bestDist {
+				bestDist = d
+				bestIdx = idx
+				bestWP = &civquestv1.Vec3{X: wp.X, Y: wp.Y, Z: wp.Z}
+				cp := *c
+				bestCorridor = &cp
+			}
+		}
+	}
+
+	if bestCorridor != nil {
+		return bestCorridor, bestIdx, bestWP, bestDist
+	}
+	return nil, -1, nil, 0
+}
+
+// FindPortalPOI searches for the nearest portal or elevation transition POI (such as an entrance,
+// campfire, habitation node, or staircase) within maxDist of pos.
+func (si *SpatialIndex) FindPortalPOI(pos *civquestv1.Vec3, maxDist float64) *db.AgentPOI {
+	if si == nil || pos == nil {
+		return nil
+	}
+	if poi := si.FindNearestPOI(pos, POICategorySettlement, "", maxDist, ""); poi != nil {
+		return poi
+	}
+	if poi := si.FindNearestPOI(pos, POICategoryHabitation, "campfire", maxDist, ""); poi != nil {
+		return poi
+	}
+	if poi := si.FindNearestPOI(pos, POICategoryHabitation, "", maxDist, ""); poi != nil {
+		return poi
+	}
+	return nil
+}

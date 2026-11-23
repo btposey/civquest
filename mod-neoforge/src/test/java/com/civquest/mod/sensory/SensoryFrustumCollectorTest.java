@@ -61,18 +61,18 @@ public class SensoryFrustumCollectorTest {
     void testDetermineWeather() {
         assertEquals(Weather.WEATHER_CLEAR, SensoryFrustumCollector.determineWeather(null));
 
-        Level thunderingLevel = mock(Level.class);
-        doReturn(true).when(thunderingLevel).isThundering();
+        net.minecraft.server.level.ServerLevel thunderingLevel = mock(net.minecraft.server.level.ServerLevel.class);
+        when(thunderingLevel.isThundering()).thenReturn(true);
         assertEquals(Weather.WEATHER_THUNDER, SensoryFrustumCollector.determineWeather(thunderingLevel));
 
-        Level rainingLevel = mock(Level.class);
-        doReturn(false).when(rainingLevel).isThundering();
-        doReturn(true).when(rainingLevel).isRaining();
+        net.minecraft.server.level.ServerLevel rainingLevel = mock(net.minecraft.server.level.ServerLevel.class);
+        when(rainingLevel.isThundering()).thenReturn(false);
+        when(rainingLevel.isRaining()).thenReturn(true);
         assertEquals(Weather.WEATHER_RAIN, SensoryFrustumCollector.determineWeather(rainingLevel));
 
-        Level clearLevel = mock(Level.class);
-        doReturn(false).when(clearLevel).isThundering();
-        doReturn(false).when(clearLevel).isRaining();
+        net.minecraft.server.level.ServerLevel clearLevel = mock(net.minecraft.server.level.ServerLevel.class);
+        when(clearLevel.isThundering()).thenReturn(false);
+        when(clearLevel.isRaining()).thenReturn(false);
         assertEquals(Weather.WEATHER_CLEAR, SensoryFrustumCollector.determineWeather(clearLevel));
     }
 

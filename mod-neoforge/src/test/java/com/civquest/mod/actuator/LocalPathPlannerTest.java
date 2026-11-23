@@ -80,18 +80,45 @@ public class LocalPathPlannerTest {
     }
 
     @Test
-    @DisplayName("Unreachable target leads to the nearest reachable cell with exit, not into the wall")
-    void unreachableTargetPicksNearestReachable() {
+    @DisplayName("ADR-026: Unreachable target behind solid barrier returns no path (no wall grinding)")
+    void unreachableTargetBehindWallReturnsNoPath() {
         Set<String> solids = new HashSet<>();
         for (int z = -20; z <= 20; z++) {
             wall(solids, 3, z, 64, 70); // infinite tall wall to the east
         }
         LocalPathPlanner.Result r = LocalPathPlanner.plan(world(solids, Set.of()),
                 new LocalPathPlanner.Cell(0, 64, 0), 10.5, 0.5, LocalPathPlanner.DEFAULT_RADIUS, null);
+        assertFalse(r.reachedTarget(), "Target behind solid wall must not be reached");
+        assertFalse(r.hasPath(), "ADR-026: Must reject path into solid wall, avoiding wall grinding");
+    }
+
+    @Test
+    @DisplayName("ADR-026: Distant overhead target from flat ground returns no path without vertical shaft")
+    void overheadTargetWithoutShaftReturnsNoPath() {
+        // Flat floor at y=64, target high in sky at y=96 (overhead tree stand)
+        LocalPathPlanner.Result r = LocalPathPlanner.plan(world(Set.of(), Set.of()),
+                new LocalPathPlanner.Cell(0, 64, 0), 10.5, 96.0, 0.5, LocalPathPlanner.DEFAULT_RADIUS, null);
         assertFalse(r.reachedTarget());
-        assertFalse(r.enclosed());
-        assertTrue(r.hasPath());
-        assertEquals(2, r.path().get(r.path().size() - 1).x(), "ends adjacent to the wall");
+        assertFalse(r.hasPath(), "ADR-026: Flat floor with no climbables must reject distant overhead target");
+    }
+
+    @Test
+    @DisplayName("ADR-026: Target within local radius inside closed room returns no path (no wall grinding)")
+    void localTargetInClosedRoomReturnsNoPath() {
+        Set<String> solids = new HashSet<>();
+        // Enclose target (3, 64, 0) inside solid walls:
+        wall(solids, 2, -1, 64, 66);
+        wall(solids, 2, 0, 64, 66);
+        wall(solids, 2, 1, 64, 66);
+        wall(solids, 4, -1, 64, 66);
+        wall(solids, 4, 0, 64, 66);
+        wall(solids, 4, 1, 64, 66);
+        wall(solids, 3, -1, 64, 66);
+        wall(solids, 3, 1, 64, 66);
+        LocalPathPlanner.Result r = LocalPathPlanner.plan(world(solids, Set.of()),
+                new LocalPathPlanner.Cell(0, 64, 0), 3.5, 64.0, 0.5, LocalPathPlanner.DEFAULT_RADIUS, null);
+        assertFalse(r.reachedTarget(), "Target inside closed room must not be reached");
+        assertFalse(r.hasPath(), "ADR-026: Unreachable target within radius must return empty path to prevent wall grinding");
     }
 
     @Test

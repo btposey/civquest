@@ -272,15 +272,24 @@ func EvaluateSleep(agentID string, frame *civquestv1.TelemetryFrame, state *Agen
 			}
 			if (!hasBed || !hasShelter) && frame.Status.Position != nil {
 				if si := state.SpatialIndex(); si != nil {
+					agentLayer := ClassifyElevationLayer(frame.Status.Position.Y, 64.0)
 					if !hasBed {
-						if poi := si.FindNearestPOI(frame.Status.Position, POICategoryHabitation, "bed", 64.0, ElevationSurface); poi != nil && poi.Reliability >= 0.5 {
+						poi := si.FindNearestPOI(frame.Status.Position, POICategoryHabitation, "bed", 64.0, agentLayer)
+						if poi == nil {
+							poi = si.FindNearestPOI(frame.Status.Position, POICategoryHabitation, "bed", 64.0, "")
+						}
+						if poi != nil && poi.Reliability >= 0.5 {
 							state.SetAssignedBed(poiBlockPos(poi))
 							recalledBedPOI = poi
 							hasBed = true
 						}
 					}
 					if !hasShelter {
-						if poi := si.FindNearestPOI(frame.Status.Position, POICategoryHabitation, "campfire", 64.0, ElevationSurface); poi != nil && poi.Reliability >= 0.5 {
+						poi := si.FindNearestPOI(frame.Status.Position, POICategoryHabitation, "campfire", 64.0, agentLayer)
+						if poi == nil {
+							poi = si.FindNearestPOI(frame.Status.Position, POICategoryHabitation, "campfire", 64.0, "")
+						}
+						if poi != nil && poi.Reliability >= 0.5 {
 							state.SetShelterPos(poiBlockPos(poi))
 							hasShelter = true
 						}
@@ -385,7 +394,12 @@ func EvaluateSleep(agentID string, frame *civquestv1.TelemetryFrame, state *Agen
 		}
 		if recalledBedPOI == nil && state != nil {
 			if si := state.SpatialIndex(); si != nil {
-				if poi := si.FindNearestPOI(agentPos, POICategoryHabitation, "bed", 64.0, ElevationSurface); poi != nil && poi.Reliability >= 0.5 {
+				agentLayer := ClassifyElevationLayer(agentPos.Y, 64.0)
+				poi := si.FindNearestPOI(agentPos, POICategoryHabitation, "bed", 64.0, agentLayer)
+				if poi == nil {
+					poi = si.FindNearestPOI(agentPos, POICategoryHabitation, "bed", 64.0, "")
+				}
+				if poi != nil && poi.Reliability >= 0.5 {
 					bpos := poiBlockPos(poi)
 					if bpos.X == bedPos.X && bpos.Y == bedPos.Y && bpos.Z == bedPos.Z {
 						recalledBedPOI = poi

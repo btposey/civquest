@@ -155,6 +155,8 @@ public final class LocalPathPlanner {
         double closestDist = hasTargetY
                 ? distSq3D(start.x, start.y, start.z, tx, ty, tz)
                 : distSq(start.x, start.z, tx, tz);
+        Node bestBorderNode = null;
+        double bestBorderDist = Double.MAX_VALUE;
         boolean reached = false;
         boolean touchedBorder = false;
         int explored = 0;
@@ -181,8 +183,13 @@ public final class LocalPathPlanner {
                 closest = cur;
                 break;
             }
-            if (Math.abs(cur.cell.x - start.x) >= radius || Math.abs(cur.cell.z - start.z) >= radius) {
+            boolean onBorder = Math.abs(cur.cell.x - start.x) >= radius || Math.abs(cur.cell.z - start.z) >= radius;
+            if (onBorder) {
                 touchedBorder = true;
+                if (d < bestBorderDist) {
+                    bestBorderDist = d;
+                    bestBorderNode = cur;
+                }
                 continue;
             }
             int cx = cur.cell.x;
@@ -236,10 +243,41 @@ public final class LocalPathPlanner {
 
         boolean enclosed = !reached && !touchedBorder && explored <= ENCLOSED_MAX_CELLS;
         List<Cell> path = new ArrayList<>();
-        for (Node n = closest; n != null && n.parent != null; n = n.parent) {
-            path.add(n.cell);
+
+        // ADR-026: Strict elimination of direct unreachable fallback (no ceiling or wall grinding).
+        // Only return a path when:
+        // 1. The target was reached (reached == true), OR
+        // 2. The target is beyond local radius horizontally, a border cell was reached (touchedBorder == true),
+        //    the best border cell reduces horizontal distance to the target compared to start,
+        //    and if hasTargetY and vertical difference is large (> 4), the border cell made vertical progress.
+        boolean allowPartialPath = false;
+        Node targetNode = closest;
+        if (!reached && touchedBorder && bestBorderNode != null) {
+            boolean targetBeyondRadius = Math.abs(tx - start.x) > radius || Math.abs(tz - start.z) > radius;
+            if (targetBeyondRadius) {
+                double startDistSq = distSq(start.x, start.z, tx, tz);
+                double borderDistSq = distSq(bestBorderNode.cell.x, bestBorderNode.cell.z, tx, tz);
+                if (borderDistSq < startDistSq - 1e-5) {
+                    if (hasTargetY && Math.abs(ty - start.y) > 4) {
+                        boolean verticalProgress = Math.abs(bestBorderNode.cell.y - ty) < Math.abs(start.y - ty);
+                        if (verticalProgress) {
+                            allowPartialPath = true;
+                            targetNode = bestBorderNode;
+                        }
+                    } else {
+                        allowPartialPath = true;
+                        targetNode = bestBorderNode;
+                    }
+                }
+            }
         }
-        Collections.reverse(path);
+
+        if (reached || allowPartialPath) {
+            for (Node n = targetNode; n != null && n.parent != null; n = n.parent) {
+                path.add(n.cell);
+            }
+            Collections.reverse(path);
+        }
         return new Result(path, reached, enclosed, explored);
     }
 
