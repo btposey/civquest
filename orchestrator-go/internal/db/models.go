@@ -325,3 +325,35 @@ type AssemblyBallotTally struct {
 	TotalWeight float64 `json:"total_weight"`
 	VoteCount   int     `json:"vote_count"`
 }
+
+// AgentPOI represents a persistent Point of Interest (workstation, container, bed, resource, or hazard)
+// discovered by an agent. Stored in map_graph.db in the agent_pois table per ADR-022.
+type AgentPOI struct {
+	POIID            string  `json:"poi_id"`
+	Category         string  `json:"category"` // 'WORKSTATION', 'CONTAINER', 'HABITATION', 'RESOURCE', 'HAZARD', 'CROP'
+	BlockID          string  `json:"block_id"` // e.g. 'minecraft:crafting_table'
+	X                float64 `json:"x"`
+	Y                float64 `json:"y"`
+	Z                float64 `json:"z"`
+	AccessX          float64 `json:"access_x"`
+	AccessY          float64 `json:"access_y"`
+	AccessZ          float64 `json:"access_z"`
+	ElevationLayer   string  `json:"elevation_layer"` // 'SURFACE', 'DUGOUT', 'UNDERGROUND', 'ELEVATED'
+	SafetyScore      float64 `json:"safety_score"`    // [0.0 - 1.0]
+	DiscoveredTick   int64   `json:"discovered_tick"`
+	LastVerifiedTick int64   `json:"last_verified_tick"`
+	Reliability      float64 `json:"reliability"`
+	IsActive         bool    `json:"is_active"`
+}
+
+// TrailCorridor represents a learned breadcrumb waypoint path connecting two POIs.
+// Stored in map_graph.db in the trail_corridors table per ADR-022.
+type TrailCorridor struct {
+	ID            string  `json:"id"`
+	FromPOIID     string  `json:"from_poi_id"`
+	ToPOIID       string  `json:"to_poi_id"`
+	WaypointsJSON string  `json:"waypoints_json"` // JSON array of [x, y, z]
+	TotalDistance float64 `json:"total_distance"`
+	IsPaved       bool    `json:"is_paved"`
+	TraverseCount int64   `json:"traverse_count"`
+}

@@ -15,6 +15,7 @@ import net.minecraft.server.level.ServerLevel;
 import net.minecraft.tags.DamageTypeTags;
 import net.minecraft.tags.EntityTypeTags;
 import net.minecraft.world.damagesource.DamageSource;
+import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.item.enchantment.EnchantmentHelper;
 import net.minecraft.world.level.ChunkPos;
@@ -39,6 +40,30 @@ import java.util.function.Consumer;
  */
 public class AgentEntity extends FakePlayer {
     private static final Logger LOGGER = LogUtils.getLogger();
+    private static final float BASAL_METABOLIC_EXHAUSTION = 0.002F;
+    private static final float MOVEMENT_EXHAUSTION = 0.01F;
+    private static final java.lang.reflect.Field SPAWN_INVULNERABLE_TIME_FIELD = resolveSpawnInvulnerableField();
+
+    private static java.lang.reflect.Field resolveSpawnInvulnerableField() {
+        try {
+            java.lang.reflect.Field f = net.minecraft.server.level.ServerPlayer.class.getDeclaredField("spawnInvulnerableTime");
+            f.setAccessible(true);
+            return f;
+        } catch (Throwable t) {
+            LOGGER.warn("Could not resolve ServerPlayer.spawnInvulnerableTime field: {}", t.getMessage());
+            return null;
+        }
+    }
+
+    private void clearSpawnInvulnerability() {
+        if (SPAWN_INVULNERABLE_TIME_FIELD != null) {
+            try {
+                SPAWN_INVULNERABLE_TIME_FIELD.setInt(this, 0);
+            } catch (Throwable t) {
+                LOGGER.warn("Failed to clear spawnInvulnerableTime for agent '{}': {}", agentId, t.getMessage());
+            }
+        }
+    }
 
     private final String agentId;
     private final String clanId;
@@ -47,6 +72,7 @@ public class AgentEntity extends FakePlayer {
     private ChunkPos forcedChunkPos;
     private StreamRegistry streamRegistry;
     private SensoryFrustumCollector sensoryCollector;
+    private com.civquest.mod.actuator.IntentActuator intentActuator;
     private final AgentNavigator navigator;
     private final com.civquest.mod.actuator.BlockBreaker breaker = new com.civquest.mod.actuator.BlockBreaker(this);
     private final AgentMotorFSM motorFSM;
@@ -103,6 +129,8 @@ public class AgentEntity extends FakePlayer {
         super(level, profile);
         this.agentId = agentId;
         this.clanId = clanId;
+        // FakePlayer.tick() is empty so ServerPlayer.spawnInvulnerableTime (60) never decrements; clear it immediately.
+        clearSpawnInvulnerability();
         this.navigator = new AgentNavigator(this);
         this.motorFSM = new AgentMotorFSM(this);
         this.watchdogFSM = new AgentWatchdogFSM(this);
@@ -135,6 +163,10 @@ public class AgentEntity extends FakePlayer {
         super.tick();
         if (!this.level().isClientSide) {
             try {
+                // LivingEntity.baseTick() skips ServerPlayer invulnerableTime countdown because ServerPlayer.tick() normally handles it.
+                if (this.invulnerableTime > 0) {
+                    this.invulnerableTime--;
+                }
                 if (this.watchdogFSM != null) {
                     this.watchdogFSM.tick();
                 }
@@ -148,12 +180,21 @@ public class AgentEntity extends FakePlayer {
                         this.navigator.tick();
                     }
                 }
+                if (this.intentActuator != null) {
+                    this.intentActuator.tick(this);
+                }
                 if (this.isAlive() && !this.isSleeping() && !this.breaker.isBreaking()
                         && (this.navigator == null || this.navigator.getNavigationState() != com.civquest.mod.grpc.v1.NavigationState.NAVIGATION_STATE_PATHING)) {
                     updateIdleSocialGaze();
                 }
                 if (this.tickCount % 10 == 0 && this.isAlive()) {
                     tryPickupNearbyItems();
+                }
+                if (this.isAlive()) {
+                    this.causeFoodExhaustion(BASAL_METABOLIC_EXHAUSTION);
+                    if (this.getDeltaMovement().horizontalDistanceSqr() > 0.001) {
+                        this.causeFoodExhaustion(MOVEMENT_EXHAUSTION);
+                    }
                 }
                 // Execute player tick logic (which FakePlayer stubbed out, including FoodData tick at 20 Hz)
                 this.doTick();
@@ -366,6 +407,27 @@ public class AgentEntity extends FakePlayer {
     }
 
     @Override
+    public boolean canCollideWith(Entity other) {
+        if (other instanceof AgentEntity) {
+            return false;
+        }
+        return super.canCollideWith(other);
+    }
+
+    @Override
+    public boolean canBeCollidedWith() {
+        return false;
+    }
+
+    @Override
+    public void push(Entity other) {
+        if (other instanceof AgentEntity) {
+            return;
+        }
+        super.push(other);
+    }
+
+    @Override
     public boolean canUsePortal(boolean allowVehicles) {
         // Autonomous agents are tethered to their assigned dimension
         return false;
@@ -396,8 +458,31 @@ public class AgentEntity extends FakePlayer {
     }
 
     @Override
+    public boolean hurt(DamageSource source, float amount) {
+        clearSpawnInvulnerability();
+        boolean hurt = super.hurt(source, amount);
+        if (hurt && this.level() != null && !this.level().isClientSide && this.isAlive()
+                && this.motorFSM != null && source != null) {
+            boolean hazardSource = source.getEntity() != null
+                    || source.getDirectEntity() instanceof net.minecraft.world.entity.projectile.Projectile;
+            if (hazardSource) {
+                this.motorFSM.preemptWithCombatReflex("damage_reflex_" + source.getMsgId());
+            }
+        }
+        return hurt;
+    }
+
+    @Override
     public boolean canHarmPlayer(Player other) {
+        if (other == null) {
+            return false;
+        }
         if (this.getServer() != null && !this.getServer().isPvpAllowed()) {
+            return false;
+        }
+        if (other instanceof AgentEntity otherAgent
+                && this.clanId != null && !this.clanId.isBlank()
+                && this.clanId.equals(otherAgent.clanId)) {
             return false;
         }
         Team team = this.getTeam();
@@ -407,17 +492,22 @@ public class AgentEntity extends FakePlayer {
                 return false;
             }
         }
-        return super.canHarmPlayer(other);
+        return true;
     }
 
     @Override
     public void die(DamageSource cause) {
+        if (this.isRemoved() || this.dead) {
+            return;
+        }
+        String causeMsg = cause != null ? cause.getLocalizedDeathMessage(this).getString() : "unknown";
         LOGGER.info("AgentEntity died: agentId='{}', clanId='{}', cause='{}'",
-                agentId, clanId, cause.getLocalizedDeathMessage(this).getString());
+                agentId, clanId, causeMsg);
 
         if (CommonHooks.onLivingDeath(this, cause)) {
             return;
         }
+        this.dead = true;
 
         this.gameEvent(GameEvent.ENTITY_DIE);
 
@@ -552,6 +642,14 @@ public class AgentEntity extends FakePlayer {
 
     public void setSensoryCollector(SensoryFrustumCollector sensoryCollector) {
         this.sensoryCollector = sensoryCollector;
+    }
+
+    public com.civquest.mod.actuator.IntentActuator getIntentActuator() {
+        return intentActuator;
+    }
+
+    public void setIntentActuator(com.civquest.mod.actuator.IntentActuator intentActuator) {
+        this.intentActuator = intentActuator;
     }
 
     public void setTelemetryContext(StreamRegistry streamRegistry, SensoryFrustumCollector sensoryCollector) {

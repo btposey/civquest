@@ -58,6 +58,14 @@ public class BlockBreaker {
         return progress;
     }
 
+    public int getTicks() {
+        return ticks;
+    }
+
+    public int getLastStage() {
+        return lastStage;
+    }
+
     /** Index of the inventory slot whose item mines {@code state} fastest, or -1 if nothing beats bare hands. */
     public static int bestToolSlot(AgentEntity agent, BlockState state) {
         int best = -1;
@@ -135,6 +143,39 @@ public class BlockBreaker {
         return true;
     }
 
+    /**
+     * Resumes breaking {@code target} from previously saved progress and tick count
+     * (used by MotorPDA stack restoration after reflex preemption).
+     */
+    public boolean resume(BlockPos target, float savedProgress, int savedTicks) {
+        Level level = agent.level();
+        if (!isBreakable(level, target)) {
+            return false;
+        }
+        if (agent.distanceToSqr(target.getX() + 0.5, target.getY() + 0.5, target.getZ() + 0.5) > REACH_SQ) {
+            return false;
+        }
+        cancel();
+        BlockState state = level.getBlockState(target);
+        equipBestTool(agent, state);
+        this.pos = target.immutable();
+        this.progress = Math.max(0.0F, savedProgress);
+        this.ticks = Math.max(0, savedTicks);
+        this.lastStage = (int) (this.progress * 10.0F);
+        double dx = target.getX() + 0.5 - agent.getX();
+        double dy = target.getY() + 0.5 - agent.getEyeY();
+        double dz = target.getZ() + 0.5 - agent.getZ();
+        float yaw = (float) (Math.atan2(dz, dx) * (180.0 / Math.PI)) - 90.0F;
+        float pitch = (float) -(Math.atan2(dy, Math.max(0.001, Math.sqrt(dx * dx + dz * dz))) * (180.0 / Math.PI));
+        agent.setYRot(yaw);
+        agent.setYHeadRot(yaw);
+        agent.setXRot(pitch);
+        if (this.progress > 0.0F && this.progress < 1.0F) {
+            level.destroyBlockProgress(agent.getId(), this.pos, this.lastStage);
+        }
+        return true;
+    }
+
     public void cancel() {
         if (pos != null) {
             try {
@@ -197,6 +238,7 @@ public class BlockBreaker {
             if (broken) {
                 agent.swing(InteractionHand.MAIN_HAND, true);
                 agent.tryPickupNearbyItems();
+                agent.causeFoodExhaustion(0.025F);
             }
             return broken;
         }

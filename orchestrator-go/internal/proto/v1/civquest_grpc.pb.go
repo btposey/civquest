@@ -32,7 +32,7 @@ const (
 // CivQuestBridgeService defines the gRPC bridge between the Minecraft NeoForge mod and external orchestrators.
 type CivQuestBridgeServiceClient interface {
 	// Primary per-agent bidirectional control and telemetry stream
-	ConnectAgent(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[AgentIntent, TelemetryFrame], error)
+	ConnectAgent(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[IntentBatch, TelemetryFrame], error)
 	// Administrative RPCs called by cq supervisor
 	SpawnAgentEntity(ctx context.Context, in *SpawnAgentRequest, opts ...grpc.CallOption) (*SpawnAgentResponse, error)
 	DespawnAgentEntity(ctx context.Context, in *DespawnAgentRequest, opts ...grpc.CallOption) (*DespawnAgentResponse, error)
@@ -47,18 +47,18 @@ func NewCivQuestBridgeServiceClient(cc grpc.ClientConnInterface) CivQuestBridgeS
 	return &civQuestBridgeServiceClient{cc}
 }
 
-func (c *civQuestBridgeServiceClient) ConnectAgent(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[AgentIntent, TelemetryFrame], error) {
+func (c *civQuestBridgeServiceClient) ConnectAgent(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[IntentBatch, TelemetryFrame], error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	stream, err := c.cc.NewStream(ctx, &CivQuestBridgeService_ServiceDesc.Streams[0], CivQuestBridgeService_ConnectAgent_FullMethodName, cOpts...)
 	if err != nil {
 		return nil, err
 	}
-	x := &grpc.GenericClientStream[AgentIntent, TelemetryFrame]{ClientStream: stream}
+	x := &grpc.GenericClientStream[IntentBatch, TelemetryFrame]{ClientStream: stream}
 	return x, nil
 }
 
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
-type CivQuestBridgeService_ConnectAgentClient = grpc.BidiStreamingClient[AgentIntent, TelemetryFrame]
+type CivQuestBridgeService_ConnectAgentClient = grpc.BidiStreamingClient[IntentBatch, TelemetryFrame]
 
 func (c *civQuestBridgeServiceClient) SpawnAgentEntity(ctx context.Context, in *SpawnAgentRequest, opts ...grpc.CallOption) (*SpawnAgentResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
@@ -97,7 +97,7 @@ func (c *civQuestBridgeServiceClient) ExportRecipeGraph(ctx context.Context, in 
 // CivQuestBridgeService defines the gRPC bridge between the Minecraft NeoForge mod and external orchestrators.
 type CivQuestBridgeServiceServer interface {
 	// Primary per-agent bidirectional control and telemetry stream
-	ConnectAgent(grpc.BidiStreamingServer[AgentIntent, TelemetryFrame]) error
+	ConnectAgent(grpc.BidiStreamingServer[IntentBatch, TelemetryFrame]) error
 	// Administrative RPCs called by cq supervisor
 	SpawnAgentEntity(context.Context, *SpawnAgentRequest) (*SpawnAgentResponse, error)
 	DespawnAgentEntity(context.Context, *DespawnAgentRequest) (*DespawnAgentResponse, error)
@@ -112,7 +112,7 @@ type CivQuestBridgeServiceServer interface {
 // pointer dereference when methods are called.
 type UnimplementedCivQuestBridgeServiceServer struct{}
 
-func (UnimplementedCivQuestBridgeServiceServer) ConnectAgent(grpc.BidiStreamingServer[AgentIntent, TelemetryFrame]) error {
+func (UnimplementedCivQuestBridgeServiceServer) ConnectAgent(grpc.BidiStreamingServer[IntentBatch, TelemetryFrame]) error {
 	return status.Error(codes.Unimplemented, "method ConnectAgent not implemented")
 }
 func (UnimplementedCivQuestBridgeServiceServer) SpawnAgentEntity(context.Context, *SpawnAgentRequest) (*SpawnAgentResponse, error) {
@@ -146,11 +146,11 @@ func RegisterCivQuestBridgeServiceServer(s grpc.ServiceRegistrar, srv CivQuestBr
 }
 
 func _CivQuestBridgeService_ConnectAgent_Handler(srv interface{}, stream grpc.ServerStream) error {
-	return srv.(CivQuestBridgeServiceServer).ConnectAgent(&grpc.GenericServerStream[AgentIntent, TelemetryFrame]{ServerStream: stream})
+	return srv.(CivQuestBridgeServiceServer).ConnectAgent(&grpc.GenericServerStream[IntentBatch, TelemetryFrame]{ServerStream: stream})
 }
 
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
-type CivQuestBridgeService_ConnectAgentServer = grpc.BidiStreamingServer[AgentIntent, TelemetryFrame]
+type CivQuestBridgeService_ConnectAgentServer = grpc.BidiStreamingServer[IntentBatch, TelemetryFrame]
 
 func _CivQuestBridgeService_SpawnAgentEntity_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(SpawnAgentRequest)

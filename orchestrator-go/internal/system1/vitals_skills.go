@@ -79,6 +79,8 @@ func (s *CombatDefenseSkill) Preconditions(facts *FactGraph) bool {
 	return facts.GetBool("threat.hostiles_present") ||
 		facts.GetBool("threat.should_panic") ||
 		facts.GetBool("threat.damage_taken") ||
+		facts.GetBool("threat.is_drowning") ||
+		facts.GetString("threat.threatType") == "DROWNING" ||
 		facts.GetBool("vitals.is_on_fire")
 }
 

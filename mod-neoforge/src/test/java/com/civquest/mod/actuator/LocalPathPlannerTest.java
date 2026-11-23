@@ -161,4 +161,96 @@ public class LocalPathPlannerTest {
         assertEquals(60.0f, LookSmoothing.clampBodyToHead(170.0f, 0.0f, 60.0f), 1e-4);
         assertEquals(6.0f, LookSmoothing.approachLinear(0.0f, 100.0f, 0.5f, 6.0f), 1e-4);
     }
+
+    @Test
+    @DisplayName("Climbable shafts allow descending and ascending more than MAX_DROP blocks")
+    void climbableShaftDescentAndAscent() {
+        // Upper plateau at y=70 (solid y<=69) for x<=1, cliff wall at x=2 (solid y<=75) except
+        // for a single climbable ladder shaft at x=2, z=0 (climbable y=64..69, floor y<=63),
+        // with doorway walls at x=3, z=0 (y=66..71) leading onto lower floor y=64 (solid y<=63) for x>=3.
+        LocalPathPlanner.World shaftWorld = new LocalPathPlanner.World() {
+            @Override
+            public boolean solid(int x, int y, int z) {
+                if (x == 2) {
+                    return z == 0 ? y <= 63 : y <= 75;
+                }
+                if (x == 3 && z == 0) {
+                    return y <= 63 || (y >= 66 && y <= 71);
+                }
+                if (x <= 1) {
+                    return y <= 69;
+                }
+                return y <= 63;
+            }
+
+            @Override
+            public boolean hazard(int x, int y, int z) {
+                return false;
+            }
+
+            @Override
+            public boolean climbable(int x, int y, int z) {
+                return x == 2 && z == 0 && y >= 64 && y <= 69;
+            }
+        };
+
+        // Descend from (0, 70, 0) down the 6-block shaft to (4, 64, 0)
+        LocalPathPlanner.Result down = LocalPathPlanner.plan(shaftWorld,
+                new LocalPathPlanner.Cell(0, 70, 0), 4.5, 64.0, 0.5, LocalPathPlanner.DEFAULT_RADIUS, null);
+        assertTrue(down.reachedTarget(), "Planner must descend 6-block climbable shaft to target");
+        assertFalse(down.enclosed());
+        assertTrue(down.path().stream().anyMatch(c -> c.x() == 2 && c.y() == 65 && c.z() == 0),
+                "Path must traverse ladder shaft vertically: " + down.path());
+
+        // Ascend from (4, 64, 0) up the 6-block shaft to (0, 70, 0)
+        LocalPathPlanner.Result up = LocalPathPlanner.plan(shaftWorld,
+                new LocalPathPlanner.Cell(4, 64, 0), 0.5, 70.0, 0.5, LocalPathPlanner.DEFAULT_RADIUS, null);
+        assertTrue(up.reachedTarget(), "Planner must ascend 6-block climbable shaft to target");
+        assertFalse(up.enclosed());
+        assertTrue(up.path().stream().anyMatch(c -> c.x() == 2 && c.y() == 67 && c.z() == 0),
+                "Path must climb ladder shaft vertically: " + up.path());
+    }
+
+    @Test
+    @DisplayName("Planner prefers dry land over plunging into deep water (>2 blocks) unless target is in water")
+    void deepWaterAvoidedUnlessTargetInWater() {
+        // Deep water pool (4 blocks deep: y=60..63 water, floor at y=59) at x in [2..4], z in [-1..1]
+        // Dry land surrounds it at z=2 and z=-2 (floor y<=63)
+        LocalPathPlanner.World pondWorld = new LocalPathPlanner.World() {
+            private boolean inPool(int x, int z) {
+                return x >= 2 && x <= 4 && z >= -1 && z <= 1;
+            }
+
+            @Override
+            public boolean solid(int x, int y, int z) {
+                if (inPool(x, z)) {
+                    return y <= 59;
+                }
+                return y <= 63;
+            }
+
+            @Override
+            public boolean hazard(int x, int y, int z) {
+                return false;
+            }
+
+            @Override
+            public boolean water(int x, int y, int z) {
+                return inPool(x, z) && y >= 60 && y <= 63;
+            }
+        };
+
+        // 1. Target on dry land across the deep pond -> must route around on dry land
+        LocalPathPlanner.Result dryRoute = LocalPathPlanner.plan(pondWorld,
+                new LocalPathPlanner.Cell(0, 64, 0), 6.5, 64.0, 0.5, LocalPathPlanner.DEFAULT_RADIUS, null);
+        assertTrue(dryRoute.reachedTarget());
+        assertTrue(dryRoute.path().stream().noneMatch(c -> LocalPathPlanner.isDeepWater(pondWorld, c.x(), c.y(), c.z())),
+                "Path to dry-land target must prefer dry land over deep water: " + dryRoute.path());
+
+        // 2. Target inside the deep pond -> allowed to swim to target
+        LocalPathPlanner.Result waterTargetRoute = LocalPathPlanner.plan(pondWorld,
+                new LocalPathPlanner.Cell(0, 64, 0), 3.5, 63.0, 0.5, LocalPathPlanner.DEFAULT_RADIUS, null);
+        assertTrue(waterTargetRoute.reachedTarget(),
+                "Path to an in-water target must still reach the water cell");
+    }
 }

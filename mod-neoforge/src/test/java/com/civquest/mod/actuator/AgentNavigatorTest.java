@@ -23,11 +23,7 @@ public class AgentNavigatorTest {
 
     @BeforeAll
     static void initMinecraft() {
-        try {
-            net.minecraft.SharedConstants.tryDetectVersion();
-            net.minecraft.server.Bootstrap.bootStrap();
-        } catch (Throwable ignored) {
-        }
+        com.civquest.mod.test.MinecraftTestBootstrap.ensureBootstrapped();
     }
 
     @Test
@@ -348,10 +344,372 @@ public class AgentNavigatorTest {
     }
 
     @Test
+    @DisplayName("Approaching and descending a ladder/vine shaft avoids cliff freeze, clears sneak, and slides down smoothly")
+    void testLadderAndVineDescentDoesNotTriggerCliffOrSneak() {
+        AgentEntity agent = mock(AgentEntity.class);
+        Level level = mock(Level.class);
+        when(agent.level()).thenReturn(level);
+        AtomicReference<Vec3> posRef = new AtomicReference<>(new Vec3(0.5, 70.0, 0.5));
+        when(agent.position()).thenAnswer(inv -> posRef.get());
+        when(agent.getDeltaMovement()).thenReturn(Vec3.ZERO);
+        when(agent.onGround()).thenReturn(false);
+        when(agent.onClimbable()).thenReturn(true);
+        when(agent.getYRot()).thenReturn(0.0f);
+        when(level.hasChunkAt(any(BlockPos.class))).thenReturn(true);
+
+        BlockState airBlock = mock(BlockState.class);
+        when(airBlock.isAir()).thenReturn(true);
+        when(airBlock.getCollisionShape(any(), any())).thenReturn(Shapes.empty());
+
+        BlockState ladderBlock = mock(BlockState.class);
+        when(ladderBlock.isAir()).thenReturn(false);
+        when(ladderBlock.is(net.minecraft.tags.BlockTags.CLIMBABLE)).thenReturn(true);
+        when(ladderBlock.getCollisionShape(any(), any())).thenReturn(Shapes.block());
+
+        BlockState solidFloor = mock(BlockState.class);
+        when(solidFloor.isAir()).thenReturn(false);
+        when(solidFloor.getCollisionShape(any(), any())).thenReturn(Shapes.block());
+
+        // Ladder shaft at (0, 64..70, 0) with floor at y=63
+        when(level.getBlockState(any(BlockPos.class))).thenAnswer(inv -> {
+            BlockPos p = inv.getArgument(0);
+            if (p.getY() <= 63) {
+                return solidFloor;
+            }
+            if (p.getX() == 0 && p.getZ() == 0 && p.getY() <= 70) {
+                return ladderBlock;
+            }
+            return airBlock;
+        });
+
+        AtomicReference<Vec3> lastDelta = new AtomicReference<>(Vec3.ZERO);
+        doAnswer(inv -> {
+            lastDelta.set(inv.getArgument(0));
+            return null;
+        }).when(agent).setDeltaMovement(any(Vec3.class));
+        doAnswer(inv -> {
+            Vec3 move = inv.getArgument(1);
+            posRef.set(posRef.get().add(move));
+            return null;
+        }).when(agent).move(any(), any(Vec3.class));
+
+        AgentNavigator navigator = new AgentNavigator(agent);
+        navigator.navigate(0.5, 64.0, 0.5, 1.0f, false, false, false, 1);
+
+        // Run 25 ticks (more than the 16-tick stuck threshold) to ensure vertical climbing progress resets stuckTicks
+        for (int i = 0; i < 25; i++) {
+            navigator.tick();
+        }
+
+        assertFalse(navigator.isCliffDetected(), "Ladder/vine shaft must never trigger cliffDetected");
+        assertNotEquals(NavigationState.NAVIGATION_STATE_STUCK, navigator.getNavigationState(),
+                "Descending a climbable shaft must not enter STUCK state");
+        assertNotEquals(NavigationState.NAVIGATION_STATE_STUCK, navigator.getReportedNavigationState());
+        verify(agent, never()).setShiftKeyDown(true);
+        verify(agent, atLeastOnce()).setShiftKeyDown(false);
+        assertEquals(-0.15, lastDelta.get().y, 1e-6, "Descending on climbable must use -0.15 controlled slide vy");
+        assertTrue(posRef.get().y < 67.0, "Agent must descend smoothly down the shaft");
+    }
+
+    @Test
+    @DisplayName("Approaching a vine drop shaft from a ledge does not trigger cliffDetected")
+    void testApproachingVineShaftFromLedgeNotFlaggedAsCliff() {
+        AgentEntity agent = mock(AgentEntity.class);
+        Level level = mock(Level.class);
+        when(agent.level()).thenReturn(level);
+        when(agent.position()).thenReturn(new Vec3(0.5, 70.0, 0.0));
+        when(agent.getDeltaMovement()).thenReturn(Vec3.ZERO);
+        when(agent.onGround()).thenReturn(true);
+        when(agent.onClimbable()).thenReturn(false);
+        when(agent.getYRot()).thenReturn(0.0f); // Facing +Z
+        when(level.hasChunkAt(any(BlockPos.class))).thenReturn(true);
+
+        BlockState airBlock = mock(BlockState.class);
+        when(airBlock.isAir()).thenReturn(true);
+        when(airBlock.getCollisionShape(any(), any())).thenReturn(Shapes.empty());
+
+        BlockState vineBlock = mock(BlockState.class);
+        when(vineBlock.isAir()).thenReturn(false);
+        when(vineBlock.is(net.minecraft.tags.BlockTags.CLIMBABLE)).thenReturn(true);
+        when(vineBlock.is(net.minecraft.world.level.block.Blocks.VINE)).thenReturn(true);
+        when(vineBlock.getCollisionShape(any(), any())).thenReturn(Shapes.empty());
+
+        // Vine shaft ahead along +Z at z=1 (y=64..69); no solid ground down to y=66
+        when(level.getBlockState(any(BlockPos.class))).thenAnswer(inv -> {
+            BlockPos p = inv.getArgument(0);
+            if (p.getZ() == 1 && p.getY() >= 64 && p.getY() <= 69) {
+                return vineBlock;
+            }
+            return airBlock;
+        });
+
+        AgentNavigator navigator = new AgentNavigator(agent);
+        navigator.navigate(0.5, 64.0, 1.5, 1.0f, false, false, false, 1);
+        navigator.tick();
+
+        assertFalse(navigator.isCliffDetected(), "Shaft containing vines must not trigger cliffDetected");
+        verify(agent, never()).setShiftKeyDown(true);
+    }
+
+    @Test
+    @DisplayName("Ascending a ladder/vine sets upward climb velocity vy = 0.20 without sneak lock")
+    void testLadderAscentSetsUpwardVelocity() {
+        AgentEntity agent = mock(AgentEntity.class);
+        Level level = mock(Level.class);
+        when(agent.level()).thenReturn(level);
+        when(agent.position()).thenReturn(new Vec3(0.5, 64.0, 0.5));
+        when(agent.getDeltaMovement()).thenReturn(Vec3.ZERO);
+        when(agent.onGround()).thenReturn(true);
+        when(agent.onClimbable()).thenReturn(true);
+        when(agent.getYRot()).thenReturn(0.0f);
+        when(level.hasChunkAt(any(BlockPos.class))).thenReturn(true);
+
+        BlockState ladderBlock = mock(BlockState.class);
+        when(ladderBlock.isAir()).thenReturn(false);
+        when(ladderBlock.is(net.minecraft.tags.BlockTags.CLIMBABLE)).thenReturn(true);
+        when(ladderBlock.getCollisionShape(any(), any())).thenReturn(Shapes.block());
+        when(level.getBlockState(any(BlockPos.class))).thenReturn(ladderBlock);
+
+        AtomicReference<Vec3> appliedDelta = new AtomicReference<>(Vec3.ZERO);
+        doAnswer(inv -> {
+            appliedDelta.set(inv.getArgument(0));
+            return null;
+        }).when(agent).setDeltaMovement(any(Vec3.class));
+
+        AgentNavigator navigator = new AgentNavigator(agent);
+        navigator.navigate(0.5, 72.0, 0.5, 1.0f, false, false, false, 1);
+        navigator.tick();
+
+        assertFalse(navigator.isCliffDetected());
+        verify(agent, never()).setShiftKeyDown(true);
+        verify(agent, atLeastOnce()).setShiftKeyDown(false);
+        assertEquals(0.20, appliedDelta.get().y, 1e-6, "Ascending on climbable must use 0.20 upward vy");
+    }
+
+    @Test
+    @DisplayName("In-water navigation applies upward swim buoyancy and prioritizes surfacing when air is low")
+    void testInWaterUpwardSwimAndBuoyancy() {
+        AgentEntity agent = mock(AgentEntity.class);
+        when(agent.level()).thenReturn(null);
+        when(agent.getYRot()).thenReturn(0.0f);
+        when(agent.isInWater()).thenReturn(true);
+        when(agent.onGround()).thenReturn(false);
+
+        AtomicReference<Vec3> appliedDelta = new AtomicReference<>(Vec3.ZERO);
+        doAnswer(inv -> {
+            appliedDelta.set(inv.getArgument(0));
+            return null;
+        }).when(agent).setDeltaMovement(any(Vec3.class));
+
+        // Case 1: Deep underwater (Y=39) with downward momentum (-0.3) swimming up to Y=41 -> vy = 0.15
+        when(agent.position()).thenReturn(new Vec3(0.5, 39.0, 0.5));
+        when(agent.getDeltaMovement()).thenReturn(new Vec3(0.0, -0.3, 0.0));
+        when(agent.getAirSupply()).thenReturn(300);
+        when(agent.isEyeInFluid(net.minecraft.tags.FluidTags.WATER)).thenReturn(false);
+        AgentNavigator nav = new AgentNavigator(agent);
+        nav.navigate(5.5, 41.0, 0.5, 1.0f, false, false, false, 1);
+        nav.tick();
+        assertEquals(0.15, appliedDelta.get().y, 1e-6, "Swimming toward higher Y must set upward vy = 0.15");
+        assertFalse(nav.isCliffDetected(), "In-water swimming must not trigger cliffDetected");
+
+        // Case 2: At water surface (target near current Y) -> surface buoyancy vy = 0.08
+        when(agent.position()).thenReturn(new Vec3(0.5, 63.0, 0.5));
+        when(agent.getDeltaMovement()).thenReturn(new Vec3(0.0, -0.2, 0.0));
+        nav.navigate(5.5, 63.0, 0.5, 1.0f, false, false, false, 1);
+        nav.tick();
+        assertEquals(0.08, appliedDelta.get().y, 1e-6, "Surface swimming must apply upward buoyancy >= 0.08");
+
+        // Case 3: Eyes submerged in water -> buoyancy >= 0.08 even when target is below
+        when(agent.position()).thenReturn(new Vec3(0.5, 50.0, 0.5));
+        when(agent.getDeltaMovement()).thenReturn(Vec3.ZERO);
+        when(agent.isEyeInFluid(net.minecraft.tags.FluidTags.WATER)).thenReturn(true);
+        nav.navigate(5.5, 48.0, 0.5, 1.0f, false, false, false, 1);
+        nav.tick();
+        assertTrue(appliedDelta.get().y >= 0.08 - 1e-6, "Submerged eyes must trigger upward buoyancy");
+
+        // Case 4: Low air supply (< 200) -> prioritize upward surfacing (>= 0.15)
+        when(agent.position()).thenReturn(new Vec3(0.5, 35.0, 0.5));
+        when(agent.isEyeInFluid(net.minecraft.tags.FluidTags.WATER)).thenReturn(false);
+        when(agent.getAirSupply()).thenReturn(150);
+        nav.navigate(5.5, 33.0, 0.5, 1.0f, false, false, false, 1);
+        nav.tick();
+        assertTrue(appliedDelta.get().y >= 0.15 - 1e-6, "Low air supply (<200) must prioritize upward surfacing");
+    }
+
+    @Test
+    @DisplayName("Shallow water is neither a hazard nor treated as a cliff")
+    void testShallowWaterNotHazardOrCliff() {
+        AgentEntity agent = mock(AgentEntity.class);
+        Level level = mock(Level.class);
+        when(agent.level()).thenReturn(level);
+        when(agent.position()).thenReturn(new Vec3(0.5, 64.0, 0.5));
+        when(agent.getDeltaMovement()).thenReturn(Vec3.ZERO);
+        when(agent.onGround()).thenReturn(true);
+        when(agent.isInWater()).thenReturn(false);
+        when(agent.getYRot()).thenReturn(-90.0f); // Facing +X
+        when(level.hasChunkAt(any(BlockPos.class))).thenReturn(true);
+
+        net.minecraft.world.level.material.FluidState waterFluid = mock(net.minecraft.world.level.material.FluidState.class);
+        when(waterFluid.is(net.minecraft.tags.FluidTags.WATER)).thenReturn(true);
+
+        BlockState solidBlock = mock(BlockState.class);
+        when(solidBlock.isAir()).thenReturn(false);
+        when(solidBlock.getCollisionShape(any(), any())).thenReturn(Shapes.block());
+
+        BlockState waterBlock = mock(BlockState.class);
+        when(waterBlock.isAir()).thenReturn(false);
+        when(waterBlock.getFluidState()).thenReturn(waterFluid);
+        when(waterBlock.getCollisionShape(any(), any())).thenReturn(Shapes.empty());
+
+        BlockState airBlock = mock(BlockState.class);
+        when(airBlock.isAir()).thenReturn(true);
+        when(airBlock.getCollisionShape(any(), any())).thenReturn(Shapes.empty());
+
+        // Shallow 1-block water at x=1, y=63 with solid floor at y=62; solid ground at x=0, y<=63
+        when(level.getBlockState(any(BlockPos.class))).thenAnswer(inv -> {
+            BlockPos p = inv.getArgument(0);
+            if (p.getX() >= 1 && p.getX() <= 2 && p.getY() == 63) {
+                return waterBlock;
+            }
+            if (p.getX() >= 1 && p.getX() <= 2 && p.getY() <= 62) {
+                return solidBlock;
+            }
+            if (p.getY() <= 63) {
+                return solidBlock;
+            }
+            return airBlock;
+        });
+
+        assertFalse(AgentNavigator.isBlockHazard(level, new BlockPos(1, 63, 0)),
+                "Shallow water must not be treated as a hazard");
+
+        AgentNavigator navigator = new AgentNavigator(agent);
+        navigator.navigate(5.5, 64.0, 0.5, 1.0f, false, false, false, 1);
+        navigator.tick();
+
+        assertFalse(navigator.isCliffDetected(), "Shallow water ahead must not trigger cliffDetected");
+        verify(agent, never()).setShiftKeyDown(true);
+    }
+
+    @Test
     @DisplayName("IntentActuator actuateCraftItem handles null arguments safely")
     void testActuateCraftItemNullSafe() {
         IntentActuator actuator = new IntentActuator();
         assertFalse(actuator.actuateCraftItem(null, null));
         assertFalse(actuator.actuateCraftItem(null, CraftItemIntent.newBuilder().setRecipeId("minecraft:wooden_axe").build()));
+    }
+
+    @Test
+    @DisplayName("isPassableDoor correctly classifies wooden doors, trapdoors, fence gates vs iron doors")
+    void testIsPassableDoorClassifications() {
+        assertFalse(AgentNavigator.isPassableDoor(null));
+
+        BlockState oakDoor = mock(BlockState.class);
+        when(oakDoor.is(net.minecraft.tags.BlockTags.WOODEN_DOORS)).thenReturn(true);
+        assertTrue(AgentNavigator.isPassableDoor(oakDoor));
+
+        BlockState oakTrapDoor = mock(BlockState.class);
+        when(oakTrapDoor.is(net.minecraft.tags.BlockTags.WOODEN_TRAPDOORS)).thenReturn(true);
+        assertTrue(AgentNavigator.isPassableDoor(oakTrapDoor));
+
+        BlockState fenceGate = mock(BlockState.class);
+        when(fenceGate.is(net.minecraft.tags.BlockTags.FENCE_GATES)).thenReturn(true);
+        assertTrue(AgentNavigator.isPassableDoor(fenceGate));
+
+        BlockState ironDoor = mock(BlockState.class);
+        when(ironDoor.is(net.minecraft.world.level.block.Blocks.IRON_DOOR)).thenReturn(true);
+        assertFalse(AgentNavigator.isPassableDoor(ironDoor));
+
+        BlockState ironTrapdoor = mock(BlockState.class);
+        when(ironTrapdoor.is(net.minecraft.world.level.block.Blocks.IRON_TRAPDOOR)).thenReturn(true);
+        assertFalse(AgentNavigator.isPassableDoor(ironTrapdoor));
+
+        BlockState stone = mock(BlockState.class);
+        when(stone.getBlock()).thenReturn(net.minecraft.world.level.block.Blocks.STONE);
+        assertFalse(AgentNavigator.isPassableDoor(stone));
+    }
+
+    @Test
+    @DisplayName("isClimbableState rejects wall vines unless target is ascending and block above is air")
+    void testIsClimbableStateWallVines() {
+        AgentEntity agent = mock(AgentEntity.class);
+        Level level = mock(Level.class);
+        when(agent.level()).thenReturn(level);
+        when(agent.position()).thenReturn(new Vec3(0.5, 64.0, 0.5));
+        when(level.hasChunkAt(any(BlockPos.class))).thenReturn(true);
+
+        BlockState vine = mock(BlockState.class);
+        when(vine.is(net.minecraft.world.level.block.Blocks.VINE)).thenReturn(true);
+        when(vine.isAir()).thenReturn(false);
+
+        BlockState air = mock(BlockState.class);
+        when(air.isAir()).thenReturn(true);
+        when(air.getCollisionShape(any(), any())).thenReturn(Shapes.empty());
+
+        BlockState solid = mock(BlockState.class);
+        when(solid.isAir()).thenReturn(false);
+        when(solid.getCollisionShape(any(), any())).thenReturn(Shapes.block());
+
+        BlockPos vinePos = new BlockPos(0, 64, 0);
+
+        AgentNavigator nav = new AgentNavigator(agent);
+
+        // 1. Horizontal movement: target at y=64 (not ascending) -> returns false
+        nav.navigate(10.0, 64.0, 0.5, 1.0f, false, false, false, 1);
+        when(level.getBlockState(vinePos.above())).thenReturn(air);
+        assertFalse(nav.isClimbableState(vine, level, vinePos), "Horizontal movement must not treat wall vines as climbable");
+
+        // 2. Ascending movement: target at y=70, block above is air -> returns true
+        nav.navigate(0.5, 70.0, 0.5, 1.0f, false, false, false, 1);
+        when(level.getBlockState(vinePos.above())).thenReturn(air);
+        assertTrue(nav.isClimbableState(vine, level, vinePos), "Ascending into open shaft must treat vines as climbable");
+
+        // 3. Ascending movement: target at y=70, but block directly above is solid ceiling -> returns false
+        when(level.getBlockState(vinePos.above())).thenReturn(solid);
+        assertFalse(nav.isClimbableState(vine, level, vinePos), "Ascending into closed ceiling must reject vines as climbable");
+    }
+
+    @Test
+    @DisplayName("Horizontal collision jumping is suppressed when headroom is less than 2.2m")
+    void testJumpSuppressedUnderLowHeadroom() {
+        AgentEntity agent = mock(AgentEntity.class);
+        Level level = mock(Level.class);
+        when(agent.level()).thenReturn(level);
+        when(agent.position()).thenReturn(new Vec3(0.0, 64.0, 0.0));
+        when(agent.getDeltaMovement()).thenReturn(Vec3.ZERO);
+        when(agent.onGround()).thenReturn(true);
+        when(level.hasChunkAt(any(BlockPos.class))).thenReturn(true);
+        agent.horizontalCollision = true;
+
+        BlockState solidBlock = mock(BlockState.class);
+        when(solidBlock.isAir()).thenReturn(false);
+        when(solidBlock.getCollisionShape(any(), any())).thenReturn(Shapes.block());
+
+        BlockState airBlock = mock(BlockState.class);
+        when(airBlock.isAir()).thenReturn(true);
+        when(airBlock.getCollisionShape(any(), any())).thenReturn(Shapes.empty());
+
+        // Low ceiling at y=66 (2.0m above feet at 64.0 -> headroom < 2.2m)
+        when(level.getBlockState(any(BlockPos.class))).thenAnswer(inv -> {
+            BlockPos pos = inv.getArgument(0);
+            if (pos.getY() == 66) {
+                return solidBlock;
+            }
+            return airBlock;
+        });
+
+        AtomicReference<Vec3> appliedDelta = new AtomicReference<>(Vec3.ZERO);
+        doAnswer(inv -> {
+            appliedDelta.set(inv.getArgument(0));
+            return null;
+        }).when(agent).setDeltaMovement(any(Vec3.class));
+
+        AgentNavigator navigator = new AgentNavigator(agent);
+        navigator.navigate(10.0, 64.0, 0.0, 1.0f, false, false, false, 1);
+        navigator.tick();
+
+        // Must NOT jump (vy must not be 0.42)
+        assertNotEquals(0.42, appliedDelta.get().y, 1e-4,
+                "Jumping must be suppressed when headroom is less than 2.2m");
     }
 }

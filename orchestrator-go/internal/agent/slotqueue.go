@@ -71,12 +71,13 @@ type slotEntry struct {
 // High-frequency duplicate intents overwrite older pending intents in the same slot.
 // PlaceBlockIntents bypass the slot map and pass through an ordered FIFO pipeline.
 type SlotQueue struct {
-	mu           sync.Mutex
-	slots        map[SlotKey]*slotEntry
-	placeBlocks  []*civquestv1.AgentIntent
-	passthrough  []*slotEntry
-	orderCounter uint64
-	notifyCh     chan struct{}
+	mu             sync.Mutex
+	slots          map[SlotKey]*slotEntry
+	placeBlocks    []*civquestv1.AgentIntent
+	passthrough    []*slotEntry
+	flushPeriphery bool
+	orderCounter   uint64
+	notifyCh       chan struct{}
 }
 
 // NewSlotQueue creates an initialized, thread-safe SlotQueue.
@@ -242,7 +243,7 @@ func (sq *SlotQueue) DrainSlots() []*civquestv1.AgentIntent {
 	sq.slots = make(map[SlotKey]*slotEntry)
 	sq.passthrough = nil
 
-	if len(sq.placeBlocks) == 0 {
+	if len(sq.placeBlocks) == 0 && !sq.flushPeriphery {
 		select {
 		case <-sq.notifyCh:
 		default:
@@ -263,7 +264,7 @@ func (sq *SlotQueue) PopPlaceBlock() *civquestv1.AgentIntent {
 	first := sq.placeBlocks[0]
 	sq.placeBlocks = sq.placeBlocks[1:]
 
-	if len(sq.placeBlocks) == 0 && len(sq.slots) == 0 && len(sq.passthrough) == 0 {
+	if len(sq.placeBlocks) == 0 && len(sq.slots) == 0 && len(sq.passthrough) == 0 && !sq.flushPeriphery {
 		select {
 		case <-sq.notifyCh:
 		default:
@@ -271,6 +272,54 @@ func (sq *SlotQueue) PopPlaceBlock() *civquestv1.AgentIntent {
 	}
 
 	return first
+}
+
+// MarkFlushPeriphery flags the next outbound IntentBatch to clear the motor stack
+// without immediately waking sendLoop so intents queued in the same tick batch together.
+func (sq *SlotQueue) MarkFlushPeriphery() {
+	sq.mu.Lock()
+	defer sq.mu.Unlock()
+	sq.flushPeriphery = true
+}
+
+// RequestFlushPeriphery flags the next outbound IntentBatch to clear the motor stack
+// and wakes sendLoop immediately.
+func (sq *SlotQueue) RequestFlushPeriphery() {
+	sq.mu.Lock()
+	defer sq.mu.Unlock()
+	sq.flushPeriphery = true
+	sq.notify()
+}
+
+// NotifyIfFlushPending wakes sendLoop if a periphery flush is still pending dispatch.
+func (sq *SlotQueue) NotifyIfFlushPending() {
+	sq.mu.Lock()
+	defer sq.mu.Unlock()
+	if sq.flushPeriphery {
+		sq.notify()
+	}
+}
+
+// ConsumeFlushPeriphery returns whether a periphery flush is pending and resets the flag.
+func (sq *SlotQueue) ConsumeFlushPeriphery() bool {
+	sq.mu.Lock()
+	defer sq.mu.Unlock()
+	flush := sq.flushPeriphery
+	sq.flushPeriphery = false
+	if len(sq.slots) == 0 && len(sq.placeBlocks) == 0 && len(sq.passthrough) == 0 {
+		select {
+		case <-sq.notifyCh:
+		default:
+		}
+	}
+	return flush
+}
+
+// FlushPending reports whether a periphery flush flag is currently queued.
+func (sq *SlotQueue) FlushPending() bool {
+	sq.mu.Lock()
+	defer sq.mu.Unlock()
+	return sq.flushPeriphery
 }
 
 // SlotCount returns the number of currently occupied coalescing slots.
@@ -299,9 +348,11 @@ func (sq *SlotQueue) PendingCount() int {
 	return sq.Len()
 }
 
-// HasPending reports whether any intents are waiting to be drained.
+// HasPending reports whether any intents or flush flags are waiting to be dispatched.
 func (sq *SlotQueue) HasPending() bool {
-	return sq.Len() > 0
+	sq.mu.Lock()
+	defer sq.mu.Unlock()
+	return len(sq.slots) > 0 || len(sq.placeBlocks) > 0 || len(sq.passthrough) > 0 || sq.flushPeriphery
 }
 
 // Ready returns a notification channel that receives a signal when a new intent is queued.

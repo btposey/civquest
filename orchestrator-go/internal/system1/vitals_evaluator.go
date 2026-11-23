@@ -96,6 +96,22 @@ func (e *ThreatEvaluator) Category() string {
 	return "threat"
 }
 
+func isDrowningDamage(frame *civquestv1.TelemetryFrame) bool {
+	if frame == nil || frame.LastDamageTaken == nil {
+		return false
+	}
+	if frame.LastDamageTaken.SourceType == civquestv1.DamageSourceType_DAMAGE_SOURCE_TYPE_DROWN {
+		return true
+	}
+	if frame.Status != nil && frame.Status.IsInWater &&
+		frame.LastDamageTaken.SourceType == civquestv1.DamageSourceType_DAMAGE_SOURCE_TYPE_UNSPECIFIED &&
+		frame.LastDamageTaken.AttackerEntityId == 0 &&
+		frame.LastDamageTaken.AttackerName == "" {
+		return true
+	}
+	return false
+}
+
 func (e *ThreatEvaluator) Evaluate(ctx *EvaluatorContext, graph *FactGraph) error {
 	if graph == nil {
 		return nil
@@ -111,15 +127,27 @@ func (e *ThreatEvaluator) Evaluate(ctx *EvaluatorContext, graph *FactGraph) erro
 		frame = ctx.Frame
 	}
 
-	_, conf, hostiles := AssessImmediateThreats(frame, bravery)
-	hostilesPresent := len(hostiles) > 0
-	threatCount := len(hostiles)
-
-	damageTaken := false
-	if frame != nil && frame.LastDamageTaken != nil {
-		damageTaken = true
+	selfHP := 20.0
+	maxHP := 20.0
+	if frame != nil && frame.Status != nil {
+		selfHP = float64(frame.Status.Health)
+		if frame.Status.MaxHealth > 0 {
+			maxHP = float64(frame.Status.MaxHealth)
+		}
 	}
 
+	_, conf, hostiles := AssessImmediateThreats(frame, bravery)
+
+	isDrowning := isDrowningDamage(frame)
+	damageTaken := false
+	if frame != nil && frame.LastDamageTaken != nil && !isDrowning {
+		if !IsPassiveOrEnvironmentalDamage(frame.LastDamageTaken) {
+			damageTaken = true
+		}
+	}
+
+	threatCount := 0
+	hostilesPresent := false
 	nearestHostileID := -1
 	nearestHostileDist := 0.0
 	minDist := math.MaxFloat64
@@ -127,6 +155,12 @@ func (e *ThreatEvaluator) Evaluate(ctx *EvaluatorContext, graph *FactGraph) erro
 	var selfPos *civquestv1.Vec3
 	if frame != nil && frame.Status != nil {
 		selfPos = frame.Status.Position
+	}
+
+	isDuskOrNight := false
+	if frame != nil {
+		tod := ((frame.TimeOfDay % 24000) + 24000) % 24000
+		isDuskOrNight = tod >= 11000 && tod < 23500
 	}
 
 	if frame != nil {
@@ -142,21 +176,20 @@ func (e *ThreatEvaluator) Evaluate(ctx *EvaluatorContext, graph *FactGraph) erro
 				continue
 			}
 			if IsHostile(e) {
+				threatCount++
+				eType := strings.ToLower(e.EntityType)
+				isCreeper := strings.Contains(eType, "creeper")
+				isRanged := strings.Contains(eType, "skeleton") || strings.Contains(eType, "stray") || strings.Contains(eType, "pillager")
+				isDangerous := isCreeper || isRanged || dist <= 8.0 || isDuskOrNight || (selfHP <= LowHPThresholdRatio*maxHP)
+				if isDangerous {
+					hostilesPresent = true
+				}
 				if dist < minDist {
 					minDist = dist
 					nearestHostileID = int(e.EntityId)
 					nearestHostileDist = dist
 				}
 			}
-		}
-	}
-
-	selfHP := 20.0
-	maxHP := 20.0
-	if frame != nil && frame.Status != nil {
-		selfHP = float64(frame.Status.Health)
-		if frame.Status.MaxHealth > 0 {
-			maxHP = float64(frame.Status.MaxHealth)
 		}
 	}
 
@@ -200,8 +233,17 @@ func (e *ThreatEvaluator) Evaluate(ctx *EvaluatorContext, graph *FactGraph) erro
 		}
 	}
 
-	isEmergency := hostilesPresent || damageTaken || isCriticalHealth || isOnFire || isCriticalHunger || shouldPanic
+	isEmergency := hostilesPresent || damageTaken || isCriticalHealth || isOnFire || isCriticalHunger || shouldPanic || isDrowning
 	threatsCleared := !isEmergency
+
+	threatType := "NONE"
+	if isDrowning {
+		threatType = "DROWNING"
+	} else if hostilesPresent || damageTaken || (shouldPanic && (hostilesPresent || damageTaken || creeperNearby)) {
+		threatType = "COMBAT"
+	} else if isOnFire {
+		threatType = "FIRE"
+	}
 
 	graph.SetBool("threat.hostiles_present", "threat", hostilesPresent, fmt.Sprintf("Hostile threats present: %t", hostilesPresent))
 	graph.SetInt("threat.immediate_threat_count", "threat", threatCount, fmt.Sprintf("Immediate threat count: %d", threatCount))
@@ -215,6 +257,8 @@ func (e *ThreatEvaluator) Evaluate(ctx *EvaluatorContext, graph *FactGraph) erro
 	graph.SetBool("threat.has_weapon", "threat", hasWeapon, fmt.Sprintf("Weapon available: %t", hasWeapon))
 	graph.SetInt("threat.weapon_slot", "threat", int(weaponSlot), fmt.Sprintf("Weapon inventory slot: %d", weaponSlot))
 	graph.SetBool("threat.damage_taken", "threat", damageTaken, fmt.Sprintf("Recent damage taken: %t", damageTaken))
+	graph.SetBool("threat.is_drowning", "threat", isDrowning, fmt.Sprintf("Drowning emergency: %t", isDrowning))
+	graph.SetString("threat.threatType", "threat", threatType, fmt.Sprintf("Threat type: %s", threatType))
 
 	return nil
 }

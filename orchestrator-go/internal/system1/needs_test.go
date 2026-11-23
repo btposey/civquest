@@ -3,6 +3,7 @@ package system1
 import (
 	"testing"
 
+	"github.com/btposey/civquest/orchestrator-go/internal/db"
 	civquestv1 "github.com/btposey/civquest/orchestrator-go/internal/proto/v1"
 )
 
@@ -394,5 +395,46 @@ func TestEvaluateBiologicalNeeds_PrioritizesEatingOverSleeping(t *testing.T) {
 	useItem := intents[0].GetUseItem()
 	if useItem == nil || !useItem.IsEatingOrDrinking {
 		t.Fatalf("expected eating intent to take precedence over sleeping, got %+v", intents[0])
+	}
+}
+
+func TestEvaluateSleep_RecallsBedFromSpatialIndex(t *testing.T) {
+	state := NewAgentState()
+	state.SpatialIndex().UpsertPOI(db.AgentPOI{
+		POIID:          FormatPOIID(POICategoryHabitation, 30, 64, 0),
+		Category:       POICategoryHabitation,
+		BlockID:        "minecraft:red_bed",
+		X:              30.5,
+		Y:              64.0,
+		Z:              0.5,
+		AccessX:        29.5,
+		AccessY:        64.0,
+		AccessZ:        0.5,
+		ElevationLayer: ElevationSurface,
+		SafetyScore:    1.0,
+		Reliability:    1.0,
+		IsActive:       true,
+	})
+
+	frame := &civquestv1.TelemetryFrame{
+		WorldTick: 1000,
+		TimeOfDay: 14000,
+		Status: &civquestv1.AgentStatus{
+			Position:        &civquestv1.Vec3{X: 0, Y: 64, Z: 0},
+			IsSleeping:      false,
+			NavigationState: civquestv1.NavigationState_NAVIGATION_STATE_IDLE,
+		},
+	}
+
+	intent := EvaluateSleep("agent1", frame, state)
+	if intent == nil || intent.GetNavigate() == nil || intent.GetNavigate().Target == nil {
+		t.Fatalf("expected NavigateIntent towards recalled bed, got %+v", intent)
+	}
+	target := intent.GetNavigate().Target
+	if target.X != 29.5 || target.Y != 64.0 || target.Z != 0.5 {
+		t.Fatalf("expected target (29.5, 64, 0.5), got %+v", target)
+	}
+	if state.GetAssignedBed() == nil || state.GetAssignedBed().X != 30 {
+		t.Fatalf("expected recalled bed to be assigned in AgentState, got %+v", state.GetAssignedBed())
 	}
 }

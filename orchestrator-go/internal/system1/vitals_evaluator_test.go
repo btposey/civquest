@@ -393,3 +393,69 @@ func BenchmarkVitalsAndThreatEvaluators(b *testing.B) {
 		}
 	}
 }
+
+func TestThreatEvaluator_DrowningNotTreatedAsCombatThreat(t *testing.T) {
+	eval := NewThreatEvaluator()
+
+	// 1. Explicit DAMAGE_SOURCE_TYPE_DROWN while IsInWater=true
+	frameDrown := &civquestv1.TelemetryFrame{
+		WorldTick: 500,
+		Status: &civquestv1.AgentStatus{
+			Health:    18,
+			MaxHealth: 20,
+			IsInWater: true,
+			Position:  &civquestv1.Vec3{X: 10, Y: 58, Z: 10},
+		},
+		LastDamageTaken: &civquestv1.DamageEvent{
+			DamageAmount: 2,
+			SourceType:   civquestv1.DamageSourceType_DAMAGE_SOURCE_TYPE_DROWN,
+		},
+	}
+	graphDrown := NewFactGraph()
+	if err := eval.Evaluate(&EvaluatorContext{AgentID: "Carl", Frame: frameDrown}, graphDrown); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got := graphDrown.GetString("threat.threatType"); got != "DROWNING" {
+		t.Errorf("expected threat.threatType = DROWNING, got %q", got)
+	}
+	if !graphDrown.GetBool("threat.is_drowning") {
+		t.Errorf("expected threat.is_drowning = true")
+	}
+	if !graphDrown.GetBool("threat.is_emergency") {
+		t.Errorf("expected threat.is_emergency = true for drowning")
+	}
+	if graphDrown.GetBool("threat.hostiles_present") {
+		t.Errorf("expected threat.hostiles_present = false for drowning")
+	}
+	if graphDrown.GetBool("threat.damage_taken") {
+		t.Errorf("expected threat.damage_taken = false (not hostile combat damage) for drowning")
+	}
+	if conf, ok := graphDrown.GetFloat("threat.confidence"); !ok || conf != 999.0 {
+		t.Errorf("expected threat.confidence = 999.0 for environmental drowning, got %v (ok=%v)", conf, ok)
+	}
+
+	// 2. Unspecified environmental water damage while IsInWater=true (legacy/unspecified drown source)
+	frameUnspecifiedWater := &civquestv1.TelemetryFrame{
+		WorldTick: 501,
+		Status: &civquestv1.AgentStatus{
+			Health:    16,
+			MaxHealth: 20,
+			IsInWater: true,
+			Position:  &civquestv1.Vec3{X: 10, Y: 58, Z: 10},
+		},
+		LastDamageTaken: &civquestv1.DamageEvent{
+			DamageAmount: 2,
+			SourceType:   civquestv1.DamageSourceType_DAMAGE_SOURCE_TYPE_UNSPECIFIED,
+		},
+	}
+	graphUnspec := NewFactGraph()
+	if err := eval.Evaluate(&EvaluatorContext{AgentID: "Carl", Frame: frameUnspecifiedWater}, graphUnspec); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got := graphUnspec.GetString("threat.threatType"); got != "DROWNING" {
+		t.Errorf("expected threat.threatType = DROWNING for unspecified water damage, got %q", got)
+	}
+	if !graphUnspec.GetBool("threat.is_emergency") {
+		t.Errorf("expected threat.is_emergency = true for unspecified water damage")
+	}
+}

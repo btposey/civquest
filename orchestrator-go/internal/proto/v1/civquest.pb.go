@@ -141,6 +141,7 @@ const (
 	DamageSourceType_DAMAGE_SOURCE_TYPE_FALL        DamageSourceType = 4
 	DamageSourceType_DAMAGE_SOURCE_TYPE_EXPLOSION   DamageSourceType = 5
 	DamageSourceType_DAMAGE_SOURCE_TYPE_LAVA        DamageSourceType = 6
+	DamageSourceType_DAMAGE_SOURCE_TYPE_DROWN       DamageSourceType = 7
 )
 
 // Enum value maps for DamageSourceType.
@@ -153,6 +154,7 @@ var (
 		4: "DAMAGE_SOURCE_TYPE_FALL",
 		5: "DAMAGE_SOURCE_TYPE_EXPLOSION",
 		6: "DAMAGE_SOURCE_TYPE_LAVA",
+		7: "DAMAGE_SOURCE_TYPE_DROWN",
 	}
 	DamageSourceType_value = map[string]int32{
 		"DAMAGE_SOURCE_TYPE_UNSPECIFIED": 0,
@@ -162,6 +164,7 @@ var (
 		"DAMAGE_SOURCE_TYPE_FALL":        4,
 		"DAMAGE_SOURCE_TYPE_EXPLOSION":   5,
 		"DAMAGE_SOURCE_TYPE_LAVA":        6,
+		"DAMAGE_SOURCE_TYPE_DROWN":       7,
 	}
 )
 
@@ -293,6 +296,67 @@ func (ReflexNotice_ReflexType) EnumDescriptor() ([]byte, []int) {
 	return file_civquest_v1_civquest_proto_rawDescGZIP(), []int{21, 0}
 }
 
+type IntentReceipt_ReceiptStatus int32
+
+const (
+	IntentReceipt_RECEIPT_STATUS_UNSPECIFIED         IntentReceipt_ReceiptStatus = 0
+	IntentReceipt_RECEIPT_STATUS_QUEUED              IntentReceipt_ReceiptStatus = 1
+	IntentReceipt_RECEIPT_STATUS_EXECUTING           IntentReceipt_ReceiptStatus = 2
+	IntentReceipt_RECEIPT_STATUS_COMPLETED           IntentReceipt_ReceiptStatus = 3
+	IntentReceipt_RECEIPT_STATUS_PREEMPTED_BY_REFLEX IntentReceipt_ReceiptStatus = 4
+	IntentReceipt_RECEIPT_STATUS_FAILED              IntentReceipt_ReceiptStatus = 5
+	IntentReceipt_RECEIPT_STATUS_ABORTED             IntentReceipt_ReceiptStatus = 6
+)
+
+// Enum value maps for IntentReceipt_ReceiptStatus.
+var (
+	IntentReceipt_ReceiptStatus_name = map[int32]string{
+		0: "RECEIPT_STATUS_UNSPECIFIED",
+		1: "RECEIPT_STATUS_QUEUED",
+		2: "RECEIPT_STATUS_EXECUTING",
+		3: "RECEIPT_STATUS_COMPLETED",
+		4: "RECEIPT_STATUS_PREEMPTED_BY_REFLEX",
+		5: "RECEIPT_STATUS_FAILED",
+		6: "RECEIPT_STATUS_ABORTED",
+	}
+	IntentReceipt_ReceiptStatus_value = map[string]int32{
+		"RECEIPT_STATUS_UNSPECIFIED":         0,
+		"RECEIPT_STATUS_QUEUED":              1,
+		"RECEIPT_STATUS_EXECUTING":           2,
+		"RECEIPT_STATUS_COMPLETED":           3,
+		"RECEIPT_STATUS_PREEMPTED_BY_REFLEX": 4,
+		"RECEIPT_STATUS_FAILED":              5,
+		"RECEIPT_STATUS_ABORTED":             6,
+	}
+)
+
+func (x IntentReceipt_ReceiptStatus) Enum() *IntentReceipt_ReceiptStatus {
+	p := new(IntentReceipt_ReceiptStatus)
+	*p = x
+	return p
+}
+
+func (x IntentReceipt_ReceiptStatus) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (IntentReceipt_ReceiptStatus) Descriptor() protoreflect.EnumDescriptor {
+	return file_civquest_v1_civquest_proto_enumTypes[5].Descriptor()
+}
+
+func (IntentReceipt_ReceiptStatus) Type() protoreflect.EnumType {
+	return &file_civquest_v1_civquest_proto_enumTypes[5]
+}
+
+func (x IntentReceipt_ReceiptStatus) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use IntentReceipt_ReceiptStatus.Descriptor instead.
+func (IntentReceipt_ReceiptStatus) EnumDescriptor() ([]byte, []int) {
+	return file_civquest_v1_civquest_proto_rawDescGZIP(), []int{22, 0}
+}
+
 type InteractBlockIntent_InteractionType int32
 
 const (
@@ -344,11 +408,11 @@ func (x InteractBlockIntent_InteractionType) String() string {
 }
 
 func (InteractBlockIntent_InteractionType) Descriptor() protoreflect.EnumDescriptor {
-	return file_civquest_v1_civquest_proto_enumTypes[5].Descriptor()
+	return file_civquest_v1_civquest_proto_enumTypes[6].Descriptor()
 }
 
 func (InteractBlockIntent_InteractionType) Type() protoreflect.EnumType {
-	return &file_civquest_v1_civquest_proto_enumTypes[5]
+	return &file_civquest_v1_civquest_proto_enumTypes[6]
 }
 
 func (x InteractBlockIntent_InteractionType) Number() protoreflect.EnumNumber {
@@ -357,7 +421,7 @@ func (x InteractBlockIntent_InteractionType) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use InteractBlockIntent_InteractionType.Descriptor instead.
 func (InteractBlockIntent_InteractionType) EnumDescriptor() ([]byte, []int) {
-	return file_civquest_v1_civquest_proto_rawDescGZIP(), []int{25, 0}
+	return file_civquest_v1_civquest_proto_rawDescGZIP(), []int{27, 0}
 }
 
 type CaravanIntent_CaravanAction int32
@@ -402,11 +466,11 @@ func (x CaravanIntent_CaravanAction) String() string {
 }
 
 func (CaravanIntent_CaravanAction) Descriptor() protoreflect.EnumDescriptor {
-	return file_civquest_v1_civquest_proto_enumTypes[6].Descriptor()
+	return file_civquest_v1_civquest_proto_enumTypes[7].Descriptor()
 }
 
 func (CaravanIntent_CaravanAction) Type() protoreflect.EnumType {
-	return &file_civquest_v1_civquest_proto_enumTypes[6]
+	return &file_civquest_v1_civquest_proto_enumTypes[7]
 }
 
 func (x CaravanIntent_CaravanAction) Number() protoreflect.EnumNumber {
@@ -415,7 +479,7 @@ func (x CaravanIntent_CaravanAction) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use CaravanIntent_CaravanAction.Descriptor instead.
 func (CaravanIntent_CaravanAction) EnumDescriptor() ([]byte, []int) {
-	return file_civquest_v1_civquest_proto_rawDescGZIP(), []int{30, 0}
+	return file_civquest_v1_civquest_proto_rawDescGZIP(), []int{32, 0}
 }
 
 type Vec3 struct {
@@ -1111,6 +1175,7 @@ type TelemetryFrame struct {
 	DeathEvent              *DeathEvent            `protobuf:"bytes,13,opt,name=death_event,json=deathEvent,proto3" json:"death_event,omitempty"` // Terminal event triggering permadeath teardown
 	LastProcessedSequenceId int64                  `protobuf:"varint,14,opt,name=last_processed_sequence_id,json=lastProcessedSequenceId,proto3" json:"last_processed_sequence_id,omitempty"`
 	ReflexNotices           []*ReflexNotice        `protobuf:"bytes,15,rep,name=reflex_notices,json=reflexNotices,proto3" json:"reflex_notices,omitempty"` // ADR-015 afferent telemetry for Layer 1A in-engine reflexes
+	Receipt                 *IntentReceipt         `protobuf:"bytes,16,opt,name=receipt,proto3" json:"receipt,omitempty"`
 	unknownFields           protoimpl.UnknownFields
 	sizeCache               protoimpl.SizeCache
 }
@@ -1246,6 +1311,13 @@ func (x *TelemetryFrame) GetLastProcessedSequenceId() int64 {
 func (x *TelemetryFrame) GetReflexNotices() []*ReflexNotice {
 	if x != nil {
 		return x.ReflexNotices
+	}
+	return nil
+}
+
+func (x *TelemetryFrame) GetReceipt() *IntentReceipt {
+	if x != nil {
+		return x.Receipt
 	}
 	return nil
 }
@@ -2122,6 +2194,158 @@ func (x *ReflexNotice) GetDetails() string {
 	return ""
 }
 
+type IntentReceipt struct {
+	state           protoimpl.MessageState      `protogen:"open.v1"`
+	BatchId         int64                       `protobuf:"varint,1,opt,name=batch_id,json=batchId,proto3" json:"batch_id,omitempty"`
+	ActiveIndex     int32                       `protobuf:"varint,2,opt,name=active_index,json=activeIndex,proto3" json:"active_index,omitempty"`
+	Status          IntentReceipt_ReceiptStatus `protobuf:"varint,3,opt,name=status,proto3,enum=civquest.v1.IntentReceipt_ReceiptStatus" json:"status,omitempty"`
+	FailureReason   string                      `protobuf:"bytes,4,opt,name=failure_reason,json=failureReason,proto3" json:"failure_reason,omitempty"`
+	MotorStackDepth int32                       `protobuf:"varint,5,opt,name=motor_stack_depth,json=motorStackDepth,proto3" json:"motor_stack_depth,omitempty"`
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
+}
+
+func (x *IntentReceipt) Reset() {
+	*x = IntentReceipt{}
+	mi := &file_civquest_v1_civquest_proto_msgTypes[22]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *IntentReceipt) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*IntentReceipt) ProtoMessage() {}
+
+func (x *IntentReceipt) ProtoReflect() protoreflect.Message {
+	mi := &file_civquest_v1_civquest_proto_msgTypes[22]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use IntentReceipt.ProtoReflect.Descriptor instead.
+func (*IntentReceipt) Descriptor() ([]byte, []int) {
+	return file_civquest_v1_civquest_proto_rawDescGZIP(), []int{22}
+}
+
+func (x *IntentReceipt) GetBatchId() int64 {
+	if x != nil {
+		return x.BatchId
+	}
+	return 0
+}
+
+func (x *IntentReceipt) GetActiveIndex() int32 {
+	if x != nil {
+		return x.ActiveIndex
+	}
+	return 0
+}
+
+func (x *IntentReceipt) GetStatus() IntentReceipt_ReceiptStatus {
+	if x != nil {
+		return x.Status
+	}
+	return IntentReceipt_RECEIPT_STATUS_UNSPECIFIED
+}
+
+func (x *IntentReceipt) GetFailureReason() string {
+	if x != nil {
+		return x.FailureReason
+	}
+	return ""
+}
+
+func (x *IntentReceipt) GetMotorStackDepth() int32 {
+	if x != nil {
+		return x.MotorStackDepth
+	}
+	return 0
+}
+
+type IntentBatch struct {
+	state          protoimpl.MessageState `protogen:"open.v1"`
+	AgentId        string                 `protobuf:"bytes,1,opt,name=agent_id,json=agentId,proto3" json:"agent_id,omitempty"`
+	BatchId        int64                  `protobuf:"varint,2,opt,name=batch_id,json=batchId,proto3" json:"batch_id,omitempty"`
+	FlushPeriphery bool                   `protobuf:"varint,3,opt,name=flush_periphery,json=flushPeriphery,proto3" json:"flush_periphery,omitempty"`
+	Intents        []*AgentIntent         `protobuf:"bytes,4,rep,name=intents,proto3" json:"intents,omitempty"`
+	TimeoutTicks   int64                  `protobuf:"varint,5,opt,name=timeout_ticks,json=timeoutTicks,proto3" json:"timeout_ticks,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
+}
+
+func (x *IntentBatch) Reset() {
+	*x = IntentBatch{}
+	mi := &file_civquest_v1_civquest_proto_msgTypes[23]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *IntentBatch) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*IntentBatch) ProtoMessage() {}
+
+func (x *IntentBatch) ProtoReflect() protoreflect.Message {
+	mi := &file_civquest_v1_civquest_proto_msgTypes[23]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use IntentBatch.ProtoReflect.Descriptor instead.
+func (*IntentBatch) Descriptor() ([]byte, []int) {
+	return file_civquest_v1_civquest_proto_rawDescGZIP(), []int{23}
+}
+
+func (x *IntentBatch) GetAgentId() string {
+	if x != nil {
+		return x.AgentId
+	}
+	return ""
+}
+
+func (x *IntentBatch) GetBatchId() int64 {
+	if x != nil {
+		return x.BatchId
+	}
+	return 0
+}
+
+func (x *IntentBatch) GetFlushPeriphery() bool {
+	if x != nil {
+		return x.FlushPeriphery
+	}
+	return false
+}
+
+func (x *IntentBatch) GetIntents() []*AgentIntent {
+	if x != nil {
+		return x.Intents
+	}
+	return nil
+}
+
+func (x *IntentBatch) GetTimeoutTicks() int64 {
+	if x != nil {
+		return x.TimeoutTicks
+	}
+	return 0
+}
+
 type AgentIntent struct {
 	state      protoimpl.MessageState `protogen:"open.v1"`
 	AgentId    string                 `protobuf:"bytes,1,opt,name=agent_id,json=agentId,proto3" json:"agent_id,omitempty"`
@@ -2147,7 +2371,7 @@ type AgentIntent struct {
 
 func (x *AgentIntent) Reset() {
 	*x = AgentIntent{}
-	mi := &file_civquest_v1_civquest_proto_msgTypes[22]
+	mi := &file_civquest_v1_civquest_proto_msgTypes[24]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2159,7 +2383,7 @@ func (x *AgentIntent) String() string {
 func (*AgentIntent) ProtoMessage() {}
 
 func (x *AgentIntent) ProtoReflect() protoreflect.Message {
-	mi := &file_civquest_v1_civquest_proto_msgTypes[22]
+	mi := &file_civquest_v1_civquest_proto_msgTypes[24]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2172,7 +2396,7 @@ func (x *AgentIntent) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AgentIntent.ProtoReflect.Descriptor instead.
 func (*AgentIntent) Descriptor() ([]byte, []int) {
-	return file_civquest_v1_civquest_proto_rawDescGZIP(), []int{22}
+	return file_civquest_v1_civquest_proto_rawDescGZIP(), []int{24}
 }
 
 func (x *AgentIntent) GetAgentId() string {
@@ -2394,7 +2618,7 @@ type NavigateIntent struct {
 
 func (x *NavigateIntent) Reset() {
 	*x = NavigateIntent{}
-	mi := &file_civquest_v1_civquest_proto_msgTypes[23]
+	mi := &file_civquest_v1_civquest_proto_msgTypes[25]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2406,7 +2630,7 @@ func (x *NavigateIntent) String() string {
 func (*NavigateIntent) ProtoMessage() {}
 
 func (x *NavigateIntent) ProtoReflect() protoreflect.Message {
-	mi := &file_civquest_v1_civquest_proto_msgTypes[23]
+	mi := &file_civquest_v1_civquest_proto_msgTypes[25]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2419,7 +2643,7 @@ func (x *NavigateIntent) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use NavigateIntent.ProtoReflect.Descriptor instead.
 func (*NavigateIntent) Descriptor() ([]byte, []int) {
-	return file_civquest_v1_civquest_proto_rawDescGZIP(), []int{23}
+	return file_civquest_v1_civquest_proto_rawDescGZIP(), []int{25}
 }
 
 func (x *NavigateIntent) GetTarget() *Vec3 {
@@ -2476,7 +2700,7 @@ type AttackIntent struct {
 
 func (x *AttackIntent) Reset() {
 	*x = AttackIntent{}
-	mi := &file_civquest_v1_civquest_proto_msgTypes[24]
+	mi := &file_civquest_v1_civquest_proto_msgTypes[26]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2488,7 +2712,7 @@ func (x *AttackIntent) String() string {
 func (*AttackIntent) ProtoMessage() {}
 
 func (x *AttackIntent) ProtoReflect() protoreflect.Message {
-	mi := &file_civquest_v1_civquest_proto_msgTypes[24]
+	mi := &file_civquest_v1_civquest_proto_msgTypes[26]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2501,7 +2725,7 @@ func (x *AttackIntent) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AttackIntent.ProtoReflect.Descriptor instead.
 func (*AttackIntent) Descriptor() ([]byte, []int) {
-	return file_civquest_v1_civquest_proto_rawDescGZIP(), []int{24}
+	return file_civquest_v1_civquest_proto_rawDescGZIP(), []int{26}
 }
 
 func (x *AttackIntent) GetTargetEntityId() int32 {
@@ -2543,7 +2767,7 @@ type InteractBlockIntent struct {
 
 func (x *InteractBlockIntent) Reset() {
 	*x = InteractBlockIntent{}
-	mi := &file_civquest_v1_civquest_proto_msgTypes[25]
+	mi := &file_civquest_v1_civquest_proto_msgTypes[27]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2555,7 +2779,7 @@ func (x *InteractBlockIntent) String() string {
 func (*InteractBlockIntent) ProtoMessage() {}
 
 func (x *InteractBlockIntent) ProtoReflect() protoreflect.Message {
-	mi := &file_civquest_v1_civquest_proto_msgTypes[25]
+	mi := &file_civquest_v1_civquest_proto_msgTypes[27]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2568,7 +2792,7 @@ func (x *InteractBlockIntent) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use InteractBlockIntent.ProtoReflect.Descriptor instead.
 func (*InteractBlockIntent) Descriptor() ([]byte, []int) {
-	return file_civquest_v1_civquest_proto_rawDescGZIP(), []int{25}
+	return file_civquest_v1_civquest_proto_rawDescGZIP(), []int{27}
 }
 
 func (x *InteractBlockIntent) GetPos() *BlockPosProto {
@@ -2603,7 +2827,7 @@ type UseItemIntent struct {
 
 func (x *UseItemIntent) Reset() {
 	*x = UseItemIntent{}
-	mi := &file_civquest_v1_civquest_proto_msgTypes[26]
+	mi := &file_civquest_v1_civquest_proto_msgTypes[28]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2615,7 +2839,7 @@ func (x *UseItemIntent) String() string {
 func (*UseItemIntent) ProtoMessage() {}
 
 func (x *UseItemIntent) ProtoReflect() protoreflect.Message {
-	mi := &file_civquest_v1_civquest_proto_msgTypes[26]
+	mi := &file_civquest_v1_civquest_proto_msgTypes[28]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2628,7 +2852,7 @@ func (x *UseItemIntent) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use UseItemIntent.ProtoReflect.Descriptor instead.
 func (*UseItemIntent) Descriptor() ([]byte, []int) {
-	return file_civquest_v1_civquest_proto_rawDescGZIP(), []int{26}
+	return file_civquest_v1_civquest_proto_rawDescGZIP(), []int{28}
 }
 
 func (x *UseItemIntent) GetInventorySlot() int32 {
@@ -2663,7 +2887,7 @@ type CraftItemIntent struct {
 
 func (x *CraftItemIntent) Reset() {
 	*x = CraftItemIntent{}
-	mi := &file_civquest_v1_civquest_proto_msgTypes[27]
+	mi := &file_civquest_v1_civquest_proto_msgTypes[29]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2675,7 +2899,7 @@ func (x *CraftItemIntent) String() string {
 func (*CraftItemIntent) ProtoMessage() {}
 
 func (x *CraftItemIntent) ProtoReflect() protoreflect.Message {
-	mi := &file_civquest_v1_civquest_proto_msgTypes[27]
+	mi := &file_civquest_v1_civquest_proto_msgTypes[29]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2688,7 +2912,7 @@ func (x *CraftItemIntent) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CraftItemIntent.ProtoReflect.Descriptor instead.
 func (*CraftItemIntent) Descriptor() ([]byte, []int) {
-	return file_civquest_v1_civquest_proto_rawDescGZIP(), []int{27}
+	return file_civquest_v1_civquest_proto_rawDescGZIP(), []int{29}
 }
 
 func (x *CraftItemIntent) GetRecipeId() string {
@@ -2722,7 +2946,7 @@ type SendChatIntent struct {
 
 func (x *SendChatIntent) Reset() {
 	*x = SendChatIntent{}
-	mi := &file_civquest_v1_civquest_proto_msgTypes[28]
+	mi := &file_civquest_v1_civquest_proto_msgTypes[30]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2734,7 +2958,7 @@ func (x *SendChatIntent) String() string {
 func (*SendChatIntent) ProtoMessage() {}
 
 func (x *SendChatIntent) ProtoReflect() protoreflect.Message {
-	mi := &file_civquest_v1_civquest_proto_msgTypes[28]
+	mi := &file_civquest_v1_civquest_proto_msgTypes[30]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2747,7 +2971,7 @@ func (x *SendChatIntent) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SendChatIntent.ProtoReflect.Descriptor instead.
 func (*SendChatIntent) Descriptor() ([]byte, []int) {
-	return file_civquest_v1_civquest_proto_rawDescGZIP(), []int{28}
+	return file_civquest_v1_civquest_proto_rawDescGZIP(), []int{30}
 }
 
 func (x *SendChatIntent) GetMessage() string {
@@ -2777,7 +3001,7 @@ type RespondTradeIntent struct {
 
 func (x *RespondTradeIntent) Reset() {
 	*x = RespondTradeIntent{}
-	mi := &file_civquest_v1_civquest_proto_msgTypes[29]
+	mi := &file_civquest_v1_civquest_proto_msgTypes[31]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2789,7 +3013,7 @@ func (x *RespondTradeIntent) String() string {
 func (*RespondTradeIntent) ProtoMessage() {}
 
 func (x *RespondTradeIntent) ProtoReflect() protoreflect.Message {
-	mi := &file_civquest_v1_civquest_proto_msgTypes[29]
+	mi := &file_civquest_v1_civquest_proto_msgTypes[31]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2802,7 +3026,7 @@ func (x *RespondTradeIntent) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RespondTradeIntent.ProtoReflect.Descriptor instead.
 func (*RespondTradeIntent) Descriptor() ([]byte, []int) {
-	return file_civquest_v1_civquest_proto_rawDescGZIP(), []int{29}
+	return file_civquest_v1_civquest_proto_rawDescGZIP(), []int{31}
 }
 
 func (x *RespondTradeIntent) GetPlayerEntityId() int32 {
@@ -2852,7 +3076,7 @@ type CaravanIntent struct {
 
 func (x *CaravanIntent) Reset() {
 	*x = CaravanIntent{}
-	mi := &file_civquest_v1_civquest_proto_msgTypes[30]
+	mi := &file_civquest_v1_civquest_proto_msgTypes[32]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2864,7 +3088,7 @@ func (x *CaravanIntent) String() string {
 func (*CaravanIntent) ProtoMessage() {}
 
 func (x *CaravanIntent) ProtoReflect() protoreflect.Message {
-	mi := &file_civquest_v1_civquest_proto_msgTypes[30]
+	mi := &file_civquest_v1_civquest_proto_msgTypes[32]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2877,7 +3101,7 @@ func (x *CaravanIntent) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CaravanIntent.ProtoReflect.Descriptor instead.
 func (*CaravanIntent) Descriptor() ([]byte, []int) {
-	return file_civquest_v1_civquest_proto_rawDescGZIP(), []int{30}
+	return file_civquest_v1_civquest_proto_rawDescGZIP(), []int{32}
 }
 
 func (x *CaravanIntent) GetAction() CaravanIntent_CaravanAction {
@@ -2919,7 +3143,7 @@ type BuildBlockIntent struct {
 
 func (x *BuildBlockIntent) Reset() {
 	*x = BuildBlockIntent{}
-	mi := &file_civquest_v1_civquest_proto_msgTypes[31]
+	mi := &file_civquest_v1_civquest_proto_msgTypes[33]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2931,7 +3155,7 @@ func (x *BuildBlockIntent) String() string {
 func (*BuildBlockIntent) ProtoMessage() {}
 
 func (x *BuildBlockIntent) ProtoReflect() protoreflect.Message {
-	mi := &file_civquest_v1_civquest_proto_msgTypes[31]
+	mi := &file_civquest_v1_civquest_proto_msgTypes[33]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2944,7 +3168,7 @@ func (x *BuildBlockIntent) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use BuildBlockIntent.ProtoReflect.Descriptor instead.
 func (*BuildBlockIntent) Descriptor() ([]byte, []int) {
-	return file_civquest_v1_civquest_proto_rawDescGZIP(), []int{31}
+	return file_civquest_v1_civquest_proto_rawDescGZIP(), []int{33}
 }
 
 func (x *BuildBlockIntent) GetTargetVoxel() *BlockPosProto {
@@ -2981,7 +3205,7 @@ type CreateWrittenBookIntent struct {
 
 func (x *CreateWrittenBookIntent) Reset() {
 	*x = CreateWrittenBookIntent{}
-	mi := &file_civquest_v1_civquest_proto_msgTypes[32]
+	mi := &file_civquest_v1_civquest_proto_msgTypes[34]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2993,7 +3217,7 @@ func (x *CreateWrittenBookIntent) String() string {
 func (*CreateWrittenBookIntent) ProtoMessage() {}
 
 func (x *CreateWrittenBookIntent) ProtoReflect() protoreflect.Message {
-	mi := &file_civquest_v1_civquest_proto_msgTypes[32]
+	mi := &file_civquest_v1_civquest_proto_msgTypes[34]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3006,7 +3230,7 @@ func (x *CreateWrittenBookIntent) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CreateWrittenBookIntent.ProtoReflect.Descriptor instead.
 func (*CreateWrittenBookIntent) Descriptor() ([]byte, []int) {
-	return file_civquest_v1_civquest_proto_rawDescGZIP(), []int{32}
+	return file_civquest_v1_civquest_proto_rawDescGZIP(), []int{34}
 }
 
 func (x *CreateWrittenBookIntent) GetTitle() string {
@@ -3058,7 +3282,7 @@ type PlaceSignpostIntent struct {
 
 func (x *PlaceSignpostIntent) Reset() {
 	*x = PlaceSignpostIntent{}
-	mi := &file_civquest_v1_civquest_proto_msgTypes[33]
+	mi := &file_civquest_v1_civquest_proto_msgTypes[35]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3070,7 +3294,7 @@ func (x *PlaceSignpostIntent) String() string {
 func (*PlaceSignpostIntent) ProtoMessage() {}
 
 func (x *PlaceSignpostIntent) ProtoReflect() protoreflect.Message {
-	mi := &file_civquest_v1_civquest_proto_msgTypes[33]
+	mi := &file_civquest_v1_civquest_proto_msgTypes[35]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3083,7 +3307,7 @@ func (x *PlaceSignpostIntent) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PlaceSignpostIntent.ProtoReflect.Descriptor instead.
 func (*PlaceSignpostIntent) Descriptor() ([]byte, []int) {
-	return file_civquest_v1_civquest_proto_rawDescGZIP(), []int{33}
+	return file_civquest_v1_civquest_proto_rawDescGZIP(), []int{35}
 }
 
 func (x *PlaceSignpostIntent) GetPos() *BlockPosProto {
@@ -3139,7 +3363,7 @@ type TransferContainerIntent struct {
 
 func (x *TransferContainerIntent) Reset() {
 	*x = TransferContainerIntent{}
-	mi := &file_civquest_v1_civquest_proto_msgTypes[34]
+	mi := &file_civquest_v1_civquest_proto_msgTypes[36]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3151,7 +3375,7 @@ func (x *TransferContainerIntent) String() string {
 func (*TransferContainerIntent) ProtoMessage() {}
 
 func (x *TransferContainerIntent) ProtoReflect() protoreflect.Message {
-	mi := &file_civquest_v1_civquest_proto_msgTypes[34]
+	mi := &file_civquest_v1_civquest_proto_msgTypes[36]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3164,7 +3388,7 @@ func (x *TransferContainerIntent) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TransferContainerIntent.ProtoReflect.Descriptor instead.
 func (*TransferContainerIntent) Descriptor() ([]byte, []int) {
-	return file_civquest_v1_civquest_proto_rawDescGZIP(), []int{34}
+	return file_civquest_v1_civquest_proto_rawDescGZIP(), []int{36}
 }
 
 func (x *TransferContainerIntent) GetContainerPos() *BlockPosProto {
@@ -3243,7 +3467,7 @@ const file_civquest_v1_civquest_proto_rawDesc = "" +
 	"\vingredients\x18\x04 \x03(\v2\x1b.civquest.v1.ItemStackProtoR\vingredients\x123\n" +
 	"\x06result\x18\x05 \x01(\v2\x1b.civquest.v1.ItemStackProtoR\x06result\"I\n" +
 	"\x14ExportRecipeResponse\x121\n" +
-	"\arecipes\x18\x01 \x03(\v2\x17.civquest.v1.RecipeNodeR\arecipes\"\xef\x06\n" +
+	"\arecipes\x18\x01 \x03(\v2\x17.civquest.v1.RecipeNodeR\arecipes\"\xa5\a\n" +
 	"\x0eTelemetryFrame\x12\x1d\n" +
 	"\n" +
 	"world_tick\x18\x01 \x01(\x03R\tworldTick\x12\x1e\n" +
@@ -3262,7 +3486,8 @@ const file_civquest_v1_civquest_proto_rawDesc = "" +
 	"\vdeath_event\x18\r \x01(\v2\x17.civquest.v1.DeathEventR\n" +
 	"deathEvent\x12;\n" +
 	"\x1alast_processed_sequence_id\x18\x0e \x01(\x03R\x17lastProcessedSequenceId\x12@\n" +
-	"\x0ereflex_notices\x18\x0f \x03(\v2\x19.civquest.v1.ReflexNoticeR\rreflexNotices\"\xee\x04\n" +
+	"\x0ereflex_notices\x18\x0f \x03(\v2\x19.civquest.v1.ReflexNoticeR\rreflexNotices\x124\n" +
+	"\areceipt\x18\x10 \x01(\v2\x1a.civquest.v1.IntentReceiptR\areceipt\"\xee\x04\n" +
 	"\vAgentStatus\x12\x19\n" +
 	"\bagent_id\x18\x01 \x01(\tR\aagentId\x12\x1b\n" +
 	"\tentity_id\x18\x02 \x01(\x05R\bentityId\x12-\n" +
@@ -3364,7 +3589,27 @@ const file_civquest_v1_civquest_proto_rawDesc = "" +
 	"\x17REFLEX_TYPE_UNSPECIFIED\x10\x00\x12\x1e\n" +
 	"\x1aREFLEX_TYPE_SHIELD_DEFENSE\x10\x01\x12\x18\n" +
 	"\x14REFLEX_TYPE_AUTO_EAT\x10\x02\x12\x1b\n" +
-	"\x17REFLEX_TYPE_ITEM_VACUUM\x10\x03\"\xe8\x06\n" +
+	"\x17REFLEX_TYPE_ITEM_VACUUM\x10\x03\"\xca\x03\n" +
+	"\rIntentReceipt\x12\x19\n" +
+	"\bbatch_id\x18\x01 \x01(\x03R\abatchId\x12!\n" +
+	"\factive_index\x18\x02 \x01(\x05R\vactiveIndex\x12@\n" +
+	"\x06status\x18\x03 \x01(\x0e2(.civquest.v1.IntentReceipt.ReceiptStatusR\x06status\x12%\n" +
+	"\x0efailure_reason\x18\x04 \x01(\tR\rfailureReason\x12*\n" +
+	"\x11motor_stack_depth\x18\x05 \x01(\x05R\x0fmotorStackDepth\"\xe5\x01\n" +
+	"\rReceiptStatus\x12\x1e\n" +
+	"\x1aRECEIPT_STATUS_UNSPECIFIED\x10\x00\x12\x19\n" +
+	"\x15RECEIPT_STATUS_QUEUED\x10\x01\x12\x1c\n" +
+	"\x18RECEIPT_STATUS_EXECUTING\x10\x02\x12\x1c\n" +
+	"\x18RECEIPT_STATUS_COMPLETED\x10\x03\x12&\n" +
+	"\"RECEIPT_STATUS_PREEMPTED_BY_REFLEX\x10\x04\x12\x19\n" +
+	"\x15RECEIPT_STATUS_FAILED\x10\x05\x12\x1a\n" +
+	"\x16RECEIPT_STATUS_ABORTED\x10\x06\"\xc5\x01\n" +
+	"\vIntentBatch\x12\x19\n" +
+	"\bagent_id\x18\x01 \x01(\tR\aagentId\x12\x19\n" +
+	"\bbatch_id\x18\x02 \x01(\x03R\abatchId\x12'\n" +
+	"\x0fflush_periphery\x18\x03 \x01(\bR\x0eflushPeriphery\x122\n" +
+	"\aintents\x18\x04 \x03(\v2\x18.civquest.v1.AgentIntentR\aintents\x12#\n" +
+	"\rtimeout_ticks\x18\x05 \x01(\x03R\ftimeoutTicks\"\xe8\x06\n" +
 	"\vAgentIntent\x12\x19\n" +
 	"\bagent_id\x18\x01 \x01(\tR\aagentId\x12\x1f\n" +
 	"\vsequence_id\x18\x02 \x01(\x03R\n" +
@@ -3476,7 +3721,7 @@ const file_civquest_v1_civquest_proto_rawDesc = "" +
 	"\x18NAVIGATION_STATE_PATHING\x10\x02\x12\x1a\n" +
 	"\x16NAVIGATION_STATE_STUCK\x10\x03\x12\x1c\n" +
 	"\x18NAVIGATION_STATE_ARRIVED\x10\x04\x12\x1d\n" +
-	"\x19NAVIGATION_STATE_BUILDING\x10\x05*\xeb\x01\n" +
+	"\x19NAVIGATION_STATE_BUILDING\x10\x05*\x89\x02\n" +
 	"\x10DamageSourceType\x12\"\n" +
 	"\x1eDAMAGE_SOURCE_TYPE_UNSPECIFIED\x10\x00\x12\x1a\n" +
 	"\x16DAMAGE_SOURCE_TYPE_MOB\x10\x01\x12\x1d\n" +
@@ -3484,13 +3729,14 @@ const file_civquest_v1_civquest_proto_rawDesc = "" +
 	"\x18DAMAGE_SOURCE_TYPE_ARROW\x10\x03\x12\x1b\n" +
 	"\x17DAMAGE_SOURCE_TYPE_FALL\x10\x04\x12 \n" +
 	"\x1cDAMAGE_SOURCE_TYPE_EXPLOSION\x10\x05\x12\x1b\n" +
-	"\x17DAMAGE_SOURCE_TYPE_LAVA\x10\x06*d\n" +
+	"\x17DAMAGE_SOURCE_TYPE_LAVA\x10\x06\x12\x1c\n" +
+	"\x18DAMAGE_SOURCE_TYPE_DROWN\x10\a*d\n" +
 	"\vChatChannel\x12\x1c\n" +
 	"\x18CHAT_CHANNEL_UNSPECIFIED\x10\x00\x12\x16\n" +
 	"\x12CHAT_CHANNEL_LOCAL\x10\x01\x12\x1f\n" +
 	"\x1bCHAT_CHANNEL_CLAN_BROADCAST\x10\x022\xec\x02\n" +
 	"\x15CivQuestBridgeService\x12I\n" +
-	"\fConnectAgent\x12\x18.civquest.v1.AgentIntent\x1a\x1b.civquest.v1.TelemetryFrame(\x010\x01\x12S\n" +
+	"\fConnectAgent\x12\x18.civquest.v1.IntentBatch\x1a\x1b.civquest.v1.TelemetryFrame(\x010\x01\x12S\n" +
 	"\x10SpawnAgentEntity\x12\x1e.civquest.v1.SpawnAgentRequest\x1a\x1f.civquest.v1.SpawnAgentResponse\x12Y\n" +
 	"\x12DespawnAgentEntity\x12 .civquest.v1.DespawnAgentRequest\x1a!.civquest.v1.DespawnAgentResponse\x12X\n" +
 	"\x11ExportRecipeGraph\x12 .civquest.v1.ExportRecipeRequest\x1a!.civquest.v1.ExportRecipeResponseBf\n" +
@@ -3508,121 +3754,127 @@ func file_civquest_v1_civquest_proto_rawDescGZIP() []byte {
 	return file_civquest_v1_civquest_proto_rawDescData
 }
 
-var file_civquest_v1_civquest_proto_enumTypes = make([]protoimpl.EnumInfo, 7)
-var file_civquest_v1_civquest_proto_msgTypes = make([]protoimpl.MessageInfo, 35)
+var file_civquest_v1_civquest_proto_enumTypes = make([]protoimpl.EnumInfo, 8)
+var file_civquest_v1_civquest_proto_msgTypes = make([]protoimpl.MessageInfo, 37)
 var file_civquest_v1_civquest_proto_goTypes = []any{
 	(Weather)(0),                             // 0: civquest.v1.Weather
 	(NavigationState)(0),                     // 1: civquest.v1.NavigationState
 	(DamageSourceType)(0),                    // 2: civquest.v1.DamageSourceType
 	(ChatChannel)(0),                         // 3: civquest.v1.ChatChannel
 	(ReflexNotice_ReflexType)(0),             // 4: civquest.v1.ReflexNotice.ReflexType
-	(InteractBlockIntent_InteractionType)(0), // 5: civquest.v1.InteractBlockIntent.InteractionType
-	(CaravanIntent_CaravanAction)(0),         // 6: civquest.v1.CaravanIntent.CaravanAction
-	(*Vec3)(nil),                             // 7: civquest.v1.Vec3
-	(*BlockPosProto)(nil),                    // 8: civquest.v1.BlockPosProto
-	(*BoundingBoxProto)(nil),                 // 9: civquest.v1.BoundingBoxProto
-	(*ItemStackProto)(nil),                   // 10: civquest.v1.ItemStackProto
-	(*SpawnAgentRequest)(nil),                // 11: civquest.v1.SpawnAgentRequest
-	(*SpawnAgentResponse)(nil),               // 12: civquest.v1.SpawnAgentResponse
-	(*DespawnAgentRequest)(nil),              // 13: civquest.v1.DespawnAgentRequest
-	(*DespawnAgentResponse)(nil),             // 14: civquest.v1.DespawnAgentResponse
-	(*ExportRecipeRequest)(nil),              // 15: civquest.v1.ExportRecipeRequest
-	(*RecipeNode)(nil),                       // 16: civquest.v1.RecipeNode
-	(*ExportRecipeResponse)(nil),             // 17: civquest.v1.ExportRecipeResponse
-	(*TelemetryFrame)(nil),                   // 18: civquest.v1.TelemetryFrame
-	(*AgentStatus)(nil),                      // 19: civquest.v1.AgentStatus
-	(*VisibleEntity)(nil),                    // 20: civquest.v1.VisibleEntity
-	(*VisibleBlock)(nil),                     // 21: civquest.v1.VisibleBlock
-	(*ChatEvent)(nil),                        // 22: civquest.v1.ChatEvent
-	(*DamageEvent)(nil),                      // 23: civquest.v1.DamageEvent
-	(*TradeRequest)(nil),                     // 24: civquest.v1.TradeRequest
-	(*FarmlandSurveyEvent)(nil),              // 25: civquest.v1.FarmlandSurveyEvent
-	(*LandmarkContext)(nil),                  // 26: civquest.v1.LandmarkContext
-	(*DeathEvent)(nil),                       // 27: civquest.v1.DeathEvent
-	(*ReflexNotice)(nil),                     // 28: civquest.v1.ReflexNotice
-	(*AgentIntent)(nil),                      // 29: civquest.v1.AgentIntent
-	(*NavigateIntent)(nil),                   // 30: civquest.v1.NavigateIntent
-	(*AttackIntent)(nil),                     // 31: civquest.v1.AttackIntent
-	(*InteractBlockIntent)(nil),              // 32: civquest.v1.InteractBlockIntent
-	(*UseItemIntent)(nil),                    // 33: civquest.v1.UseItemIntent
-	(*CraftItemIntent)(nil),                  // 34: civquest.v1.CraftItemIntent
-	(*SendChatIntent)(nil),                   // 35: civquest.v1.SendChatIntent
-	(*RespondTradeIntent)(nil),               // 36: civquest.v1.RespondTradeIntent
-	(*CaravanIntent)(nil),                    // 37: civquest.v1.CaravanIntent
-	(*BuildBlockIntent)(nil),                 // 38: civquest.v1.BuildBlockIntent
-	(*CreateWrittenBookIntent)(nil),          // 39: civquest.v1.CreateWrittenBookIntent
-	(*PlaceSignpostIntent)(nil),              // 40: civquest.v1.PlaceSignpostIntent
-	(*TransferContainerIntent)(nil),          // 41: civquest.v1.TransferContainerIntent
+	(IntentReceipt_ReceiptStatus)(0),         // 5: civquest.v1.IntentReceipt.ReceiptStatus
+	(InteractBlockIntent_InteractionType)(0), // 6: civquest.v1.InteractBlockIntent.InteractionType
+	(CaravanIntent_CaravanAction)(0),         // 7: civquest.v1.CaravanIntent.CaravanAction
+	(*Vec3)(nil),                             // 8: civquest.v1.Vec3
+	(*BlockPosProto)(nil),                    // 9: civquest.v1.BlockPosProto
+	(*BoundingBoxProto)(nil),                 // 10: civquest.v1.BoundingBoxProto
+	(*ItemStackProto)(nil),                   // 11: civquest.v1.ItemStackProto
+	(*SpawnAgentRequest)(nil),                // 12: civquest.v1.SpawnAgentRequest
+	(*SpawnAgentResponse)(nil),               // 13: civquest.v1.SpawnAgentResponse
+	(*DespawnAgentRequest)(nil),              // 14: civquest.v1.DespawnAgentRequest
+	(*DespawnAgentResponse)(nil),             // 15: civquest.v1.DespawnAgentResponse
+	(*ExportRecipeRequest)(nil),              // 16: civquest.v1.ExportRecipeRequest
+	(*RecipeNode)(nil),                       // 17: civquest.v1.RecipeNode
+	(*ExportRecipeResponse)(nil),             // 18: civquest.v1.ExportRecipeResponse
+	(*TelemetryFrame)(nil),                   // 19: civquest.v1.TelemetryFrame
+	(*AgentStatus)(nil),                      // 20: civquest.v1.AgentStatus
+	(*VisibleEntity)(nil),                    // 21: civquest.v1.VisibleEntity
+	(*VisibleBlock)(nil),                     // 22: civquest.v1.VisibleBlock
+	(*ChatEvent)(nil),                        // 23: civquest.v1.ChatEvent
+	(*DamageEvent)(nil),                      // 24: civquest.v1.DamageEvent
+	(*TradeRequest)(nil),                     // 25: civquest.v1.TradeRequest
+	(*FarmlandSurveyEvent)(nil),              // 26: civquest.v1.FarmlandSurveyEvent
+	(*LandmarkContext)(nil),                  // 27: civquest.v1.LandmarkContext
+	(*DeathEvent)(nil),                       // 28: civquest.v1.DeathEvent
+	(*ReflexNotice)(nil),                     // 29: civquest.v1.ReflexNotice
+	(*IntentReceipt)(nil),                    // 30: civquest.v1.IntentReceipt
+	(*IntentBatch)(nil),                      // 31: civquest.v1.IntentBatch
+	(*AgentIntent)(nil),                      // 32: civquest.v1.AgentIntent
+	(*NavigateIntent)(nil),                   // 33: civquest.v1.NavigateIntent
+	(*AttackIntent)(nil),                     // 34: civquest.v1.AttackIntent
+	(*InteractBlockIntent)(nil),              // 35: civquest.v1.InteractBlockIntent
+	(*UseItemIntent)(nil),                    // 36: civquest.v1.UseItemIntent
+	(*CraftItemIntent)(nil),                  // 37: civquest.v1.CraftItemIntent
+	(*SendChatIntent)(nil),                   // 38: civquest.v1.SendChatIntent
+	(*RespondTradeIntent)(nil),               // 39: civquest.v1.RespondTradeIntent
+	(*CaravanIntent)(nil),                    // 40: civquest.v1.CaravanIntent
+	(*BuildBlockIntent)(nil),                 // 41: civquest.v1.BuildBlockIntent
+	(*CreateWrittenBookIntent)(nil),          // 42: civquest.v1.CreateWrittenBookIntent
+	(*PlaceSignpostIntent)(nil),              // 43: civquest.v1.PlaceSignpostIntent
+	(*TransferContainerIntent)(nil),          // 44: civquest.v1.TransferContainerIntent
 }
 var file_civquest_v1_civquest_proto_depIdxs = []int32{
-	8,  // 0: civquest.v1.BoundingBoxProto.min:type_name -> civquest.v1.BlockPosProto
-	8,  // 1: civquest.v1.BoundingBoxProto.max:type_name -> civquest.v1.BlockPosProto
-	7,  // 2: civquest.v1.SpawnAgentRequest.spawn_coords:type_name -> civquest.v1.Vec3
-	10, // 3: civquest.v1.RecipeNode.ingredients:type_name -> civquest.v1.ItemStackProto
-	10, // 4: civquest.v1.RecipeNode.result:type_name -> civquest.v1.ItemStackProto
-	16, // 5: civquest.v1.ExportRecipeResponse.recipes:type_name -> civquest.v1.RecipeNode
+	9,  // 0: civquest.v1.BoundingBoxProto.min:type_name -> civquest.v1.BlockPosProto
+	9,  // 1: civquest.v1.BoundingBoxProto.max:type_name -> civquest.v1.BlockPosProto
+	8,  // 2: civquest.v1.SpawnAgentRequest.spawn_coords:type_name -> civquest.v1.Vec3
+	11, // 3: civquest.v1.RecipeNode.ingredients:type_name -> civquest.v1.ItemStackProto
+	11, // 4: civquest.v1.RecipeNode.result:type_name -> civquest.v1.ItemStackProto
+	17, // 5: civquest.v1.ExportRecipeResponse.recipes:type_name -> civquest.v1.RecipeNode
 	0,  // 6: civquest.v1.TelemetryFrame.weather:type_name -> civquest.v1.Weather
-	19, // 7: civquest.v1.TelemetryFrame.status:type_name -> civquest.v1.AgentStatus
-	20, // 8: civquest.v1.TelemetryFrame.visible_entities:type_name -> civquest.v1.VisibleEntity
-	21, // 9: civquest.v1.TelemetryFrame.interesting_blocks:type_name -> civquest.v1.VisibleBlock
-	22, // 10: civquest.v1.TelemetryFrame.incoming_chats:type_name -> civquest.v1.ChatEvent
-	23, // 11: civquest.v1.TelemetryFrame.last_damage_taken:type_name -> civquest.v1.DamageEvent
-	24, // 12: civquest.v1.TelemetryFrame.pending_trade:type_name -> civquest.v1.TradeRequest
-	25, // 13: civquest.v1.TelemetryFrame.farmland_survey:type_name -> civquest.v1.FarmlandSurveyEvent
-	26, // 14: civquest.v1.TelemetryFrame.current_landmark:type_name -> civquest.v1.LandmarkContext
-	27, // 15: civquest.v1.TelemetryFrame.death_event:type_name -> civquest.v1.DeathEvent
-	28, // 16: civquest.v1.TelemetryFrame.reflex_notices:type_name -> civquest.v1.ReflexNotice
-	7,  // 17: civquest.v1.AgentStatus.position:type_name -> civquest.v1.Vec3
-	1,  // 18: civquest.v1.AgentStatus.navigation_state:type_name -> civquest.v1.NavigationState
-	10, // 19: civquest.v1.AgentStatus.inventory:type_name -> civquest.v1.ItemStackProto
-	7,  // 20: civquest.v1.VisibleEntity.position:type_name -> civquest.v1.Vec3
-	8,  // 21: civquest.v1.VisibleBlock.pos:type_name -> civquest.v1.BlockPosProto
-	2,  // 22: civquest.v1.DamageEvent.source_type:type_name -> civquest.v1.DamageSourceType
-	10, // 23: civquest.v1.TradeRequest.player_offered_items:type_name -> civquest.v1.ItemStackProto
-	9,  // 24: civquest.v1.FarmlandSurveyEvent.bounds:type_name -> civquest.v1.BoundingBoxProto
-	7,  // 25: civquest.v1.DeathEvent.death_location:type_name -> civquest.v1.Vec3
-	10, // 26: civquest.v1.DeathEvent.dropped_loot:type_name -> civquest.v1.ItemStackProto
-	4,  // 27: civquest.v1.ReflexNotice.reflex_type:type_name -> civquest.v1.ReflexNotice.ReflexType
-	30, // 28: civquest.v1.AgentIntent.navigate:type_name -> civquest.v1.NavigateIntent
-	31, // 29: civquest.v1.AgentIntent.attack:type_name -> civquest.v1.AttackIntent
-	32, // 30: civquest.v1.AgentIntent.interact_block:type_name -> civquest.v1.InteractBlockIntent
-	33, // 31: civquest.v1.AgentIntent.use_item:type_name -> civquest.v1.UseItemIntent
-	34, // 32: civquest.v1.AgentIntent.craft_item:type_name -> civquest.v1.CraftItemIntent
-	35, // 33: civquest.v1.AgentIntent.chat:type_name -> civquest.v1.SendChatIntent
-	36, // 34: civquest.v1.AgentIntent.trade_response:type_name -> civquest.v1.RespondTradeIntent
-	37, // 35: civquest.v1.AgentIntent.caravan:type_name -> civquest.v1.CaravanIntent
-	38, // 36: civquest.v1.AgentIntent.build_block:type_name -> civquest.v1.BuildBlockIntent
-	39, // 37: civquest.v1.AgentIntent.create_book:type_name -> civquest.v1.CreateWrittenBookIntent
-	40, // 38: civquest.v1.AgentIntent.place_signpost:type_name -> civquest.v1.PlaceSignpostIntent
-	41, // 39: civquest.v1.AgentIntent.transfer_container:type_name -> civquest.v1.TransferContainerIntent
-	7,  // 40: civquest.v1.NavigateIntent.target:type_name -> civquest.v1.Vec3
-	8,  // 41: civquest.v1.InteractBlockIntent.pos:type_name -> civquest.v1.BlockPosProto
-	5,  // 42: civquest.v1.InteractBlockIntent.interaction_type:type_name -> civquest.v1.InteractBlockIntent.InteractionType
-	8,  // 43: civquest.v1.CraftItemIntent.workstation_pos:type_name -> civquest.v1.BlockPosProto
-	3,  // 44: civquest.v1.SendChatIntent.target_channel:type_name -> civquest.v1.ChatChannel
-	10, // 45: civquest.v1.RespondTradeIntent.agent_counter_offer:type_name -> civquest.v1.ItemStackProto
-	10, // 46: civquest.v1.RespondTradeIntent.demanded_from_player:type_name -> civquest.v1.ItemStackProto
-	6,  // 47: civquest.v1.CaravanIntent.action:type_name -> civquest.v1.CaravanIntent.CaravanAction
-	8,  // 48: civquest.v1.CaravanIntent.fence_pos:type_name -> civquest.v1.BlockPosProto
-	10, // 49: civquest.v1.CaravanIntent.cargo_items:type_name -> civquest.v1.ItemStackProto
-	8,  // 50: civquest.v1.BuildBlockIntent.target_voxel:type_name -> civquest.v1.BlockPosProto
-	8,  // 51: civquest.v1.CreateWrittenBookIntent.target_lectern_or_shelf:type_name -> civquest.v1.BlockPosProto
-	8,  // 52: civquest.v1.PlaceSignpostIntent.pos:type_name -> civquest.v1.BlockPosProto
-	8,  // 53: civquest.v1.TransferContainerIntent.container_pos:type_name -> civquest.v1.BlockPosProto
-	10, // 54: civquest.v1.TransferContainerIntent.items:type_name -> civquest.v1.ItemStackProto
-	29, // 55: civquest.v1.CivQuestBridgeService.ConnectAgent:input_type -> civquest.v1.AgentIntent
-	11, // 56: civquest.v1.CivQuestBridgeService.SpawnAgentEntity:input_type -> civquest.v1.SpawnAgentRequest
-	13, // 57: civquest.v1.CivQuestBridgeService.DespawnAgentEntity:input_type -> civquest.v1.DespawnAgentRequest
-	15, // 58: civquest.v1.CivQuestBridgeService.ExportRecipeGraph:input_type -> civquest.v1.ExportRecipeRequest
-	18, // 59: civquest.v1.CivQuestBridgeService.ConnectAgent:output_type -> civquest.v1.TelemetryFrame
-	12, // 60: civquest.v1.CivQuestBridgeService.SpawnAgentEntity:output_type -> civquest.v1.SpawnAgentResponse
-	14, // 61: civquest.v1.CivQuestBridgeService.DespawnAgentEntity:output_type -> civquest.v1.DespawnAgentResponse
-	17, // 62: civquest.v1.CivQuestBridgeService.ExportRecipeGraph:output_type -> civquest.v1.ExportRecipeResponse
-	59, // [59:63] is the sub-list for method output_type
-	55, // [55:59] is the sub-list for method input_type
-	55, // [55:55] is the sub-list for extension type_name
-	55, // [55:55] is the sub-list for extension extendee
-	0,  // [0:55] is the sub-list for field type_name
+	20, // 7: civquest.v1.TelemetryFrame.status:type_name -> civquest.v1.AgentStatus
+	21, // 8: civquest.v1.TelemetryFrame.visible_entities:type_name -> civquest.v1.VisibleEntity
+	22, // 9: civquest.v1.TelemetryFrame.interesting_blocks:type_name -> civquest.v1.VisibleBlock
+	23, // 10: civquest.v1.TelemetryFrame.incoming_chats:type_name -> civquest.v1.ChatEvent
+	24, // 11: civquest.v1.TelemetryFrame.last_damage_taken:type_name -> civquest.v1.DamageEvent
+	25, // 12: civquest.v1.TelemetryFrame.pending_trade:type_name -> civquest.v1.TradeRequest
+	26, // 13: civquest.v1.TelemetryFrame.farmland_survey:type_name -> civquest.v1.FarmlandSurveyEvent
+	27, // 14: civquest.v1.TelemetryFrame.current_landmark:type_name -> civquest.v1.LandmarkContext
+	28, // 15: civquest.v1.TelemetryFrame.death_event:type_name -> civquest.v1.DeathEvent
+	29, // 16: civquest.v1.TelemetryFrame.reflex_notices:type_name -> civquest.v1.ReflexNotice
+	30, // 17: civquest.v1.TelemetryFrame.receipt:type_name -> civquest.v1.IntentReceipt
+	8,  // 18: civquest.v1.AgentStatus.position:type_name -> civquest.v1.Vec3
+	1,  // 19: civquest.v1.AgentStatus.navigation_state:type_name -> civquest.v1.NavigationState
+	11, // 20: civquest.v1.AgentStatus.inventory:type_name -> civquest.v1.ItemStackProto
+	8,  // 21: civquest.v1.VisibleEntity.position:type_name -> civquest.v1.Vec3
+	9,  // 22: civquest.v1.VisibleBlock.pos:type_name -> civquest.v1.BlockPosProto
+	2,  // 23: civquest.v1.DamageEvent.source_type:type_name -> civquest.v1.DamageSourceType
+	11, // 24: civquest.v1.TradeRequest.player_offered_items:type_name -> civquest.v1.ItemStackProto
+	10, // 25: civquest.v1.FarmlandSurveyEvent.bounds:type_name -> civquest.v1.BoundingBoxProto
+	8,  // 26: civquest.v1.DeathEvent.death_location:type_name -> civquest.v1.Vec3
+	11, // 27: civquest.v1.DeathEvent.dropped_loot:type_name -> civquest.v1.ItemStackProto
+	4,  // 28: civquest.v1.ReflexNotice.reflex_type:type_name -> civquest.v1.ReflexNotice.ReflexType
+	5,  // 29: civquest.v1.IntentReceipt.status:type_name -> civquest.v1.IntentReceipt.ReceiptStatus
+	32, // 30: civquest.v1.IntentBatch.intents:type_name -> civquest.v1.AgentIntent
+	33, // 31: civquest.v1.AgentIntent.navigate:type_name -> civquest.v1.NavigateIntent
+	34, // 32: civquest.v1.AgentIntent.attack:type_name -> civquest.v1.AttackIntent
+	35, // 33: civquest.v1.AgentIntent.interact_block:type_name -> civquest.v1.InteractBlockIntent
+	36, // 34: civquest.v1.AgentIntent.use_item:type_name -> civquest.v1.UseItemIntent
+	37, // 35: civquest.v1.AgentIntent.craft_item:type_name -> civquest.v1.CraftItemIntent
+	38, // 36: civquest.v1.AgentIntent.chat:type_name -> civquest.v1.SendChatIntent
+	39, // 37: civquest.v1.AgentIntent.trade_response:type_name -> civquest.v1.RespondTradeIntent
+	40, // 38: civquest.v1.AgentIntent.caravan:type_name -> civquest.v1.CaravanIntent
+	41, // 39: civquest.v1.AgentIntent.build_block:type_name -> civquest.v1.BuildBlockIntent
+	42, // 40: civquest.v1.AgentIntent.create_book:type_name -> civquest.v1.CreateWrittenBookIntent
+	43, // 41: civquest.v1.AgentIntent.place_signpost:type_name -> civquest.v1.PlaceSignpostIntent
+	44, // 42: civquest.v1.AgentIntent.transfer_container:type_name -> civquest.v1.TransferContainerIntent
+	8,  // 43: civquest.v1.NavigateIntent.target:type_name -> civquest.v1.Vec3
+	9,  // 44: civquest.v1.InteractBlockIntent.pos:type_name -> civquest.v1.BlockPosProto
+	6,  // 45: civquest.v1.InteractBlockIntent.interaction_type:type_name -> civquest.v1.InteractBlockIntent.InteractionType
+	9,  // 46: civquest.v1.CraftItemIntent.workstation_pos:type_name -> civquest.v1.BlockPosProto
+	3,  // 47: civquest.v1.SendChatIntent.target_channel:type_name -> civquest.v1.ChatChannel
+	11, // 48: civquest.v1.RespondTradeIntent.agent_counter_offer:type_name -> civquest.v1.ItemStackProto
+	11, // 49: civquest.v1.RespondTradeIntent.demanded_from_player:type_name -> civquest.v1.ItemStackProto
+	7,  // 50: civquest.v1.CaravanIntent.action:type_name -> civquest.v1.CaravanIntent.CaravanAction
+	9,  // 51: civquest.v1.CaravanIntent.fence_pos:type_name -> civquest.v1.BlockPosProto
+	11, // 52: civquest.v1.CaravanIntent.cargo_items:type_name -> civquest.v1.ItemStackProto
+	9,  // 53: civquest.v1.BuildBlockIntent.target_voxel:type_name -> civquest.v1.BlockPosProto
+	9,  // 54: civquest.v1.CreateWrittenBookIntent.target_lectern_or_shelf:type_name -> civquest.v1.BlockPosProto
+	9,  // 55: civquest.v1.PlaceSignpostIntent.pos:type_name -> civquest.v1.BlockPosProto
+	9,  // 56: civquest.v1.TransferContainerIntent.container_pos:type_name -> civquest.v1.BlockPosProto
+	11, // 57: civquest.v1.TransferContainerIntent.items:type_name -> civquest.v1.ItemStackProto
+	31, // 58: civquest.v1.CivQuestBridgeService.ConnectAgent:input_type -> civquest.v1.IntentBatch
+	12, // 59: civquest.v1.CivQuestBridgeService.SpawnAgentEntity:input_type -> civquest.v1.SpawnAgentRequest
+	14, // 60: civquest.v1.CivQuestBridgeService.DespawnAgentEntity:input_type -> civquest.v1.DespawnAgentRequest
+	16, // 61: civquest.v1.CivQuestBridgeService.ExportRecipeGraph:input_type -> civquest.v1.ExportRecipeRequest
+	19, // 62: civquest.v1.CivQuestBridgeService.ConnectAgent:output_type -> civquest.v1.TelemetryFrame
+	13, // 63: civquest.v1.CivQuestBridgeService.SpawnAgentEntity:output_type -> civquest.v1.SpawnAgentResponse
+	15, // 64: civquest.v1.CivQuestBridgeService.DespawnAgentEntity:output_type -> civquest.v1.DespawnAgentResponse
+	18, // 65: civquest.v1.CivQuestBridgeService.ExportRecipeGraph:output_type -> civquest.v1.ExportRecipeResponse
+	62, // [62:66] is the sub-list for method output_type
+	58, // [58:62] is the sub-list for method input_type
+	58, // [58:58] is the sub-list for extension type_name
+	58, // [58:58] is the sub-list for extension extendee
+	0,  // [0:58] is the sub-list for field type_name
 }
 
 func init() { file_civquest_v1_civquest_proto_init() }
@@ -3630,7 +3882,7 @@ func file_civquest_v1_civquest_proto_init() {
 	if File_civquest_v1_civquest_proto != nil {
 		return
 	}
-	file_civquest_v1_civquest_proto_msgTypes[22].OneofWrappers = []any{
+	file_civquest_v1_civquest_proto_msgTypes[24].OneofWrappers = []any{
 		(*AgentIntent_Navigate)(nil),
 		(*AgentIntent_Attack)(nil),
 		(*AgentIntent_InteractBlock)(nil),
@@ -3649,8 +3901,8 @@ func file_civquest_v1_civquest_proto_init() {
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_civquest_v1_civquest_proto_rawDesc), len(file_civquest_v1_civquest_proto_rawDesc)),
-			NumEnums:      7,
-			NumMessages:   35,
+			NumEnums:      8,
+			NumMessages:   37,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

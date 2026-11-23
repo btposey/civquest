@@ -1,31 +1,169 @@
 package com.civquest.mod;
 
+import com.civquest.mod.actuator.BlockBreaker;
+import com.civquest.mod.actuator.IntentActuator;
+import com.civquest.mod.actuator.motor.AgentMotorFSM;
+import com.civquest.mod.actuator.motor.MotorState;
+import com.civquest.mod.grpc.v1.AgentIntent;
+import com.civquest.mod.grpc.v1.BlockPosProto;
 import com.civquest.mod.grpc.v1.DespawnAgentRequest;
 import com.civquest.mod.grpc.v1.DespawnAgentResponse;
+import com.civquest.mod.grpc.v1.IntentBatch;
+import com.civquest.mod.grpc.v1.IntentReceipt;
+import com.civquest.mod.grpc.v1.InteractBlockIntent;
 import com.civquest.mod.grpc.v1.SpawnAgentRequest;
 import com.civquest.mod.grpc.v1.SpawnAgentResponse;
 import com.civquest.mod.grpc.v1.TelemetryFrame;
 import com.civquest.mod.grpc.v1.Vec3;
 import com.google.protobuf.ByteString;
+import com.mojang.authlib.GameProfile;
 import io.grpc.Status;
 import io.grpc.StatusRuntimeException;
 import io.grpc.stub.StreamObserver;
 import io.netty.buffer.Unpooled;
+import net.minecraft.core.BlockPos;
+import net.minecraft.core.Holder;
+import net.minecraft.core.RegistryAccess;
 import net.minecraft.core.UUIDUtil;
+import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.network.FriendlyByteBuf;
+import net.minecraft.server.MinecraftServer;
+import net.minecraft.server.PlayerAdvancements;
+import net.minecraft.server.level.ServerLevel;
+import net.minecraft.server.level.ServerPlayerGameMode;
+import net.minecraft.server.network.TextFilter;
+import net.minecraft.server.players.PlayerList;
+import net.minecraft.stats.ServerStatsCounter;
+import net.minecraft.tags.DamageTypeTags;
+import net.minecraft.util.RandomSource;
+import net.minecraft.world.Difficulty;
+import net.minecraft.world.damagesource.DamageScaling;
+import net.minecraft.world.damagesource.DamageSource;
+import net.minecraft.world.damagesource.DamageSources;
+import net.minecraft.world.damagesource.DamageType;
+import net.minecraft.world.entity.monster.Zombie;
+import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.item.Items;
+import net.minecraft.world.level.GameRules;
+import net.minecraft.world.level.GameType;
+import net.minecraft.world.level.Level;
+import net.minecraft.world.level.biome.Biome;
+import net.minecraft.world.level.block.Blocks;
+import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.level.border.WorldBorder;
+import net.minecraft.world.level.dimension.DimensionType;
+import net.minecraft.world.level.material.Fluids;
+import net.minecraft.world.level.storage.WorldData;
+import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.mockito.Mockito;
 
 import java.nio.charset.StandardCharsets;
+import java.util.Collections;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
 import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyBoolean;
+import static org.mockito.Mockito.*;
 
 public class AgentEntityTest {
+
+    @BeforeAll
+    static void initMinecraft() {
+        try {
+            net.neoforged.fml.loading.LoadingModList.of(
+                    java.util.List.of(), java.util.List.of(), java.util.List.of(), java.util.List.of(), java.util.Map.of()
+            );
+        } catch (Throwable ignored) {}
+        try {
+            java.lang.reflect.Field unsafeField = sun.misc.Unsafe.class.getDeclaredField("theUnsafe");
+            unsafeField.setAccessible(true);
+            sun.misc.Unsafe unsafe = (sun.misc.Unsafe) unsafeField.get(null);
+
+            java.lang.reflect.Field fmlLoaderDist = net.neoforged.fml.loading.FMLLoader.class.getDeclaredField("dist");
+            long offset1 = unsafe.staticFieldOffset(fmlLoaderDist);
+            unsafe.putObject(net.neoforged.fml.loading.FMLLoader.class, offset1, net.neoforged.api.distmarker.Dist.DEDICATED_SERVER);
+
+            java.lang.reflect.Field fmlEnvDist = net.neoforged.fml.loading.FMLEnvironment.class.getDeclaredField("dist");
+            long offset2 = unsafe.staticFieldOffset(fmlEnvDist);
+            unsafe.putObject(net.neoforged.fml.loading.FMLEnvironment.class, offset2, net.neoforged.api.distmarker.Dist.DEDICATED_SERVER);
+        } catch (Throwable ignored) {}
+        try {
+            net.minecraft.SharedConstants.tryDetectVersion();
+            net.minecraft.server.Bootstrap.bootStrap();
+        } catch (Throwable ignored) {}
+        try {
+            java.lang.reflect.Method unfreeze = net.neoforged.neoforge.registries.BaseMappedRegistry.class.getDeclaredMethod("unfreeze");
+            unfreeze.setAccessible(true);
+            @SuppressWarnings({"unchecked", "rawtypes"})
+            net.minecraft.core.WritableRegistry rootRegistry = (net.minecraft.core.WritableRegistry) net.minecraft.core.registries.BuiltInRegistries.REGISTRY;
+            if (!net.minecraft.core.registries.BuiltInRegistries.REGISTRY.containsKey(net.neoforged.neoforge.registries.NeoForgeRegistries.Keys.FLUID_TYPES.location())) {
+                unfreeze.invoke(rootRegistry);
+                net.minecraft.core.Registry.register(
+                        rootRegistry,
+                        net.neoforged.neoforge.registries.NeoForgeRegistries.Keys.FLUID_TYPES.location(),
+                        net.neoforged.neoforge.registries.NeoForgeRegistries.FLUID_TYPES
+                );
+                rootRegistry.freeze();
+            }
+            var fluidTypes = net.neoforged.neoforge.registries.NeoForgeRegistries.FLUID_TYPES;
+            if (!fluidTypes.containsKey(net.minecraft.resources.ResourceLocation.withDefaultNamespace("empty"))) {
+                unfreeze.invoke(fluidTypes);
+                net.minecraft.core.Registry.register(
+                        fluidTypes,
+                        net.minecraft.resources.ResourceLocation.withDefaultNamespace("empty"),
+                        new net.neoforged.neoforge.fluids.FluidType(net.neoforged.neoforge.fluids.FluidType.Properties.create())
+                );
+                net.minecraft.core.Registry.register(
+                        fluidTypes,
+                        net.minecraft.resources.ResourceLocation.withDefaultNamespace("water"),
+                        new net.neoforged.neoforge.fluids.FluidType(net.neoforged.neoforge.fluids.FluidType.Properties.create())
+                );
+                net.minecraft.core.Registry.register(
+                        fluidTypes,
+                        net.minecraft.resources.ResourceLocation.withDefaultNamespace("lava"),
+                        new net.neoforged.neoforge.fluids.FluidType(net.neoforged.neoforge.fluids.FluidType.Properties.create())
+                );
+                fluidTypes.freeze();
+            }
+            var attributes = net.minecraft.core.registries.BuiltInRegistries.ATTRIBUTE;
+            var swimKey = net.minecraft.resources.ResourceLocation.fromNamespaceAndPath("neoforge", "swim_speed");
+            if (!attributes.containsKey(swimKey)) {
+                unfreeze.invoke(attributes);
+                net.minecraft.core.Registry.register(
+                        attributes,
+                        swimKey,
+                        new net.neoforged.neoforge.common.PercentageAttribute("neoforge.swim_speed", 1.0D, 0.0D, 1024.0D).setSyncable(true)
+                );
+                net.minecraft.core.Registry.register(
+                        attributes,
+                        net.minecraft.resources.ResourceLocation.fromNamespaceAndPath("neoforge", "nametag_distance"),
+                        new net.minecraft.world.entity.ai.attributes.RangedAttribute("neoforge.name_tag_distance", 64.0D, 0.0D, 64.0D).setSyncable(true)
+                );
+                net.minecraft.core.Registry.register(
+                        attributes,
+                        net.minecraft.resources.ResourceLocation.fromNamespaceAndPath("neoforge", "creative_flight"),
+                        new net.neoforged.neoforge.common.BooleanAttribute("neoforge.creative_flight", false).setSyncable(true)
+                );
+                attributes.freeze();
+            }
+        } catch (Throwable ignored) {}
+        try {
+            java.lang.reflect.Field cachedValueField = net.neoforged.neoforge.common.ModConfigSpec.ConfigValue.class.getDeclaredField("cachedValue");
+            cachedValueField.setAccessible(true);
+            cachedValueField.set(net.neoforged.neoforge.common.NeoForgeConfig.SERVER.fullBoundingBoxLadders, Boolean.FALSE);
+        } catch (Throwable t) {
+            throw new RuntimeException("Failed to initialize NeoForgeConfig.SERVER.fullBoundingBoxLadders in test", t);
+        }
+    }
 
     private AgentEntityManager entityManager;
     private StreamRegistry streamRegistry;
@@ -394,5 +532,407 @@ public class AgentEntityTest {
         UUID otherEntityThrower = otherUUID;
         boolean otherEntityThanked = playerUUID != null && otherEntityThrower != null && otherEntityThrower.equals(playerUUID);
         assertFalse(otherEntityThanked, "Items thrown by other entities must not thank the nearby player");
+    }
+
+    private static class TestWorldContext {
+        final MinecraftServer server;
+        final ServerLevel level;
+        final DamageSources damageSources;
+        final DamageSource starveSource;
+        final GameRules gameRules;
+
+        TestWorldContext() {
+            server = mock(MinecraftServer.class);
+            level = mock(ServerLevel.class);
+            PlayerList playerList = mock(PlayerList.class);
+            WorldData worldData = mock(WorldData.class);
+            ServerPlayerGameMode gameMode = mock(ServerPlayerGameMode.class);
+            ServerStatsCounter statsCounter = mock(ServerStatsCounter.class);
+            PlayerAdvancements advancements = mock(PlayerAdvancements.class);
+            DimensionType dimensionType = mock(DimensionType.class);
+
+            damageSources = mock(DamageSources.class);
+            starveSource = spy(new DamageSource(Holder.direct(new DamageType("starve", DamageScaling.NEVER, 0.0F))));
+            doReturn(true).when(starveSource).is(DamageTypeTags.BYPASSES_ARMOR);
+            doReturn(starveSource).when(damageSources).starve();
+            DamageSource genericSource = new DamageSource(Holder.direct(new DamageType("generic", DamageScaling.NEVER, 0.0F)));
+            doReturn(genericSource).when(damageSources).generic();
+            doReturn(genericSource).when(damageSources).inWall();
+            doReturn(genericSource).when(damageSources).drown();
+            doReturn(genericSource).when(damageSources).fellOutOfWorld();
+            doReturn(genericSource).when(damageSources).onFire();
+
+            gameRules = new GameRules();
+            gameRules.getRule(GameRules.RULE_DOMOBLOOT).set(false, server);
+
+            when(server.createTextFilterForPlayer(any())).thenReturn(TextFilter.DUMMY);
+            when(server.createGameModeForPlayer(any())).thenReturn(gameMode);
+            when(server.getPlayerList()).thenReturn(playerList);
+            when(server.getWorldData()).thenReturn(worldData);
+            when(server.isPvpAllowed()).thenReturn(true);
+            when(server.isDedicatedServer()).thenReturn(false);
+            when(server.isRunning()).thenReturn(true);
+            net.minecraft.server.ReloadableServerRegistries.Holder reloadableRegistries = mock(net.minecraft.server.ReloadableServerRegistries.Holder.class);
+            when(reloadableRegistries.getLootTable(any())).thenReturn(net.minecraft.world.level.storage.loot.LootTable.EMPTY);
+            when(server.reloadableRegistries()).thenReturn(reloadableRegistries);
+
+            when(worldData.getGameType()).thenReturn(GameType.SURVIVAL);
+            when(gameMode.getGameModeForPlayer()).thenReturn(GameType.SURVIVAL);
+            when(playerList.getPlayerStats(any())).thenReturn(statsCounter);
+            when(playerList.getPlayerAdvancements(any())).thenReturn(advancements);
+            when(playerList.getPlayers()).thenReturn(Collections.emptyList());
+
+            when(level.getServer()).thenReturn(server);
+            when(level.getSharedSpawnPos()).thenReturn(new BlockPos(0, 64, 0));
+            when(level.getSharedSpawnAngle()).thenReturn(0.0F);
+            net.minecraft.core.MappedRegistry<net.minecraft.world.item.enchantment.Enchantment> enchantmentRegistry =
+                    new net.minecraft.core.MappedRegistry<>(net.minecraft.core.registries.Registries.ENCHANTMENT, com.mojang.serialization.Lifecycle.stable());
+            enchantmentRegistry.freeze();
+            java.util.List<net.minecraft.core.Registry<?>> allRegs = new java.util.ArrayList<>();
+            BuiltInRegistries.REGISTRY.forEach(allRegs::add);
+            allRegs.add(enchantmentRegistry);
+            RegistryAccess.Frozen registryAccess = new RegistryAccess.ImmutableRegistryAccess(allRegs).freeze();
+            when(level.registryAccess()).thenReturn(registryAccess);
+            when(level.dimensionType()).thenReturn(dimensionType);
+            when(level.dimension()).thenReturn(Level.OVERWORLD);
+            when(level.getWorldBorder()).thenReturn(new WorldBorder());
+            RandomSource randomSource = RandomSource.create();
+            when(level.getRandom()).thenReturn(randomSource);
+            try {
+                java.lang.reflect.Field randomField = Level.class.getDeclaredField("random");
+                randomField.setAccessible(true);
+                randomField.set(level, randomSource);
+            } catch (Throwable t) {
+                throw new RuntimeException("Failed to set Level.random on mock", t);
+            }
+            when(level.getGameRules()).thenReturn(gameRules);
+            when(level.getDifficulty()).thenReturn(Difficulty.NORMAL);
+            when(level.noCollision(any(), any())).thenReturn(true);
+            when(level.damageSources()).thenReturn(damageSources);
+            when(level.getBlockState(any(BlockPos.class))).thenReturn(Blocks.AIR.defaultBlockState());
+            when(level.getFluidState(any(BlockPos.class))).thenReturn(Fluids.EMPTY.defaultFluidState());
+            when(level.hasChunkAt(any(BlockPos.class))).thenReturn(true);
+            when(level.getMinBuildHeight()).thenReturn(-64);
+            when(level.getMaxBuildHeight()).thenReturn(320);
+            when(level.getProfiler()).thenReturn(net.minecraft.util.profiling.InactiveProfiler.INSTANCE);
+            when(level.getChunkSource()).thenReturn(mock(net.minecraft.server.level.ServerChunkCache.class));
+            when(level.getScoreboard()).thenReturn(new net.minecraft.server.ServerScoreboard(server));
+            when(level.tickRateManager()).thenReturn(new net.minecraft.world.TickRateManager());
+            @SuppressWarnings("unchecked")
+            Holder<Biome> mockBiome = mock(Holder.class);
+            when(level.getBiome(any(BlockPos.class))).thenReturn(mockBiome);
+        }
+
+        AgentEntity createAgent(String agentId, String displayName) {
+            GameProfile profile = new GameProfile(AgentEntity.createOfflineUUID(displayName), displayName);
+            AgentEntity agent = new AgentEntity(level, profile, agentId, "clan-test");
+            agent.setPos(0.5, 64.0, 0.5);
+            return agent;
+        }
+    }
+
+    @Test
+    @DisplayName("AgentEntity takes damage from hostile attacks and fall damage immediately after spawn")
+    void testAgentTakesHostileAndFallDamage() {
+        TestWorldContext ctx = new TestWorldContext();
+        ctx.gameRules.getRule(GameRules.RULE_NATURAL_REGENERATION).set(false, ctx.server);
+        AgentEntity agent = ctx.createAgent("agent-dmg-01", "MortalTestAgent");
+
+        assertEquals(20.0F, agent.getHealth(), 0.001F);
+
+        // 1. Hostile mob attack (does NOT bypass invulnerability)
+        Zombie mockZombie = mock(Zombie.class);
+        when(mockZombie.getName()).thenReturn(net.minecraft.network.chat.Component.literal("Zombie"));
+        when(mockZombie.getUUID()).thenReturn(UUID.randomUUID());
+        DamageSource mobAttack = new DamageSource(
+                Holder.direct(new DamageType("mob", DamageScaling.NEVER, 0.1F)),
+                mockZombie
+        );
+
+        boolean hurtByMob = agent.hurt(mobAttack, 4.0F);
+        assertTrue(hurtByMob, "AgentEntity must take damage from hostile attacks immediately after spawn");
+        assertEquals(16.0F, agent.getHealth(), 0.001F);
+
+        // Tick 20 times to clear post-hit invulnerableTime (20 -> 0)
+        assertTrue(agent.invulnerableTime > 0, "Post-hit invulnerableTime should be set");
+        for (int i = 0; i < 20; i++) {
+            agent.tick();
+        }
+        assertEquals(0, agent.invulnerableTime, "invulnerableTime must decrement to 0 across 20 ticks");
+
+        // 2. Fall damage (IS_FALL, does NOT bypass invulnerability)
+        DamageSource fallDamage = spy(new DamageSource(
+                Holder.direct(new DamageType("fall", DamageScaling.NEVER, 0.0F))
+        ));
+        doReturn(true).when(fallDamage).is(DamageTypeTags.IS_FALL);
+
+        boolean hurtByFall = agent.hurt(fallDamage, 5.0F);
+        assertTrue(hurtByFall, "AgentEntity must take fall damage");
+        assertEquals(11.0F, agent.getHealth(), 0.001F);
+    }
+
+    @Test
+    @DisplayName("AgentEntity accumulates metabolic, movement, and block-break exhaustion and starves at 0 food")
+    void testAgentExhaustionAndStarvationDamage() {
+        TestWorldContext ctx = new TestWorldContext();
+        AgentEntity agent = ctx.createAgent("agent-hunger-01", "HungryAgent");
+        // Disable natural regeneration so starvation / food decay is isolated cleanly
+        ctx.gameRules.getRule(GameRules.RULE_NATURAL_REGENERATION).set(false, ctx.server);
+
+        assertEquals(20, agent.getFoodData().getFoodLevel());
+        assertEquals(5.0F, agent.getFoodData().getSaturationLevel(), 0.001F);
+
+        // 1. Basal metabolic exhaustion accumulates when idle
+        agent.tick();
+        float afterIdleTick = agent.getFoodData().getExhaustionLevel();
+        assertTrue(afterIdleTick > 0.0F, "Idle tick must add basal metabolic exhaustion");
+
+        // 2. Movement exhaustion accumulates when horizontal velocity > 0.001
+        agent.setDeltaMovement(0.25, 0.0, 0.0);
+        agent.tick();
+        float afterMoveTick = agent.getFoodData().getExhaustionLevel();
+        assertTrue(afterMoveTick - afterIdleTick >= 0.01F,
+                "Moving tick must add movement exhaustion on top of basal exhaustion");
+
+        // 3. Block breaking exhaustion (+0.025F when a block is broken)
+        agent.setOnGround(true);
+        BlockPos targetPos = new BlockPos(1, 64, 0);
+        BlockState dirt = Blocks.DIRT.defaultBlockState();
+        when(ctx.level.getBlockState(targetPos)).thenReturn(dirt);
+        when(ctx.level.destroyBlock(targetPos, true, agent)).thenReturn(true);
+        BlockBreaker breaker = new BlockBreaker(agent);
+        float beforeBreak = agent.getFoodData().getExhaustionLevel();
+        assertTrue(breaker.start(targetPos));
+        // Tick until dirt breaks
+        for (int i = 0; i < 80 && breaker.isBreaking(); i++) {
+            breaker.tick();
+        }
+        assertFalse(breaker.isBreaking(), "BlockBreaker should complete breaking dirt");
+        assertTrue(agent.getFoodData().getExhaustionLevel() - beforeBreak >= 0.024F,
+                "Breaking a block must add 0.025F exhaustion");
+        // Block is now broken in the mock world
+        when(ctx.level.getBlockState(targetPos)).thenReturn(Blocks.AIR.defaultBlockState());
+
+        // 4. Exhaustion drains saturation and then food level
+        agent.getFoodData().setSaturation(0.0F);
+        agent.getFoodData().setFoodLevel(20);
+        agent.getFoodData().setExhaustion(3.995F);
+        agent.setDeltaMovement(0.25, 0.0, 0.0);
+        agent.tick(); // 3.995 + 0.012 = 4.007 > 4.0 => foodLevel drops to 19
+        assertEquals(19, agent.getFoodData().getFoodLevel(),
+                "Food level must decrease when accumulated exhaustion exceeds 4.0");
+
+        // 5. Starvation damage applies when food level is 0 (every 80 ticks in Difficulty.NORMAL)
+        agent.setNoGravity(true);
+        agent.setPos(0.5, 64.0, 0.5);
+        agent.setDeltaMovement(0.0, 0.0, 0.0);
+        agent.getFoodData().setFoodLevel(0);
+        agent.getFoodData().setSaturation(0.0F);
+        agent.getFoodData().setExhaustion(0.0F);
+        float initialHealth = agent.getHealth();
+        for (int i = 0; i < 80; i++) {
+            agent.tick();
+        }
+        assertTrue(agent.getHealth() < initialHealth,
+                "Starvation damage must reduce agent health after 80 ticks at 0 food");
+        assertSame(ctx.starveSource, agent.getLastDamageSource(),
+                "Damage source after 80 ticks at 0 food must be starvation");
+    }
+
+    @Test
+    @DisplayName("Taking lethal damage invokes die(), emits DeathEvent, clears inventory, and fires deathListener")
+    void testLethalDamageTriggersDeathLifecycle() {
+        TestWorldContext ctx = new TestWorldContext();
+        AgentEntity agent = ctx.createAgent("agent-lethal-01", "LethalTestAgent");
+
+        StreamRegistry registry = new StreamRegistry();
+        AtomicReference<TelemetryFrame> terminalFrameRef = new AtomicReference<>();
+        registry.register("agent-lethal-01", new StreamObserver<>() {
+            @Override
+            public void onNext(TelemetryFrame value) {
+                if (value.hasDeathEvent()) {
+                    terminalFrameRef.set(value);
+                }
+            }
+            @Override
+            public void onError(Throwable t) {}
+            @Override
+            public void onCompleted() {}
+        });
+        agent.setStreamRegistry(registry);
+
+        agent.getInventory().setItem(0, new ItemStack(Items.COBBLESTONE, 12));
+
+        AtomicBoolean deathListenerCalled = new AtomicBoolean(false);
+        AtomicInteger deathListenerCount = new AtomicInteger(0);
+        agent.setDeathListener(dead -> {
+            deathListenerCalled.set(true);
+            deathListenerCount.incrementAndGet();
+            registry.close(dead.getAgentId());
+        });
+
+        DamageSource lethalAttack = new DamageSource(
+                Holder.direct(new DamageType("mob", DamageScaling.NEVER, 0.1F))
+        );
+        boolean hurt = agent.hurt(lethalAttack, 25.0F);
+        assertTrue(hurt, "Lethal damage must be accepted");
+        assertTrue(agent.getHealth() <= 0.0F, "Agent health must be <= 0 after lethal damage");
+        assertTrue(deathListenerCalled.get(), "deathListener must be triggered on lethal damage");
+        assertEquals(1, deathListenerCount.get(), "deathListener must fire exactly once");
+        assertTrue(agent.isRemoved(), "Agent entity must be discarded on death");
+        assertNotNull(terminalFrameRef.get(), "DeathEvent telemetry frame must be emitted");
+        assertEquals("agent-lethal-01", terminalFrameRef.get().getDeathEvent().getAgentId());
+        assertTrue(agent.getInventory().isEmpty(), "Inventory must be dropped/cleared on death");
+    }
+
+    @Test
+    @DisplayName("Agents without explicit spawn_coords default to world shared spawn with surface heightmap and deterministic spread")
+    void testSpawnDefaultsToWorldSpawnNotPlayerLocation() throws Exception {
+        TestWorldContext ctx = new TestWorldContext();
+        when(ctx.server.submit(any(java.util.function.Supplier.class))).thenAnswer(inv -> {
+            java.util.function.Supplier<?> supplier = inv.getArgument(0);
+            return CompletableFuture.completedFuture(supplier.get());
+        });
+        when(ctx.level.addFreshEntity(any())).thenReturn(true);
+        when(ctx.level.getSharedSpawnPos()).thenReturn(new BlockPos(100, 64, 200));
+        when(ctx.level.getHeight(eq(net.minecraft.world.level.levelgen.Heightmap.Types.MOTION_BLOCKING_NO_LEAVES), anyInt(), anyInt()))
+                .thenReturn(72);
+
+        // Place a human player far away to verify agents do NOT spawn near the player
+        net.minecraft.server.level.ServerPlayer humanPlayer = mock(net.minecraft.server.level.ServerPlayer.class);
+        when(humanPlayer.getX()).thenReturn(500.0);
+        when(humanPlayer.getY()).thenReturn(80.0);
+        when(humanPlayer.getZ()).thenReturn(-500.0);
+        when(ctx.server.getPlayerList().getPlayers()).thenReturn(java.util.List.of(humanPlayer));
+
+        SpawnAgentRequest req1 = SpawnAgentRequest.newBuilder()
+                .setAgentId("spawn-test-1")
+                .setDisplayName("SpawnOne")
+                .setClanId("clan-test")
+                .build();
+        SpawnAgentRequest req2 = SpawnAgentRequest.newBuilder()
+                .setAgentId("spawn-test-2")
+                .setDisplayName("SpawnTwo")
+                .setClanId("clan-test")
+                .build();
+
+        AgentEntity agent1 = entityManager.spawnAgent(ctx.server, ctx.level, req1).get();
+        AgentEntity agent2 = entityManager.spawnAgent(ctx.server, ctx.level, req2).get();
+
+        assertEquals(100.5, agent1.getX(), 1e-6, "First agent must spawn at world spawn X");
+        assertEquals(72.0, agent1.getY(), 1e-6, "First agent must spawn at surface heightmap Y");
+        assertEquals(200.5, agent1.getZ(), 1e-6, "First agent must spawn at world spawn Z");
+
+        assertEquals(102.0, agent2.getX(), 1e-6, "Second agent must receive deterministic spread offset");
+        assertEquals(72.0, agent2.getY(), 1e-6);
+        assertEquals(200.5, agent2.getZ(), 1e-6);
+    }
+
+    @Test
+    @DisplayName("AgentEntity hurt() reflex preempts MINING via MotorPDA stack and popState resumes breaking with zero amnesia")
+    void testDamageReflexPreemptsMiningAndResumesWithZeroAmnesia() {
+        TestWorldContext ctx = new TestWorldContext();
+        AgentEntity agent = ctx.createAgent("agent-reflex-01", "ReflexMiner");
+        IntentActuator actuator = new IntentActuator();
+        agent.setIntentActuator(actuator);
+        agent.setNoGravity(true);
+        agent.setOnGround(true);
+        agent.setPos(0.5, 64.0, 0.5);
+        agent.getInventory().setItem(0, new ItemStack(Items.STONE_PICKAXE, 1));
+
+        BlockPos targetPos = new BlockPos(1, 64, 0);
+        BlockPos floorPos = new BlockPos(0, 63, 0);
+        BlockState stoneState = Blocks.STONE.defaultBlockState();
+        when(ctx.level.getBlockState(any(BlockPos.class))).thenAnswer(inv -> {
+            BlockPos p = inv.getArgument(0);
+            return (targetPos.equals(p) || floorPos.equals(p)) ? stoneState : Blocks.AIR.defaultBlockState();
+        });
+        when(ctx.level.destroyBlock(eq(targetPos), eq(true), eq(agent))).thenReturn(true);
+
+        IntentBatch batch = IntentBatch.newBuilder()
+                .setAgentId("agent-reflex-01")
+                .setBatchId(901L)
+                .addIntents(AgentIntent.newBuilder()
+                        .setAgentId("agent-reflex-01")
+                        .setInteractBlock(InteractBlockIntent.newBuilder()
+                                .setPos(BlockPosProto.newBuilder().setX(1).setY(64).setZ(0).build())
+                                .setInteractionType(InteractBlockIntent.InteractionType.HARVEST_BREAK)
+                                .build())
+                        .build())
+                .build();
+
+        actuator.submitBatch(agent, batch);
+        assertEquals(MotorState.MINING, agent.getMotorFSM().getState());
+
+        // Advance several ticks to accrue partial breaking progress
+        for (int i = 0; i < 6; i++) {
+            agent.tick();
+        }
+        float progressBeforeHit = agent.getBreaker().getProgress();
+        assertTrue(progressBeforeHit > 0.0f, "Breaking progress must advance before interruption");
+        assertEquals(MotorState.MINING, agent.getMotorFSM().getState());
+
+        // Simulate mob attack hitting the agent -> triggers hurt() reflex preemption
+        Zombie attacker = mock(Zombie.class);
+        DamageSource mobHit = new DamageSource(
+                Holder.direct(new DamageType("mob", DamageScaling.NEVER, 0.1F)),
+                attacker
+        );
+        boolean hurt = agent.hurt(mobHit, 2.0F);
+        assertTrue(hurt);
+        // Zero knockback drift in mock air world so the agent remains within 4.5 blocks of the target ore
+        agent.setDeltaMovement(0.0, 0.0, 0.0);
+        agent.setPos(0.5, 64.0, 0.5);
+        assertEquals(MotorState.COMBAT_ENGAGED, agent.getMotorFSM().getState());
+        assertEquals(1, agent.getMotorFSM().getStackDepth());
+        assertEquals(IntentReceipt.ReceiptStatus.RECEIPT_STATUS_PREEMPTED_BY_REFLEX,
+                actuator.getCurrentReceipt(agent).getStatus());
+        assertEquals(1, actuator.getCurrentReceipt(agent).getMotorStackDepth());
+
+        // Clear invulnerability / tick past combat timeout -> popState() restores MINING & progress
+        for (int i = 0; i <= AgentMotorFSM.COMBAT_TIMEOUT_TICKS; i++) {
+            agent.setDeltaMovement(0.0, 0.0, 0.0);
+            agent.tick();
+        }
+        assertEquals(MotorState.MINING, agent.getMotorFSM().getState(),
+                () -> "Expected MINING after popState, reason=" + agent.getMotorFSM().getLastAsyncFailureReason()
+                        + ", pos=(" + agent.getX() + "," + agent.getY() + "," + agent.getZ() + ")");
+        assertEquals(0, agent.getMotorFSM().getStackDepth());
+        assertTrue(agent.getBreaker().isBreaking());
+        assertTrue(agent.getBreaker().getProgress() >= progressBeforeHit,
+                "Resumed breaking progress must retain prior progress (zero amnesia)");
+
+        // Finish breaking the block cleanly -> batch completes
+        for (int i = 0; i < 200 && actuator.getCurrentReceipt(agent).getStatus() != IntentReceipt.ReceiptStatus.RECEIPT_STATUS_COMPLETED; i++) {
+            agent.setOnGround(true);
+            agent.setDeltaMovement(0.0, 0.0, 0.0);
+            agent.tick();
+        }
+        assertEquals(IntentReceipt.ReceiptStatus.RECEIPT_STATUS_COMPLETED,
+                actuator.getCurrentReceipt(agent).getStatus());
+        assertEquals(MotorState.IDLE, agent.getMotorFSM().getState());
+    }
+
+    @Test
+    @DisplayName("ADR-028: Inter-agent collision and push suppression between AgentEntity instances")
+    void testInterAgentCollisionSuppression() {
+        TestWorldContext ctx = new TestWorldContext();
+        AgentEntity agent1 = ctx.createAgent("agent-1", "AgentAlpha");
+        AgentEntity agent2 = ctx.createAgent("agent-2", "AgentBeta");
+
+        // canCollideWith
+        assertFalse(agent1.canCollideWith(agent2), "canCollideWith another AgentEntity must return false");
+        assertFalse(agent2.canCollideWith(agent1), "canCollideWith another AgentEntity must return false");
+
+        // canBeCollidedWith
+        assertFalse(agent1.canBeCollidedWith(), "canBeCollidedWith must return false");
+        assertFalse(agent2.canBeCollidedWith(), "canBeCollidedWith must return false");
+
+        // push suppression
+        net.minecraft.world.phys.Vec3 originalDelta1 = agent1.getDeltaMovement();
+        net.minecraft.world.phys.Vec3 originalDelta2 = agent2.getDeltaMovement();
+        agent1.push(agent2);
+        assertEquals(originalDelta1, agent1.getDeltaMovement(), "Pushing another AgentEntity must be a no-op");
+        assertEquals(originalDelta2, agent2.getDeltaMovement(), "Pushed AgentEntity deltaMovement must remain unchanged");
     }
 }

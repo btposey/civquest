@@ -4,6 +4,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/btposey/civquest/orchestrator-go/internal/db"
 	civquestv1 "github.com/btposey/civquest/orchestrator-go/internal/proto/v1"
 	"github.com/btposey/civquest/orchestrator-go/internal/xdg"
 )
@@ -213,6 +214,46 @@ func TestCraftingTableDistantNavigation(t *testing.T) {
 	}
 }
 
+func TestCraftingTableUndergroundIgnoredInFavorOfPocketCrafting(t *testing.T) {
+	state := NewAgentState()
+	state.telemetryFramesSeen = 5
+	state.lastExploreTick = 100
+	cfg := xdg.DefaultAgentIdentityConfig("Able")
+	cfg.Profession = "EXPLORER"
+
+	// Agent on surface at (0, 64, 0) needing tools, carrying 2 oak logs.
+	// Crafting table exists in a dugout cave directly below at (0, 50, 0) (dy = -14, hDist = 0).
+	// Because dy > 3 and hDist < |dy|*1.5, the table is unreachable.
+	// The agent must NOT navigate towards the underground table; it should craft a new table in pocket crafting!
+	frame := &civquestv1.TelemetryFrame{
+		WorldTick: 500,
+		TimeOfDay: 2000,
+		Status: &civquestv1.AgentStatus{
+			Position:        &civquestv1.Vec3{X: 0, Y: 64, Z: 0},
+			Health:          20,
+			FoodLevel:       20,
+			NavigationState: civquestv1.NavigationState_NAVIGATION_STATE_IDLE,
+			Inventory: []*civquestv1.ItemStackProto{
+				{Slot: 0, ItemId: "minecraft:oak_log", Count: 2},
+			},
+		},
+		InterestingBlocks: []*civquestv1.VisibleBlock{
+			{
+				Pos:     &civquestv1.BlockPosProto{X: 0, Y: 50, Z: 0},
+				BlockId: "minecraft:crafting_table",
+			},
+		},
+	}
+
+	intent := EvaluateBootstrapGoals("Able", frame, cfg, state)
+	if intent == nil || intent.GetCraftItem() == nil {
+		t.Fatalf("expected CraftItemIntent for pocket crafting crafting_table, got %+v", intent)
+	}
+	if intent.GetCraftItem().RecipeId != "minecraft:crafting_table" {
+		t.Fatalf("expected recipeId minecraft:crafting_table, got %s", intent.GetCraftItem().RecipeId)
+	}
+}
+
 func TestCraftingTableStoneUpgrade(t *testing.T) {
 	state := NewAgentState()
 	state.telemetryFramesSeen = 5
@@ -272,4 +313,825 @@ func TestEvaluateBootstrapGoalsDirect(t *testing.T) {
 		t.Errorf("EvaluateBootstrapGoalsDirect took %v, exceeded 5ms budget", duration)
 	}
 	_ = intent
+}
+
+func TestTaskSubroutine_GenericPhasesAndLifecycle(t *testing.T) {
+	state := NewAgentState()
+	prepareCalled := false
+	actCalled := false
+	completed := false
+	failed := false
+
+	// 1. Generic non-tree TaskFSM progressing APPROACH -> PREPARE -> ACT -> EVALUATE -> COMPLETE
+	targetPos := &civquestv1.BlockPosProto{X: 8, Y: 64, Z: 0}
+	var task *TaskFSM
+	task = NewTaskFSM(TaskDescriptor{
+		ID:              "generic_block_op:8,64,0",
+		Kind:            "generic_op",
+		Stage:           StageSettlement,
+		Routine:         RoutinePrimaryDuty,
+		ReachRadius:     3.0,
+		ActionCooldown:  10,
+		ProgressTimeout: 100,
+		Preemptible:     true,
+		Target: TaskTarget{
+			Kind:     TaskTargetBlock,
+			BlockPos: targetPos,
+			Position: &civquestv1.Vec3{X: 8.5, Y: 64, Z: 0.5},
+		},
+		IsComplete: func(s *AgentState, f *civquestv1.TelemetryFrame) bool {
+			return actCalled && f.WorldTick >= 150
+		},
+		SelectSubTarget: func(s *AgentState, f *civquestv1.TelemetryFrame, cur *TaskSubroutine) (*civquestv1.Vec3, *civquestv1.BlockPosProto, string, bool) {
+			return &civquestv1.Vec3{X: 8.5, Y: 64, Z: 0.5}, targetPos, "minecraft:stone", true
+		},
+		PrepareIntent: func(agentID string, s *AgentState, f *civquestv1.TelemetryFrame, cur *TaskSubroutine) *civquestv1.AgentIntent {
+			if prepareCalled {
+				return nil
+			}
+			prepareCalled = true
+			return &civquestv1.AgentIntent{
+				AgentId: agentID,
+				Action: &civquestv1.AgentIntent_InteractBlock{
+					InteractBlock: &civquestv1.InteractBlockIntent{
+						Pos:             targetPos,
+						InteractionType: civquestv1.InteractBlockIntent_USE_WORKSTATION,
+						BlockOrItemId:   "minecraft:iron_pickaxe",
+					},
+				},
+			}
+		},
+		BuildActIntent: func(agentID string, s *AgentState, f *civquestv1.TelemetryFrame, cur *TaskSubroutine) *civquestv1.AgentIntent {
+			actCalled = true
+			return &civquestv1.AgentIntent{
+				AgentId: agentID,
+				Action: &civquestv1.AgentIntent_InteractBlock{
+					InteractBlock: &civquestv1.InteractBlockIntent{
+						Pos:             targetPos,
+						InteractionType: civquestv1.InteractBlockIntent_HARVEST_BREAK,
+						BlockOrItemId:   "minecraft:stone",
+					},
+				},
+			}
+		},
+		OnComplete: func(s *AgentState, f *civquestv1.TelemetryFrame, cur *TaskSubroutine) {
+			completed = true
+		},
+	}, 100)
+
+	// Distant frame -> APPROACH
+	farFrame := &civquestv1.TelemetryFrame{
+		WorldTick: 100,
+		Status: &civquestv1.AgentStatus{
+			Position:        &civquestv1.Vec3{X: 0, Y: 64, Z: 0},
+			NavigationState: civquestv1.NavigationState_NAVIGATION_STATE_IDLE,
+		},
+	}
+	res1 := task.Tick("agent", state, farFrame)
+	if res1.Phase != TaskPhaseApproach || res1.Intent == nil || res1.Intent.GetNavigate() == nil {
+		t.Fatalf("expected APPROACH with NavigateIntent, got phase=%s intent=%+v", res1.Phase, res1.Intent)
+	}
+
+	// Within reach -> PREPARE
+	nearFrame := &civquestv1.TelemetryFrame{
+		WorldTick: 120,
+		Status: &civquestv1.AgentStatus{
+			Position:        &civquestv1.Vec3{X: 7.0, Y: 64, Z: 0.5},
+			NavigationState: civquestv1.NavigationState_NAVIGATION_STATE_IDLE,
+		},
+	}
+	res2 := task.Tick("agent", state, nearFrame)
+	if res2.Phase != TaskPhasePrepare || !prepareCalled || res2.Intent == nil ||
+		res2.Intent.GetInteractBlock().InteractionType != civquestv1.InteractBlockIntent_USE_WORKSTATION {
+		t.Fatalf("expected PREPARE phase intent, got phase=%s intent=%+v", res2.Phase, res2.Intent)
+	}
+
+	// Next tick -> ACT
+	nearFrame.WorldTick = 121
+	res3 := task.Tick("agent", state, nearFrame)
+	if res3.Phase != TaskPhaseAct || !actCalled || res3.Intent == nil ||
+		res3.Intent.GetInteractBlock().InteractionType != civquestv1.InteractBlockIntent_HARVEST_BREAK {
+		t.Fatalf("expected ACT phase HARVEST_BREAK intent, got phase=%s intent=%+v", res3.Phase, res3.Intent)
+	}
+	if task.Phase != TaskPhaseEvaluate {
+		t.Fatalf("expected task phase to advance to EVALUATE after ACT, got %s", task.Phase)
+	}
+
+	// Completion tick -> COMPLETE
+	nearFrame.WorldTick = 150
+	res4 := task.Tick("agent", state, nearFrame)
+	if res4.Phase != TaskPhaseComplete || !res4.Done || !completed {
+		t.Fatalf("expected COMPLETE and OnComplete fired, got phase=%s done=%v completed=%v", res4.Phase, res4.Done, completed)
+	}
+
+	// 2. Unachievable task -> FAILED
+	failTask := NewTaskFSM(TaskDescriptor{
+		ID:      "generic_fail",
+		Kind:    "generic_op",
+		Stage:   StageSettlement,
+		Routine: RoutinePrimaryDuty,
+		IsUnachievable: func(s *AgentState, f *civquestv1.TelemetryFrame) bool {
+			return true
+		},
+		OnFail: func(s *AgentState, f *civquestv1.TelemetryFrame, cur *TaskSubroutine, reason string) {
+			failed = true
+		},
+	}, 200)
+	resFail := failTask.Tick("agent", state, nearFrame)
+	if resFail.Phase != TaskPhaseFailed || !resFail.Done || !failed {
+		t.Fatalf("expected FAILED and OnFail fired, got phase=%s done=%v failed=%v", resFail.Phase, resFail.Done, failed)
+	}
+}
+
+func TestHarvestTreeTask_StrictColumnCommitmentAndReachability(t *testing.T) {
+	state := NewAgentState()
+	state.telemetryFramesSeen = 5
+	cfg := xdg.DefaultAgentIdentityConfig("Logger")
+	cfg.Profession = "EXPLORER"
+
+	// Target tree at (4, 64..67, 0); distracting closer tree at (2, 64, 3).
+	// Agent starts with empty inventory, locks onto (4, 0), and once committed must NOT craft
+	// even as harvested logs enter inventory.
+	frame := &civquestv1.TelemetryFrame{
+		WorldTick: 100,
+		TimeOfDay: 2000,
+		Status: &civquestv1.AgentStatus{
+			Position:        &civquestv1.Vec3{X: 3.5, Y: 64, Z: 0.5},
+			Health:          20,
+			FoodLevel:       20,
+			NavigationState: civquestv1.NavigationState_NAVIGATION_STATE_IDLE,
+		},
+		InterestingBlocks: []*civquestv1.VisibleBlock{
+			{Pos: &civquestv1.BlockPosProto{X: 4, Y: 64, Z: 0}, BlockId: "minecraft:oak_log"},
+			{Pos: &civquestv1.BlockPosProto{X: 4, Y: 65, Z: 0}, BlockId: "minecraft:oak_log"},
+			{Pos: &civquestv1.BlockPosProto{X: 4, Y: 66, Z: 0}, BlockId: "minecraft:oak_log"},
+			{Pos: &civquestv1.BlockPosProto{X: 4, Y: 67, Z: 0}, BlockId: "minecraft:oak_log"},
+			{Pos: &civquestv1.BlockPosProto{X: 40, Y: 64, Z: 3}, BlockId: "minecraft:birch_log"},
+		},
+	}
+
+	// Select and lock onto (4, 0)
+	intent1 := EvaluateBootstrapGoals("Logger", frame, cfg, state)
+	if intent1 == nil || intent1.GetInteractBlock() == nil ||
+		intent1.GetInteractBlock().InteractionType != civquestv1.InteractBlockIntent_HARVEST_BREAK ||
+		intent1.GetInteractBlock().Pos.X != 4 || intent1.GetInteractBlock().Pos.Y != 64 || intent1.GetInteractBlock().Pos.Z != 0 {
+		t.Fatalf("expected HARVEST_BREAK at bottom log (4,64,0), got %+v", intent1)
+	}
+	if locked, tx, tz, _ := state.GetTargetTree(); !locked || tx != 4 || tz != 0 {
+		t.Fatalf("expected tree lock on (4,0), got locked=%v (%d,%d)", locked, tx, tz)
+	}
+
+	// During 20-tick harvest cooldown (log still breaking), exploration AND crafting MUST be suppressed!
+	frame.WorldTick = 105
+	// Move birch_log closer (distance 1) and put oak_logs in inventory — must NOT switch tree or craft!
+	frame.InterestingBlocks = []*civquestv1.VisibleBlock{
+		{Pos: &civquestv1.BlockPosProto{X: 4, Y: 64, Z: 0}, BlockId: "minecraft:oak_log"},
+		{Pos: &civquestv1.BlockPosProto{X: 4, Y: 65, Z: 0}, BlockId: "minecraft:oak_log"},
+		{Pos: &civquestv1.BlockPosProto{X: 4, Y: 66, Z: 0}, BlockId: "minecraft:oak_log"},
+		{Pos: &civquestv1.BlockPosProto{X: 4, Y: 67, Z: 0}, BlockId: "minecraft:oak_log"},
+		{Pos: &civquestv1.BlockPosProto{X: 3, Y: 64, Z: 1}, BlockId: "minecraft:birch_log"},
+	}
+	frame.Status.Inventory = []*civquestv1.ItemStackProto{
+		{Slot: 0, ItemId: "minecraft:oak_log", Count: 2},
+	}
+	if cooldownIntent := EvaluateBootstrapGoals("Logger", frame, cfg, state); cooldownIntent != nil {
+		t.Fatalf("expected nil intent during harvest cooldown (no exploration/crafting fallthrough), got %+v", cooldownIntent)
+	}
+	if exploreIntent := EvaluateExploration("Logger", frame, cfg, state); exploreIntent != nil {
+		t.Fatalf("expected EvaluateExploration to suppress wander while committed to tree, got %+v", exploreIntent)
+	}
+
+	// Next tick after (4, 64, 0) breaks -> must break (4, 65, 0) on the locked trunk, NOT (3, 64, 1)
+	frame.WorldTick = 121
+	frame.InterestingBlocks = []*civquestv1.VisibleBlock{
+		{Pos: &civquestv1.BlockPosProto{X: 4, Y: 65, Z: 0}, BlockId: "minecraft:oak_log"},
+		{Pos: &civquestv1.BlockPosProto{X: 4, Y: 66, Z: 0}, BlockId: "minecraft:oak_log"},
+		{Pos: &civquestv1.BlockPosProto{X: 4, Y: 67, Z: 0}, BlockId: "minecraft:oak_log"},
+		{Pos: &civquestv1.BlockPosProto{X: 3, Y: 64, Z: 1}, BlockId: "minecraft:birch_log"},
+	}
+	intent2 := EvaluateBootstrapGoals("Logger", frame, cfg, state)
+	if intent2 == nil || intent2.GetInteractBlock() == nil ||
+		intent2.GetInteractBlock().Pos.X != 4 || intent2.GetInteractBlock().Pos.Y != 65 || intent2.GetInteractBlock().Pos.Z != 0 {
+		t.Fatalf("expected continued HARVEST_BREAK on locked trunk (4,65,0), got %+v", intent2)
+	}
+
+	// Condition (a): Suppose only a canopy log above 4.5m reach (Y=70, dist > 4.5m from Y=64) remains in column
+	// Wait: [Y-1..Y+5] is [63..69], so test Y=69 where distance from eye/pos (3.5, 64, 0.5) to (4.5, 69.5, 0.5) is sqrt(1 + 30.25) = 5.59m > 4.5m!
+	frame.WorldTick = 145
+	frame.InterestingBlocks = []*civquestv1.VisibleBlock{
+		{Pos: &civquestv1.BlockPosProto{X: 4, Y: 69, Z: 0}, BlockId: "minecraft:oak_log"},
+	}
+	// Agent is within 2.5m horizontally of (4, 0) and zero logs remain within 4.5m reach -> task completes and unlocks!
+	_ = EvaluateBootstrapGoals("Logger", frame, cfg, state)
+	if state.HasActiveTask() {
+		t.Fatalf("expected HarvestTreeTask to complete when no logs remain within 4.5m reach at trunk")
+	}
+	if locked, _, _, _ := state.GetTargetTree(); locked {
+		t.Fatalf("expected targetTreeLocked cleared once reachable logs exhausted")
+	}
+
+	// Condition (b): New tree lock where column [Y-1..Y+5] becomes completely empty
+	state.ClearActiveTask()
+	frame.Status.Inventory = nil
+	frame.WorldTick = 200
+	frame.InterestingBlocks = []*civquestv1.VisibleBlock{
+		{Pos: &civquestv1.BlockPosProto{X: 2, Y: 64, Z: 0}, BlockId: "minecraft:oak_log"},
+	}
+	if startIntent := EvaluateBootstrapGoals("Logger", frame, cfg, state); startIntent == nil || startIntent.GetInteractBlock() == nil {
+		t.Fatalf("expected new HARVEST_BREAK on (2,64,0), got %+v", startIntent)
+	}
+	// While pathing toward tree, exploration must stay suppressed
+	state.ClearActiveTask()
+	state.StartTask(NewHarvestTreeTask(12, 64, 0, StageBootstrap, 210))
+	frame.WorldTick = 211
+	frame.Status.Position = &civquestv1.Vec3{X: 0, Y: 64, Z: 0}
+	frame.Status.NavigationState = civquestv1.NavigationState_NAVIGATION_STATE_PATHING
+	frame.InterestingBlocks = []*civquestv1.VisibleBlock{
+		{Pos: &civquestv1.BlockPosProto{X: 12, Y: 64, Z: 0}, BlockId: "minecraft:oak_log"},
+	}
+	if pathingIntent := EvaluateBootstrapGoals("Logger", frame, cfg, state); pathingIntent != nil {
+		t.Fatalf("expected nil while Baritone pathing to locked tree (no wander), got %+v", pathingIntent)
+	}
+	// Now trunk disappears completely from [Y-1..Y+5] -> completes!
+	frame.WorldTick = 212
+	frame.Status.NavigationState = civquestv1.NavigationState_NAVIGATION_STATE_IDLE
+	frame.InterestingBlocks = nil
+	_ = EvaluateBootstrapGoals("Logger", frame, cfg, state)
+	if state.HasActiveTask() {
+		t.Fatalf("expected task complete when column [Y-1..Y+5] has no logs")
+	}
+}
+
+func TestHarvestTreeTask_HardTimeoutUnlocksAndCoolsDown(t *testing.T) {
+	state := NewAgentState()
+	state.telemetryFramesSeen = 5
+	cfg := xdg.DefaultAgentIdentityConfig("TimeoutAgent")
+
+	// Blocked tree at (10, 64, 0) far outside 4.5m reach, and another tree at (3, 64, 0)
+	state.StartTask(NewHarvestTreeTask(10, 64, 0, StageBootstrap, 100))
+
+	frame := &civquestv1.TelemetryFrame{
+		WorldTick: 100,
+		TimeOfDay: 2000,
+		Status: &civquestv1.AgentStatus{
+			Position:        &civquestv1.Vec3{X: 0, Y: 64, Z: 0},
+			Health:          20,
+			FoodLevel:       20,
+			NavigationState: civquestv1.NavigationState_NAVIGATION_STATE_STUCK,
+		},
+		InterestingBlocks: []*civquestv1.VisibleBlock{
+			{Pos: &civquestv1.BlockPosProto{X: 10, Y: 64, Z: 0}, BlockId: "minecraft:oak_log"},
+			{Pos: &civquestv1.BlockPosProto{X: 3, Y: 64, Z: 0}, BlockId: "minecraft:birch_log"},
+		},
+	}
+
+	// At tick 249 (149 ticks elapsed), still committed to (10, 0)
+	frame.WorldTick = 249
+	_ = EvaluateBootstrapGoals("TimeoutAgent", frame, cfg, state)
+	if locked, tx, _, _ := state.GetTargetTree(); !locked || tx != 10 {
+		t.Fatalf("expected tree lock on (10,0) before 150-tick timeout, got locked=%v tx=%d", locked, tx)
+	}
+
+	// At tick 250 (150 ticks without breaking a block) -> hard timeout, unlock, cooldown on (10, 0), select (3, 0)!
+	frame.WorldTick = 250
+	frame.Status.NavigationState = civquestv1.NavigationState_NAVIGATION_STATE_IDLE
+	intent := EvaluateBootstrapGoals("TimeoutAgent", frame, cfg, state)
+	if intent == nil || intent.GetInteractBlock() == nil || intent.GetInteractBlock().Pos.X != 3 {
+		t.Fatalf("expected agent to recover and target unobstructed tree (3,64,0) after timeout, got %+v", intent)
+	}
+	if !state.IsTreeOnCooldownLocked(10, 0, 250) {
+		t.Fatalf("expected timed-out tree (10,0) to be placed on cooldown")
+	}
+}
+
+func TestHarvestTreeTask_CollectsDroppedWoodThenTransitionsCleanly(t *testing.T) {
+	state := NewAgentState()
+	state.telemetryFramesSeen = 5
+	cfg := xdg.DefaultAgentIdentityConfig("Collector")
+
+	// Locked onto tree at (4, 64, 0)
+	state.StartTask(NewHarvestTreeTask(4, 64, 0, StageBootstrap, 100))
+
+	// Tree trunk is now gone, and a dropped Oak Log entity sits at (4.5, 64, 0.5) (distance 4.5m > 2.5m pickup radius)
+	frame := &civquestv1.TelemetryFrame{
+		WorldTick: 140,
+		TimeOfDay: 2000,
+		Status: &civquestv1.AgentStatus{
+			Position:        &civquestv1.Vec3{X: 0.0, Y: 64, Z: 0.5},
+			Health:          20,
+			FoodLevel:       20,
+			NavigationState: civquestv1.NavigationState_NAVIGATION_STATE_IDLE,
+		},
+		VisibleEntities: []*civquestv1.VisibleEntity{
+			{
+				EntityId:    777,
+				EntityType:  "minecraft:item",
+				DisplayName: "Oak Log",
+				Position:    &civquestv1.Vec3{X: 4.5, Y: 64, Z: 0.5},
+			},
+		},
+	}
+
+	collectNav := EvaluateBootstrapGoals("Collector", frame, cfg, state)
+	if collectNav == nil || collectNav.GetNavigate() == nil {
+		t.Fatalf("expected NavigateIntent toward dropped Oak Log after tree harvest, got %+v", collectNav)
+	}
+	active, kind, _, routine := state.ActiveTaskInfo()
+	if !active || kind != "collect_items" || routine != RoutineCollectItems {
+		t.Fatalf("expected active collect_items / COLLECT_ITEMS task, got active=%v kind=%s routine=%s", active, kind, routine)
+	}
+
+	// Item picked up (VisibleEntities empty, 2 oak_log now in inventory) -> transitions cleanly to crafting_table!
+	frame.WorldTick = 160
+	frame.VisibleEntities = nil
+	frame.Status.Position = &civquestv1.Vec3{X: 4.0, Y: 64, Z: 0.5}
+	frame.Status.Inventory = []*civquestv1.ItemStackProto{
+		{Slot: 0, ItemId: "minecraft:oak_log", Count: 2},
+	}
+	craftIntent := EvaluateBootstrapGoals("Collector", frame, cfg, state)
+	if craftIntent == nil || craftIntent.GetCraftItem() == nil || craftIntent.GetCraftItem().RecipeId != "minecraft:crafting_table" {
+		t.Fatalf("expected clean transition to CraftItemIntent(minecraft:crafting_table), got %+v", craftIntent)
+	}
+	if state.HasActiveTask() {
+		t.Fatalf("expected collect_items task cleared once drops collected")
+	}
+}
+
+func TestTaskSubroutine_ReceiptImmediateAdvancementAndRecovery(t *testing.T) {
+	state := NewAgentState()
+
+	// 1. RECEIPT_STATUS_COMPLETED clears ActionCooldown & advances immediately
+	stepIdx := 0
+	var failReason string
+	onFailCalled := false
+
+	task := NewTaskSubroutine(TaskDescriptor{
+		ID:                 "receipt_test",
+		Kind:               "receipt_test",
+		Stage:              StageSettlement,
+		Routine:            RoutinePrimaryDuty,
+		ReachRadius:        4.5,
+		ArrivalTolerance:   2,
+		ActionCooldown:     20,
+		MaxReceiptFailures: 2,
+		SelectSubTarget: func(s *AgentState, f *civquestv1.TelemetryFrame, cur *TaskSubroutine) (*civquestv1.Vec3, *civquestv1.BlockPosProto, string, bool) {
+			return &civquestv1.Vec3{X: 2, Y: 64, Z: 0}, &civquestv1.BlockPosProto{X: 2, Y: 64, Z: 0}, "target_block", true
+		},
+		NeedsSubTargetRefresh: func(s *AgentState, f *civquestv1.TelemetryFrame, cur *TaskSubroutine) bool {
+			return false
+		},
+		BuildActIntent: func(agentID string, s *AgentState, f *civquestv1.TelemetryFrame, cur *TaskSubroutine) *civquestv1.AgentIntent {
+			stepIdx++
+			return &civquestv1.AgentIntent{
+				AgentId: agentID,
+				Action: &civquestv1.AgentIntent_InteractBlock{
+					InteractBlock: &civquestv1.InteractBlockIntent{
+						Pos:             &civquestv1.BlockPosProto{X: 2, Y: 64, Z: 0},
+						InteractionType: civquestv1.InteractBlockIntent_HARVEST_BREAK,
+					},
+				},
+			}
+		},
+		OnFail: func(s *AgentState, f *civquestv1.TelemetryFrame, cur *TaskSubroutine, reason string) {
+			onFailCalled = true
+			failReason = reason
+		},
+	}, 100)
+
+	state.StartTask(task)
+
+	// Tick 100: emits first ACT intent and sets LastActionTick = 100
+	frame := &civquestv1.TelemetryFrame{
+		WorldTick: 100,
+		Status: &civquestv1.AgentStatus{
+			Position:        &civquestv1.Vec3{X: 0, Y: 64, Z: 0},
+			NavigationState: civquestv1.NavigationState_NAVIGATION_STATE_IDLE,
+		},
+	}
+	res1 := state.StepActiveTask("agent", frame)
+	if res1.Intent == nil || res1.Phase != TaskPhaseAct || stepIdx != 1 {
+		t.Fatalf("expected initial ACT intent on tick 100, got %+v (stepIdx=%d)", res1, stepIdx)
+	}
+
+	// Tick 101 without receipt: blocked by 20-tick ActionCooldown
+	frame.WorldTick = 101
+	resWait := state.StepActiveTask("agent", frame)
+	if resWait.Intent != nil || resWait.Phase != TaskPhaseAct || stepIdx != 1 {
+		t.Fatalf("expected cooldown hold without receipt at tick 101, got %+v", resWait)
+	}
+
+	// Tick 102 with RECEIPT_STATUS_COMPLETED: must advance immediately without waiting 20 ticks
+	frame.WorldTick = 102
+	frame.Receipt = &civquestv1.IntentReceipt{
+		BatchId: 10,
+		Status:  civquestv1.IntentReceipt_RECEIPT_STATUS_COMPLETED,
+	}
+	resAdvance := state.StepActiveTask("agent", frame)
+	if resAdvance.Intent == nil || resAdvance.Phase != TaskPhaseAct || stepIdx != 2 {
+		t.Fatalf("expected immediate advancement to next ACT on RECEIPT_STATUS_COMPLETED, got %+v (stepIdx=%d)", resAdvance, stepIdx)
+	}
+
+	// 2. RECEIPT_STATUS_PREEMPTED_BY_REFLEX resets cooldowns without counting as failure
+	frame.WorldTick = 103
+	frame.Receipt = &civquestv1.IntentReceipt{
+		BatchId: 11,
+		Status:  civquestv1.IntentReceipt_RECEIPT_STATUS_PREEMPTED_BY_REFLEX,
+	}
+	resPreempt := state.StepActiveTask("agent", frame)
+	if !resPreempt.Active || resPreempt.Done || task.ConsecutiveFailures != 0 {
+		t.Fatalf("expected clean preemption reset with 0 failures, got res=%+v failures=%d", resPreempt, task.ConsecutiveFailures)
+	}
+
+	// 3. First RECEIPT_STATUS_FAILED triggers recovery without failing task
+	frame.WorldTick = 104
+	frame.Receipt = &civquestv1.IntentReceipt{
+		BatchId:       12,
+		Status:        civquestv1.IntentReceipt_RECEIPT_STATUS_FAILED,
+		FailureReason: "path blocked",
+	}
+	resRecover := state.StepActiveTask("agent", frame)
+	if !resRecover.Active || resRecover.Done || task.ConsecutiveFailures != 1 {
+		t.Fatalf("expected recovery on first failure (failures=1), got res=%+v failures=%d", resRecover, task.ConsecutiveFailures)
+	}
+	if task.Metadata["last_failure_reason"] != "path blocked" {
+		t.Fatalf("expected last_failure_reason recorded, got %+v", task.Metadata)
+	}
+
+	// 4. Second RECEIPT_STATUS_FAILED reaches MaxReceiptFailures and fails task
+	frame.WorldTick = 105
+	frame.Receipt = &civquestv1.IntentReceipt{
+		BatchId:       13,
+		Status:        civquestv1.IntentReceipt_RECEIPT_STATUS_FAILED,
+		FailureReason: "target unreachable",
+	}
+	resFail := state.StepActiveTask("agent", frame)
+	if resFail.Phase != TaskPhaseFailed || !resFail.Done || !onFailCalled {
+		t.Fatalf("expected TaskPhaseFailed and OnFail callback on second failure, got res=%+v onFail=%v", resFail, onFailCalled)
+	}
+	if failReason == "" || state.HasActiveTask() {
+		t.Fatalf("expected failure reason and cleared active task, got reason=%q active=%v", failReason, state.HasActiveTask())
+	}
+}
+
+func TestDistributedTreeSelection_AcrossAgents(t *testing.T) {
+	// 6 distinct tree trunks all within 32m of origin (0, 64, 0)
+	blocks := []*civquestv1.VisibleBlock{
+		{Pos: &civquestv1.BlockPosProto{X: 4, Y: 64, Z: 0}, BlockId: "minecraft:oak_log"},
+		{Pos: &civquestv1.BlockPosProto{X: 4, Y: 65, Z: 0}, BlockId: "minecraft:oak_log"},
+		{Pos: &civquestv1.BlockPosProto{X: 8, Y: 64, Z: 2}, BlockId: "minecraft:oak_log"},
+		{Pos: &civquestv1.BlockPosProto{X: 0, Y: 64, Z: 10}, BlockId: "minecraft:birch_log"},
+		{Pos: &civquestv1.BlockPosProto{X: -12, Y: 64, Z: 4}, BlockId: "minecraft:spruce_log"},
+		{Pos: &civquestv1.BlockPosProto{X: 6, Y: 64, Z: -14}, BlockId: "minecraft:oak_log"},
+		{Pos: &civquestv1.BlockPosProto{X: -15, Y: 64, Z: -10}, BlockId: "minecraft:birch_log"},
+	}
+
+	type xz struct {
+		x, z int32
+	}
+	chosen := make(map[xz]int)
+	agents := []string{"Able", "Baker", "Carl", "Dawn", "Eve", "Frank"}
+
+	for _, id := range agents {
+		state := NewAgentState()
+		state.telemetryFramesSeen = 5
+		cfg := xdg.DefaultAgentIdentityConfig(id)
+		frame := &civquestv1.TelemetryFrame{
+			WorldTick: 200,
+			TimeOfDay: 2000,
+			Status: &civquestv1.AgentStatus{
+				Position:        &civquestv1.Vec3{X: 0, Y: 64, Z: 0},
+				Health:          20,
+				FoodLevel:       20,
+				NavigationState: civquestv1.NavigationState_NAVIGATION_STATE_IDLE,
+			},
+			InterestingBlocks: blocks,
+		}
+		intent := EvaluateBootstrapGoals(id, frame, cfg, state)
+		if intent == nil {
+			t.Fatalf("expected non-nil intent for agent %s", id)
+		}
+		locked, tx, tz, _ := state.GetTargetTree()
+		if !locked {
+			t.Fatalf("expected agent %s to lock onto a tree trunk", id)
+		}
+		chosen[xz{tx, tz}]++
+	}
+
+	if len(chosen) < 3 {
+		t.Fatalf("expected agents to distribute across multiple distinct trees, got %+v", chosen)
+	}
+}
+
+func TestCraftingTableSelfPlacement_IgnoresDistantTable(t *testing.T) {
+	state := NewAgentState()
+	state.telemetryFramesSeen = 5
+	cfg := xdg.DefaultAgentIdentityConfig("Able")
+	cfg.Profession = "EXPLORER"
+
+	// Able has a crafting_table in inventory, stands at (0, 64, 0) facing +Z (Yaw=0),
+	// and sees another agent's distant crafting table at (40, 64, 0).
+	// Able MUST place its own crafting table immediately in front instead of navigating to (40, 64, 0).
+	frame := &civquestv1.TelemetryFrame{
+		WorldTick: 300,
+		TimeOfDay: 2000,
+		Status: &civquestv1.AgentStatus{
+			Position:        &civquestv1.Vec3{X: 0, Y: 64, Z: 0},
+			Yaw:             0,
+			Health:          20,
+			FoodLevel:       20,
+			NavigationState: civquestv1.NavigationState_NAVIGATION_STATE_IDLE,
+			Inventory: []*civquestv1.ItemStackProto{
+				{Slot: 0, ItemId: "minecraft:oak_log", Count: 2},
+				{Slot: 1, ItemId: "minecraft:crafting_table", Count: 1},
+			},
+		},
+		InterestingBlocks: []*civquestv1.VisibleBlock{
+			{Pos: &civquestv1.BlockPosProto{X: 40, Y: 64, Z: 0}, BlockId: "minecraft:crafting_table"},
+		},
+	}
+
+	placeIntent := EvaluateBootstrapGoals("Able", frame, cfg, state)
+	if placeIntent == nil || placeIntent.GetInteractBlock() == nil ||
+		placeIntent.GetInteractBlock().InteractionType != civquestv1.InteractBlockIntent_PLACE_BLOCK ||
+		placeIntent.GetInteractBlock().BlockOrItemId != "minecraft:crafting_table" {
+		t.Fatalf("expected self-placement PLACE_BLOCK for minecraft:crafting_table instead of distant navigation, got %+v", placeIntent)
+	}
+	placedPos := placeIntent.GetInteractBlock().Pos
+	if placedPos == nil || placedPos.X != 0 || placedPos.Y != 64 || placedPos.Z != 1 {
+		t.Fatalf("expected crafting table placed ~1.5m in front at (0, 64, 1), got %+v", placedPos)
+	}
+
+	// Next tick: placed crafting table appears at (0, 64, 1), consumed from inventory -> crafts wooden_axe!
+	frame.WorldTick = 325
+	frame.Status.Inventory = []*civquestv1.ItemStackProto{
+		{Slot: 0, ItemId: "minecraft:oak_log", Count: 2},
+	}
+	frame.InterestingBlocks = append(frame.InterestingBlocks, &civquestv1.VisibleBlock{
+		Pos:     placedPos,
+		BlockId: "minecraft:crafting_table",
+	})
+	craftIntent := EvaluateBootstrapGoals("Able", frame, cfg, state)
+	if craftIntent == nil || craftIntent.GetCraftItem() == nil || craftIntent.GetCraftItem().RecipeId != "minecraft:wooden_axe" {
+		t.Fatalf("expected immediate transition to CraftItemIntent(minecraft:wooden_axe), got %+v", craftIntent)
+	}
+}
+
+func TestBootstrap_CraftingTableRecallFromSpatialIndex(t *testing.T) {
+	state := NewAgentState()
+	state.telemetryFramesSeen = 5
+	cfg := xdg.DefaultAgentIdentityConfig("Able")
+	cfg.Profession = "EXPLORER"
+
+	// Known crafting table 30 blocks away in SpatialIndex (empty InterestingBlocks)
+	state.SpatialIndex().UpsertPOI(db.AgentPOI{
+		POIID:          FormatPOIID(POICategoryWorkstation, 30, 64, 0),
+		Category:       POICategoryWorkstation,
+		BlockID:        "minecraft:crafting_table",
+		X:              30.5,
+		Y:              64.0,
+		Z:              0.5,
+		AccessX:        29.5,
+		AccessY:        64.0,
+		AccessZ:        0.5,
+		ElevationLayer: ElevationSurface,
+		SafetyScore:    1.0,
+		Reliability:    1.0,
+		IsActive:       true,
+	})
+
+	frame := &civquestv1.TelemetryFrame{
+		WorldTick: 100,
+		TimeOfDay: 2000,
+		Status: &civquestv1.AgentStatus{
+			Position:        &civquestv1.Vec3{X: 0, Y: 64, Z: 0},
+			Health:          20,
+			FoodLevel:       20,
+			NavigationState: civquestv1.NavigationState_NAVIGATION_STATE_IDLE,
+			Inventory: []*civquestv1.ItemStackProto{
+				{Slot: 0, ItemId: "minecraft:oak_log", Count: 2},
+			},
+		},
+	}
+
+	// Agent 30 blocks away with EMPTY InterestingBlocks recalls table and navigates to Access coords
+	navIntent := EvaluateBootstrapGoals("Able", frame, cfg, state)
+	if navIntent == nil || navIntent.GetNavigate() == nil || navIntent.GetNavigate().Target == nil {
+		t.Fatalf("expected NavigateIntent towards recalled crafting table, got %+v", navIntent)
+	}
+	target := navIntent.GetNavigate().Target
+	if target.X != 29.5 || target.Y != 64.0 || target.Z != 0.5 {
+		t.Fatalf("expected NavigateIntent target (29.5, 64, 0.5), got %+v", target)
+	}
+
+	// While pathing, exploration must not hijack navigation
+	frame.WorldTick = 110
+	frame.Status.NavigationState = civquestv1.NavigationState_NAVIGATION_STATE_PATHING
+	if pathingIntent := EvaluateBootstrapGoals("Able", frame, cfg, state); pathingIntent != nil {
+		t.Fatalf("expected nil while pathing to recalled table, got %+v", pathingIntent)
+	}
+
+	// Once within 4.5m (e.g. arrived at 29.5, 64, 0.5), craft directly at recalled workstation
+	frame.WorldTick = 150
+	frame.Status.NavigationState = civquestv1.NavigationState_NAVIGATION_STATE_IDLE
+	frame.Status.Position = &civquestv1.Vec3{X: 29.5, Y: 64.0, Z: 0.5}
+	craftIntent := EvaluateBootstrapGoals("Able", frame, cfg, state)
+	if craftIntent == nil || craftIntent.GetCraftItem() == nil || craftIntent.GetCraftItem().RecipeId != "minecraft:wooden_axe" {
+		t.Fatalf("expected CraftItemIntent(minecraft:wooden_axe) when within 4.5m of recalled table, got %+v", craftIntent)
+	}
+	if craftIntent.GetCraftItem().WorkstationPos == nil || craftIntent.GetCraftItem().WorkstationPos.X != 30 {
+		t.Fatalf("expected WorkstationPos X=30, got %+v", craftIntent.GetCraftItem().WorkstationPos)
+	}
+
+	// Low reliability (< 0.5) table is ignored -> falls back to pocket crafting a new table
+	state2 := NewAgentState()
+	state2.telemetryFramesSeen = 5
+	state2.SpatialIndex().UpsertPOI(db.AgentPOI{
+		POIID:          FormatPOIID(POICategoryWorkstation, 30, 64, 0),
+		Category:       POICategoryWorkstation,
+		BlockID:        "minecraft:crafting_table",
+		X:              30.5,
+		Y:              64.0,
+		Z:              0.5,
+		AccessX:        29.5,
+		AccessY:        64.0,
+		AccessZ:        0.5,
+		ElevationLayer: ElevationSurface,
+		SafetyScore:    1.0,
+		Reliability:    0.3,
+		IsActive:       true,
+	})
+	frame.Status.Position = &civquestv1.Vec3{X: 0, Y: 64, Z: 0}
+	pocketCraft := EvaluateBootstrapGoals("Able", frame, cfg, state2)
+	if pocketCraft == nil || pocketCraft.GetCraftItem() == nil || pocketCraft.GetCraftItem().RecipeId != "minecraft:crafting_table" {
+		t.Fatalf("expected pocket crafting fallback when recalled table reliability < 0.5, got %+v", pocketCraft)
+	}
+}
+
+func TestBootstrap_TimberStandRecallFromSpatialIndex(t *testing.T) {
+	state := NewAgentState()
+	state.telemetryFramesSeen = 5
+	cfg := xdg.DefaultAgentIdentityConfig("Logger")
+	cfg.Profession = "EXPLORER"
+
+	// Known oak_log stand 30 blocks away in SpatialIndex (empty InterestingBlocks)
+	poiID := FormatPOIID(POICategoryResource, 30, 64, 0)
+	state.SpatialIndex().UpsertPOI(db.AgentPOI{
+		POIID:          poiID,
+		Category:       POICategoryResource,
+		BlockID:        "minecraft:oak_log",
+		X:              30.5,
+		Y:              64.0,
+		Z:              0.5,
+		AccessX:        29.5,
+		AccessY:        64.0,
+		AccessZ:        0.5,
+		ElevationLayer: ElevationSurface,
+		SafetyScore:    1.0,
+		Reliability:    1.0,
+		IsActive:       true,
+	})
+
+	frame := &civquestv1.TelemetryFrame{
+		WorldTick: 100,
+		TimeOfDay: 2000,
+		Status: &civquestv1.AgentStatus{
+			Position:        &civquestv1.Vec3{X: 0, Y: 64, Z: 0},
+			Health:          20,
+			FoodLevel:       20,
+			NavigationState: civquestv1.NavigationState_NAVIGATION_STATE_IDLE,
+		},
+	}
+
+	navIntent := EvaluateBootstrapGoals("Logger", frame, cfg, state)
+	if navIntent == nil || navIntent.GetNavigate() == nil || navIntent.GetNavigate().Target == nil {
+		t.Fatalf("expected NavigateIntent towards recalled timber stand, got %+v", navIntent)
+	}
+	target := navIntent.GetNavigate().Target
+	if target.X != 29.5 || target.Y != 64.0 || target.Z != 0.5 {
+		t.Fatalf("expected NavigateIntent target (29.5, 64, 0.5), got %+v", target)
+	}
+
+	// While pathing, exploration must not overwrite path
+	frame.WorldTick = 110
+	frame.Status.NavigationState = civquestv1.NavigationState_NAVIGATION_STATE_PATHING
+	if pathingIntent := EvaluateBootstrapGoals("Logger", frame, cfg, state); pathingIntent != nil {
+		t.Fatalf("expected nil while pathing to recalled timber stand, got %+v", pathingIntent)
+	}
+
+	// Arriving at (29.5, 64, 0.5) with still-empty InterestingBlocks prunes stale log POI
+	frame.WorldTick = 160
+	frame.Status.NavigationState = civquestv1.NavigationState_NAVIGATION_STATE_IDLE
+	frame.Status.Position = &civquestv1.Vec3{X: 29.5, Y: 64.0, Z: 0.5}
+	_ = EvaluateBootstrapGoals("Logger", frame, cfg, state)
+	if _, exists := state.SpatialIndex().GetPOI(poiID); exists {
+		t.Fatalf("expected stale log POI %s to be pruned when absent at close range", poiID)
+	}
+}
+
+func TestPioneerGenesis_SettlementNucleationLifecycle(t *testing.T) {
+	// 1. Pioneer Genesis Invariant: Defaults must be EXPLORER in BOOTSTRAP stage
+	cfg := xdg.DefaultAgentIdentityConfig("earl")
+	if cfg.Profession != "EXPLORER" {
+		t.Errorf("expected default profession EXPLORER, got %q", cfg.Profession)
+	}
+	if cfg.Stage != "BOOTSTRAP" {
+		t.Errorf("expected default stage BOOTSTRAP, got %q", cfg.Stage)
+	}
+	if cfg.EffectiveStage() != "BOOTSTRAP" {
+		t.Errorf("expected EffectiveStage() = BOOTSTRAP, got %q", cfg.EffectiveStage())
+	}
+
+	state := NewAgentState()
+	si := state.SpatialIndex()
+
+	// 2. Wilderness Phase: No settlement POI exists in SpatialIndex
+	if si.HasSettlementPOI(nil, 0) {
+		t.Fatalf("expected HasSettlementPOI=false in raw wilderness without hearth")
+	}
+
+	specializedRoles := []string{"FARMER", "MINER", "BUILDER", "CRAFTER", "RANCHER", "GUARD"}
+	for _, role := range specializedRoles {
+		if !IsSpecializedProfession(role) {
+			t.Errorf("expected %s to be recognized as specialized profession", role)
+		}
+		if !IsPioneerNucleationLocked(si, role) {
+			t.Errorf("expected %s nucleation to be locked without settlement POI", role)
+		}
+		if eff := EffectivePioneerProfession(si, role); eff != "EXPLORER" {
+			t.Errorf("expected %s to fall back to EXPLORER before settlement genesis, got %q", role, eff)
+		}
+	}
+
+	// Pioneer Explorer itself is never locked
+	if IsPioneerNucleationLocked(si, "EXPLORER") {
+		t.Errorf("expected EXPLORER to not be locked")
+	}
+	if eff := EffectivePioneerProfession(si, "EXPLORER"); eff != "EXPLORER" {
+		t.Errorf("expected EXPLORER to remain EXPLORER, got %q", eff)
+	}
+
+	// Verify SurvivalKitEvaluator facts reflect locked nucleation
+	cfgFarmer := &xdg.AgentIdentityConfig{Name: "carl", Profession: "FARMER"}
+	eval := NewSurvivalKitEvaluator()
+	graph := NewFactGraph()
+	evalCtx := &EvaluatorContext{
+		AgentID: "carl",
+		Config:  cfgFarmer,
+		State:   state,
+		Frame: &civquestv1.TelemetryFrame{
+			WorldTick: 100,
+			Status:    &civquestv1.AgentStatus{Position: &civquestv1.Vec3{X: 0, Y: 64, Z: 0}},
+		},
+	}
+	if err := eval.Evaluate(evalCtx, graph); err != nil {
+		t.Fatalf("evaluator error: %v", err)
+	}
+	if graph.GetBool("bootstrap.has_settlement_poi") {
+		t.Errorf("expected bootstrap.has_settlement_poi=false")
+	}
+	if !graph.GetBool("bootstrap.nucleation_locked") {
+		t.Errorf("expected bootstrap.nucleation_locked=true for FARMER in wilderness")
+	}
+
+	// 3. Settlement Genesis: Consecrate a campfire hearth POI in SpatialIndex
+	hearthPOI := db.AgentPOI{
+		POIID:       FormatPOIID(POICategoryHabitation, 0, 64, 0),
+		Category:    POICategoryHabitation,
+		BlockID:     "minecraft:campfire",
+		X:           0.5,
+		Y:           64.0,
+		Z:           0.5,
+		Reliability: 1.0,
+	}
+	si.UpsertPOI(hearthPOI)
+
+	if !si.HasSettlementPOI(nil, 0) {
+		t.Fatalf("expected HasSettlementPOI=true after registering campfire hearth")
+	}
+	nearestHearth := si.FindSettlementHearth(&civquestv1.Vec3{X: 10, Y: 64, Z: 10}, 64.0)
+	if nearestHearth == nil || nearestHearth.POIID != hearthPOI.POIID {
+		t.Fatalf("expected to find nearest hearth %s, got %+v", hearthPOI.POIID, nearestHearth)
+	}
+
+	// Now career nucleation unlocks: specialized roles can be assumed!
+	for _, role := range specializedRoles {
+		if IsPioneerNucleationLocked(si, role) {
+			t.Errorf("expected %s nucleation to be unlocked once settlement hearth exists", role)
+		}
+		if eff := EffectivePioneerProfession(si, role); eff != role {
+			t.Errorf("expected %s effective profession to be active after settlement genesis, got %q", role, eff)
+		}
+	}
+
+	// Verify SurvivalKitEvaluator facts reflect unlocked settlement genesis
+	graphSettled := NewFactGraph()
+	if err := eval.Evaluate(evalCtx, graphSettled); err != nil {
+		t.Fatalf("evaluator error: %v", err)
+	}
+	if !graphSettled.GetBool("bootstrap.has_settlement_poi") {
+		t.Errorf("expected bootstrap.has_settlement_poi=true after hearth established")
+	}
+	if graphSettled.GetBool("bootstrap.nucleation_locked") {
+		t.Errorf("expected bootstrap.nucleation_locked=false after hearth established")
+	}
 }

@@ -4,6 +4,7 @@ import (
 	"sync"
 
 	civquestv1 "github.com/btposey/civquest/orchestrator-go/internal/proto/v1"
+	"google.golang.org/protobuf/proto"
 )
 
 // Stage represents the Tier 1 macro strategic stage of an agent in the Two-Tier HFSM.
@@ -65,6 +66,10 @@ const (
 	RoutineArmoryMaintenance Routine = "ARMORY_MAINTENANCE"
 	// RoutineCamp represents camping with player companion during evening/night, overriding tavern and bed return.
 	RoutineCamp Routine = "CAMP"
+	// RoutineHarvestTree represents committed timber felling until trunk logs within reach are exhausted.
+	RoutineHarvestTree Routine = "HARVEST_TREE"
+	// RoutineCollectItems represents collecting dropped items near a completed harvest target.
+	RoutineCollectItems Routine = "COLLECT_ITEMS"
 	// RoutineDead represents terminal permadeath cessation of all operational routines.
 	RoutineDead Routine = "DEAD"
 )
@@ -121,11 +126,30 @@ type AgentState struct {
 	lastCraftTick             int64
 	PavingTracker             *RoadPavingTracker
 
+	// Unstuck and excavation navigation state
+	unstuckLocked    bool
+	unstuckDirX      int32
+	unstuckDirZ      int32
+	unstuckStartTick int64
+	unstuckStartX    float64
+	unstuckStartZ    float64
+
+	// Timber tree trunk harvesting focus and generic task subroutine commitment
+	targetTreeLocked        bool
+	targetTreeX             int32
+	targetTreeZ             int32
+	targetTreeStartTick     int64
+	activeTask              *TaskSubroutine
+	failedTrees             map[[2]int32]int64
+	unreachableWorkstations map[[3]int32]int64
+
 	// Autonomous exploration, forward outposts & topological mapping state
 	homeOrigin              *civquestv1.Vec3
 	currentOutpost          *civquestv1.Vec3
 	outposts                []*civquestv1.Vec3
 	lastExploreTick         int64
+	lastBootstrapNavTick    int64
+	navigatingToPOI         bool
 	exploreStepIndex        int
 	lastHeadingRad          float64
 	frontierAzimuthRad      float64
@@ -138,6 +162,16 @@ type AgentState struct {
 	lastMapPos              *civquestv1.Vec3
 	telemetryFramesSeen     int64
 	goals                   GoalHierarchy
+
+	// Intent execution receipt tracking from the motor periphery
+	lastReceipt    *civquestv1.IntentReceipt
+	pendingReceipt *civquestv1.IntentReceipt
+
+	// In-memory 16x16x16 spatial grid index for persistent POIs (ADR-022)
+	spatialIndex *SpatialIndex
+
+	// Breadcrumb habit trail and corridor navigation tracker (ADR-023)
+	habitTrailTracker *HabitTrailTracker
 }
 
 // NewAgentState creates an initialized AgentState.
@@ -149,12 +183,68 @@ func NewAgentState() *AgentState {
 		FSMState:                StageBootstrap,
 		armoryMaintenanceNeeded: true,
 		PavingTracker:           NewRoadPavingTracker(DefaultPavingCapacity, DefaultPavingThreshold),
+		spatialIndex:            NewSpatialIndex(),
+		habitTrailTracker:       NewHabitTrailTracker(DefaultBreadcrumbDisplacement, DefaultArrivalThreshold, DefaultFinalTransitionDist),
 		goals: GoalHierarchy{
 			ImmediateGoal: "GATHER_TIMBER: Gather 4 logs and craft basic wooden tools",
 			ShortTermGoal: "ESTABLISH_OUTPOST_CHAIN: Advance frontier and establish safe day-night outposts with tools & light",
 			LongTermGoal:  "CHART_REGIONAL_ATLAS: Map biome sectors, consecrate landmarks, and link outposts for Clan Cartographer",
 		},
 	}
+}
+
+// SpatialIndex returns the agent's in-memory SpatialIndex for persistent POIs.
+func (s *AgentState) SpatialIndex() *SpatialIndex {
+	if s == nil {
+		return nil
+	}
+	s.mu.RLock()
+	idx := s.spatialIndex
+	s.mu.RUnlock()
+	if idx != nil {
+		return idx
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.SpatialIndexLocked()
+}
+
+// SpatialIndexLocked returns the agent's SpatialIndex while s.mu is already held.
+func (s *AgentState) SpatialIndexLocked() *SpatialIndex {
+	if s == nil {
+		return nil
+	}
+	if s.spatialIndex == nil {
+		s.spatialIndex = NewSpatialIndex()
+	}
+	return s.spatialIndex
+}
+
+// HabitTrailTracker returns the agent's in-memory HabitTrailTracker (ADR-023).
+func (s *AgentState) HabitTrailTracker() *HabitTrailTracker {
+	if s == nil {
+		return nil
+	}
+	s.mu.RLock()
+	tracker := s.habitTrailTracker
+	s.mu.RUnlock()
+	if tracker != nil {
+		return tracker
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.HabitTrailTrackerLocked()
+}
+
+// HabitTrailTrackerLocked returns the agent's HabitTrailTracker while s.mu is already held.
+func (s *AgentState) HabitTrailTrackerLocked() *HabitTrailTracker {
+	if s == nil {
+		return nil
+	}
+	if s.habitTrailTracker == nil {
+		s.habitTrailTracker = NewHabitTrailTracker(DefaultBreadcrumbDisplacement, DefaultArrivalThreshold, DefaultFinalTransitionDist)
+	}
+	return s.habitTrailTracker
 }
 
 // GetAssignedBed returns a defensive copy of the assigned bed pos.
@@ -957,4 +1047,428 @@ func (s *AgentState) SetPavingTracker(t *RoadPavingTracker) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.PavingTracker = t
+}
+
+// GetUnstuckLock returns the active unstuck escape direction lock.
+func (s *AgentState) GetUnstuckLock() (locked bool, dirX, dirZ int32, startTick int64, startX, startZ float64) {
+	if s == nil {
+		return false, 0, 0, 0, 0, 0
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.GetUnstuckLockLocked()
+}
+
+// GetUnstuckLockLocked returns the active unstuck escape direction lock assuming mutex is held.
+func (s *AgentState) GetUnstuckLockLocked() (locked bool, dirX, dirZ int32, startTick int64, startX, startZ float64) {
+	if s == nil {
+		return false, 0, 0, 0, 0, 0
+	}
+	return s.unstuckLocked, s.unstuckDirX, s.unstuckDirZ, s.unstuckStartTick, s.unstuckStartX, s.unstuckStartZ
+}
+
+// SetUnstuckLock locks the unstuck escape direction and origin.
+func (s *AgentState) SetUnstuckLock(locked bool, dirX, dirZ int32, startTick int64, startX, startZ float64) {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.SetUnstuckLockLocked(locked, dirX, dirZ, startTick, startX, startZ)
+}
+
+// SetUnstuckLockLocked locks the unstuck escape direction assuming mutex is held.
+func (s *AgentState) SetUnstuckLockLocked(locked bool, dirX, dirZ int32, startTick int64, startX, startZ float64) {
+	if s == nil {
+		return
+	}
+	s.unstuckLocked = locked
+	s.unstuckDirX = dirX
+	s.unstuckDirZ = dirZ
+	s.unstuckStartTick = startTick
+	s.unstuckStartX = startX
+	s.unstuckStartZ = startZ
+}
+
+// ClearUnstuckLock clears any active unstuck escape lock.
+func (s *AgentState) ClearUnstuckLock() {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.ClearUnstuckLockLocked()
+}
+
+// ClearUnstuckLockLocked clears any active unstuck escape lock assuming mutex is held.
+func (s *AgentState) ClearUnstuckLockLocked() {
+	if s == nil {
+		return
+	}
+	s.unstuckLocked = false
+	s.unstuckDirX = 0
+	s.unstuckDirZ = 0
+	s.unstuckStartTick = 0
+	s.unstuckStartX = 0
+	s.unstuckStartZ = 0
+}
+
+// GetTargetTree returns the focused tree trunk coordinates.
+func (s *AgentState) GetTargetTree() (locked bool, x, z int32, startTick int64) {
+	if s == nil {
+		return false, 0, 0, 0
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.GetTargetTreeLocked()
+}
+
+// GetTargetTreeLocked returns the focused tree trunk coordinates assuming mutex is held.
+func (s *AgentState) GetTargetTreeLocked() (locked bool, x, z int32, startTick int64) {
+	if s == nil {
+		return false, 0, 0, 0
+	}
+	return s.targetTreeLocked, s.targetTreeX, s.targetTreeZ, s.targetTreeStartTick
+}
+
+// SetTargetTree sets the focused tree trunk coordinates.
+func (s *AgentState) SetTargetTree(locked bool, x, z int32, startTick int64) {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.SetTargetTreeLocked(locked, x, z, startTick)
+}
+
+// SetTargetTreeLocked sets the focused tree trunk coordinates assuming mutex is held.
+func (s *AgentState) SetTargetTreeLocked(locked bool, x, z int32, startTick int64) {
+	if s == nil {
+		return
+	}
+	s.targetTreeLocked = locked
+	s.targetTreeX = x
+	s.targetTreeZ = z
+	s.targetTreeStartTick = startTick
+}
+
+// ClearTargetTree clears the focused tree trunk.
+func (s *AgentState) ClearTargetTree() {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.ClearTargetTreeLocked()
+}
+
+// ClearTargetTreeLocked clears the focused tree trunk assuming mutex is held.
+func (s *AgentState) ClearTargetTreeLocked() {
+	if s == nil {
+		return
+	}
+	s.targetTreeLocked = false
+	s.targetTreeX = 0
+	s.targetTreeZ = 0
+	s.targetTreeStartTick = 0
+}
+
+// StartTask installs a committed TaskSubroutine on the agent state.
+func (s *AgentState) StartTask(sub *TaskSubroutine) {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.StartTaskLocked(sub)
+}
+
+// StartTaskLocked installs a committed TaskSubroutine assuming mutex is held.
+func (s *AgentState) StartTaskLocked(sub *TaskSubroutine) {
+	if s == nil {
+		return
+	}
+	s.activeTask = sub
+	if sub != nil && sub.Spec.Kind == "harvest_tree" && sub.Spec.Target.BlockPos != nil {
+		s.SetTargetTreeLocked(true, sub.Spec.Target.BlockPos.X, sub.Spec.Target.BlockPos.Z, sub.StartedTick)
+	}
+}
+
+// GetActiveTask returns the currently active TaskSubroutine if any.
+func (s *AgentState) GetActiveTask() *TaskSubroutine {
+	if s == nil {
+		return nil
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.activeTask
+}
+
+// GetActiveTaskLocked returns the currently active TaskSubroutine assuming mutex is held.
+func (s *AgentState) GetActiveTaskLocked() *TaskSubroutine {
+	if s == nil {
+		return nil
+	}
+	return s.activeTask
+}
+
+// HasActiveTask returns true if an active, non-terminal TaskSubroutine is committed.
+func (s *AgentState) HasActiveTask() bool {
+	if s == nil {
+		return false
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.HasActiveTaskLocked()
+}
+
+// HasActiveTaskLocked returns true if an active, non-terminal TaskSubroutine is committed assuming mutex is held.
+func (s *AgentState) HasActiveTaskLocked() bool {
+	if s == nil || s.activeTask == nil {
+		return false
+	}
+	return s.activeTask.Phase != TaskPhaseComplete && s.activeTask.Phase != TaskPhaseFailed
+}
+
+// ActiveTaskInfo returns a race-free value snapshot of the active task's status.
+func (s *AgentState) ActiveTaskInfo() (active bool, kind string, phase TaskPhase, routine Routine) {
+	if s == nil {
+		return false, "", "", ""
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if s.activeTask == nil || s.activeTask.Phase == TaskPhaseComplete || s.activeTask.Phase == TaskPhaseFailed {
+		return false, "", "", ""
+	}
+	return true, s.activeTask.Spec.Kind, s.activeTask.Phase, s.activeTask.Spec.Routine
+}
+
+// IsActiveTaskPushedToPDA returns whether the active task's parent frame has been pushed onto the PDA stack.
+func (s *AgentState) IsActiveTaskPushedToPDA() bool {
+	if s == nil {
+		return false
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.activeTask != nil && s.activeTask.PushedToPDA
+}
+
+// SetActiveTaskPushedToPDA updates whether the active task's parent frame is on the PDA stack.
+func (s *AgentState) SetActiveTaskPushedToPDA(pushed bool) {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.activeTask != nil {
+		s.activeTask.PushedToPDA = pushed
+	}
+}
+
+// GetActiveTaskMetadata returns a defensive metadata snapshot for the active task, or nil if none.
+func (s *AgentState) GetActiveTaskMetadata() map[string]string {
+	if s == nil {
+		return nil
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if s.activeTask == nil {
+		return nil
+	}
+	return s.activeTask.MetadataSnapshot()
+}
+
+// PauseActiveTask marks the active task as paused at the given tick during emergency preemption.
+func (s *AgentState) PauseActiveTask(tick int64) {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.activeTask != nil {
+		s.activeTask.Pause(tick)
+	}
+}
+
+// HandleEmergencyPreempt pauses a preemptible active task and returns its metadata for the PDA stack,
+// or clears a non-preemptible active task so it is not resumed after emergency clearance.
+func (s *AgentState) HandleEmergencyPreempt(tick int64) map[string]string {
+	if s == nil {
+		return nil
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.activeTask == nil || s.activeTask.Phase == TaskPhaseComplete || s.activeTask.Phase == TaskPhaseFailed {
+		return nil
+	}
+	if !s.activeTask.Spec.Preemptible {
+		s.ClearActiveTaskLocked()
+		return nil
+	}
+	s.activeTask.Pause(tick)
+	return s.activeTask.MetadataSnapshot()
+}
+
+// ResumeActiveTask resumes the active task after emergency clearance, compensating timeout ticks.
+func (s *AgentState) ResumeActiveTask(tick int64) {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.activeTask != nil {
+		s.activeTask.Resume(tick)
+	}
+}
+
+// IngestReceipt stores the latest IntentReceipt from a telemetry frame so
+// active tasks can react immediately to completion, preemption, or failure.
+func (s *AgentState) IngestReceipt(receipt *civquestv1.IntentReceipt) {
+	if s == nil || receipt == nil {
+		return
+	}
+	cloned := proto.Clone(receipt).(*civquestv1.IntentReceipt)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.lastReceipt = cloned
+	s.pendingReceipt = proto.Clone(cloned).(*civquestv1.IntentReceipt)
+}
+
+// GetLastReceipt returns a defensive copy of the most recently ingested IntentReceipt.
+func (s *AgentState) GetLastReceipt() *civquestv1.IntentReceipt {
+	if s == nil {
+		return nil
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if s.lastReceipt == nil {
+		return nil
+	}
+	return proto.Clone(s.lastReceipt).(*civquestv1.IntentReceipt)
+}
+
+// StepActiveTask advances the active TaskSubroutine by one tick, clearing it upon completion or failure.
+func (s *AgentState) StepActiveTask(agentID string, frame *civquestv1.TelemetryFrame) TaskStepResult {
+	if s == nil {
+		return TaskStepResult{}
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.StepActiveTaskLocked(agentID, frame)
+}
+
+// StepActiveTaskLocked advances the active TaskSubroutine assuming mutex is held.
+func (s *AgentState) StepActiveTaskLocked(agentID string, frame *civquestv1.TelemetryFrame) TaskStepResult {
+	if s == nil || s.activeTask == nil {
+		if s != nil {
+			s.pendingReceipt = nil
+		}
+		return TaskStepResult{}
+	}
+	var receipt *civquestv1.IntentReceipt
+	if frame != nil && frame.GetReceipt() != nil {
+		receipt = frame.GetReceipt()
+		s.lastReceipt = proto.Clone(receipt).(*civquestv1.IntentReceipt)
+	} else if s.pendingReceipt != nil {
+		receipt = s.pendingReceipt
+	}
+	s.pendingReceipt = nil
+
+	res := s.activeTask.TickWithReceipt(agentID, s, frame, receipt)
+	if res.Done {
+		s.activeTask = nil
+	}
+	return res
+}
+
+// ClearActiveTask clears any active task subroutine and unlocks any focused tree.
+func (s *AgentState) ClearActiveTask() {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.ClearActiveTaskLocked()
+}
+
+// ClearActiveTaskLocked clears any active task subroutine assuming mutex is held.
+func (s *AgentState) ClearActiveTaskLocked() {
+	if s == nil {
+		return
+	}
+	s.activeTask = nil
+	s.ClearTargetTreeLocked()
+}
+
+// MarkTreeFailedLocked records a temporary cooldown for an unreachable/blocked tree trunk.
+func (s *AgentState) MarkTreeFailedLocked(x, z int32, tick int64) {
+	if s == nil {
+		return
+	}
+	if s.failedTrees == nil {
+		s.failedTrees = make(map[[2]int32]int64)
+	}
+	s.failedTrees[[2]int32{x, z}] = tick
+}
+
+// IsTreeOnCooldownLocked returns true if a tree trunk recently timed out and is on retry backoff.
+func (s *AgentState) IsTreeOnCooldownLocked(x, z int32, tick int64) bool {
+	if s == nil || s.failedTrees == nil {
+		return false
+	}
+	failedTick, ok := s.failedTrees[[2]int32{x, z}]
+	if !ok {
+		return false
+	}
+	if tick < failedTick || tick-failedTick >= 600 {
+		delete(s.failedTrees, [2]int32{x, z})
+		return false
+	}
+	return true
+}
+
+// MarkWorkstationUnreachable records a temporary cooldown for an unreachable/blocked workstation.
+func (s *AgentState) MarkWorkstationUnreachable(x, y, z int32, tick int64) {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.MarkWorkstationUnreachableLocked(x, y, z, tick)
+}
+
+// MarkWorkstationUnreachableLocked records workstation failure while s.mu is already held.
+func (s *AgentState) MarkWorkstationUnreachableLocked(x, y, z int32, tick int64) {
+	if s == nil {
+		return
+	}
+	if s.unreachableWorkstations == nil {
+		s.unreachableWorkstations = make(map[[3]int32]int64)
+	}
+	s.unreachableWorkstations[[3]int32{x, y, z}] = tick
+}
+
+// IsWorkstationUnreachable returns true if a workstation is marked unreachable and still on cooldown.
+func (s *AgentState) IsWorkstationUnreachable(x, y, z int32, tick int64) bool {
+	if s == nil {
+		return false
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.IsWorkstationUnreachableLocked(x, y, z, tick)
+}
+
+// IsWorkstationUnreachableLocked checks workstation cooldown while s.mu is already held.
+func (s *AgentState) IsWorkstationUnreachableLocked(x, y, z int32, tick int64) bool {
+	if s == nil || s.unreachableWorkstations == nil {
+		return false
+	}
+	failedTick, ok := s.unreachableWorkstations[[3]int32{x, y, z}]
+	if !ok {
+		return false
+	}
+	if tick < failedTick || tick-failedTick >= 600 {
+		return false
+	}
+	return true
 }

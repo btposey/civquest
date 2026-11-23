@@ -858,3 +858,186 @@ func TestScanInventoryCombatItems(t *testing.T) {
 		t.Errorf("expected weaponSlot=-1, got %d", weaponSlot)
 	}
 }
+
+func TestEvaluateReflexes_DrowningEmergencySurfacing(t *testing.T) {
+	// Case 1: Carl submerged at Y=58 taking DAMAGE_SOURCE_TYPE_DROWN without visible water blocks
+	frame := &civquestv1.TelemetryFrame{
+		WorldTick: 600,
+		Status: &civquestv1.AgentStatus{
+			Health:    16,
+			MaxHealth: 20,
+			FoodLevel: 18,
+			IsInWater: true,
+			Position:  &civquestv1.Vec3{X: 10, Y: 58, Z: 20},
+		},
+		LastDamageTaken: &civquestv1.DamageEvent{
+			DamageAmount: 2,
+			SourceType:   civquestv1.DamageSourceType_DAMAGE_SOURCE_TYPE_DROWN,
+		},
+	}
+
+	res := EvaluateReflexes(ReflexContext{
+		AgentID: "Carl",
+		Bravery: 0.5,
+		Frame:   frame,
+	})
+	if !res.ShouldAct {
+		t.Fatalf("expected ShouldAct=true for drowning emergency")
+	}
+
+	var navIntent *civquestv1.NavigateIntent
+	for _, intent := range res.Intents {
+		if att := intent.GetAttack(); att != nil {
+			t.Fatalf("expected NO AttackIntent (no horizontal flee) when drowning, got %+v", att)
+		}
+		if nav := intent.GetNavigate(); nav != nil {
+			navIntent = nav
+		}
+	}
+	if navIntent == nil || navIntent.Target == nil {
+		t.Fatalf("expected surfacing NavigateIntent when drowning, got %+v", res.Intents)
+	}
+	if navIntent.Target.X != 10 || navIntent.Target.Z != 20 {
+		t.Errorf("expected surfacing target to preserve X=10, Z=20, got (%v, %v)", navIntent.Target.X, navIntent.Target.Z)
+	}
+	if navIntent.Target.Y <= 58 {
+		t.Errorf("expected surfacing target Y > 58, got %v", navIntent.Target.Y)
+	}
+	if navIntent.SpeedMultiplier != 1.5 || !navIntent.Sprint {
+		t.Errorf("expected SpeedMultiplier=1.5 and Sprint=true, got speed=%v sprint=%v", navIntent.SpeedMultiplier, navIntent.Sprint)
+	}
+
+	// Case 2: Water column blocks known -> targets surfaceY + 1 (maxWaterY=62 -> surface=63 -> target=64)
+	frame.InterestingBlocks = []*civquestv1.VisibleBlock{
+		{Pos: &civquestv1.BlockPosProto{X: 10, Y: 59, Z: 20}, BlockId: "minecraft:water"},
+		{Pos: &civquestv1.BlockPosProto{X: 10, Y: 62, Z: 20}, BlockId: "minecraft:water"},
+	}
+	frame.LastDamageTaken = &civquestv1.DamageEvent{
+		DamageAmount: 2,
+		SourceType:   civquestv1.DamageSourceType_DAMAGE_SOURCE_TYPE_UNSPECIFIED,
+	}
+	res2 := EvaluateReflexes(ReflexContext{
+		AgentID: "Carl",
+		Bravery: 0.5,
+		Frame:   frame,
+	})
+	if !res2.ShouldAct || len(res2.Intents) == 0 || res2.Intents[0].GetNavigate() == nil {
+		t.Fatalf("expected surfacing NavigateIntent for water column, got %+v", res2.Intents)
+	}
+	if res2.Intents[0].GetNavigate().Target.Y != 64.0 {
+		t.Errorf("expected surfacing target Y=64.0 (surfaceY+1), got %v", res2.Intents[0].GetNavigate().Target.Y)
+	}
+}
+
+func TestEvaluateReflexes_StarvationAndPassiveDamageIgnored(t *testing.T) {
+	// Case 1: Starving agent taking DAMAGE_SOURCE_TYPE_UNSPECIFIED with AttackerEntityId == 0
+	frameStarving := &civquestv1.TelemetryFrame{
+		WorldTick: 500,
+		Status: &civquestv1.AgentStatus{
+			AgentId:   "Earl",
+			Health:    15.0,
+			MaxHealth: 20.0,
+			FoodLevel: 0,
+			Position:  &civquestv1.Vec3{X: 100, Y: 64, Z: 200},
+			Inventory: []*civquestv1.ItemStackProto{
+				{ItemId: "minecraft:shield", Slot: 40, Count: 1}, // Has shield in offhand
+			},
+		},
+		LastDamageTaken: &civquestv1.DamageEvent{
+			DamageAmount:     1.0,
+			SourceType:       civquestv1.DamageSourceType_DAMAGE_SOURCE_TYPE_UNSPECIFIED,
+			AttackerEntityId: 0,
+		},
+	}
+
+	res := EvaluateReflexes(ReflexContext{
+		AgentID:   "Earl",
+		Bravery:   0.5,
+		Frame:     frameStarving,
+		HasShield: true,
+	})
+
+	if res.Confidence != 999.0 {
+		t.Errorf("expected confidence 999.0 (no hostile threats), got %v", res.Confidence)
+	}
+	if res.IsPanic {
+		t.Errorf("expected IsPanic=false for starvation damage, got true")
+	}
+	if res.ShouldAct {
+		t.Errorf("expected ShouldAct=false for starvation damage, got true")
+	}
+	if len(res.Intents) > 0 {
+		t.Errorf("expected 0 intents emitted for starvation damage, got %d: %+v", len(res.Intents), res.Intents)
+	}
+
+	// Case 2: Named starvation/hunger damage (AttackerName = "starvation")
+	frameNamedStarve := &civquestv1.TelemetryFrame{
+		WorldTick: 501,
+		Status: &civquestv1.AgentStatus{
+			AgentId:   "Earl",
+			Health:    14.0,
+			MaxHealth: 20.0,
+			FoodLevel: 0,
+			Position:  &civquestv1.Vec3{X: 100, Y: 64, Z: 200},
+			Inventory: []*civquestv1.ItemStackProto{
+				{ItemId: "minecraft:shield", Slot: 40, Count: 1},
+			},
+		},
+		LastDamageTaken: &civquestv1.DamageEvent{
+			DamageAmount: 1.0,
+			AttackerName: "starvation",
+		},
+	}
+
+	resNamed := EvaluateReflexes(ReflexContext{
+		AgentID:   "Earl",
+		Bravery:   0.5,
+		Frame:     frameNamedStarve,
+		HasShield: true,
+	})
+
+	if resNamed.Confidence != 999.0 {
+		t.Errorf("expected confidence 999.0 for named starvation, got %v", resNamed.Confidence)
+	}
+	if resNamed.IsPanic || resNamed.ShouldAct || len(resNamed.Intents) > 0 {
+		t.Errorf("expected no combat action or panic for named starvation, got isPanic=%v shouldAct=%v intents=%d",
+			resNamed.IsPanic, resNamed.ShouldAct, len(resNamed.Intents))
+	}
+
+	// Case 3: Contrast with active hostile mob attack (AttackerEntityId = 42, SourceType = MOB)
+	// Must properly drop confidence and trigger combat reflex/panic
+	frameHostile := &civquestv1.TelemetryFrame{
+		WorldTick: 502,
+		Status: &civquestv1.AgentStatus{
+			AgentId:   "Earl",
+			Health:    10.0,
+			MaxHealth: 20.0,
+			FoodLevel: 10,
+			Position:  &civquestv1.Vec3{X: 100, Y: 64, Z: 200},
+			Inventory: []*civquestv1.ItemStackProto{
+				{ItemId: "minecraft:shield", Slot: 40, Count: 1},
+			},
+		},
+		LastDamageTaken: &civquestv1.DamageEvent{
+			DamageAmount:     3.0,
+			SourceType:       civquestv1.DamageSourceType_DAMAGE_SOURCE_TYPE_MOB,
+			AttackerEntityId: 42,
+			AttackerName:     "Zombie",
+		},
+	}
+
+	resHostile := EvaluateReflexes(ReflexContext{
+		AgentID:   "Earl",
+		Bravery:   0.5,
+		Frame:     frameHostile,
+		HasShield: true,
+	})
+
+	if resHostile.Confidence >= 999.0 {
+		t.Errorf("expected confidence drop for hostile attack, got %v", resHostile.Confidence)
+	}
+	if !resHostile.IsPanic || !resHostile.ShouldAct {
+		t.Errorf("expected panic and action for hostile mob attack, got isPanic=%v shouldAct=%v",
+			resHostile.IsPanic, resHostile.ShouldAct)
+	}
+}

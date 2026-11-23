@@ -50,22 +50,13 @@ func EvaluatePatrol(
 
 	navState := frame.Status.NavigationState
 
-	// 1. Immediate terrain unsticking / dig-out or contouring detour when STUCK
-	if navState == civquestv1.NavigationState_NAVIGATION_STATE_STUCK {
-		if obstruct := findObstructingBlockToDig(frame, pos); obstruct != nil {
-			if state.lastHarvestTick == 0 || frame.WorldTick < state.lastHarvestTick || frame.WorldTick-state.lastHarvestTick >= 20 {
-				state.lastHarvestTick = frame.WorldTick
-				return &civquestv1.AgentIntent{
-					AgentId: agentID,
-					Action: &civquestv1.AgentIntent_InteractBlock{
-						InteractBlock: &civquestv1.InteractBlockIntent{
-							Pos:             obstruct.Pos,
-							InteractionType: civquestv1.InteractBlockIntent_HARVEST_BREAK,
-							BlockOrItemId:   obstruct.BlockId,
-						},
-					},
-				}
-			}
+	// 1. Immediate terrain unsticking / dig-out or contouring detour when STUCK or ENCLOSED
+	if navState == civquestv1.NavigationState_NAVIGATION_STATE_STUCK || frame.Status.GetNavigationEnclosed() {
+		if unstuckIntent := EvaluateUnstuck(agentID, frame, pos, state); unstuckIntent != nil {
+			return unstuckIntent
+		}
+		if locked, _, _, _, _, _ := state.GetUnstuckLockLocked(); locked {
+			return nil // Waiting on excavation sequence, do NOT rotate heading
 		}
 		if frame.WorldTick >= state.lastExploreTick && frame.WorldTick-state.lastExploreTick < 20 {
 			return nil

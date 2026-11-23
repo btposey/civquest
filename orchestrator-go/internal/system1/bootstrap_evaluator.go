@@ -66,6 +66,35 @@ func (e *SurvivalKitEvaluator) Evaluate(ctx *EvaluatorContext, graph *FactGraph)
 	graph.SetBool("bootstrap.needs_tools", "bootstrap", needsTools, fmt.Sprintf("Needs tools: %t", needsTools))
 	graph.SetBool("bootstrap.on_cooldown", "bootstrap", onCooldown, fmt.Sprintf("Bootstrap on cooldown: %t", onCooldown))
 
+	hasSettlement := false
+	nucleationLocked := false
+	if ctx != nil && ctx.State != nil {
+		si := ctx.State.SpatialIndexLocked()
+		if si != nil {
+			hasSettlement = si.HasSettlementPOI(nil, 0)
+		}
+		prof := ""
+		if ctx.Config != nil {
+			prof = ctx.Config.Profession
+		}
+		nucleationLocked = IsPioneerNucleationLocked(si, prof)
+	}
+	graph.SetBool("bootstrap.has_settlement_poi", "bootstrap", hasSettlement, fmt.Sprintf("Settlement POI verified: %t", hasSettlement))
+	graph.SetBool("settlement.is_consecrated", "settlement", hasSettlement, fmt.Sprintf("Settlement hearth consecrated: %t", hasSettlement))
+	graph.SetBool("bootstrap.nucleation_locked", "bootstrap", nucleationLocked, fmt.Sprintf("Specialized career nucleation locked: %t", nucleationLocked))
+
+	taskActive := false
+	taskKind := ""
+	taskPhase := ""
+	if ctx != nil && ctx.State != nil {
+		var p TaskPhase
+		taskActive, taskKind, p, _ = ctx.State.ActiveTaskInfo()
+		taskPhase = string(p)
+	}
+	graph.SetBool("task.active", "task", taskActive, fmt.Sprintf("Active task subroutine: %t", taskActive))
+	graph.SetString("task.kind", "task", taskKind, fmt.Sprintf("Active task kind: %s", taskKind))
+	graph.SetString("task.phase", "task", taskPhase, fmt.Sprintf("Active task phase: %s", taskPhase))
+
 	return nil
 }
 

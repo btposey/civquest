@@ -6,6 +6,7 @@ import com.civquest.mod.grpc.v1.DespawnAgentRequest;
 import com.civquest.mod.grpc.v1.DespawnAgentResponse;
 import com.civquest.mod.grpc.v1.ExportRecipeRequest;
 import com.civquest.mod.grpc.v1.ExportRecipeResponse;
+import com.civquest.mod.grpc.v1.IntentBatch;
 import com.civquest.mod.grpc.v1.SpawnAgentRequest;
 import com.civquest.mod.grpc.v1.SpawnAgentResponse;
 import com.civquest.mod.grpc.v1.TelemetryFrame;
@@ -260,7 +261,7 @@ public class CivQuestBridgeServerTest {
 
         BlockingQueue<TelemetryFrame> receivedFrames = new ArrayBlockingQueue<>(5);
 
-        StreamObserver<AgentIntent> requestObserver = asyncStub.connectAgent(new StreamObserver<>() {
+        StreamObserver<IntentBatch> requestObserver = asyncStub.connectAgent(new StreamObserver<>() {
             @Override
             public void onNext(TelemetryFrame frame) {
                 receivedFrames.offer(frame);

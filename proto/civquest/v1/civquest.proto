@@ -9,7 +9,7 @@ option java_multiple_files = true;
 // CivQuestBridgeService defines the gRPC bridge between the Minecraft NeoForge mod and external orchestrators.
 service CivQuestBridgeService {
   // Primary per-agent bidirectional control and telemetry stream
-  rpc ConnectAgent(stream AgentIntent) returns (stream TelemetryFrame);
+  rpc ConnectAgent(stream IntentBatch) returns (stream TelemetryFrame);
 
   // Administrative RPCs called by cq supervisor
   rpc SpawnAgentEntity(SpawnAgentRequest) returns (SpawnAgentResponse);
@@ -71,6 +71,7 @@ enum DamageSourceType {
   DAMAGE_SOURCE_TYPE_FALL = 4;
   DAMAGE_SOURCE_TYPE_EXPLOSION = 5;
   DAMAGE_SOURCE_TYPE_LAVA = 6;
+  DAMAGE_SOURCE_TYPE_DROWN = 7;
 }
 
 enum ChatChannel {
@@ -140,6 +141,7 @@ message TelemetryFrame {
   DeathEvent death_event = 13;  // Terminal event triggering permadeath teardown
   int64 last_processed_sequence_id = 14;
   repeated ReflexNotice reflex_notices = 15; // ADR-015 afferent telemetry for Layer 1A in-engine reflexes
+  IntentReceipt receipt = 16;
 }
 
 message AgentStatus {
@@ -242,7 +244,32 @@ message ReflexNotice {
   string details = 3;
 }
 
+message IntentReceipt {
+  enum ReceiptStatus {
+    RECEIPT_STATUS_UNSPECIFIED = 0;
+    RECEIPT_STATUS_QUEUED = 1;
+    RECEIPT_STATUS_EXECUTING = 2;
+    RECEIPT_STATUS_COMPLETED = 3;
+    RECEIPT_STATUS_PREEMPTED_BY_REFLEX = 4;
+    RECEIPT_STATUS_FAILED = 5;
+    RECEIPT_STATUS_ABORTED = 6;
+  }
+  int64 batch_id = 1;
+  int32 active_index = 2;
+  ReceiptStatus status = 3;
+  string failure_reason = 4;
+  int32 motor_stack_depth = 5;
+}
+
 // ==================== INTENTS (Agent -> Server) ====================
+
+message IntentBatch {
+  string agent_id = 1;
+  int64 batch_id = 2;
+  bool flush_periphery = 3;
+  repeated AgentIntent intents = 4;
+  int64 timeout_ticks = 5;
+}
 
 message AgentIntent {
   string agent_id = 1;

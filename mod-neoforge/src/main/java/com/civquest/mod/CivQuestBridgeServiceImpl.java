@@ -1,12 +1,12 @@
 package com.civquest.mod;
 
-import com.civquest.mod.grpc.v1.AgentIntent;
 import com.civquest.mod.grpc.v1.AgentStatus;
 import com.civquest.mod.grpc.v1.CivQuestBridgeServiceGrpc;
 import com.civquest.mod.grpc.v1.DespawnAgentRequest;
 import com.civquest.mod.grpc.v1.DespawnAgentResponse;
 import com.civquest.mod.grpc.v1.ExportRecipeRequest;
 import com.civquest.mod.grpc.v1.ExportRecipeResponse;
+import com.civquest.mod.grpc.v1.IntentBatch;
 import com.civquest.mod.grpc.v1.SpawnAgentRequest;
 import com.civquest.mod.grpc.v1.SpawnAgentResponse;
 import com.civquest.mod.grpc.v1.TelemetryFrame;
@@ -75,7 +75,7 @@ public class CivQuestBridgeServiceImpl extends CivQuestBridgeServiceGrpc.CivQues
     }
 
     @Override
-    public StreamObserver<AgentIntent> connectAgent(StreamObserver<TelemetryFrame> responseObserver) {
+    public StreamObserver<IntentBatch> connectAgent(StreamObserver<TelemetryFrame> responseObserver) {
         LOGGER.info("ConnectAgent stream initiated by client");
 
         // Send baseline initial TelemetryFrame for probe readiness verification
@@ -120,18 +120,18 @@ public class CivQuestBridgeServiceImpl extends CivQuestBridgeServiceGrpc.CivQues
             });
         }
 
-        return new StreamObserver<AgentIntent>() {
+        return new StreamObserver<IntentBatch>() {
             @Override
-            public void onNext(AgentIntent value) {
+            public void onNext(IntentBatch value) {
                 if (terminated.get()) {
                     return;
                 }
 
                 String intentAgentId = value.getAgentId();
                 if (intentAgentId == null || intentAgentId.isBlank()) {
-                    LOGGER.error("Received AgentIntent with empty or blank agent_id");
+                    LOGGER.error("Received IntentBatch with empty or blank agent_id");
                     terminateWithError(Status.INVALID_ARGUMENT
-                            .withDescription("AgentIntent must contain a non-blank agent_id"));
+                            .withDescription("IntentBatch must contain a non-blank agent_id"));
                     return;
                 }
 
@@ -170,8 +170,8 @@ public class CivQuestBridgeServiceImpl extends CivQuestBridgeServiceGrpc.CivQues
                     return;
                 }
 
-                LOGGER.debug("Received AgentIntent: agent_id={}, action_case={}",
-                        value.getAgentId(), value.getActionCase());
+                LOGGER.debug("Received IntentBatch: agent_id={}, batch_id={}, intents={}, flush_periphery={}",
+                        value.getAgentId(), value.getBatchId(), value.getIntentsCount(), value.getFlushPeriphery());
 
                 MinecraftServer server = getServer();
                 if (server != null && server.isRunning()) {
@@ -187,10 +187,10 @@ public class CivQuestBridgeServiceImpl extends CivQuestBridgeServiceGrpc.CivQues
                         agent.getWatchdogFSM().onIntentReceived(value);
                     }
                 }
-                agentEntityManager.handleIntent(server, value)
+                agentEntityManager.handleIntentBatch(server, value)
                         .whenComplete((res, err) -> {
                             if (err != null) {
-                                LOGGER.warn("Intent actuation failed: {}", err.getMessage());
+                                LOGGER.warn("IntentBatch actuation failed: {}", err.getMessage());
                             }
                         });
             }

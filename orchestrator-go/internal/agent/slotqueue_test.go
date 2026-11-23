@@ -426,3 +426,68 @@ func TestSlotQueue_ConcurrentSafety(t *testing.T) {
 		t.Fatalf("expected empty queue after completion, got %d", sq.Len())
 	}
 }
+
+func TestSlotQueue_FlushPeripheryLifecycle(t *testing.T) {
+	sq := agent.NewSlotQueue()
+
+	if sq.HasPending() || sq.FlushPending() {
+		t.Fatalf("expected empty queue initially")
+	}
+
+	// MarkFlushPeriphery flags flush without notifying Ready()
+	sq.MarkFlushPeriphery()
+	if !sq.FlushPending() || !sq.HasPending() {
+		t.Fatalf("expected FlushPending and HasPending true after MarkFlushPeriphery")
+	}
+	if sq.Len() != 0 {
+		t.Fatalf("expected Len() == 0 with only flush pending, got %d", sq.Len())
+	}
+	select {
+	case <-sq.Ready():
+		t.Fatalf("MarkFlushPeriphery must not notify Ready() before tick intents are queued")
+	default:
+	}
+
+	// NotifyIfFlushPending wakes sendLoop if no intents were queued
+	sq.NotifyIfFlushPending()
+	select {
+	case <-sq.Ready():
+	default:
+		t.Fatalf("expected Ready() signal after NotifyIfFlushPending")
+	}
+
+	// DrainSlots/PopPlaceBlock must keep Ready() or HasPending() intact while flush is pending
+	sq.Put(false, &civquestv1.AgentIntent{
+		Action: &civquestv1.AgentIntent_Navigate{
+			Navigate: &civquestv1.NavigateIntent{
+				Target: &civquestv1.Vec3{X: 1, Y: 64, Z: 1},
+			},
+		},
+	})
+	_ = sq.DrainSlots()
+	if !sq.HasPending() || !sq.FlushPending() {
+		t.Fatalf("expected flush still pending after DrainSlots")
+	}
+
+	// ConsumeFlushPeriphery returns true once and clears state
+	if !sq.ConsumeFlushPeriphery() {
+		t.Fatalf("expected ConsumeFlushPeriphery to return true")
+	}
+	if sq.ConsumeFlushPeriphery() {
+		t.Fatalf("expected second ConsumeFlushPeriphery to return false")
+	}
+	if sq.HasPending() || sq.FlushPending() {
+		t.Fatalf("expected no pending state after ConsumeFlushPeriphery")
+	}
+
+	// RequestFlushPeriphery flags and notifies immediately
+	sq.RequestFlushPeriphery()
+	select {
+	case <-sq.Ready():
+	default:
+		t.Fatalf("expected Ready() signal after RequestFlushPeriphery")
+	}
+	if !sq.ConsumeFlushPeriphery() {
+		t.Fatalf("expected true after RequestFlushPeriphery")
+	}
+}

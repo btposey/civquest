@@ -108,7 +108,7 @@ func (c *Client) DespawnAgentEntity(ctx context.Context, req *civquestv1.Despawn
 }
 
 // ConnectAgent establishes the bidirectional agent telemetry and intent stream.
-func (c *Client) ConnectAgent(ctx context.Context, opts ...grpc.CallOption) (civquestv1.CivQuestBridgeService_ConnectAgentClient, error) {
+func (c *Client) ConnectAgent(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[civquestv1.IntentBatch, civquestv1.TelemetryFrame], error) {
 	return c.bridge.ConnectAgent(ctx, opts...)
 }
 

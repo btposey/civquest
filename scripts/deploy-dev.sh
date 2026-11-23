@@ -374,7 +374,19 @@ cat > "${CIVQUEST_DATA_DIR}/civquest.agents.json" << EOF
   ],
   "config_dir": "${CIVQUEST_CONFIG_DIR}",
   "data_dir": "${CIVQUEST_DATA_DIR}",
-  "state_dir": "${CIVQUEST_STATE_DIR}"
+  "state_dir": "${CIVQUEST_STATE_DIR}",
+  "default_profession": "EXPLORER",
+  "default_stage": "BOOTSTRAP",
+  "agents": [
+    {"name": "able", "profession": "EXPLORER", "stage": "BOOTSTRAP"},
+    {"name": "bert", "profession": "EXPLORER", "stage": "BOOTSTRAP"},
+    {"name": "carl", "profession": "EXPLORER", "stage": "BOOTSTRAP"},
+    {"name": "dave", "profession": "EXPLORER", "stage": "BOOTSTRAP"},
+    {"name": "earl", "profession": "EXPLORER", "stage": "BOOTSTRAP"},
+    {"name": "fred", "profession": "EXPLORER", "stage": "BOOTSTRAP"},
+    {"name": "aria", "profession": "EXPLORER", "stage": "BOOTSTRAP"},
+    {"name": "boreas", "profession": "EXPLORER", "stage": "BOOTSTRAP"}
+  ]
 }
 EOF
 
@@ -409,9 +421,10 @@ if [ ! -f "${CIVQUEST_CONFIG_DIR}/agents/aria.yaml" ] || [ "${FORCE_OVERWRITE}" 
 name: "aria"
 uuid: "b5f7e340-9a4c-4e89-a567-27b28dbb3a41"
 clan_id: "pioneers"
-profession: "FARMER"
+profession: "EXPLORER"
+stage: "BOOTSTRAP"
 secondary_hobby: "BOTANIST"
-system_prompt: "You are Aria, an industrious pioneer farmer dedicated to cultivating sustainable crops."
+system_prompt: "You are Aria, an intrepid pioneer explorer dedicated to scouting wilderness and founding sustainable settlements."
 traits:
   bravery: 0.60
   industriousness: 0.85
@@ -430,9 +443,10 @@ if [ ! -f "${CIVQUEST_CONFIG_DIR}/agents/boreas.yaml" ] || [ "${FORCE_OVERWRITE}
 name: "boreas"
 uuid: "c6a8e451-0b5d-4f90-b678-38c39ecc4b52"
 clan_id: "pioneers"
-profession: "BUILDER"
+profession: "EXPLORER"
+stage: "BOOTSTRAP"
 secondary_hobby: "MASON"
-system_prompt: "You are Boreas, a stoic pioneer builder who constructs defensive fortifications and granaries."
+system_prompt: "You are Boreas, a stoic pioneer scout who surveys terrain and establishes forward outposts."
 traits:
   bravery: 0.75
   industriousness: 0.90
@@ -444,6 +458,48 @@ skin:
   texture_path: "boreas_skin.png"
 EOF
 fi
+
+for starter_agent in "earl" "fred" "bert" "dave"; do
+    if [ ! -f "${CIVQUEST_CONFIG_DIR}/agents/${starter_agent}.yaml" ] || [ "${FORCE_OVERWRITE}" = "true" ]; then
+        log_info "Writing starter agent profile ${starter_agent}.yaml..."
+        cat > "${CIVQUEST_CONFIG_DIR}/agents/${starter_agent}.yaml" << EOF
+name: "${starter_agent}"
+clan_id: "pioneers"
+profession: "EXPLORER"
+stage: "BOOTSTRAP"
+traits:
+  bravery: 0.60
+  industriousness: 0.80
+  sociability: 0.60
+  curiosity: 0.70
+  aggressiveness: 0.20
+skin:
+  model: "default"
+  texture_path: "${starter_agent}_skin.png"
+EOF
+    fi
+done
+
+for starter_agent in "earl" "fred" "bert" "dave"; do
+    if [ ! -f "${CIVQUEST_CONFIG_DIR}/agents/${starter_agent}.yaml" ] || [ "${FORCE_OVERWRITE}" = "true" ]; then
+        log_info "Writing starter agent profile ${starter_agent}.yaml..."
+        cat > "${CIVQUEST_CONFIG_DIR}/agents/${starter_agent}.yaml" << EOF
+name: "${starter_agent}"
+clan_id: "pioneers"
+profession: "EXPLORER"
+stage: "BOOTSTRAP"
+traits:
+  bravery: 0.60
+  industriousness: 0.80
+  sociability: 0.60
+  curiosity: 0.70
+  aggressiveness: 0.20
+skin:
+  model: "default"
+  texture_path: "${starter_agent}_skin.png"
+EOF
+    fi
+done
 
 # 3f. NeoForge Server Runtime (if needed)
 if [ "${SKIP_SERVER_RUNTIME}" = "true" ] || [ "${OFFLINE_MODE}" = "1" ]; then

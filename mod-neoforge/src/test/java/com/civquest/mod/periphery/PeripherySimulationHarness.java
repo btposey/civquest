@@ -7,10 +7,12 @@ import com.civquest.mod.StreamRegistry;
 import com.civquest.mod.actuator.AgentNavigator;
 import com.civquest.mod.actuator.BlockBreaker;
 import com.civquest.mod.actuator.IntentActuator;
+import com.civquest.mod.actuator.motor.AgentMotorFSM;
 import com.civquest.mod.grpc.v1.AgentIntent;
 import com.civquest.mod.grpc.v1.ChatEvent;
 import com.civquest.mod.grpc.v1.DamageEvent;
 import com.civquest.mod.grpc.v1.DeathEvent;
+import com.civquest.mod.grpc.v1.IntentBatch;
 import com.civquest.mod.grpc.v1.TelemetryFrame;
 import com.civquest.mod.sensory.SensoryFrustumCollector;
 import com.mojang.authlib.GameProfile;
@@ -83,7 +85,7 @@ public class PeripherySimulationHarness {
     private final List<ServerPlayer> players = new CopyOnWriteArrayList<>();
     private final List<TelemetryFrame> receivedFrames = new CopyOnWriteArrayList<>();
 
-    private final AtomicReference<StreamObserver<AgentIntent>> intentStream = new AtomicReference<>();
+    private final AtomicReference<StreamObserver<IntentBatch>> intentStream = new AtomicReference<>();
     private final AtomicBoolean lineOfSightBlocked = new AtomicBoolean(false);
 
     public PeripherySimulationHarness() {
@@ -268,8 +270,8 @@ public class PeripherySimulationHarness {
     /**
      * Connects an agent stream via CivQuestBridgeServiceImpl and registers the bidirectional IPC pipeline.
      */
-    public StreamObserver<AgentIntent> connectAgentStream(String agentId) {
-        StreamObserver<AgentIntent> observer = bridgeService.connectAgent(new StreamObserver<>() {
+    public StreamObserver<IntentBatch> connectAgentStream(String agentId) {
+        StreamObserver<IntentBatch> observer = bridgeService.connectAgent(new StreamObserver<>() {
             @Override
             public void onNext(TelemetryFrame frame) {
                 receivedFrames.add(frame);
@@ -283,20 +285,36 @@ public class PeripherySimulationHarness {
         });
 
         this.intentStream.set(observer);
-        // Bind agentId on stream with initial intent
-        observer.onNext(AgentIntent.newBuilder().setAgentId(agentId).build());
+        // Bind agentId on stream with initial handshake batch
+        observer.onNext(IntentBatch.newBuilder().setAgentId(agentId).build());
         return observer;
     }
 
     /**
-     * Dispatches an AgentIntent through the IPC stream observer into the actuation loop.
+     * Dispatches an AgentIntent wrapped in an IntentBatch through the IPC stream observer into the actuation loop.
      */
     public void sendIntent(AgentIntent intent) {
-        StreamObserver<AgentIntent> observer = intentStream.get();
+        StreamObserver<IntentBatch> observer = intentStream.get();
         if (observer != null) {
-            observer.onNext(intent);
+            observer.onNext(IntentBatch.newBuilder()
+                    .setAgentId(intent.getAgentId())
+                    .setBatchId(Math.max(1L, intent.getSequenceId()))
+                    .addIntents(intent)
+                    .build());
         } else {
             entityManager.handleIntent(mockServer, intent);
+        }
+    }
+
+    /**
+     * Dispatches a full IntentBatch through the IPC stream observer into the actuation loop.
+     */
+    public void sendIntentBatch(IntentBatch batch) {
+        StreamObserver<IntentBatch> observer = intentStream.get();
+        if (observer != null) {
+            observer.onNext(batch);
+        } else {
+            entityManager.handleIntentBatch(mockServer, batch);
         }
     }
 
@@ -378,6 +396,15 @@ public class PeripherySimulationHarness {
 
         BlockBreaker breaker = new BlockBreaker(agent);
         when(agent.getBreaker()).thenReturn(breaker);
+
+        AgentMotorFSM motorFSM = new AgentMotorFSM(agent);
+        when(agent.getMotorFSM()).thenReturn(motorFSM);
+        when(agent.getIntentActuator()).thenReturn(intentActuator);
+        doAnswer(invoc -> {
+            motorFSM.tick();
+            intentActuator.tick(agent);
+            return null;
+        }).when(agent).tick();
 
         when(agent.equipBestToolFor(any(BlockState.class))).thenAnswer(invoc -> {
             BlockState target = invoc.getArgument(0);

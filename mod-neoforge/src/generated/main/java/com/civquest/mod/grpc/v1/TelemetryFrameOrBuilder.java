@@ -271,4 +271,19 @@ public interface TelemetryFrameOrBuilder extends
    */
   com.civquest.mod.grpc.v1.ReflexNoticeOrBuilder getReflexNoticesOrBuilder(
       int index);
+
+  /**
+   * <code>.civquest.v1.IntentReceipt receipt = 16;</code>
+   * @return Whether the receipt field is set.
+   */
+  boolean hasReceipt();
+  /**
+   * <code>.civquest.v1.IntentReceipt receipt = 16;</code>
+   * @return The receipt.
+   */
+  com.civquest.mod.grpc.v1.IntentReceipt getReceipt();
+  /**
+   * <code>.civquest.v1.IntentReceipt receipt = 16;</code>
+   */
+  com.civquest.mod.grpc.v1.IntentReceiptOrBuilder getReceiptOrBuilder();
 }

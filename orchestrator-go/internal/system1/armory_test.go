@@ -462,3 +462,63 @@ func TestEvaluateArmoryMaintenance_Sub5msExecution(t *testing.T) {
 		t.Fatalf("EvaluateArmoryMaintenance exceeded 5ms budget: average %v", avgPerCall)
 	}
 }
+
+func TestEvaluateArmoryMaintenance_CraftingTableRecallFromSpatialIndex(t *testing.T) {
+	state := NewAgentState()
+	cfg := xdg.DefaultAgentIdentityConfig("NightSentry")
+	cfg.Profession = "GUARD"
+
+	// Distant crafting table at (40, 64, 10) stored only in SpatialIndex (empty InterestingBlocks)
+	state.SpatialIndex().UpsertPOI(db.AgentPOI{
+		POIID:          FormatPOIID(POICategoryWorkstation, 40, 64, 10),
+		Category:       POICategoryWorkstation,
+		BlockID:        "minecraft:crafting_table",
+		X:              40.5,
+		Y:              64.0,
+		Z:              10.5,
+		AccessX:        39.5,
+		AccessY:        64.0,
+		AccessZ:        10.5,
+		ElevationLayer: ElevationSurface,
+		SafetyScore:    1.0,
+		Reliability:    1.0,
+		IsActive:       true,
+	})
+
+	frame := &civquestv1.TelemetryFrame{
+		WorldTick: 850,
+		TimeOfDay: 10500,
+		Status: &civquestv1.AgentStatus{
+			Position:        &civquestv1.Vec3{X: 10, Y: 64, Z: 10},
+			Health:          20,
+			FoodLevel:       20,
+			NavigationState: civquestv1.NavigationState_NAVIGATION_STATE_IDLE,
+			Inventory: []*civquestv1.ItemStackProto{
+				{Slot: 0, ItemId: "minecraft:crafting_table", Count: 1},
+				{Slot: 1, ItemId: "minecraft:feather", Count: 1},
+				{Slot: 2, ItemId: "minecraft:stick", Count: 1},
+				{Slot: 3, ItemId: "minecraft:flint", Count: 1},
+			},
+		},
+	}
+
+	intent := EvaluateArmoryMaintenance("NightSentry", frame, cfg, state, nil)
+	if intent == nil || intent.GetNavigate() == nil || intent.GetNavigate().Target == nil {
+		t.Fatalf("expected NavigateIntent towards recalled crafting table, got %+v", intent)
+	}
+	target := intent.GetNavigate().Target
+	if target.X != 39.5 || target.Y != 64.0 || target.Z != 10.5 {
+		t.Fatalf("expected navigation target (39.5, 64, 10.5), got %+v", target)
+	}
+
+	// Within 4.5m -> craft at recalled table
+	frame.WorldTick = 900
+	frame.Status.Position = &civquestv1.Vec3{X: 39.5, Y: 64.0, Z: 10.5}
+	craftIntent := EvaluateArmoryMaintenance("NightSentry", frame, cfg, state, nil)
+	if craftIntent == nil || craftIntent.GetCraftItem() == nil {
+		t.Fatalf("expected CraftItemIntent when within 4.5m of recalled table, got %+v", craftIntent)
+	}
+	if craftIntent.GetCraftItem().WorkstationPos == nil || craftIntent.GetCraftItem().WorkstationPos.X != 40 {
+		t.Fatalf("expected WorkstationPos X=40, got %+v", craftIntent.GetCraftItem().WorkstationPos)
+	}
+}

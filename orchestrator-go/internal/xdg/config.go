@@ -163,6 +163,7 @@ type AgentIdentityConfig struct {
 	UUID              string             `yaml:"uuid"`
 	ClanID            string             `yaml:"clan_id"`
 	Profession        string             `yaml:"profession"`
+	Stage             string             `yaml:"stage,omitempty"`
 	Shift             string             `yaml:"shift,omitempty"`
 	SecondaryHobby    string             `yaml:"secondary_hobby,omitempty"`
 	SystemPrompt      string             `yaml:"system_prompt,omitempty"`
@@ -188,6 +189,15 @@ type AgentVoiceConfig struct {
 	SpeechQuirks []string `yaml:"speech_quirks,omitempty"` // e.g. ["uses farming metaphors", "addresses travelers as friend"]
 	Catchphrase  string   `yaml:"catchphrase,omitempty"`   // Optional recurring idiom or expression
 	Backstory    string   `yaml:"backstory,omitempty"`     // Short individualized origin note
+}
+
+// EffectiveStage returns the normalized lifecycle stage ("BOOTSTRAP", "SETTLEMENT", etc.) for the agent.
+// Per ADR-027 (Pioneer Genesis Invariant), agents default to "BOOTSTRAP" if unset.
+func (c *AgentIdentityConfig) EffectiveStage() string {
+	if c == nil || strings.TrimSpace(c.Stage) == "" {
+		return "BOOTSTRAP"
+	}
+	return strings.ToUpper(strings.TrimSpace(c.Stage))
 }
 
 // EffectiveShift returns the normalized work shift ("1st" or "3rd") for the agent.
@@ -379,12 +389,14 @@ type AgentSkinConfig struct {
 }
 
 // DefaultAgentIdentityConfig returns a sensible default identity configuration for an agent.
+// Per ADR-027, every newly created agent defaults to EXPLORER profession in BOOTSTRAP stage.
 func DefaultAgentIdentityConfig(name string) *AgentIdentityConfig {
 	return &AgentIdentityConfig{
 		Name:           name,
 		UUID:           "",
 		ClanID:         "pioneers",
-		Profession:     "UNASSIGNED",
+		Profession:     "EXPLORER",
+		Stage:          "BOOTSTRAP",
 		SecondaryHobby: "NONE",
 		SystemPrompt:   "",
 		Generation:     1,

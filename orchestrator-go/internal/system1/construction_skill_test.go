@@ -127,7 +127,7 @@ func TestConstructionSkill_QuadrantExecutionAndSubterraneanExcavation(t *testing
 		InterestingBlocks: []*civquestv1.VisibleBlock{
 			{
 				Pos:     &civquestv1.BlockPosProto{X: 100, Y: 63, Z: 200}, // AnchorY (64) + MinY (-1) = 63
-				BlockId: "minecraft:dirt",                                  // Obstructing natural terrain
+				BlockId: "minecraft:dirt",                                 // Obstructing natural terrain
 			},
 		},
 	}

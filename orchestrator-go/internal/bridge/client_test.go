@@ -358,7 +358,7 @@ func TestClientAuthenticatedFullLifecycle(t *testing.T) {
 		t.Errorf("Expected health 20.0, got: %f", frame.GetStatus().GetHealth())
 	}
 
-	// Send AgentIntent
+	// Send IntentBatch
 	intent := &civquestv1.AgentIntent{
 		AgentId:    "agent-alpha",
 		SequenceId: 1,
@@ -369,8 +369,13 @@ func TestClientAuthenticatedFullLifecycle(t *testing.T) {
 			},
 		},
 	}
-	if err := stream.Send(intent); err != nil {
-		t.Fatalf("Failed sending intent: %v", err)
+	batch := &civquestv1.IntentBatch{
+		AgentId: "agent-alpha",
+		BatchId: 1,
+		Intents: []*civquestv1.AgentIntent{intent},
+	}
+	if err := stream.Send(batch); err != nil {
+		t.Fatalf("Failed sending intent batch: %v", err)
 	}
 	if err := stream.CloseSend(); err != nil {
 		t.Fatalf("Failed closing send stream: %v", err)

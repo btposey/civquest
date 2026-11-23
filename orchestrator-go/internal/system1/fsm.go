@@ -62,10 +62,21 @@ func (c *FSMContext) DamageTaken() bool {
 	if c.Facts != nil {
 		return c.Facts.GetBool("threat.damage_taken")
 	}
-	if c.Frame == nil {
+	if c.Frame == nil || isDrowningDamage(c.Frame) {
 		return false
 	}
-	return c.Frame.LastDamageTaken != nil
+	return c.Frame.LastDamageTaken != nil && !IsPassiveOrEnvironmentalDamage(c.Frame.LastDamageTaken)
+}
+
+// IsDrowning checks if the agent is experiencing a drowning emergency.
+func (c *FSMContext) IsDrowning() bool {
+	if c == nil {
+		return false
+	}
+	if c.Facts != nil {
+		return c.Facts.GetBool("threat.is_drowning") || c.Facts.GetString("threat.threatType") == "DROWNING"
+	}
+	return isDrowningDamage(c.Frame)
 }
 
 // IsHealthCritical checks if HP <= 35% max HP.
@@ -163,7 +174,7 @@ func (c *FSMContext) IsEmergency() bool {
 	if c == nil {
 		return false
 	}
-	return c.HostilesPresent() || c.DamageTaken() || c.IsHealthCritical() || c.IsOnFire() || c.IsCriticalHunger() || c.ShouldPanic()
+	return c.HostilesPresent() || c.DamageTaken() || c.IsHealthCritical() || c.IsOnFire() || c.IsCriticalHunger() || c.ShouldPanic() || c.IsDrowning()
 }
 
 // ThreatsCleared evaluates whether all hostiles, panic, critical health, and critical hunger issues have cleared.
@@ -179,7 +190,7 @@ func (c *FSMContext) ThreatsCleared() bool {
 	if c == nil {
 		return true
 	}
-	return !c.HostilesPresent() && !c.DamageTaken() && !c.IsHealthCritical() && !c.IsOnFire() && !c.IsCriticalHunger() && !c.ShouldPanic()
+	return !c.HostilesPresent() && !c.DamageTaken() && !c.IsHealthCritical() && !c.IsOnFire() && !c.IsCriticalHunger() && !c.ShouldPanic() && !c.IsDrowning()
 }
 
 // HasSurvivalKit returns true if the agent holds an axe, weapon/sword, and light source.
@@ -668,14 +679,33 @@ func (h *BootstrapStateHandler) OnTick(ctx *FSMContext) []FSMIntent {
 				intents = append(intents, FSMIntent{Intent: shelterIntent, Priority: false})
 			}
 		} else if !ctx.IsDuskOrNight() && (ctx.State == nil || ctx.State.Routine() != RoutineSleep) {
+			if ctx.State != nil && ctx.State.HasActiveTask() {
+				_, kind, _, _ := ctx.State.ActiveTaskInfo()
+				if kind != "harvest_tree" && kind != "collect_items" {
+					stepRes := ctx.State.StepActiveTask(ctx.AgentID, ctx.Frame)
+					if stepRes.Intent != nil {
+						intents = append(intents, FSMIntent{Intent: stepRes.Intent, Priority: false})
+					}
+					if stepRes.Active {
+						return intents
+					}
+				} else {
+					if bootstrapIntent := EvaluateBootstrapGoals(ctx.AgentID, ctx.Frame, ctx.Config, ctx.State); bootstrapIntent != nil {
+						intents = append(intents, FSMIntent{Intent: bootstrapIntent, Priority: false})
+					}
+					return intents
+				}
+			}
 			if skillIntents, _, ok := DefaultRegistry.SelectAndExecuteSkill(skillCtx, ctx.Facts, "bootstrap"); ok && len(skillIntents) > 0 {
 				for _, si := range skillIntents {
 					if si != nil {
 						intents = append(intents, FSMIntent{Intent: si, Priority: false})
 					}
 				}
-			} else if bootstrapIntent := EvaluateBootstrapGoals(ctx.AgentID, ctx.Frame, ctx.Config, ctx.State); bootstrapIntent != nil {
-				intents = append(intents, FSMIntent{Intent: bootstrapIntent, Priority: false})
+			} else if ctx.State == nil || !ctx.State.HasActiveTask() {
+				if bootstrapIntent := EvaluateBootstrapGoals(ctx.AgentID, ctx.Frame, ctx.Config, ctx.State); bootstrapIntent != nil {
+					intents = append(intents, FSMIntent{Intent: bootstrapIntent, Priority: false})
+				}
 			}
 		}
 	}
@@ -782,6 +812,17 @@ func (h *SettlementStateHandler) OnTick(ctx *FSMContext) []FSMIntent {
 				intents = append(intents, FSMIntent{Intent: shelterIntent, Priority: false})
 				return intents
 			}
+		}
+	}
+
+	// Execute any committed TaskSubroutine before falling back to circadian patrol/exploration
+	if ctx.State != nil && ctx.State.HasActiveTask() && len(ctx.Frame.IncomingChats) == 0 && ctx.Frame.PendingTrade == nil {
+		stepRes := ctx.State.StepActiveTask(ctx.AgentID, ctx.Frame)
+		if stepRes.Intent != nil {
+			intents = append(intents, FSMIntent{Intent: stepRes.Intent, Priority: false})
+		}
+		if stepRes.Active {
+			return intents
 		}
 	}
 
@@ -969,6 +1010,9 @@ func (h *ColonizeStateHandler) OnTick(ctx *FSMContext) []FSMIntent {
 		// Colonization duties: harvest timber, establish core starter shelter, scout perimeter
 		if bootstrapIntent := EvaluateBootstrapGoals(ctx.AgentID, ctx.Frame, ctx.Config, ctx.State); bootstrapIntent != nil {
 			intents = append(intents, FSMIntent{Intent: bootstrapIntent, Priority: false})
+		} else if ctx.State != nil && ctx.State.HasActiveTask() {
+			// Committed TaskSubroutine active (pathing/cooldown); suppress exploration
+			return intents
 		} else if skillIntents, _, ok := DefaultRegistry.SelectAndExecuteSkill(skillCtx, ctx.Facts, "exploration"); ok && len(skillIntents) > 0 {
 			for _, si := range skillIntents {
 				if si != nil {
@@ -1143,7 +1187,7 @@ func (h *RestStateHandler) Guard(ctx *FSMContext) bool {
 	if ctx == nil {
 		return true
 	}
-	if ctx.HostilesPresent() || ctx.DamageTaken() || ctx.IsHealthCritical() || ctx.IsOnFire() || ctx.IsCriticalHunger() || ctx.ShouldPanic() {
+	if ctx.HostilesPresent() || ctx.DamageTaken() || ctx.IsHealthCritical() || ctx.IsOnFire() || ctx.IsCriticalHunger() || ctx.ShouldPanic() || ctx.IsDrowning() {
 		return false
 	}
 	return true
@@ -1202,6 +1246,7 @@ type FSMResult struct {
 	StageTransitioned   bool
 	RoutineTransitioned bool
 	Transitioned        bool
+	FlushPeriphery      bool
 	State               State // Backward compatibility alias for Stage
 	PreviousState       State // Backward compatibility alias for PreviousStage
 	TransitionReason    string
@@ -1520,12 +1565,19 @@ func (fsm *AgentFSM) TransitionTo(target State, reason string, ctx *FSMContext) 
 		if ctx != nil && ctx.Frame != nil {
 			tick = ctx.Frame.WorldTick
 		}
-		fsm.pushLocked(fromStage, fsm.currentRoutine, reason, tick, nil)
+		var taskMeta map[string]string
+		if ctx != nil && ctx.State != nil && ctx.State.HasActiveTask() {
+			taskMeta = ctx.State.HandleEmergencyPreempt(tick)
+		}
+		fsm.pushLocked(fromStage, fsm.currentRoutine, reason, tick, taskMeta)
 	}
 
-	// Terminal dead state: clear stack
+	// Terminal dead state: clear stack and any active task
 	if target == StageDead {
 		fsm.clearStackLocked()
+		if ctx != nil && ctx.State != nil {
+			ctx.State.ClearActiveTask()
+		}
 	}
 
 	if currentHandler, exists := fsm.handlers[fromStage]; exists && ctx != nil {
@@ -1601,6 +1653,9 @@ func (fsm *AgentFSM) Tick(ctx *FSMContext) FSMResult {
 		worldTick = ctx.Frame.WorldTick
 		tod = ctx.Frame.TimeOfDay
 		weather = ctx.Frame.Weather
+		if ctx.State != nil && ctx.Frame.GetReceipt() != nil {
+			ctx.State.IngestReceipt(ctx.Frame.GetReceipt())
+		}
 	}
 
 	// 0. Terminal Dead State Check:
@@ -1618,6 +1673,9 @@ func (fsm *AgentFSM) Tick(ctx *FSMContext) FSMResult {
 
 	if isDead {
 		fsm.clearStackLocked()
+		if ctx != nil && ctx.State != nil {
+			ctx.State.ClearActiveTask()
+		}
 		if fsm.currentStage != StageDead {
 			fromStage := fsm.currentStage
 			if currentHandler, exists := fsm.handlers[fromStage]; exists && ctx != nil {
@@ -1656,6 +1714,7 @@ func (fsm *AgentFSM) Tick(ctx *FSMContext) FSMResult {
 				StageTransitioned:   true,
 				RoutineTransitioned: true,
 				Transitioned:        true,
+				FlushPeriphery:      true,
 				State:               StageDead,
 				PreviousState:       fromStage,
 				TransitionReason:    "terminal agent death detected",
@@ -1734,8 +1793,12 @@ func (fsm *AgentFSM) Tick(ctx *FSMContext) FSMResult {
 		toStage := StageEmergency
 		ruleDesc := "Hostile threat, damage, or critical vitals detected; preempting to emergency"
 
+		var taskMeta map[string]string
+		if ctx != nil && ctx.State != nil && ctx.State.HasActiveTask() {
+			taskMeta = ctx.State.HandleEmergencyPreempt(worldTick)
+		}
 		// Automatically push current state onto the stack before switching to emergency
-		fsm.pushLocked(fromStage, fsm.currentRoutine, ruleDesc, worldTick, nil)
+		fsm.pushLocked(fromStage, fsm.currentRoutine, ruleDesc, worldTick, taskMeta)
 
 		if currentHandler, exists := fsm.handlers[fromStage]; exists && ctx != nil {
 			currentHandler.OnExit(ctx, toStage)
@@ -1809,6 +1872,7 @@ func (fsm *AgentFSM) Tick(ctx *FSMContext) FSMResult {
 			pdaRestored = true
 
 			if ctx.State != nil {
+				ctx.State.ResumeActiveTask(worldTick)
 				ctx.State.SetRoutine(frame.Routine)
 				ctx.State.SetStageAndRoutine(toStage, frame.Routine)
 			}
@@ -1826,7 +1890,11 @@ func (fsm *AgentFSM) Tick(ctx *FSMContext) FSMResult {
 					// PDA State Stack: When transitioning into StageEmergency from any non-emergency stage,
 					// automatically push the current (currentStage, currentRoutine, reason, tick, metadata) onto the stack!
 					if toStage == StageEmergency && fromStage != StageEmergency && fromStage != StageDead {
-						fsm.pushLocked(fromStage, fsm.currentRoutine, rule.Description, worldTick, nil)
+						var taskMeta map[string]string
+						if ctx != nil && ctx.State != nil && ctx.State.HasActiveTask() {
+							taskMeta = ctx.State.HandleEmergencyPreempt(worldTick)
+						}
+						fsm.pushLocked(fromStage, fsm.currentRoutine, rule.Description, worldTick, taskMeta)
 					}
 
 					if currentHandler, exists := fsm.handlers[fromStage]; exists && ctx != nil {
@@ -1857,6 +1925,10 @@ func (fsm *AgentFSM) Tick(ctx *FSMContext) FSMResult {
 		}
 	}
 
+	// Capture pre-Step-3 routine in case a TaskSubroutine was installed externally before Tick.
+	preStep3Routine := fsm.currentRoutine
+	taskActiveBeforeStep3 := false
+
 	// 3. Evaluate Tier 2 Circadian Operational Routine
 	if !pdaRestored {
 		var newRoutine Routine
@@ -1866,8 +1938,15 @@ func (fsm *AgentFSM) Tick(ctx *FSMContext) FSMResult {
 			newRoutine = RoutineDead
 		} else if fsm.currentStage == Stage("DIALOGUE") || fsm.currentRoutine == Routine("DIALOGUE") {
 			newRoutine = fsm.currentRoutine
+		} else if ctx != nil && ctx.State != nil {
+			if active, _, _, taskRoutine := ctx.State.ActiveTaskInfo(); active && taskRoutine != "" {
+				taskActiveBeforeStep3 = true
+				newRoutine = taskRoutine
+			} else {
+				newRoutine = ComputeCircadianRoutine(tod, weather, ctx.Config, ctx.State)
+			}
 		} else {
-			newRoutine = ComputeCircadianRoutine(tod, weather, ctx.Config, ctx.State)
+			newRoutine = ComputeCircadianRoutine(tod, weather, ctx.Config, nil)
 		}
 
 		if newRoutine != fsm.currentRoutine {
@@ -1887,10 +1966,65 @@ func (fsm *AgentFSM) Tick(ctx *FSMContext) FSMResult {
 		ctx.State.SetStageAndRoutine(fsm.currentStage, fsm.currentRoutine)
 	}
 
+	preOnTickRoutine := fsm.currentRoutine
+
 	// 5. Execute OnTick for the active Stage handler
 	var intents []FSMIntent
 	if handler, exists := fsm.handlers[fsm.currentStage]; exists && ctx != nil {
 		intents = handler.OnTick(ctx)
+	}
+
+	// 5b. Synchronize active TaskSubroutine commitment with the PDA state stack
+	if ctx != nil && ctx.State != nil && fsm.currentStage != StageEmergency && fsm.currentStage != StageDead {
+		active, taskKind, _, taskRoutine := ctx.State.ActiveTaskInfo()
+		topHasTaskFrame := len(fsm.stack) > 0 && fsm.stack[len(fsm.stack)-1].Metadata != nil &&
+			fsm.stack[len(fsm.stack)-1].Metadata["task_frame"] == "true"
+
+		if active {
+			if !topHasTaskFrame && !ctx.State.IsActiveTaskPushedToPDA() {
+				parentR := preOnTickRoutine
+				if taskActiveBeforeStep3 {
+					parentR = preStep3Routine
+				}
+				if parentR == "" || parentR == RoutineHarvestTree || parentR == RoutineCollectItems ||
+					parentR == RoutineEmergency || parentR == RoutineDead {
+					parentR = ComputeCircadianRoutine(tod, weather, ctx.Config, ctx.State)
+				}
+				meta := ctx.State.GetActiveTaskMetadata()
+				fsm.pushLocked(fsm.currentStage, parentR, "task subroutine committed: "+taskKind, worldTick, meta)
+				ctx.State.SetActiveTaskPushedToPDA(true)
+			}
+			if taskRoutine != "" && fsm.currentRoutine != taskRoutine {
+				prevR := fsm.currentRoutine
+				fsm.previousRoutine = prevR
+				fsm.currentRoutine = taskRoutine
+				fsm.routineEnteredTick = worldTick
+				routineTransitioned = true
+				if fsm.onRoutineTransition != nil {
+					fsm.onRoutineTransition(prevR, taskRoutine, "task subroutine active: "+taskKind)
+				}
+				ctx.State.SetStageAndRoutine(fsm.currentStage, fsm.currentRoutine)
+			}
+		} else if topHasTaskFrame {
+			if popped, ok := fsm.popLocked(); ok {
+				restoredR := popped.Routine
+				if restoredR == "" || restoredR == RoutineHarvestTree || restoredR == RoutineCollectItems ||
+					restoredR == RoutineEmergency || restoredR == RoutineDead {
+					restoredR = ComputeCircadianRoutine(tod, weather, ctx.Config, ctx.State)
+				}
+				if restoredR != fsm.currentRoutine {
+					prevR := fsm.currentRoutine
+					fsm.previousRoutine = prevR
+					fsm.currentRoutine = restoredR
+					fsm.routineEnteredTick = worldTick
+					routineTransitioned = true
+					if fsm.onRoutineTransition != nil {
+						fsm.onRoutineTransition(prevR, restoredR, "task subroutine completed/popped")
+					}
+				}
+				ctx.State.SetStageAndRoutine(fsm.currentStage, fsm.currentRoutine)
+			}
+		}
 	}
 
 	// 6. Evaluate Goals
@@ -1907,6 +2041,7 @@ func (fsm *AgentFSM) Tick(ctx *FSMContext) FSMResult {
 		StageTransitioned:   stageTransitioned,
 		RoutineTransitioned: routineTransitioned,
 		Transitioned:        stageTransitioned || routineTransitioned,
+		FlushPeriphery:      routineTransitioned || stageTransitioned,
 		State:               fsm.currentStage,
 		PreviousState:       fsm.previousStage,
 		TransitionReason:    transitionReason,

@@ -1,10 +1,14 @@
 package com.civquest.mod.actuator;
 
 import com.civquest.mod.AgentEntity;
+import com.civquest.mod.actuator.motor.AgentMotorFSM;
+import com.civquest.mod.actuator.motor.MotorState;
 import com.civquest.mod.grpc.v1.AgentIntent;
 import com.civquest.mod.grpc.v1.AttackIntent;
 import com.civquest.mod.grpc.v1.ChatChannel;
 import com.civquest.mod.grpc.v1.CreateWrittenBookIntent;
+import com.civquest.mod.grpc.v1.IntentBatch;
+import com.civquest.mod.grpc.v1.IntentReceipt;
 import com.civquest.mod.grpc.v1.InteractBlockIntent;
 import com.civquest.mod.grpc.v1.NavigateIntent;
 import com.civquest.mod.grpc.v1.PlaceSignpostIntent;
@@ -33,11 +37,17 @@ import net.minecraft.world.entity.EquipmentSlot;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.food.FoodProperties;
 import net.minecraft.world.item.BlockItem;
+import net.minecraft.world.item.BowItem;
+import net.minecraft.world.item.CrossbowItem;
+import net.minecraft.world.item.DiggerItem;
 import net.minecraft.world.item.HangingSignItem;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
 import net.minecraft.world.item.SignItem;
+import net.minecraft.world.item.SwordItem;
+import net.minecraft.world.item.TieredItem;
+import net.minecraft.world.item.TridentItem;
 import net.minecraft.world.item.component.WrittenBookContent;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.BedBlock;
@@ -50,16 +60,20 @@ import net.minecraft.world.level.block.entity.LecternBlockEntity;
 import net.minecraft.world.level.block.entity.SignBlockEntity;
 import net.minecraft.world.level.block.entity.SignText;
 import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.level.block.state.properties.BedPart;
 import net.minecraft.world.phys.AABB;
 import org.slf4j.Logger;
 
+import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.Deque;
 import java.util.List;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * Executes physical agent intents on the Minecraft server thread.
- * Translates protobuf intent commands into in-world entity actions, block interactions,
- * combat reflexes, and inventory manipulations.
+ * Translates protobuf intent commands and {@link IntentBatch} sequences into in-world entity actions,
+ * block interactions, combat reflexes, and inventory manipulations.
  */
 public class IntentActuator {
     private static final Logger LOGGER = LogUtils.getLogger();
@@ -67,17 +81,417 @@ public class IntentActuator {
     private static final double INTERACT_REACH_SQ = 36.0; // 6.0 blocks squared
     private static final double BED_REACH_SQ = 20.25;     // 4.5 blocks squared
 
-    public void actuate(AgentEntity agent, AgentIntent intent) {
-        if (agent == null || intent == null) {
+    private static final class BatchSession {
+        AgentEntity agent;
+        IntentBatch activeBatch;
+        final Deque<IntentBatch> pendingBatches = new ArrayDeque<>();
+        int activeIndex = 0;
+        IntentReceipt.ReceiptStatus status = IntentReceipt.ReceiptStatus.RECEIPT_STATUS_UNSPECIFIED;
+        String failureReason = "";
+        long elapsedTicks = 0L;
+        boolean dispatched = false;
+    }
+
+    private final ConcurrentHashMap<String, BatchSession> sessions = new ConcurrentHashMap<>();
+
+    private static String resolveAgentKey(AgentEntity agent) {
+        String id = agent.getAgentId();
+        return (id != null && !id.isBlank()) ? id : ("entity@" + System.identityHashCode(agent));
+    }
+
+    /**
+     * Submits a prioritized {@link IntentBatch} vector for sequential execution by the agent.
+     */
+    public void submitBatch(AgentEntity agent, IntentBatch batch) {
+        if (agent == null || batch == null) {
             return;
+        }
+        if (agent.getIntentActuator() == null) {
+            agent.setIntentActuator(this);
+        }
+
+        BatchSession session = sessions.computeIfAbsent(resolveAgentKey(agent), k -> new BatchSession());
+        session.agent = agent;
+
+        // Out-of-band chat dispatch: if batch contains SendChatIntent, execute it immediately
+        // so chat is never queued behind long-running or stalled NavigateIntent in pendingBatches.
+        List<AgentIntent> nonChatIntents = new ArrayList<>();
+        boolean hasChat = false;
+        for (AgentIntent intent : batch.getIntentsList()) {
+            if (intent.hasChat()) {
+                hasChat = true;
+                actuateSendChat(session, intent.getChat());
+            } else {
+                nonChatIntents.add(intent);
+            }
+        }
+
+        if (hasChat && nonChatIntents.isEmpty()) {
+            synchronized (session) {
+                if (!isSessionInFlight(session)) {
+                    session.activeBatch = batch;
+                    session.activeIndex = batch.getIntentsCount();
+                    session.status = IntentReceipt.ReceiptStatus.RECEIPT_STATUS_COMPLETED;
+                    session.failureReason = "";
+                    session.elapsedTicks = 0L;
+                    session.dispatched = true;
+                    syncReceiptToMotor(agent, session);
+                }
+            }
+            return;
+        }
+
+        IntentBatch queueBatch = hasChat ? batch.toBuilder().clearIntents().addAllIntents(nonChatIntents).build() : batch;
+
+        // Stream handshake / keepalive message with no flush and no intents: bind stream without mutating active batch
+        if (!queueBatch.getFlushPeriphery() && queueBatch.getIntentsCount() == 0 && queueBatch.getBatchId() == 0L) {
+            return;
+        }
+
+        synchronized (session) {
+            if (queueBatch.getFlushPeriphery()) {
+                flushSessionAndMotor(agent, session);
+                if (queueBatch.getIntentsCount() == 0) {
+                    session.activeBatch = queueBatch;
+                    session.activeIndex = 0;
+                    session.status = IntentReceipt.ReceiptStatus.RECEIPT_STATUS_COMPLETED;
+                    session.failureReason = "";
+                    session.elapsedTicks = 0L;
+                    session.dispatched = true;
+                    syncReceiptToMotor(agent, session);
+                    return;
+                }
+            } else if (isSessionInFlight(session)) {
+                session.pendingBatches.addLast(queueBatch);
+                return;
+            } else if (queueBatch.getIntentsCount() == 0) {
+                session.activeBatch = queueBatch;
+                session.activeIndex = 0;
+                session.status = IntentReceipt.ReceiptStatus.RECEIPT_STATUS_COMPLETED;
+                session.failureReason = "";
+                session.elapsedTicks = 0L;
+                session.dispatched = true;
+                syncReceiptToMotor(agent, session);
+                return;
+            }
+
+            session.activeBatch = queueBatch;
+            session.activeIndex = 0;
+            session.status = IntentReceipt.ReceiptStatus.RECEIPT_STATUS_QUEUED;
+            session.failureReason = "";
+            session.elapsedTicks = 0L;
+            session.dispatched = false;
+            syncReceiptToMotor(agent, session);
+            advanceBatch(agent, session);
+        }
+    }
+
+    public void actuateIntentBatch(AgentEntity agent, IntentBatch batch) {
+        submitBatch(agent, batch);
+    }
+
+    public void actuateIntentBatch(BatchSession session, IntentBatch batch) {
+        if (session != null && session.agent != null) {
+            submitBatch(session.agent, batch);
+        }
+    }
+
+    public boolean actuateSendChat(BatchSession session, SendChatIntent intent) {
+        if (session == null || session.agent == null || intent == null) {
+            return false;
+        }
+        return actuateSendChat(session.agent, intent);
+    }
+
+    public static boolean hasSendChat(IntentBatch batch) {
+        if (batch == null) {
+            return false;
+        }
+        for (AgentIntent intent : batch.getIntentsList()) {
+            if (intent.hasChat()) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    public static SendChatIntent getSendChat(IntentBatch batch) {
+        if (batch == null) {
+            return null;
+        }
+        for (AgentIntent intent : batch.getIntentsList()) {
+            if (intent.hasChat()) {
+                return intent.getChat();
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Clears the agent's active and queued batches, clears the MotorPDA LIFO stack,
+     * cancels active breaking/navigation, and resets MotorPDA to {@link MotorState#IDLE}.
+     */
+    public void flush(AgentEntity agent) {
+        if (agent == null) {
+            return;
+        }
+        BatchSession session = sessions.get(resolveAgentKey(agent));
+        if (session != null) {
+            synchronized (session) {
+                flushSessionAndMotor(agent, session);
+            }
+        } else if (agent.getMotorFSM() != null) {
+            agent.getMotorFSM().flush();
+            agent.getMotorFSM().updateReceiptState(
+                    0L, 0, IntentReceipt.ReceiptStatus.RECEIPT_STATUS_UNSPECIFIED, ""
+            );
+        }
+    }
+
+    private void flushSessionAndMotor(AgentEntity agent, BatchSession session) {
+        session.pendingBatches.clear();
+        session.activeBatch = null;
+        session.activeIndex = 0;
+        session.status = IntentReceipt.ReceiptStatus.RECEIPT_STATUS_UNSPECIFIED;
+        session.failureReason = "";
+        session.elapsedTicks = 0L;
+        session.dispatched = false;
+        if (agent.getMotorFSM() != null) {
+            agent.getMotorFSM().flush();
+        }
+        syncReceiptToMotor(agent, session);
+    }
+
+    /**
+     * Advances the active {@link IntentBatch} on each 20 Hz server tick, monitoring primitive completion,
+     * failure short-circuiting, timeout aborts, and reflex preemption stack depth.
+     */
+    public void tick(AgentEntity agent) {
+        if (agent == null) {
+            return;
+        }
+        BatchSession session = sessions.get(resolveAgentKey(agent));
+        if (session == null) {
+            return;
+        }
+        synchronized (session) {
+            if (session.activeBatch == null) {
+                return;
+            }
+            if (!isSessionInFlight(session)) {
+                return;
+            }
+
+            session.elapsedTicks++;
+            long timeoutTicks = session.activeBatch.getTimeoutTicks();
+            if (timeoutTicks > 0 && session.elapsedTicks >= timeoutTicks) {
+                session.status = IntentReceipt.ReceiptStatus.RECEIPT_STATUS_ABORTED;
+                session.failureReason = "Batch timed out after " + session.elapsedTicks + " ticks";
+                session.pendingBatches.clear();
+                if (agent.getMotorFSM() != null) {
+                    agent.getMotorFSM().flush();
+                }
+                syncReceiptToMotor(agent, session);
+                return;
+            }
+
+            advanceBatch(agent, session);
+        }
+    }
+
+    private static boolean isSessionInFlight(BatchSession session) {
+        return session.activeBatch != null && (session.status == IntentReceipt.ReceiptStatus.RECEIPT_STATUS_QUEUED
+                || session.status == IntentReceipt.ReceiptStatus.RECEIPT_STATUS_EXECUTING
+                || session.status == IntentReceipt.ReceiptStatus.RECEIPT_STATUS_PREEMPTED_BY_REFLEX);
+    }
+
+    private void advanceBatch(AgentEntity agent, BatchSession session) {
+        AgentMotorFSM fsm = agent.getMotorFSM();
+        while (session.activeBatch != null) {
+            int count = session.activeBatch.getIntentsCount();
+            if (session.activeIndex >= count) {
+                session.status = IntentReceipt.ReceiptStatus.RECEIPT_STATUS_COMPLETED;
+                session.failureReason = "";
+                syncReceiptToMotor(agent, session);
+                if (!session.pendingBatches.isEmpty()) {
+                    IntentBatch next = session.pendingBatches.pollFirst();
+                    session.activeBatch = next;
+                    session.activeIndex = 0;
+                    session.status = IntentReceipt.ReceiptStatus.RECEIPT_STATUS_QUEUED;
+                    session.failureReason = "";
+                    session.elapsedTicks = 0L;
+                    session.dispatched = false;
+                    syncReceiptToMotor(agent, session);
+                    continue;
+                }
+                break;
+            }
+
+            AgentIntent currentIntent = session.activeBatch.getIntents(session.activeIndex);
+            if (!session.dispatched) {
+                if (isAlreadyBrokenHarvestIntent(agent, currentIntent)) {
+                    if (fsm != null && currentIntent.getSequenceId() > 0) {
+                        fsm.markSequenceProcessed(currentIntent.getSequenceId());
+                    }
+                    session.activeIndex++;
+                    session.dispatched = false;
+                    continue;
+                }
+                session.status = IntentReceipt.ReceiptStatus.RECEIPT_STATUS_EXECUTING;
+                syncReceiptToMotor(agent, session);
+
+                boolean ok = actuateWithResult(agent, currentIntent);
+                session.dispatched = true;
+
+                if (!ok) {
+                    session.status = IntentReceipt.ReceiptStatus.RECEIPT_STATUS_FAILED;
+                    session.failureReason = resolveFailureReason(fsm, session.activeIndex, currentIntent);
+                    session.pendingBatches.clear();
+                    syncReceiptToMotor(agent, session);
+                    break;
+                }
+
+                if (fsm != null) {
+                    if (fsm.getStackDepth() > 0) {
+                        session.status = IntentReceipt.ReceiptStatus.RECEIPT_STATUS_PREEMPTED_BY_REFLEX;
+                        syncReceiptToMotor(agent, session);
+                        break;
+                    }
+                    if (fsm.getState() == MotorState.IDLE) {
+                        if (!fsm.didLastAsyncActionSucceed()) {
+                            session.status = IntentReceipt.ReceiptStatus.RECEIPT_STATUS_FAILED;
+                            session.failureReason = resolveFailureReason(fsm, session.activeIndex, currentIntent);
+                            session.pendingBatches.clear();
+                            syncReceiptToMotor(agent, session);
+                            break;
+                        }
+                        session.activeIndex++;
+                        session.dispatched = false;
+                    } else {
+                        session.status = IntentReceipt.ReceiptStatus.RECEIPT_STATUS_EXECUTING;
+                        syncReceiptToMotor(agent, session);
+                        break;
+                    }
+                } else {
+                    session.activeIndex++;
+                    session.dispatched = false;
+                }
+            } else {
+                if (fsm != null && fsm.getStackDepth() > 0) {
+                    session.status = IntentReceipt.ReceiptStatus.RECEIPT_STATUS_PREEMPTED_BY_REFLEX;
+                    syncReceiptToMotor(agent, session);
+                    break;
+                }
+                if (fsm == null || fsm.getState() == MotorState.IDLE) {
+                    if (fsm != null && !fsm.didLastAsyncActionSucceed()) {
+                        session.status = IntentReceipt.ReceiptStatus.RECEIPT_STATUS_FAILED;
+                        session.failureReason = resolveFailureReason(fsm, session.activeIndex, currentIntent);
+                        session.pendingBatches.clear();
+                        syncReceiptToMotor(agent, session);
+                        break;
+                    }
+                    session.activeIndex++;
+                    session.dispatched = false;
+                } else {
+                    session.status = IntentReceipt.ReceiptStatus.RECEIPT_STATUS_EXECUTING;
+                    syncReceiptToMotor(agent, session);
+                    break;
+                }
+            }
+        }
+    }
+
+    private static boolean isAlreadyBrokenHarvestIntent(AgentEntity agent, AgentIntent intent) {
+        if (agent == null || intent == null || !intent.hasInteractBlock()) {
+            return false;
+        }
+        InteractBlockIntent interact = intent.getInteractBlock();
+        if (interact.getInteractionType() != InteractBlockIntent.InteractionType.HARVEST_BREAK) {
+            return false;
+        }
+        Level level = agent.level();
+        if (level == null) {
+            return false;
+        }
+        BlockPos targetPos = new BlockPos(interact.getPos().getX(), interact.getPos().getY(), interact.getPos().getZ());
+        if (!level.hasChunkAt(targetPos)) {
+            return false;
+        }
+        BlockState state = level.getBlockState(targetPos);
+        return state != null && state.isAir();
+    }
+
+    private static String resolveFailureReason(AgentMotorFSM fsm, int index, AgentIntent intent) {
+        if (fsm != null && fsm.getLastAsyncFailureReason() != null && !fsm.getLastAsyncFailureReason().isBlank()) {
+            return fsm.getLastAsyncFailureReason();
+        }
+        return "Primitive at index " + index + " (" + intent.getActionCase() + ") failed";
+    }
+
+    private static void syncReceiptToMotor(AgentEntity agent, BatchSession session) {
+        if (agent.getMotorFSM() == null) {
+            return;
+        }
+        long batchId = session.activeBatch != null ? session.activeBatch.getBatchId() : 0L;
+        agent.getMotorFSM().updateReceiptState(batchId, session.activeIndex, session.status, session.failureReason);
+    }
+
+    /**
+     * Returns the current {@link IntentReceipt} for the given agent.
+     */
+    public IntentReceipt getCurrentReceipt(AgentEntity agent) {
+        if (agent == null) {
+            return IntentReceipt.getDefaultInstance();
+        }
+        BatchSession session = sessions.get(resolveAgentKey(agent));
+        if (session == null) {
+            return agent.getMotorFSM() != null
+                    ? agent.getMotorFSM().getCurrentReceipt()
+                    : IntentReceipt.getDefaultInstance();
+        }
+        synchronized (session) {
+            int depth = agent.getMotorFSM() != null ? agent.getMotorFSM().getStackDepth() : 0;
+            IntentReceipt.ReceiptStatus effectiveStatus = session.status;
+            if (depth > 0 && isSessionInFlight(session)) {
+                effectiveStatus = IntentReceipt.ReceiptStatus.RECEIPT_STATUS_PREEMPTED_BY_REFLEX;
+            }
+            return IntentReceipt.newBuilder()
+                    .setBatchId(session.activeBatch != null ? session.activeBatch.getBatchId() : 0L)
+                    .setActiveIndex(session.activeIndex)
+                    .setStatus(effectiveStatus)
+                    .setFailureReason(session.failureReason != null ? session.failureReason : "")
+                    .setMotorStackDepth(depth)
+                    .build();
+        }
+    }
+
+    public int getQueuedBatchCount(AgentEntity agent) {
+        if (agent == null) {
+            return 0;
+        }
+        BatchSession session = sessions.get(resolveAgentKey(agent));
+        if (session == null) {
+            return 0;
+        }
+        synchronized (session) {
+            return session.pendingBatches.size();
+        }
+    }
+
+    public void actuate(AgentEntity agent, AgentIntent intent) {
+        actuateWithResult(agent, intent);
+    }
+
+    public boolean actuateWithResult(AgentEntity agent, AgentIntent intent) {
+        if (agent == null || intent == null) {
+            return false;
         }
 
         if (agent.getMotorFSM() != null) {
-            agent.getMotorFSM().handleIntent(intent, this);
-            return;
+            return agent.getMotorFSM().handleIntent(intent, this);
         }
 
-        switch (intent.getActionCase()) {
+        return switch (intent.getActionCase()) {
             case NAVIGATE -> actuateNavigate(agent, intent.getNavigate());
             case ATTACK -> actuateAttack(agent, intent.getAttack());
             case INTERACT_BLOCK -> actuateInteractBlock(agent, intent.getInteractBlock());
@@ -88,8 +502,11 @@ public class IntentActuator {
             case PLACE_SIGNPOST -> actuatePlaceSignpost(agent, intent.getPlaceSignpost());
             case CHAT -> actuateSendChat(agent, intent.getChat());
             case TRADE_RESPONSE -> actuateRespondTrade(agent, intent.getTradeResponse());
-            default -> LOGGER.debug("Unhandled or unsupported intent action: {}", intent.getActionCase());
-        }
+            default -> {
+                LOGGER.debug("Unhandled or unsupported intent action: {}", intent.getActionCase());
+                yield false;
+            }
+        };
     }
 
     public boolean actuateRespondTrade(AgentEntity agent, RespondTradeIntent intent) {
@@ -327,24 +744,7 @@ public class IntentActuator {
                 return false;
             }
             case SLEEP_IN_BED -> {
-                if (level == null || !level.hasChunkAt(pos)) {
-                    return false;
-                }
-                if (agent.distanceToSqr(pos.getX() + 0.5, pos.getY() + 0.5, pos.getZ() + 0.5) > BED_REACH_SQ) {
-                    return false;
-                }
-                BlockState state = level.getBlockState(pos);
-                if (!state.is(BlockTags.BEDS)) {
-                    return false;
-                }
-                if (state.hasProperty(BedBlock.OCCUPIED) && state.getValue(BedBlock.OCCUPIED)) {
-                    return false;
-                }
-                if (!level.isNight() && !level.isThundering()) {
-                    return false;
-                }
-                agent.startSleeping(pos);
-                return agent.isSleeping();
+                return actuateSleepInBed(agent, pos);
             }
             case WAKE_UP -> {
                 agent.stopSleeping();
@@ -589,6 +989,122 @@ public class IntentActuator {
             }
         }
         return Blocks.COBBLESTONE != null ? Blocks.COBBLESTONE.defaultBlockState() : null;
+    }
+
+    public boolean actuateSleepInBed(AgentEntity agent, BlockPos pos) {
+        if (agent == null || pos == null) {
+            return false;
+        }
+        Level level = agent.level();
+        if (level == null || !level.hasChunkAt(pos)) {
+            return false;
+        }
+        if (agent.distanceToSqr(pos.getX() + 0.5, pos.getY() + 0.5, pos.getZ() + 0.5) > BED_REACH_SQ) {
+            return false;
+        }
+        BlockState state = level.getBlockState(pos);
+        if (!state.is(BlockTags.BEDS)) {
+            return false;
+        }
+
+        BlockPos targetPos = pos;
+        if (state.getBlock() instanceof BedBlock) {
+            if (state.hasProperty(BedBlock.PART) && state.getValue(BedBlock.PART) == BedPart.FOOT) {
+                if (state.hasProperty(BedBlock.FACING)) {
+                    targetPos = pos.relative(state.getValue(BedBlock.FACING));
+                }
+            }
+        }
+
+        BlockState targetState = level.getBlockState(targetPos);
+        if (state.hasProperty(BedBlock.OCCUPIED) && state.getValue(BedBlock.OCCUPIED)) {
+            return false;
+        }
+        if (targetState.hasProperty(BedBlock.OCCUPIED) && targetState.getValue(BedBlock.OCCUPIED)) {
+            return false;
+        }
+        if (!level.isNight() && !level.isThundering()) {
+            return false;
+        }
+
+        sheatheHeldWeaponOrTool(agent);
+        agent.startSleeping(targetPos);
+        return agent.isSleeping();
+    }
+
+    public void sheatheHeldWeaponOrTool(AgentEntity agent) {
+        if (agent == null) {
+            return;
+        }
+        var inv = agent.getInventory();
+        if (inv == null) {
+            return;
+        }
+        ItemStack held = agent.getMainHandItem();
+        if (held.isEmpty() || !isWeaponOrTool(held)) {
+            return;
+        }
+
+        // 1. Check if any hotbar slot (0-8) is empty
+        for (int i = 0; i < 9; i++) {
+            if (inv.items.get(i).isEmpty()) {
+                inv.selected = i;
+                return;
+            }
+        }
+
+        // 2. Check if offhand is empty
+        if (agent.getOffhandItem().isEmpty()) {
+            agent.setItemInHand(InteractionHand.OFF_HAND, held);
+            inv.items.set(inv.selected, ItemStack.EMPTY);
+            return;
+        }
+
+        // 3. Check if any inventory slot (9-35) is empty
+        for (int i = 9; i < inv.items.size(); i++) {
+            if (inv.items.get(i).isEmpty()) {
+                inv.items.set(i, held);
+                inv.items.set(inv.selected, ItemStack.EMPTY);
+                return;
+            }
+        }
+
+        // 4. Check if any hotbar slot (0-8) has a non-weapon/non-tool item
+        for (int i = 0; i < 9; i++) {
+            if (!isWeaponOrTool(inv.items.get(i))) {
+                inv.selected = i;
+                return;
+            }
+        }
+
+        // 5. Swap held weapon with any non-weapon slot in the rest of the inventory
+        for (int i = 9; i < inv.items.size(); i++) {
+            if (!isWeaponOrTool(inv.items.get(i))) {
+                ItemStack nonWeapon = inv.items.get(i);
+                inv.items.set(inv.selected, nonWeapon);
+                inv.items.set(i, held);
+                return;
+            }
+        }
+    }
+
+    public static boolean isWeaponOrTool(ItemStack stack) {
+        if (stack == null || stack.isEmpty()) {
+            return false;
+        }
+        Item item = stack.getItem();
+        if (item instanceof TieredItem
+                || item instanceof SwordItem
+                || item instanceof DiggerItem
+                || item instanceof BowItem
+                || item instanceof CrossbowItem
+                || item instanceof TridentItem) {
+            return true;
+        }
+        String id = BuiltInRegistries.ITEM.getKey(item).toString();
+        return id.contains("sword") || id.contains("axe") || id.contains("pickaxe")
+                || id.contains("shovel") || id.contains("hoe") || id.contains("bow")
+                || id.contains("trident");
     }
 
     public boolean actuateUseItem(AgentEntity agent, UseItemIntent intent) {

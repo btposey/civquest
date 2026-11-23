@@ -3,6 +3,7 @@ package com.civquest.mod;
 import com.civquest.mod.actuator.IntentActuator;
 import com.civquest.mod.grpc.v1.AgentIntent;
 import com.civquest.mod.grpc.v1.DamageEvent;
+import com.civquest.mod.grpc.v1.IntentBatch;
 import com.civquest.mod.grpc.v1.SpawnAgentRequest;
 import com.civquest.mod.grpc.v1.TelemetryFrame;
 import com.civquest.mod.sensory.SensoryFrustumCollector;
@@ -14,8 +15,9 @@ import net.minecraft.network.protocol.game.ClientboundPlayerInfoRemovePacket;
 import net.minecraft.network.protocol.game.ClientboundPlayerInfoUpdatePacket;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
-import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.util.Mth;
 import net.minecraft.world.level.ChunkPos;
+import net.minecraft.world.level.levelgen.Heightmap;
 import net.neoforged.neoforge.event.entity.living.LivingDamageEvent;
 import net.neoforged.neoforge.event.tick.ServerTickEvent;
 import org.slf4j.Logger;
@@ -175,6 +177,7 @@ public class AgentEntityManager {
         AgentEntity agent = entityFactory.create(level, profile, agentId, request.getClanId());
         agent.setStreamRegistry(this.streamRegistry);
         agent.setSensoryCollector(this.sensoryCollector);
+        agent.setIntentActuator(this.intentActuator);
 
         if (request.getSkinPngBytes() != null && !request.getSkinPngBytes().isEmpty()) {
             if (request.getSkinPngBytes().size() > 65536) {
@@ -192,17 +195,18 @@ public class AgentEntityManager {
             y = request.getSpawnCoords().getY();
             z = request.getSpawnCoords().getZ();
         } else if (level != null) {
-            if (server != null && server.getPlayerList() != null && !server.getPlayerList().getPlayers().isEmpty()) {
-                ServerPlayer player = server.getPlayerList().getPlayers().get(0);
-                x = player.getX() + 2.0;
-                y = player.getY();
-                z = player.getZ() + 2.0;
-            } else {
-                BlockPos spawnPos = level.getSharedSpawnPos();
-                x = spawnPos.getX() + 0.5;
-                z = spawnPos.getZ() + 0.5;
-                y = level.getHeight(net.minecraft.world.level.levelgen.Heightmap.Types.MOTION_BLOCKING, spawnPos.getX(), spawnPos.getZ());
+            BlockPos spawnPos = level.getSharedSpawnPos();
+            if (spawnPos == null) {
+                spawnPos = BlockPos.ZERO;
             }
+            int existingCount = agents.size();
+            double offsetX = (existingCount % 4) * 1.5;
+            double offsetZ = ((existingCount / 4) % 4) * 1.5;
+            x = spawnPos.getX() + 0.5 + offsetX;
+            z = spawnPos.getZ() + 0.5 + offsetZ;
+            int surfaceX = Mth.floor(x);
+            int surfaceZ = Mth.floor(z);
+            y = level.getHeight(Heightmap.Types.MOTION_BLOCKING_NO_LEAVES, surfaceX, surfaceZ);
         }
 
         agent.moveTo(x, y, z, 0.0f, 0.0f);
@@ -320,6 +324,9 @@ public class AgentEntityManager {
      */
     public void registerAgent(AgentEntity agent) {
         if (agent != null && agent.getAgentId() != null) {
+            if (agent.getIntentActuator() == null) {
+                agent.setIntentActuator(this.intentActuator);
+            }
             agents.put(agent.getAgentId(), agent);
         }
     }
@@ -474,24 +481,60 @@ public class AgentEntityManager {
             }
         };
 
+        return submitServerOrHeadless(server, intent.getAgentId(), intent.getActionCase().name(), task);
+    }
+
+    public CompletableFuture<Void> handleIntentBatch(MinecraftServer server, IntentBatch batch) {
+        if (batch == null) {
+            return CompletableFuture.completedFuture(null);
+        }
+
+        Runnable task = () -> {
+            try {
+                String agentId = batch.getAgentId();
+                if (agentId == null || agentId.isBlank()) {
+                    LOGGER.warn("Received IntentBatch without agent_id");
+                    return;
+                }
+
+                AgentEntity agent = getAgent(agentId);
+                if (agent == null || agent.isRemoved() || !agent.isAlive()) {
+                    LOGGER.warn("Received IntentBatch {} for unknown or inactive agent '{}'",
+                            batch.getBatchId(), agentId);
+                    return;
+                }
+
+                intentActuator.submitBatch(agent, batch);
+            } catch (Throwable t) {
+                LOGGER.error("Error executing IntentBatch {} for agent '{}': {}",
+                        batch.getBatchId(), batch.getAgentId(), t.getMessage(), t);
+            }
+        };
+
+        return submitServerOrHeadless(server, batch.getAgentId(), "IntentBatch#" + batch.getBatchId(), task);
+    }
+
+    private CompletableFuture<Void> submitServerOrHeadless(MinecraftServer server,
+                                                             String agentId,
+                                                             String actionLabel,
+                                                             Runnable task) {
         if (server != null) {
             if (!server.isRunning()) {
-                LOGGER.warn("Dropping intent {}: MinecraftServer is not running", intent.getActionCase());
+                LOGGER.warn("Dropping {}: MinecraftServer is not running", actionLabel);
                 return CompletableFuture.failedFuture(new IllegalStateException("MinecraftServer is not running"));
             }
             try {
                 return server.submit(task);
             } catch (RejectedExecutionException e) {
-                LOGGER.warn("Rejected execution when submitting intent {}: {}", intent.getActionCase(), e.getMessage());
+                LOGGER.warn("Rejected execution when submitting {}: {}", actionLabel, e.getMessage());
                 return CompletableFuture.failedFuture(e);
             }
         } else {
             // Headless test environment without MinecraftServer
-            String agentId = intent.getAgentId();
             AgentEntity agent = (agentId != null) ? agents.get(agentId) : null;
             if (agent != null && agent.level() != null) {
-                LOGGER.warn("Dropping intent {}: no MinecraftServer running to execute world-modifying task safely",
-                        intent.getActionCase());
+                LOGGER.warn("Dropping {}: no MinecraftServer running to execute world-modifying task safely",
+                        actionLabel);
                 return CompletableFuture.failedFuture(new IllegalStateException("No MinecraftServer present for world-bound agent"));
             }
             task.run();

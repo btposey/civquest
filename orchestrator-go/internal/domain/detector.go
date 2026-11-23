@@ -37,13 +37,23 @@ type ServerManifest struct {
 
 // AgentsManifest describes the metadata written during './install.sh agents'.
 type AgentsManifest struct {
-	Version     string   `json:"version"`
-	InstalledAt string   `json:"installed_at"`
-	BinDir      string   `json:"bin_dir"`
-	Binaries    []string `json:"binaries"`
-	ConfigDir   string   `json:"config_dir"`
-	DataDir     string   `json:"data_dir"`
-	StateDir    string   `json:"state_dir"`
+	Version           string                `json:"version"`
+	InstalledAt       string                `json:"installed_at"`
+	BinDir            string                `json:"bin_dir"`
+	Binaries          []string              `json:"binaries"`
+	ConfigDir         string                `json:"config_dir"`
+	DataDir           string                `json:"data_dir"`
+	StateDir          string                `json:"state_dir"`
+	DefaultProfession string                `json:"default_profession,omitempty"`
+	DefaultStage      string                `json:"default_stage,omitempty"`
+	Agents            []AgentManifestPreset `json:"agents,omitempty"`
+}
+
+// AgentManifestPreset describes an agent preset entry in civquest.agents.json.
+type AgentManifestPreset struct {
+	Name       string `json:"name"`
+	Profession string `json:"profession"`
+	Stage      string `json:"stage"`
 }
 
 // ServerStatus holds the detected runtime and installation status of the server.

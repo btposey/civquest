@@ -38,6 +38,10 @@ public enum DamageSourceType
    * <code>DAMAGE_SOURCE_TYPE_LAVA = 6;</code>
    */
   DAMAGE_SOURCE_TYPE_LAVA(6),
+  /**
+   * <code>DAMAGE_SOURCE_TYPE_DROWN = 7;</code>
+   */
+  DAMAGE_SOURCE_TYPE_DROWN(7),
   UNRECOGNIZED(-1),
   ;
 
@@ -78,6 +82,10 @@ public enum DamageSourceType
    * <code>DAMAGE_SOURCE_TYPE_LAVA = 6;</code>
    */
   public static final int DAMAGE_SOURCE_TYPE_LAVA_VALUE = 6;
+  /**
+   * <code>DAMAGE_SOURCE_TYPE_DROWN = 7;</code>
+   */
+  public static final int DAMAGE_SOURCE_TYPE_DROWN_VALUE = 7;
 
 
   public final int getNumber() {
@@ -111,6 +119,7 @@ public enum DamageSourceType
       case 4: return DAMAGE_SOURCE_TYPE_FALL;
       case 5: return DAMAGE_SOURCE_TYPE_EXPLOSION;
       case 6: return DAMAGE_SOURCE_TYPE_LAVA;
+      case 7: return DAMAGE_SOURCE_TYPE_DROWN;
       default: return null;
     }
   }

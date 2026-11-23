@@ -5,6 +5,7 @@ import com.civquest.mod.grpc.v1.AgentStatus;
 import com.civquest.mod.grpc.v1.AttackIntent;
 import com.civquest.mod.grpc.v1.DespawnAgentRequest;
 import com.civquest.mod.grpc.v1.DespawnAgentResponse;
+import com.civquest.mod.grpc.v1.IntentBatch;
 import com.civquest.mod.grpc.v1.TelemetryFrame;
 import io.grpc.Status;
 import io.grpc.stub.ServerCallStreamObserver;
@@ -360,16 +361,20 @@ public class StreamRegistryTest {
         assertSame(registry, service.getStreamRegistry());
 
         RecordingObserver responseObserver = new RecordingObserver();
-        StreamObserver<AgentIntent> requestObserver = service.connectAgent(responseObserver);
+        StreamObserver<IntentBatch> requestObserver = service.connectAgent(responseObserver);
 
         // connectAgent immediately sends initial TelemetryFrame probe
         assertEquals(1, responseObserver.receivedFrames.size());
         assertEquals(0, registry.getActiveAgentCount(), "Agent should not yet be registered before intent");
 
-        // Send first intent from agent-beta
-        requestObserver.onNext(AgentIntent.newBuilder()
+        // Send first batch from agent-beta
+        requestObserver.onNext(IntentBatch.newBuilder()
                 .setAgentId("agent-beta")
-                .setAttack(AttackIntent.newBuilder().setTargetEntityId(42).build())
+                .setBatchId(1L)
+                .addIntents(AgentIntent.newBuilder()
+                        .setAgentId("agent-beta")
+                        .setAttack(AttackIntent.newBuilder().setTargetEntityId(42).build())
+                        .build())
                 .build());
 
         assertTrue(registry.isRegistered("agent-beta"));
@@ -385,9 +390,9 @@ public class StreamRegistryTest {
 
         // Test error lifecycle with another agent
         RecordingObserver responseObserver2 = new RecordingObserver();
-        StreamObserver<AgentIntent> requestObserver2 = service.connectAgent(responseObserver2);
+        StreamObserver<IntentBatch> requestObserver2 = service.connectAgent(responseObserver2);
 
-        requestObserver2.onNext(AgentIntent.newBuilder()
+        requestObserver2.onNext(IntentBatch.newBuilder()
                 .setAgentId("agent-gamma")
                 .build());
         assertTrue(registry.isRegistered("agent-gamma"));
@@ -575,25 +580,29 @@ public class StreamRegistryTest {
         CivQuestBridgeServiceImpl service = new CivQuestBridgeServiceImpl(registry);
 
         RecordingObserver responseObserver = new RecordingObserver();
-        StreamObserver<AgentIntent> requestObserver = service.connectAgent(responseObserver);
+        StreamObserver<IntentBatch> requestObserver = service.connectAgent(responseObserver);
 
-        // Bind stream to agent-alpha on first valid intent
-        requestObserver.onNext(AgentIntent.newBuilder()
+        // Bind stream to agent-alpha on first valid batch
+        requestObserver.onNext(IntentBatch.newBuilder()
                 .setAgentId("agent-alpha")
                 .build());
 
         assertTrue(registry.isRegistered("agent-alpha"));
         assertNull(responseObserver.error.get());
 
-        // Subsequent intent with same agent ID is accepted
-        requestObserver.onNext(AgentIntent.newBuilder()
+        // Subsequent batch with same agent ID is accepted
+        requestObserver.onNext(IntentBatch.newBuilder()
                 .setAgentId("agent-alpha")
-                .setAttack(AttackIntent.newBuilder().setTargetEntityId(10).build())
+                .setBatchId(2L)
+                .addIntents(AgentIntent.newBuilder()
+                        .setAgentId("agent-alpha")
+                        .setAttack(AttackIntent.newBuilder().setTargetEntityId(10).build())
+                        .build())
                 .build());
         assertNull(responseObserver.error.get());
 
         // Attempting to mutate stream to agent-bravo must be rejected
-        requestObserver.onNext(AgentIntent.newBuilder()
+        requestObserver.onNext(IntentBatch.newBuilder()
                 .setAgentId("agent-bravo")
                 .build());
 
@@ -612,9 +621,9 @@ public class StreamRegistryTest {
 
         // Test empty string
         RecordingObserver responseObserver1 = new RecordingObserver();
-        StreamObserver<AgentIntent> requestObserver1 = service.connectAgent(responseObserver1);
+        StreamObserver<IntentBatch> requestObserver1 = service.connectAgent(responseObserver1);
 
-        requestObserver1.onNext(AgentIntent.newBuilder()
+        requestObserver1.onNext(IntentBatch.newBuilder()
                 .setAgentId("")
                 .build());
 
@@ -624,9 +633,9 @@ public class StreamRegistryTest {
 
         // Test whitespace blank string
         RecordingObserver responseObserver2 = new RecordingObserver();
-        StreamObserver<AgentIntent> requestObserver2 = service.connectAgent(responseObserver2);
+        StreamObserver<IntentBatch> requestObserver2 = service.connectAgent(responseObserver2);
 
-        requestObserver2.onNext(AgentIntent.newBuilder()
+        requestObserver2.onNext(IntentBatch.newBuilder()
                 .setAgentId("   ")
                 .build());
 
@@ -642,11 +651,11 @@ public class StreamRegistryTest {
         CivQuestBridgeServiceImpl service = new CivQuestBridgeServiceImpl(registry);
 
         TestServerCallStreamObserver<TelemetryFrame> responseObserver = new TestServerCallStreamObserver<>();
-        StreamObserver<AgentIntent> requestObserver = service.connectAgent(responseObserver);
+        StreamObserver<IntentBatch> requestObserver = service.connectAgent(responseObserver);
 
         assertNotNull(responseObserver.cancelHandler, "Cancellation handler must be registered on ServerCallStreamObserver");
 
-        requestObserver.onNext(AgentIntent.newBuilder()
+        requestObserver.onNext(IntentBatch.newBuilder()
                 .setAgentId("agent-disconnect")
                 .build());
 

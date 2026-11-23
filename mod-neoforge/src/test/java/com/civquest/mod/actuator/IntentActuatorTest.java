@@ -7,18 +7,25 @@ import com.civquest.mod.StreamRegistry;
 import com.civquest.mod.grpc.v1.AgentIntent;
 import com.civquest.mod.grpc.v1.AttackIntent;
 import com.civquest.mod.grpc.v1.BlockPosProto;
+import com.civquest.mod.grpc.v1.ChatChannel;
 import com.civquest.mod.grpc.v1.CraftItemIntent;
 import com.civquest.mod.grpc.v1.CreateWrittenBookIntent;
+import com.civquest.mod.grpc.v1.IntentBatch;
+import com.civquest.mod.grpc.v1.IntentReceipt;
 import com.civquest.mod.grpc.v1.InteractBlockIntent;
 import com.civquest.mod.grpc.v1.NavigateIntent;
 import com.civquest.mod.grpc.v1.NavigationState;
 import com.civquest.mod.grpc.v1.PlaceSignpostIntent;
+import com.civquest.mod.grpc.v1.SendChatIntent;
 import com.civquest.mod.grpc.v1.TelemetryFrame;
 import com.civquest.mod.grpc.v1.UseItemIntent;
 import com.civquest.mod.grpc.v1.Vec3;
 import io.grpc.StatusRuntimeException;
 import io.grpc.stub.StreamObserver;
 import net.minecraft.core.BlockPos;
+import net.minecraft.core.Direction;
+import net.minecraft.server.MinecraftServer;
+import net.minecraft.server.players.PlayerList;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.player.Inventory;
 import net.minecraft.world.entity.player.Player;
@@ -26,8 +33,10 @@ import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
 import net.minecraft.world.level.Level;
+import net.minecraft.world.level.block.BedBlock;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.level.block.state.properties.BedPart;
 import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.shapes.Shapes;
 import org.junit.jupiter.api.BeforeAll;
@@ -51,28 +60,7 @@ public class IntentActuatorTest {
 
     @BeforeAll
     static void initMinecraft() {
-        try {
-            net.neoforged.fml.loading.LoadingModList.of(
-                    java.util.List.of(), java.util.List.of(), java.util.List.of(), java.util.List.of(), java.util.Map.of()
-            );
-        } catch (Throwable ignored) {}
-        try {
-            java.lang.reflect.Field unsafeField = sun.misc.Unsafe.class.getDeclaredField("theUnsafe");
-            unsafeField.setAccessible(true);
-            sun.misc.Unsafe unsafe = (sun.misc.Unsafe) unsafeField.get(null);
-
-            java.lang.reflect.Field fmlLoaderDist = net.neoforged.fml.loading.FMLLoader.class.getDeclaredField("dist");
-            long offset1 = unsafe.staticFieldOffset(fmlLoaderDist);
-            unsafe.putObject(net.neoforged.fml.loading.FMLLoader.class, offset1, net.neoforged.api.distmarker.Dist.DEDICATED_SERVER);
-
-            java.lang.reflect.Field fmlEnvDist = net.neoforged.fml.loading.FMLEnvironment.class.getDeclaredField("dist");
-            long offset2 = unsafe.staticFieldOffset(fmlEnvDist);
-            unsafe.putObject(net.neoforged.fml.loading.FMLEnvironment.class, offset2, net.neoforged.api.distmarker.Dist.DEDICATED_SERVER);
-        } catch (Throwable ignored) {}
-        try {
-            net.minecraft.SharedConstants.tryDetectVersion();
-            net.minecraft.server.Bootstrap.bootStrap();
-        } catch (Throwable ignored) {}
+        com.civquest.mod.test.MinecraftTestBootstrap.ensureBootstrapped();
     }
 
     @BeforeEach
@@ -279,7 +267,7 @@ public class IntentActuatorTest {
         CivQuestBridgeServiceImpl service = new CivQuestBridgeServiceImpl(streamRegistry, manager, () -> null);
 
         AtomicReference<TelemetryFrame> initialFrame = new AtomicReference<>();
-        StreamObserver<AgentIntent> requestObserver = service.connectAgent(new StreamObserver<>() {
+        StreamObserver<IntentBatch> requestObserver = service.connectAgent(new StreamObserver<>() {
             @Override
             public void onNext(TelemetryFrame value) {
                 initialFrame.set(value);
@@ -294,7 +282,7 @@ public class IntentActuatorTest {
 
         assertNotNull(initialFrame.get());
 
-        // Send NavigateIntent over stream
+        // Send NavigateIntent inside IntentBatch over stream
         AgentIntent intent = AgentIntent.newBuilder()
                 .setAgentId("agent-stream-test")
                 .setNavigate(NavigateIntent.newBuilder()
@@ -302,8 +290,13 @@ public class IntentActuatorTest {
                         .setArrivalTolerance(1)
                         .build())
                 .build();
+        IntentBatch batch = IntentBatch.newBuilder()
+                .setAgentId("agent-stream-test")
+                .setBatchId(1L)
+                .addIntents(intent)
+                .build();
 
-        assertDoesNotThrow(() -> requestObserver.onNext(intent));
+        assertDoesNotThrow(() -> requestObserver.onNext(batch));
         assertTrue(streamRegistry.isRegistered("agent-stream-test"));
     }
 
@@ -315,7 +308,7 @@ public class IntentActuatorTest {
         CivQuestBridgeServiceImpl service = new CivQuestBridgeServiceImpl(streamRegistry, manager, () -> null);
 
         AtomicReference<Throwable> errorRef = new AtomicReference<>();
-        StreamObserver<AgentIntent> requestObserver = service.connectAgent(new StreamObserver<>() {
+        StreamObserver<IntentBatch> requestObserver = service.connectAgent(new StreamObserver<>() {
             @Override
             public void onNext(TelemetryFrame value) {}
 
@@ -328,16 +321,24 @@ public class IntentActuatorTest {
             public void onCompleted() {}
         });
 
-        // First intent binds to agent-1
-        requestObserver.onNext(AgentIntent.newBuilder()
+        // First batch binds to agent-1
+        requestObserver.onNext(IntentBatch.newBuilder()
                 .setAgentId("agent-1")
-                .setNavigate(NavigateIntent.newBuilder().build())
+                .setBatchId(1L)
+                .addIntents(AgentIntent.newBuilder()
+                        .setAgentId("agent-1")
+                        .setNavigate(NavigateIntent.newBuilder().build())
+                        .build())
                 .build());
 
-        // Second intent with different agentId must trigger PERMISSION_DENIED
-        requestObserver.onNext(AgentIntent.newBuilder()
+        // Second batch with different agentId must trigger PERMISSION_DENIED
+        requestObserver.onNext(IntentBatch.newBuilder()
                 .setAgentId("agent-2")
-                .setNavigate(NavigateIntent.newBuilder().build())
+                .setBatchId(2L)
+                .addIntents(AgentIntent.newBuilder()
+                        .setAgentId("agent-2")
+                        .setNavigate(NavigateIntent.newBuilder().build())
+                        .build())
                 .build());
 
         Throwable error = errorRef.get();
@@ -654,5 +655,415 @@ public class IntentActuatorTest {
             assertEquals(Blocks.OAK_LOG, genericLogs.getBlock());
             assertEquals("z", genericLogs.getValue(net.minecraft.world.level.block.RotatedPillarBlock.AXIS).getSerializedName());
         }
+    }
+
+    @Test
+    @DisplayName("IntentBatch executes primitives sequentially and transitions to RECEIPT_STATUS_COMPLETED")
+    void testIntentBatchSequentialExecution() {
+        AgentEntity agent = mock(AgentEntity.class);
+        AgentNavigator nav = mock(AgentNavigator.class);
+        BlockBreaker breaker = mock(BlockBreaker.class);
+        when(agent.getAgentId()).thenReturn("batch-seq-agent");
+        when(agent.isAlive()).thenReturn(true);
+        when(agent.getNavigator()).thenReturn(nav);
+        when(agent.getBreaker()).thenReturn(breaker);
+
+        com.civquest.mod.actuator.motor.AgentMotorFSM fsm = new com.civquest.mod.actuator.motor.AgentMotorFSM(agent);
+        when(agent.getMotorFSM()).thenReturn(fsm);
+
+        Inventory inv = new Inventory(agent);
+        inv.setItem(0, new ItemStack(Items.OAK_PLANKS, 4));
+        when(agent.getInventory()).thenReturn(inv);
+
+        // Primitive 0: Navigate (async) -> active while pathing, completes when arrived
+        when(nav.isPathing()).thenReturn(true);
+        when(nav.isArrived()).thenReturn(false);
+
+        AgentIntent navIntent = AgentIntent.newBuilder()
+                .setAgentId("batch-seq-agent")
+                .setNavigate(NavigateIntent.newBuilder()
+                        .setTarget(Vec3.newBuilder().setX(10).setY(64).setZ(10).build())
+                        .setArrivalTolerance(1)
+                        .build())
+                .build();
+        AgentIntent craftIntent = AgentIntent.newBuilder()
+                .setAgentId("batch-seq-agent")
+                .setCraftItem(CraftItemIntent.newBuilder().setRecipeId("minecraft:stick").build())
+                .build();
+
+        IntentBatch batch = IntentBatch.newBuilder()
+                .setAgentId("batch-seq-agent")
+                .setBatchId(101L)
+                .addIntents(navIntent)
+                .addIntents(craftIntent)
+                .build();
+
+        actuator.submitBatch(agent, batch);
+        IntentReceipt executing = actuator.getCurrentReceipt(agent);
+        assertEquals(101L, executing.getBatchId());
+        assertEquals(0, executing.getActiveIndex());
+        assertEquals(IntentReceipt.ReceiptStatus.RECEIPT_STATUS_EXECUTING, executing.getStatus());
+
+        // Still pathing on tick 1
+        fsm.tick();
+        actuator.tick(agent);
+        assertEquals(IntentReceipt.ReceiptStatus.RECEIPT_STATUS_EXECUTING, actuator.getCurrentReceipt(agent).getStatus());
+        assertEquals(0, actuator.getCurrentReceipt(agent).getActiveIndex());
+
+        // Navigator arrives -> FSM goes IDLE -> IntentActuator advances to primitive 1 (CRAFT) and finishes COMPLETED
+        when(nav.isPathing()).thenReturn(false);
+        when(nav.isArrived()).thenReturn(true);
+        fsm.tick();
+        actuator.tick(agent);
+
+        IntentReceipt completed = actuator.getCurrentReceipt(agent);
+        assertEquals(101L, completed.getBatchId());
+        assertEquals(2, completed.getActiveIndex());
+        assertEquals(IntentReceipt.ReceiptStatus.RECEIPT_STATUS_COMPLETED, completed.getStatus());
+        assertTrue(inv.countItem(Items.STICK) >= 4, "Second primitive (craft stick) must execute after navigation completes");
+    }
+
+    @Test
+    @DisplayName("IntentBatch stops executing subsequent items and sets RECEIPT_STATUS_FAILED when a primitive fails")
+    void testIntentBatchFailureStopsSubsequentItems() {
+        AgentEntity agent = mock(AgentEntity.class);
+        when(agent.getAgentId()).thenReturn("batch-fail-agent");
+        when(agent.isAlive()).thenReturn(true);
+        com.civquest.mod.actuator.motor.AgentMotorFSM fsm = new com.civquest.mod.actuator.motor.AgentMotorFSM(agent);
+        when(agent.getMotorFSM()).thenReturn(fsm);
+
+        Inventory inv = new Inventory(agent);
+        // Empty inventory so craft #1 fails, and craft #2 (even with planks? no, keep separate indicator) won't run
+        when(agent.getInventory()).thenReturn(inv);
+
+        AgentIntent badCraft = AgentIntent.newBuilder()
+                .setAgentId("batch-fail-agent")
+                .setCraftItem(CraftItemIntent.newBuilder().setRecipeId("minecraft:nonexistent_recipe").build())
+                .build();
+        AgentIntent followingNav = AgentIntent.newBuilder()
+                .setAgentId("batch-fail-agent")
+                .setNavigate(NavigateIntent.newBuilder()
+                        .setTarget(Vec3.newBuilder().setX(5).setY(64).setZ(5).build())
+                        .build())
+                .build();
+
+        IntentBatch batch = IntentBatch.newBuilder()
+                .setAgentId("batch-fail-agent")
+                .setBatchId(202L)
+                .addIntents(badCraft)
+                .addIntents(followingNav)
+                .build();
+
+        actuator.submitBatch(agent, batch);
+
+        IntentReceipt receipt = actuator.getCurrentReceipt(agent);
+        assertEquals(202L, receipt.getBatchId());
+        assertEquals(0, receipt.getActiveIndex());
+        assertEquals(IntentReceipt.ReceiptStatus.RECEIPT_STATUS_FAILED, receipt.getStatus());
+        assertFalse(receipt.getFailureReason().isBlank());
+        assertEquals(com.civquest.mod.actuator.motor.MotorState.IDLE, fsm.getState(),
+                "Subsequent navigation intent must not run after earlier primitive failed");
+    }
+
+    @Test
+    @DisplayName("IntentBatch with flush_periphery=true clears MotorPDA stack, stops breaker/navigator, and preempts active batch")
+    void testIntentBatchFlushPeriphery() {
+        AgentEntity agent = mock(AgentEntity.class);
+        AgentNavigator nav = mock(AgentNavigator.class);
+        BlockBreaker breaker = mock(BlockBreaker.class);
+        when(agent.getAgentId()).thenReturn("batch-flush-agent");
+        when(agent.isAlive()).thenReturn(true);
+        when(agent.getNavigator()).thenReturn(nav);
+        when(agent.getBreaker()).thenReturn(breaker);
+
+        com.civquest.mod.actuator.motor.AgentMotorFSM fsm = new com.civquest.mod.actuator.motor.AgentMotorFSM(agent);
+        when(agent.getMotorFSM()).thenReturn(fsm);
+
+        when(nav.isPathing()).thenReturn(true);
+        when(nav.isArrived()).thenReturn(false);
+
+        IntentBatch initialBatch = IntentBatch.newBuilder()
+                .setAgentId("batch-flush-agent")
+                .setBatchId(301L)
+                .addIntents(AgentIntent.newBuilder()
+                        .setAgentId("batch-flush-agent")
+                        .setNavigate(NavigateIntent.newBuilder()
+                                .setTarget(Vec3.newBuilder().setX(20).setY(64).setZ(20).build())
+                                .build())
+                        .build())
+                .build();
+        actuator.submitBatch(agent, initialBatch);
+        fsm.pushState(com.civquest.mod.actuator.motor.MotorState.COMBAT_ENGAGED, "reflex");
+        assertEquals(1, fsm.getStackDepth());
+        assertEquals(IntentReceipt.ReceiptStatus.RECEIPT_STATUS_PREEMPTED_BY_REFLEX,
+                actuator.getCurrentReceipt(agent).getStatus());
+
+        // Flush batch arrives
+        Inventory inv = new Inventory(agent);
+        inv.setItem(0, new ItemStack(Items.OAK_PLANKS, 4));
+        when(agent.getInventory()).thenReturn(inv);
+
+        IntentBatch flushBatch = IntentBatch.newBuilder()
+                .setAgentId("batch-flush-agent")
+                .setBatchId(302L)
+                .setFlushPeriphery(true)
+                .addIntents(AgentIntent.newBuilder()
+                        .setAgentId("batch-flush-agent")
+                        .setCraftItem(CraftItemIntent.newBuilder().setRecipeId("minecraft:stick").build())
+                        .build())
+                .build();
+        actuator.submitBatch(agent, flushBatch);
+
+        assertEquals(0, fsm.getStackDepth());
+        verify(breaker, atLeastOnce()).cancel();
+        verify(nav, atLeastOnce()).stop();
+        IntentReceipt receipt = actuator.getCurrentReceipt(agent);
+        assertEquals(302L, receipt.getBatchId());
+        assertEquals(IntentReceipt.ReceiptStatus.RECEIPT_STATUS_COMPLETED, receipt.getStatus());
+    }
+
+    @Test
+    @DisplayName("IntentBatch enforces timeout_ticks and queues non-flushing batches in order")
+    void testIntentBatchTimeoutAndQueueing() {
+        AgentEntity agent = mock(AgentEntity.class);
+        AgentNavigator nav = mock(AgentNavigator.class);
+        BlockBreaker breaker = mock(BlockBreaker.class);
+        when(agent.getAgentId()).thenReturn("batch-timeout-agent");
+        when(agent.isAlive()).thenReturn(true);
+        when(agent.getNavigator()).thenReturn(nav);
+        when(agent.getBreaker()).thenReturn(breaker);
+
+        com.civquest.mod.actuator.motor.AgentMotorFSM fsm = new com.civquest.mod.actuator.motor.AgentMotorFSM(agent);
+        when(agent.getMotorFSM()).thenReturn(fsm);
+        when(nav.isPathing()).thenReturn(true);
+        when(nav.isArrived()).thenReturn(false);
+
+        IntentBatch batch1 = IntentBatch.newBuilder()
+                .setAgentId("batch-timeout-agent")
+                .setBatchId(401L)
+                .setTimeoutTicks(3L)
+                .addIntents(AgentIntent.newBuilder()
+                        .setAgentId("batch-timeout-agent")
+                        .setNavigate(NavigateIntent.newBuilder()
+                                .setTarget(Vec3.newBuilder().setX(50).setY(64).setZ(50).build())
+                                .build())
+                        .build())
+                .build();
+        IntentBatch batch2 = IntentBatch.newBuilder()
+                .setAgentId("batch-timeout-agent")
+                .setBatchId(402L)
+                .setFlushPeriphery(false)
+                .addIntents(AgentIntent.newBuilder()
+                        .setAgentId("batch-timeout-agent")
+                        .setNavigate(NavigateIntent.newBuilder()
+                                .setTarget(Vec3.newBuilder().setX(10).setY(64).setZ(10).build())
+                                .build())
+                        .build())
+                .build();
+
+        actuator.submitBatch(agent, batch1);
+        actuator.submitBatch(agent, batch2);
+        assertEquals(1, actuator.getQueuedBatchCount(agent));
+        assertEquals(401L, actuator.getCurrentReceipt(agent).getBatchId());
+
+        // Tick 3 times to exceed timeoutTicks = 3
+        for (int i = 0; i < 3; i++) {
+            fsm.tick();
+            actuator.tick(agent);
+        }
+
+        IntentReceipt aborted = actuator.getCurrentReceipt(agent);
+        assertEquals(401L, aborted.getBatchId());
+        assertEquals(IntentReceipt.ReceiptStatus.RECEIPT_STATUS_ABORTED, aborted.getStatus());
+        assertEquals(com.civquest.mod.actuator.motor.MotorState.IDLE, fsm.getState());
+        assertEquals(0, actuator.getQueuedBatchCount(agent));
+    }
+
+    @Test
+    @DisplayName("Queued duplicate HARVEST_BREAK intent on already-broken air block completes gracefully without mining_start_failed")
+    void testQueuedHarvestBreakOnAlreadyAirBlockCompletesGracefully() {
+        AgentEntity agent = mock(AgentEntity.class);
+        Level level = mock(Level.class);
+        BlockBreaker breaker = mock(BlockBreaker.class);
+        when(agent.getAgentId()).thenReturn("dup-break-agent");
+        when(agent.isAlive()).thenReturn(true);
+        when(agent.level()).thenReturn(level);
+        when(agent.getBreaker()).thenReturn(breaker);
+        when(agent.distanceToSqr(anyDouble(), anyDouble(), anyDouble())).thenReturn(4.0);
+        when(level.hasChunkAt(any(BlockPos.class))).thenReturn(true);
+
+        BlockState stoneBlock = mock(BlockState.class);
+        when(stoneBlock.isAir()).thenReturn(false);
+        when(stoneBlock.getDestroySpeed(any(), any())).thenReturn(1.5f);
+
+        BlockState airBlock = mock(BlockState.class);
+        when(airBlock.isAir()).thenReturn(true);
+
+        AtomicReference<BlockState> blockAtTarget = new AtomicReference<>(stoneBlock);
+        BlockPos targetPos = new BlockPos(5, 64, 5);
+        when(level.getBlockState(targetPos)).thenAnswer(inv -> blockAtTarget.get());
+
+        com.civquest.mod.actuator.motor.AgentMotorFSM fsm = new com.civquest.mod.actuator.motor.AgentMotorFSM(agent);
+        when(agent.getMotorFSM()).thenReturn(fsm);
+
+        // First HARVEST_BREAK starts mining; breaker remains active until tick() breaks it
+        when(breaker.start(targetPos)).thenReturn(true);
+        when(breaker.isBreaking()).thenReturn(true);
+
+        AgentIntent breakIntent = AgentIntent.newBuilder()
+                .setAgentId("dup-break-agent")
+                .setSequenceId(1L)
+                .setInteractBlock(InteractBlockIntent.newBuilder()
+                        .setPos(BlockPosProto.newBuilder().setX(5).setY(64).setZ(5).build())
+                        .setInteractionType(InteractBlockIntent.InteractionType.HARVEST_BREAK)
+                        .build())
+                .build();
+
+        IntentBatch batch1 = IntentBatch.newBuilder()
+                .setAgentId("dup-break-agent")
+                .setBatchId(501L)
+                .addIntents(breakIntent)
+                .build();
+        IntentBatch batch2 = IntentBatch.newBuilder()
+                .setAgentId("dup-break-agent")
+                .setBatchId(502L)
+                .setFlushPeriphery(false)
+                .addIntents(breakIntent.toBuilder().setSequenceId(2L).build())
+                .build();
+
+        actuator.submitBatch(agent, batch1);
+        assertEquals(IntentReceipt.ReceiptStatus.RECEIPT_STATUS_EXECUTING, actuator.getCurrentReceipt(agent).getStatus());
+
+        // Queue duplicate break batch while first is still mining
+        actuator.submitBatch(agent, batch2);
+        assertEquals(1, actuator.getQueuedBatchCount(agent));
+
+        // Simulate block breaking finishing: block becomes AIR and breaker stops
+        blockAtTarget.set(airBlock);
+        when(breaker.tick()).thenReturn(true);
+        when(breaker.isBreaking()).thenReturn(false);
+
+        fsm.tick();
+        actuator.tick(agent);
+
+        IntentReceipt finalReceipt = actuator.getCurrentReceipt(agent);
+        assertEquals(502L, finalReceipt.getBatchId());
+        assertEquals(IntentReceipt.ReceiptStatus.RECEIPT_STATUS_COMPLETED, finalReceipt.getStatus(),
+                "Duplicate HARVEST_BREAK on already-air block must complete gracefully without mining_start_failed");
+        assertEquals("", finalReceipt.getFailureReason());
+        assertEquals(com.civquest.mod.actuator.motor.MotorState.IDLE, fsm.getState());
+        verify(breaker, times(1)).start(targetPos);
+    }
+
+    @Test
+    @DisplayName("SendChatIntent dispatches immediately out-of-band and does not queue behind active NavigateIntent")
+    void testOutOfBandChatDispatch() {
+        AgentEntity agent = mock(AgentEntity.class);
+        AgentNavigator nav = mock(AgentNavigator.class);
+        when(agent.getAgentId()).thenReturn("chat-oob-agent");
+        when(agent.isAlive()).thenReturn(true);
+        when(agent.getNavigator()).thenReturn(nav);
+        when(agent.getGameProfile()).thenReturn(new com.mojang.authlib.GameProfile(java.util.UUID.randomUUID(), "ChattyAgent"));
+
+        MinecraftServer server = mock(MinecraftServer.class);
+        PlayerList playerList = mock(PlayerList.class);
+        when(agent.getServer()).thenReturn(server);
+        when(server.getPlayerList()).thenReturn(playerList);
+        when(agent.level()).thenReturn(mock(Level.class));
+
+        com.civquest.mod.actuator.motor.AgentMotorFSM fsm = new com.civquest.mod.actuator.motor.AgentMotorFSM(agent);
+        when(agent.getMotorFSM()).thenReturn(fsm);
+        when(nav.isPathing()).thenReturn(true);
+        when(nav.isArrived()).thenReturn(false);
+
+        // Submit active NavigateIntent batch
+        IntentBatch navBatch = IntentBatch.newBuilder()
+                .setAgentId("chat-oob-agent")
+                .setBatchId(801L)
+                .addIntents(AgentIntent.newBuilder()
+                        .setAgentId("chat-oob-agent")
+                        .setNavigate(NavigateIntent.newBuilder()
+                                .setTarget(Vec3.newBuilder().setX(100).setY(64).setZ(100).build())
+                                .build())
+                        .build())
+                .build();
+        actuator.submitBatch(agent, navBatch);
+        assertEquals(IntentReceipt.ReceiptStatus.RECEIPT_STATUS_EXECUTING, actuator.getCurrentReceipt(agent).getStatus());
+        assertEquals(0, actuator.getQueuedBatchCount(agent));
+
+        // Submit chat batch while navigate is executing
+        IntentBatch chatBatch = IntentBatch.newBuilder()
+                .setAgentId("chat-oob-agent")
+                .setBatchId(802L)
+                .addIntents(AgentIntent.newBuilder()
+                        .setAgentId("chat-oob-agent")
+                        .setChat(SendChatIntent.newBuilder()
+                                .setMessage("Hello world out-of-band!")
+                                .setTargetChannel(ChatChannel.CHAT_CHANNEL_LOCAL)
+                                .build())
+                        .build())
+                .build();
+        actuator.submitBatch(agent, chatBatch);
+
+        // Chat batch must NOT be queued in pendingBatches waiting for navigation
+        assertEquals(0, actuator.getQueuedBatchCount(agent), "Chat batch must not queue behind in-flight NavigateIntent");
+
+        // Active batch is still the navigate batch
+        assertEquals(801L, actuator.getCurrentReceipt(agent).getBatchId());
+    }
+
+    @Test
+    @DisplayName("actuateSleepInBed adjusts foot pos to head pos and sheathes held weapons before sleeping")
+    void testActuateSleepInBedFootToHeadAdjustmentAndSheathing() {
+        AgentEntity agent = mock(AgentEntity.class);
+        Level level = mock(Level.class);
+        when(agent.level()).thenReturn(level);
+        when(agent.distanceToSqr(anyDouble(), anyDouble(), anyDouble())).thenReturn(2.0); // Within BED_REACH_SQ
+        when(level.hasChunkAt(any(BlockPos.class))).thenReturn(true);
+        when(level.isNight()).thenReturn(true);
+
+        BlockPos footPos = new BlockPos(10, 64, 10);
+        BlockPos headPos = footPos.relative(Direction.SOUTH); // (10, 64, 11)
+
+        BlockState footBedState = mock(BlockState.class);
+        when(footBedState.is(net.minecraft.tags.BlockTags.BEDS)).thenReturn(true);
+        BedBlock bedBlock = mock(BedBlock.class);
+        when(footBedState.getBlock()).thenReturn(bedBlock);
+        when(footBedState.hasProperty(BedBlock.PART)).thenReturn(true);
+        when(footBedState.getValue(BedBlock.PART)).thenReturn(BedPart.FOOT);
+        when(footBedState.hasProperty(BedBlock.FACING)).thenReturn(true);
+        when(footBedState.getValue(BedBlock.FACING)).thenReturn(Direction.SOUTH);
+        when(footBedState.hasProperty(BedBlock.OCCUPIED)).thenReturn(true);
+        when(footBedState.getValue(BedBlock.OCCUPIED)).thenReturn(false);
+
+        BlockState headBedState = mock(BlockState.class);
+        when(headBedState.is(net.minecraft.tags.BlockTags.BEDS)).thenReturn(true);
+        when(headBedState.getBlock()).thenReturn(bedBlock);
+        when(headBedState.hasProperty(BedBlock.PART)).thenReturn(true);
+        when(headBedState.getValue(BedBlock.PART)).thenReturn(BedPart.HEAD);
+        when(headBedState.hasProperty(BedBlock.OCCUPIED)).thenReturn(true);
+        when(headBedState.getValue(BedBlock.OCCUPIED)).thenReturn(false);
+
+        when(level.getBlockState(footPos)).thenReturn(footBedState);
+        when(level.getBlockState(headPos)).thenReturn(headBedState);
+
+        // Setup inventory with sword in selected slot 0 and empty slot at 1
+        Inventory inventory = new Inventory(mock(Player.class));
+        ItemStack diamondSword = new ItemStack(Items.DIAMOND_SWORD);
+        inventory.items.set(0, diamondSword);
+        inventory.selected = 0;
+        when(agent.getInventory()).thenReturn(inventory);
+        when(agent.getMainHandItem()).thenAnswer(inv -> inventory.getSelected());
+        when(agent.getOffhandItem()).thenReturn(ItemStack.EMPTY);
+        when(agent.isSleeping()).thenReturn(true);
+
+        assertTrue(actuator.actuateSleepInBed(agent, footPos));
+
+        // Verify headPos was passed to startSleeping (adjusted from footPos)
+        verify(agent).startSleeping(headPos);
+
+        // Verify weapon was sheathed: hotbar selected slot is no longer slot 0 (switched to empty slot 1)
+        assertFalse(IntentActuator.isWeaponOrTool(agent.getMainHandItem()),
+                "Agent main hand must not hold a weapon while sleeping");
     }
 }

@@ -350,8 +350,9 @@ func EvaluateArmoryMaintenance(
 
 	pos := frame.Status.Position
 
-	// 3. Find nearest crafting table in frustum
+	// 3. Find nearest reachable crafting table in frustum, or recall from SpatialIndex (ADR-022)
 	var nearestCraftingTable *civquestv1.VisibleBlock
+	var recalledTablePOI *db.AgentPOI
 	bestTableDistSq := math.MaxFloat64
 	for _, b := range frame.InterestingBlocks {
 		if b == nil || b.Pos == nil {
@@ -362,6 +363,16 @@ func EvaluateArmoryMaintenance(
 			dx := float64(b.Pos.X) + 0.5 - pos.X
 			dy := float64(b.Pos.Y) + 0.5 - pos.Y
 			dz := float64(b.Pos.Z) + 0.5 - pos.Z
+			// Check reachability: reject tables vertically separated by > 3 blocks unless there is a gradual horizontal slope,
+			// or tables recently marked unreachable.
+			hDist := math.Hypot(dx, dz)
+			absDy := math.Abs(dy)
+			if absDy > 3.0 && hDist < absDy*1.5 {
+				continue
+			}
+			if state != nil && state.IsWorkstationUnreachable(b.Pos.X, b.Pos.Y, b.Pos.Z, frame.WorldTick) {
+				continue
+			}
 			dSq := dx*dx + dy*dy + dz*dz
 			if dSq < bestTableDistSq {
 				bestTableDistSq = dSq
@@ -370,9 +381,32 @@ func EvaluateArmoryMaintenance(
 		}
 	}
 
+	if nearestCraftingTable == nil && state != nil {
+		if si := state.SpatialIndex(); si != nil {
+			if poi := si.FindNearestPOI(pos, POICategoryWorkstation, "minecraft:crafting_table", 64.0, ElevationSurface); poi != nil && poi.Reliability >= 0.5 {
+				bpos := poiBlockPos(poi)
+				if !state.IsWorkstationUnreachable(bpos.X, bpos.Y, bpos.Z, frame.WorldTick) {
+					dx := poi.X - pos.X
+					dy := poi.Y + 0.5 - pos.Y
+					dz := poi.Z - pos.Z
+					hDist := math.Hypot(dx, dz)
+					absDy := math.Abs(dy)
+					if absDy <= 3.0 || hDist >= absDy*1.5 {
+						recalledTablePOI = poi
+						bestTableDistSq = dx*dx + dy*dy + dz*dz
+						nearestCraftingTable = &civquestv1.VisibleBlock{
+							Pos:     bpos,
+							BlockId: poi.BlockID,
+						}
+					}
+				}
+			}
+		}
+	}
+
 	if nearestCraftingTable != nil {
-		if bestTableDistSq <= 20.25 {
-			// Craft at reachable table (<= 4.5 blocks reach)
+		if bestTableDistSq <= 20.25 && math.Abs(float64(nearestCraftingTable.Pos.Y)+0.5-pos.Y) <= 2.5 {
+			// Craft at reachable table (<= 4.5 blocks reach, same level)
 			state.SetLastCraftTick(frame.WorldTick)
 			return &civquestv1.AgentIntent{
 				AgentId: agentID,
@@ -386,18 +420,31 @@ func EvaluateArmoryMaintenance(
 			}
 		}
 
-		// Navigate to distant table if not already pathing
+		// Navigate to distant table if reachable and not already pathing
 		navState := frame.Status.NavigationState
+		if navState == civquestv1.NavigationState_NAVIGATION_STATE_STUCK {
+			state.MarkWorkstationUnreachable(nearestCraftingTable.Pos.X, nearestCraftingTable.Pos.Y, nearestCraftingTable.Pos.Z, frame.WorldTick)
+			if recalledTablePOI != nil {
+				if si := state.SpatialIndex(); si != nil {
+					si.DecayPOIReliability(recalledTablePOI.POIID, 0.3)
+				}
+			}
+			return nil
+		}
 		if navState != civquestv1.NavigationState_NAVIGATION_STATE_PATHING {
+			target := &civquestv1.Vec3{
+				X: float64(nearestCraftingTable.Pos.X) + 0.5,
+				Y: float64(nearestCraftingTable.Pos.Y),
+				Z: float64(nearestCraftingTable.Pos.Z) + 0.5,
+			}
+			if recalledTablePOI != nil {
+				target = poiAccessTarget(recalledTablePOI)
+			}
 			return &civquestv1.AgentIntent{
 				AgentId: agentID,
 				Action: &civquestv1.AgentIntent_Navigate{
 					Navigate: &civquestv1.NavigateIntent{
-						Target: &civquestv1.Vec3{
-							X: float64(nearestCraftingTable.Pos.X) + 0.5,
-							Y: float64(nearestCraftingTable.Pos.Y),
-							Z: float64(nearestCraftingTable.Pos.Z) + 0.5,
-						},
+						Target:           target,
 						SpeedMultiplier:  1.0,
 						ArrivalTolerance: 2,
 					},
@@ -407,24 +454,17 @@ func EvaluateArmoryMaintenance(
 		return nil
 	}
 
-	// 4. No crafting table in frustum: place one from inventory if available
+	// 4. Place crafting table from inventory if available
 	if mats.craftingTableCount > 0 {
 		lastPlace := state.GetLastShelterPlaceTick()
 		canPlace := lastPlace == 0 || frame.WorldTick < lastPlace || frame.WorldTick-lastPlace >= 20
 		if canPlace {
 			state.SetLastShelterPlaceTick(frame.WorldTick)
-			cx := int32(math.Floor(pos.X))
-			cy := int32(math.Floor(pos.Y))
-			cz := int32(math.Floor(pos.Z))
 			return &civquestv1.AgentIntent{
 				AgentId: agentID,
 				Action: &civquestv1.AgentIntent_InteractBlock{
 					InteractBlock: &civquestv1.InteractBlockIntent{
-						Pos: &civquestv1.BlockPosProto{
-							X: cx + 1,
-							Y: cy,
-							Z: cz,
-						},
+						Pos:             selectAdjacentCraftingTablePos(frame, pos),
 						InteractionType: civquestv1.InteractBlockIntent_PLACE_BLOCK,
 						BlockOrItemId:   "minecraft:crafting_table",
 					},

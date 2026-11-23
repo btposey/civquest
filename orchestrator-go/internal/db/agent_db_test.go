@@ -75,12 +75,29 @@ func TestAutoMigrationAndSchema(t *testing.T) {
 	}
 
 	// Verify tables in map_graph.db
-	expectedMapTables := []string{"map_nodes", "map_edges"}
+	expectedMapTables := []string{"map_nodes", "map_edges", "agent_pois", "trail_corridors"}
 	for _, tbl := range expectedMapTables {
 		var name string
 		err := agentDB.MapDB().QueryRowContext(ctx, "SELECT name FROM sqlite_schema WHERE name = ?", tbl).Scan(&name)
 		if err != nil {
 			t.Errorf("expected table %s in map_graph.db, got error: %v", tbl, err)
+		}
+	}
+
+	// Verify indexes in map_graph.db for ADR-022 tables
+	expectedMapIndexes := []string{
+		"idx_agent_pois_cat_pos",
+		"idx_agent_pois_layer",
+		"idx_agent_pois_active",
+		"idx_trail_corridors_from",
+		"idx_trail_corridors_to",
+		"idx_trail_corridors_endpoints",
+	}
+	for _, idx := range expectedMapIndexes {
+		var name string
+		err := agentDB.MapDB().QueryRowContext(ctx, "SELECT name FROM sqlite_schema WHERE type = 'index' AND name = ?", idx).Scan(&name)
+		if err != nil {
+			t.Errorf("expected index %s in map_graph.db, got error: %v", idx, err)
 		}
 	}
 
@@ -230,6 +247,69 @@ func TestAutoMigrationAndSchema(t *testing.T) {
 		}
 		if eErr := agentDB.AddMapEdge(ctx, badEdge); eErr == nil {
 			t.Errorf("expected error for map edge distance < 0, got nil")
+		}
+	})
+
+	t.Run("check constraints on agent_pois and trail_corridors", func(t *testing.T) {
+		validPOI := AgentPOI{
+			POIID:          "poi-valid",
+			Category:       "WORKSTATION",
+			BlockID:        "minecraft:crafting_table",
+			ElevationLayer: "SURFACE",
+			SafetyScore:    0.9,
+			Reliability:    1.0,
+			IsActive:       true,
+		}
+
+		badCat := validPOI
+		badCat.POIID = "poi-bad-cat"
+		badCat.Category = "INVALID_CAT"
+		if err := agentDB.AddOrUpdatePOI(ctx, badCat); err == nil {
+			t.Errorf("expected error for invalid POI category, got nil")
+		}
+
+		badLayer := validPOI
+		badLayer.POIID = "poi-bad-layer"
+		badLayer.ElevationLayer = "ORBIT"
+		if err := agentDB.AddOrUpdatePOI(ctx, badLayer); err == nil {
+			t.Errorf("expected error for invalid POI elevation_layer, got nil")
+		}
+
+		badSafety := validPOI
+		badSafety.POIID = "poi-bad-safety"
+		badSafety.SafetyScore = 1.2
+		if err := agentDB.AddOrUpdatePOI(ctx, badSafety); err == nil {
+			t.Errorf("expected error for POI safety_score > 1.0, got nil")
+		}
+
+		badReliability := validPOI
+		badReliability.POIID = "poi-bad-rel"
+		badReliability.Reliability = -0.1
+		if err := agentDB.AddOrUpdatePOI(ctx, badReliability); err == nil {
+			t.Errorf("expected error for POI reliability < 0.0, got nil")
+		}
+
+		badDistCorridor := TrailCorridor{
+			ID:            "cor-bad-dist",
+			FromPOIID:     "poi-1",
+			ToPOIID:       "poi-2",
+			WaypointsJSON: "[]",
+			TotalDistance: -5.0,
+		}
+		if err := agentDB.AddTrailCorridor(ctx, badDistCorridor); err == nil {
+			t.Errorf("expected error for trail corridor total_distance < 0, got nil")
+		}
+
+		badCountCorridor := TrailCorridor{
+			ID:            "cor-bad-count",
+			FromPOIID:     "poi-1",
+			ToPOIID:       "poi-2",
+			WaypointsJSON: "[]",
+			TotalDistance: 10.0,
+			TraverseCount: -1,
+		}
+		if err := agentDB.AddTrailCorridor(ctx, badCountCorridor); err == nil {
+			t.Errorf("expected error for trail corridor traverse_count < 0, got nil")
 		}
 	})
 }
@@ -1007,5 +1087,323 @@ func TestCloseAndClosedErrors(t *testing.T) {
 	}
 	if _, _, err := agentDB.GetMapGraph(ctx); err != ErrClosed {
 		t.Errorf("expected ErrClosed on GetMapGraph, got %v", err)
+	}
+	if err := agentDB.AddOrUpdatePOI(ctx, AgentPOI{POIID: "p"}); err != ErrClosed {
+		t.Errorf("expected ErrClosed on AddOrUpdatePOI, got %v", err)
+	}
+	if _, err := agentDB.GetPOI(ctx, "p"); err != ErrClosed {
+		t.Errorf("expected ErrClosed on GetPOI, got %v", err)
+	}
+	if _, err := agentDB.ListPOIs(ctx, "", false); err != ErrClosed {
+		t.Errorf("expected ErrClosed on ListPOIs, got %v", err)
+	}
+	if err := agentDB.InvalidatePOI(ctx, "p"); err != ErrClosed {
+		t.Errorf("expected ErrClosed on InvalidatePOI, got %v", err)
+	}
+	if err := agentDB.DecayPOIReliability(ctx, "p", 0.1); err != ErrClosed {
+		t.Errorf("expected ErrClosed on DecayPOIReliability, got %v", err)
+	}
+	if err := agentDB.AddTrailCorridor(ctx, TrailCorridor{ID: "c", FromPOIID: "a", ToPOIID: "b"}); err != ErrClosed {
+		t.Errorf("expected ErrClosed on AddTrailCorridor, got %v", err)
+	}
+	if _, err := agentDB.ListTrailCorridors(ctx, "", ""); err != ErrClosed {
+		t.Errorf("expected ErrClosed on ListTrailCorridors, got %v", err)
+	}
+}
+
+func TestAgentPOICRUDAndInvalidation(t *testing.T) {
+	tempDir, err := os.MkdirTemp("", "civquest_poi_test_*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tempDir)
+
+	agentDB, err := OpenAgentDB(tempDir)
+	if err != nil {
+		t.Fatalf("OpenAgentDB failed: %v", err)
+	}
+	defer agentDB.Close()
+
+	ctx := context.Background()
+
+	// Empty list initially
+	initial, err := agentDB.ListPOIs(ctx, "", false)
+	if err != nil {
+		t.Fatalf("ListPOIs failed: %v", err)
+	}
+	if len(initial) != 0 {
+		t.Fatalf("expected 0 POIs initially, got %d", len(initial))
+	}
+
+	// Missing GetPOI returns nil, nil
+	missing, err := agentDB.GetPOI(ctx, "poi-missing")
+	if err != nil {
+		t.Fatalf("GetPOI on missing returned unexpected error: %v", err)
+	}
+	if missing != nil {
+		t.Fatalf("expected nil for missing POI, got %+v", missing)
+	}
+
+	// Add POIs
+	poi1 := AgentPOI{
+		POIID:            "poi-craft-1",
+		Category:         "WORKSTATION",
+		BlockID:          "minecraft:crafting_table",
+		X:                10.5,
+		Y:                64.0,
+		Z:                -20.5,
+		AccessX:          11.5,
+		AccessY:          64.0,
+		AccessZ:          -20.5,
+		ElevationLayer:   "SURFACE",
+		SafetyScore:      0.95,
+		DiscoveredTick:   100,
+		LastVerifiedTick: 100,
+		Reliability:      1.0,
+		IsActive:         true,
+	}
+	poi2 := AgentPOI{
+		POIID:            "poi-chest-1",
+		Category:         "CONTAINER",
+		BlockID:          "minecraft:chest",
+		X:                12.0,
+		Y:                58.0,
+		Z:                -18.0,
+		AccessX:          12.0,
+		AccessY:          58.0,
+		AccessZ:          -17.0,
+		ElevationLayer:   "DUGOUT",
+		SafetyScore:      0.85,
+		DiscoveredTick:   200,
+		LastVerifiedTick: 200,
+		Reliability:      0.9,
+		IsActive:         true,
+	}
+	poi3 := AgentPOI{
+		POIID:            "poi-furnace-1",
+		Category:         "WORKSTATION",
+		BlockID:          "minecraft:furnace",
+		X:                14.0,
+		Y:                64.0,
+		Z:                -20.0,
+		AccessX:          14.0,
+		AccessY:          64.0,
+		AccessZ:          -19.0,
+		ElevationLayer:   "SURFACE",
+		SafetyScore:      0.9,
+		DiscoveredTick:   300,
+		LastVerifiedTick: 300,
+		Reliability:      1.0,
+		IsActive:         false,
+	}
+
+	for _, p := range []AgentPOI{poi1, poi2, poi3} {
+		if err := agentDB.AddOrUpdatePOI(ctx, p); err != nil {
+			t.Fatalf("AddOrUpdatePOI(%s) failed: %v", p.POIID, err)
+		}
+	}
+
+	// Verify GetPOI
+	got1, err := agentDB.GetPOI(ctx, "poi-craft-1")
+	if err != nil {
+		t.Fatalf("GetPOI failed: %v", err)
+	}
+	if got1 == nil || got1.BlockID != "minecraft:crafting_table" || got1.AccessX != 11.5 ||
+		got1.ElevationLayer != "SURFACE" || got1.Reliability != 1.0 || !got1.IsActive {
+		t.Fatalf("unexpected GetPOI result: %+v", got1)
+	}
+
+	// Verify upsert update
+	poi1.LastVerifiedTick = 450
+	poi1.SafetyScore = 0.80
+	if err := agentDB.AddOrUpdatePOI(ctx, poi1); err != nil {
+		t.Fatalf("AddOrUpdatePOI update failed: %v", err)
+	}
+	got1Updated, err := agentDB.GetPOI(ctx, "poi-craft-1")
+	if err != nil {
+		t.Fatalf("GetPOI after update failed: %v", err)
+	}
+	if got1Updated.LastVerifiedTick != 450 || got1Updated.SafetyScore != 0.80 {
+		t.Errorf("expected updated tick=450, safety=0.80, got %+v", got1Updated)
+	}
+
+	// Verify ListPOIs filters
+	allPOIs, err := agentDB.ListPOIs(ctx, "", false)
+	if err != nil || len(allPOIs) != 3 {
+		t.Fatalf("expected 3 total POIs, got %d (err=%v)", len(allPOIs), err)
+	}
+
+	activePOIs, err := agentDB.ListPOIs(ctx, "", true)
+	if err != nil || len(activePOIs) != 2 {
+		t.Fatalf("expected 2 active POIs, got %d (err=%v)", len(activePOIs), err)
+	}
+
+	allWorkstations, err := agentDB.ListPOIs(ctx, "WORKSTATION", false)
+	if err != nil || len(allWorkstations) != 2 {
+		t.Fatalf("expected 2 WORKSTATION POIs, got %d (err=%v)", len(allWorkstations), err)
+	}
+
+	activeWorkstations, err := agentDB.ListPOIs(ctx, "WORKSTATION", true)
+	if err != nil || len(activeWorkstations) != 1 || activeWorkstations[0].POIID != "poi-craft-1" {
+		t.Fatalf("expected 1 active WORKSTATION (poi-craft-1), got %+v (err=%v)", activeWorkstations, err)
+	}
+
+	// Verify DecayPOIReliability
+	if err := agentDB.DecayPOIReliability(ctx, "poi-craft-1", 0.35); err != nil {
+		t.Fatalf("DecayPOIReliability failed: %v", err)
+	}
+	gotDecayed, _ := agentDB.GetPOI(ctx, "poi-craft-1")
+	if math.Abs(gotDecayed.Reliability-0.65) > 1e-9 {
+		t.Errorf("expected reliability 0.65 after 0.35 decay, got %f", gotDecayed.Reliability)
+	}
+
+	// Decay beyond 0 clamps to 0.0
+	if err := agentDB.DecayPOIReliability(ctx, "poi-craft-1", 2.0); err != nil {
+		t.Fatalf("DecayPOIReliability clamp failed: %v", err)
+	}
+	gotClamped, _ := agentDB.GetPOI(ctx, "poi-craft-1")
+	if gotClamped.Reliability != 0.0 {
+		t.Errorf("expected reliability clamped to 0.0, got %f", gotClamped.Reliability)
+	}
+
+	// Decay negative delta and missing POI errors
+	if err := agentDB.DecayPOIReliability(ctx, "poi-craft-1", -0.1); err == nil {
+		t.Errorf("expected error for negative decay delta, got nil")
+	}
+	if err := agentDB.DecayPOIReliability(ctx, "poi-missing", 0.1); !errors.Is(err, ErrNotFound) {
+		t.Errorf("expected ErrNotFound for missing POI decay, got %v", err)
+	}
+
+	// Verify InvalidatePOI
+	if err := agentDB.InvalidatePOI(ctx, "poi-craft-1"); err != nil {
+		t.Fatalf("InvalidatePOI failed: %v", err)
+	}
+	gotInvalidated, _ := agentDB.GetPOI(ctx, "poi-craft-1")
+	if gotInvalidated.IsActive {
+		t.Errorf("expected poi-craft-1 IsActive=false after InvalidatePOI")
+	}
+	activeAfterInv, _ := agentDB.ListPOIs(ctx, "", true)
+	if len(activeAfterInv) != 1 || activeAfterInv[0].POIID != "poi-chest-1" {
+		t.Errorf("expected only poi-chest-1 active after invalidation, got %+v", activeAfterInv)
+	}
+	if err := agentDB.InvalidatePOI(ctx, "poi-missing"); !errors.Is(err, ErrNotFound) {
+		t.Errorf("expected ErrNotFound for missing POI invalidation, got %v", err)
+	}
+
+	// Empty POIID validation
+	if err := agentDB.AddOrUpdatePOI(ctx, AgentPOI{}); err == nil {
+		t.Errorf("expected error for empty POIID in AddOrUpdatePOI, got nil")
+	}
+}
+
+func TestTrailCorridorCRUD(t *testing.T) {
+	tempDir, err := os.MkdirTemp("", "civquest_trail_test_*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tempDir)
+
+	agentDB, err := OpenAgentDB(tempDir)
+	if err != nil {
+		t.Fatalf("OpenAgentDB failed: %v", err)
+	}
+	defer agentDB.Close()
+
+	ctx := context.Background()
+
+	// Empty initially
+	initial, err := agentDB.ListTrailCorridors(ctx, "", "")
+	if err != nil {
+		t.Fatalf("ListTrailCorridors failed: %v", err)
+	}
+	if len(initial) != 0 {
+		t.Fatalf("expected 0 trail corridors initially, got %d", len(initial))
+	}
+
+	// Insert corridors
+	c1 := TrailCorridor{
+		ID:            "trail-home-mine",
+		FromPOIID:     "poi-home",
+		ToPOIID:       "poi-mine",
+		WaypointsJSON: `[[10,64,10],[20,64,15],[30,63,20]]`,
+		TotalDistance: 24.5,
+		IsPaved:       false,
+		TraverseCount: 5,
+	}
+	c2 := TrailCorridor{
+		ID:            "trail-home-forest",
+		FromPOIID:     "poi-home",
+		ToPOIID:       "poi-forest",
+		WaypointsJSON: `[[10,64,10],[5,65,-5]]`,
+		TotalDistance: 16.2,
+		IsPaved:       true,
+		TraverseCount: 12,
+	}
+	c3 := TrailCorridor{
+		ID:            "trail-mine-forest",
+		FromPOIID:     "poi-mine",
+		ToPOIID:       "poi-forest",
+		TotalDistance: 35.0,
+		IsPaved:       false,
+		TraverseCount: 2,
+	}
+
+	for _, c := range []TrailCorridor{c1, c2, c3} {
+		if err := agentDB.AddTrailCorridor(ctx, c); err != nil {
+			t.Fatalf("AddTrailCorridor(%s) failed: %v", c.ID, err)
+		}
+	}
+
+	// List all (ordered by traverse_count DESC)
+	all, err := agentDB.ListTrailCorridors(ctx, "", "")
+	if err != nil || len(all) != 3 {
+		t.Fatalf("expected 3 trail corridors, got %d (err=%v)", len(all), err)
+	}
+	if all[0].ID != "trail-home-forest" || !all[0].IsPaved {
+		t.Errorf("expected trail-home-forest (traverse_count=12, paved=true) first, got %+v", all[0])
+	}
+	// c3 had empty WaypointsJSON -> defaulted to "[]"
+	if all[2].ID != "trail-mine-forest" || all[2].WaypointsJSON != "[]" {
+		t.Errorf("expected trail-mine-forest with default WaypointsJSON '[]', got %+v", all[2])
+	}
+
+	// Filter by fromPOIID only
+	fromHome, err := agentDB.ListTrailCorridors(ctx, "poi-home", "")
+	if err != nil || len(fromHome) != 2 {
+		t.Fatalf("expected 2 corridors from poi-home, got %d (err=%v)", len(fromHome), err)
+	}
+
+	// Filter by toPOIID only
+	toForest, err := agentDB.ListTrailCorridors(ctx, "", "poi-forest")
+	if err != nil || len(toForest) != 2 {
+		t.Fatalf("expected 2 corridors to poi-forest, got %d (err=%v)", len(toForest), err)
+	}
+
+	// Filter by both fromPOIID and toPOIID
+	exact, err := agentDB.ListTrailCorridors(ctx, "poi-home", "poi-mine")
+	if err != nil || len(exact) != 1 || exact[0].ID != "trail-home-mine" {
+		t.Fatalf("expected 1 corridor poi-home -> poi-mine, got %+v (err=%v)", exact, err)
+	}
+
+	// Upsert update
+	c1.IsPaved = true
+	c1.TraverseCount = 20
+	if err := agentDB.AddTrailCorridor(ctx, c1); err != nil {
+		t.Fatalf("AddTrailCorridor update failed: %v", err)
+	}
+	updated, err := agentDB.ListTrailCorridors(ctx, "poi-home", "poi-mine")
+	if err != nil || len(updated) != 1 || !updated[0].IsPaved || updated[0].TraverseCount != 20 {
+		t.Fatalf("expected updated trail corridor paved=true, traverse_count=20, got %+v", updated)
+	}
+
+	// Validation errors
+	if err := agentDB.AddTrailCorridor(ctx, TrailCorridor{FromPOIID: "a", ToPOIID: "b"}); err == nil {
+		t.Errorf("expected error for empty corridor ID, got nil")
+	}
+	if err := agentDB.AddTrailCorridor(ctx, TrailCorridor{ID: "x", ToPOIID: "b"}); err == nil {
+		t.Errorf("expected error for empty FromPOIID, got nil")
+	}
+	if err := agentDB.AddTrailCorridor(ctx, TrailCorridor{ID: "x", FromPOIID: "a"}); err == nil {
+		t.Errorf("expected error for empty ToPOIID, got nil")
 	}
 }

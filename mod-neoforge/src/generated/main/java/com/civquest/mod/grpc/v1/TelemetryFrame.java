@@ -495,6 +495,32 @@ private static final long serialVersionUID = 0L;
     return reflexNotices_.get(index);
   }
 
+  public static final int RECEIPT_FIELD_NUMBER = 16;
+  private com.civquest.mod.grpc.v1.IntentReceipt receipt_;
+  /**
+   * <code>.civquest.v1.IntentReceipt receipt = 16;</code>
+   * @return Whether the receipt field is set.
+   */
+  @java.lang.Override
+  public boolean hasReceipt() {
+    return ((bitField0_ & 0x00000040) != 0);
+  }
+  /**
+   * <code>.civquest.v1.IntentReceipt receipt = 16;</code>
+   * @return The receipt.
+   */
+  @java.lang.Override
+  public com.civquest.mod.grpc.v1.IntentReceipt getReceipt() {
+    return receipt_ == null ? com.civquest.mod.grpc.v1.IntentReceipt.getDefaultInstance() : receipt_;
+  }
+  /**
+   * <code>.civquest.v1.IntentReceipt receipt = 16;</code>
+   */
+  @java.lang.Override
+  public com.civquest.mod.grpc.v1.IntentReceiptOrBuilder getReceiptOrBuilder() {
+    return receipt_ == null ? com.civquest.mod.grpc.v1.IntentReceipt.getDefaultInstance() : receipt_;
+  }
+
   private byte memoizedIsInitialized = -1;
   @java.lang.Override
   public final boolean isInitialized() {
@@ -553,6 +579,9 @@ private static final long serialVersionUID = 0L;
     }
     for (int i = 0; i < reflexNotices_.size(); i++) {
       output.writeMessage(15, reflexNotices_.get(i));
+    }
+    if (((bitField0_ & 0x00000040) != 0)) {
+      output.writeMessage(16, getReceipt());
     }
     getUnknownFields().writeTo(output);
   }
@@ -622,6 +651,10 @@ private static final long serialVersionUID = 0L;
       size += com.google.protobuf.CodedOutputStream
         .computeMessageSize(15, reflexNotices_.get(i));
     }
+    if (((bitField0_ & 0x00000040) != 0)) {
+      size += com.google.protobuf.CodedOutputStream
+        .computeMessageSize(16, getReceipt());
+    }
     size += getUnknownFields().getSerializedSize();
     memoizedSize = size;
     return size;
@@ -684,6 +717,11 @@ private static final long serialVersionUID = 0L;
         != other.getLastProcessedSequenceId()) return false;
     if (!getReflexNoticesList()
         .equals(other.getReflexNoticesList())) return false;
+    if (hasReceipt() != other.hasReceipt()) return false;
+    if (hasReceipt()) {
+      if (!getReceipt()
+          .equals(other.getReceipt())) return false;
+    }
     if (!getUnknownFields().equals(other.getUnknownFields())) return false;
     return true;
   }
@@ -747,6 +785,10 @@ private static final long serialVersionUID = 0L;
     if (getReflexNoticesCount() > 0) {
       hash = (37 * hash) + REFLEX_NOTICES_FIELD_NUMBER;
       hash = (53 * hash) + getReflexNoticesList().hashCode();
+    }
+    if (hasReceipt()) {
+      hash = (37 * hash) + RECEIPT_FIELD_NUMBER;
+      hash = (53 * hash) + getReceipt().hashCode();
     }
     hash = (29 * hash) + getUnknownFields().hashCode();
     memoizedHashCode = hash;
@@ -888,6 +930,7 @@ private static final long serialVersionUID = 0L;
         getCurrentLandmarkFieldBuilder();
         getDeathEventFieldBuilder();
         getReflexNoticesFieldBuilder();
+        getReceiptFieldBuilder();
       }
     }
     @java.lang.Override
@@ -957,6 +1000,11 @@ private static final long serialVersionUID = 0L;
         reflexNoticesBuilder_.clear();
       }
       bitField0_ = (bitField0_ & ~0x00004000);
+      receipt_ = null;
+      if (receiptBuilder_ != null) {
+        receiptBuilder_.dispose();
+        receiptBuilder_ = null;
+      }
       return this;
     }
 
@@ -1081,6 +1129,12 @@ private static final long serialVersionUID = 0L;
       }
       if (((from_bitField0_ & 0x00002000) != 0)) {
         result.lastProcessedSequenceId_ = lastProcessedSequenceId_;
+      }
+      if (((from_bitField0_ & 0x00008000) != 0)) {
+        result.receipt_ = receiptBuilder_ == null
+            ? receipt_
+            : receiptBuilder_.build();
+        to_bitField0_ |= 0x00000040;
       }
       result.bitField0_ |= to_bitField0_;
     }
@@ -1236,6 +1290,9 @@ private static final long serialVersionUID = 0L;
           }
         }
       }
+      if (other.hasReceipt()) {
+        mergeReceipt(other.getReceipt());
+      }
       this.mergeUnknownFields(other.getUnknownFields());
       onChanged();
       return this;
@@ -1381,6 +1438,13 @@ private static final long serialVersionUID = 0L;
               }
               break;
             } // case 122
+            case 130: {
+              input.readMessage(
+                  getReceiptFieldBuilder().getBuilder(),
+                  extensionRegistry);
+              bitField0_ |= 0x00008000;
+              break;
+            } // case 130
             default: {
               if (!super.parseUnknownField(input, extensionRegistry, tag)) {
                 done = true; // was an endgroup tag
@@ -3423,6 +3487,127 @@ private static final long serialVersionUID = 0L;
         reflexNotices_ = null;
       }
       return reflexNoticesBuilder_;
+    }
+
+    private com.civquest.mod.grpc.v1.IntentReceipt receipt_;
+    private com.google.protobuf.SingleFieldBuilder<
+        com.civquest.mod.grpc.v1.IntentReceipt, com.civquest.mod.grpc.v1.IntentReceipt.Builder, com.civquest.mod.grpc.v1.IntentReceiptOrBuilder> receiptBuilder_;
+    /**
+     * <code>.civquest.v1.IntentReceipt receipt = 16;</code>
+     * @return Whether the receipt field is set.
+     */
+    public boolean hasReceipt() {
+      return ((bitField0_ & 0x00008000) != 0);
+    }
+    /**
+     * <code>.civquest.v1.IntentReceipt receipt = 16;</code>
+     * @return The receipt.
+     */
+    public com.civquest.mod.grpc.v1.IntentReceipt getReceipt() {
+      if (receiptBuilder_ == null) {
+        return receipt_ == null ? com.civquest.mod.grpc.v1.IntentReceipt.getDefaultInstance() : receipt_;
+      } else {
+        return receiptBuilder_.getMessage();
+      }
+    }
+    /**
+     * <code>.civquest.v1.IntentReceipt receipt = 16;</code>
+     */
+    public Builder setReceipt(com.civquest.mod.grpc.v1.IntentReceipt value) {
+      if (receiptBuilder_ == null) {
+        if (value == null) {
+          throw new NullPointerException();
+        }
+        receipt_ = value;
+      } else {
+        receiptBuilder_.setMessage(value);
+      }
+      bitField0_ |= 0x00008000;
+      onChanged();
+      return this;
+    }
+    /**
+     * <code>.civquest.v1.IntentReceipt receipt = 16;</code>
+     */
+    public Builder setReceipt(
+        com.civquest.mod.grpc.v1.IntentReceipt.Builder builderForValue) {
+      if (receiptBuilder_ == null) {
+        receipt_ = builderForValue.build();
+      } else {
+        receiptBuilder_.setMessage(builderForValue.build());
+      }
+      bitField0_ |= 0x00008000;
+      onChanged();
+      return this;
+    }
+    /**
+     * <code>.civquest.v1.IntentReceipt receipt = 16;</code>
+     */
+    public Builder mergeReceipt(com.civquest.mod.grpc.v1.IntentReceipt value) {
+      if (receiptBuilder_ == null) {
+        if (((bitField0_ & 0x00008000) != 0) &&
+          receipt_ != null &&
+          receipt_ != com.civquest.mod.grpc.v1.IntentReceipt.getDefaultInstance()) {
+          getReceiptBuilder().mergeFrom(value);
+        } else {
+          receipt_ = value;
+        }
+      } else {
+        receiptBuilder_.mergeFrom(value);
+      }
+      if (receipt_ != null) {
+        bitField0_ |= 0x00008000;
+        onChanged();
+      }
+      return this;
+    }
+    /**
+     * <code>.civquest.v1.IntentReceipt receipt = 16;</code>
+     */
+    public Builder clearReceipt() {
+      bitField0_ = (bitField0_ & ~0x00008000);
+      receipt_ = null;
+      if (receiptBuilder_ != null) {
+        receiptBuilder_.dispose();
+        receiptBuilder_ = null;
+      }
+      onChanged();
+      return this;
+    }
+    /**
+     * <code>.civquest.v1.IntentReceipt receipt = 16;</code>
+     */
+    public com.civquest.mod.grpc.v1.IntentReceipt.Builder getReceiptBuilder() {
+      bitField0_ |= 0x00008000;
+      onChanged();
+      return getReceiptFieldBuilder().getBuilder();
+    }
+    /**
+     * <code>.civquest.v1.IntentReceipt receipt = 16;</code>
+     */
+    public com.civquest.mod.grpc.v1.IntentReceiptOrBuilder getReceiptOrBuilder() {
+      if (receiptBuilder_ != null) {
+        return receiptBuilder_.getMessageOrBuilder();
+      } else {
+        return receipt_ == null ?
+            com.civquest.mod.grpc.v1.IntentReceipt.getDefaultInstance() : receipt_;
+      }
+    }
+    /**
+     * <code>.civquest.v1.IntentReceipt receipt = 16;</code>
+     */
+    private com.google.protobuf.SingleFieldBuilder<
+        com.civquest.mod.grpc.v1.IntentReceipt, com.civquest.mod.grpc.v1.IntentReceipt.Builder, com.civquest.mod.grpc.v1.IntentReceiptOrBuilder> 
+        getReceiptFieldBuilder() {
+      if (receiptBuilder_ == null) {
+        receiptBuilder_ = new com.google.protobuf.SingleFieldBuilder<
+            com.civquest.mod.grpc.v1.IntentReceipt, com.civquest.mod.grpc.v1.IntentReceipt.Builder, com.civquest.mod.grpc.v1.IntentReceiptOrBuilder>(
+                getReceipt(),
+                getParentForChildren(),
+                isClean());
+        receipt_ = null;
+      }
+      return receiptBuilder_;
     }
 
     // @@protoc_insertion_point(builder_scope:civquest.v1.TelemetryFrame)

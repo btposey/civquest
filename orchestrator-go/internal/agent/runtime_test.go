@@ -37,6 +37,8 @@ type mockBridgeServer struct {
 	civquestv1.UnimplementedCivQuestBridgeServiceServer
 
 	mu              sync.Mutex
+	receivedBatches []*civquestv1.IntentBatch
+	batchCh         chan *civquestv1.IntentBatch
 	receivedIntents []*civquestv1.AgentIntent
 	intentCh        chan *civquestv1.AgentIntent
 	serverStream    civquestv1.CivQuestBridgeService_ConnectAgentServer
@@ -45,6 +47,7 @@ type mockBridgeServer struct {
 
 func newMockBridgeServer() *mockBridgeServer {
 	return &mockBridgeServer{
+		batchCh:     make(chan *civquestv1.IntentBatch, 100),
 		intentCh:    make(chan *civquestv1.AgentIntent, 100),
 		streamReady: make(chan struct{}, 1),
 	}
@@ -60,7 +63,7 @@ func (s *mockBridgeServer) ConnectAgent(stream civquestv1.CivQuestBridgeService_
 	s.mu.Unlock()
 
 	for {
-		intent, err := stream.Recv()
+		batch, err := stream.Recv()
 		if err == io.EOF {
 			return nil
 		}
@@ -69,12 +72,20 @@ func (s *mockBridgeServer) ConnectAgent(stream civquestv1.CivQuestBridgeService_
 		}
 
 		s.mu.Lock()
-		s.receivedIntents = append(s.receivedIntents, intent)
+		s.receivedBatches = append(s.receivedBatches, batch)
+		intents := batch.GetIntents()
+		s.receivedIntents = append(s.receivedIntents, intents...)
 		s.mu.Unlock()
 
 		select {
-		case s.intentCh <- intent:
+		case s.batchCh <- batch:
 		default:
+		}
+		for _, intent := range intents {
+			select {
+			case s.intentCh <- intent:
+			default:
+			}
 		}
 	}
 }
@@ -792,7 +803,7 @@ type mockFailingStream struct {
 	ctx       context.Context
 }
 
-func (m *mockFailingStream) Send(intent *civquestv1.AgentIntent) error {
+func (m *mockFailingStream) Send(batch *civquestv1.IntentBatch) error {
 	if m.sendCount.Add(1) > 1 {
 		return errors.New("simulated broken pipe during send")
 	}
@@ -815,7 +826,7 @@ type mockFailingConnector struct {
 	stream *mockFailingStream
 }
 
-func (c *mockFailingConnector) ConnectAgent(ctx context.Context, opts ...grpc.CallOption) (civquestv1.CivQuestBridgeService_ConnectAgentClient, error) {
+func (c *mockFailingConnector) ConnectAgent(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[civquestv1.IntentBatch, civquestv1.TelemetryFrame], error) {
 	c.stream.ctx = ctx
 	return c.stream, nil
 }
@@ -2846,6 +2857,7 @@ func TestRuntime_AgrarianSharecroppingAndSpecialization(t *testing.T) {
 		},
 		InterestingBlocks: []*civquestv1.VisibleBlock{
 			{BlockId: "vinery:grape_bush"},
+			{BlockId: "minecraft:campfire", Pos: &civquestv1.BlockPosProto{X: 10, Y: 64, Z: 10}},
 		},
 	}
 	if err := mockSvc.SendFrame(grapeFrame); err != nil {
@@ -3660,6 +3672,237 @@ func TestRuntime_ExplorerSectorLockedFrontierScouting(t *testing.T) {
 	}
 
 	rt.Stop()
+	cancel()
+	_ = <-runErrCh
+}
+
+func TestRuntime_Phase3IntentBatchAndReceiptFlow(t *testing.T) {
+	mockSvc, client, cleanup := setupTestBridge(t)
+	defer cleanup()
+
+	tmpDir := t.TempDir()
+	resolver := xdg.NewResolver(xdg.WithCustomRoot(tmpDir))
+	_ = resolver.InitAgentDirectories("aria")
+
+	cfg := agent.Config{
+		AgentID:      "aria",
+		ClanID:       "pioneers",
+		Resolver:     resolver,
+		BridgeClient: client,
+	}
+
+	rt, err := agent.NewRuntime(cfg)
+	if err != nil {
+		t.Fatalf("failed creating runtime: %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	runErrCh := make(chan error, 1)
+	go func() {
+		runErrCh <- rt.Start(ctx)
+	}()
+
+	select {
+	case <-mockSvc.streamReady:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for ConnectAgent stream readiness")
+	}
+
+	// 1. Handshake must arrive as an IntentBatch with BatchId == 1
+	var handshakeBatch *civquestv1.IntentBatch
+	select {
+	case handshakeBatch = <-mockSvc.batchCh:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for handshake IntentBatch")
+	}
+	if handshakeBatch.AgentId != "aria" || handshakeBatch.BatchId != 1 || handshakeBatch.FlushPeriphery {
+		t.Fatalf("unexpected handshake IntentBatch: %+v", handshakeBatch)
+	}
+	if len(handshakeBatch.Intents) != 1 || handshakeBatch.Intents[0].AgentId != "aria" {
+		t.Fatalf("expected 1 handshake intent inside IntentBatch, got %+v", handshakeBatch.Intents)
+	}
+
+	// 2. Transition Bootstrap/DawnPrep -> Settlement/PrimaryDuty must emit FlushPeriphery: true
+	dayFrame := &civquestv1.TelemetryFrame{
+		WorldTick: 100,
+		TimeOfDay: 2000,
+		Status: &civquestv1.AgentStatus{
+			AgentId:         "aria",
+			Health:          20.0,
+			MaxHealth:       20.0,
+			FoodLevel:       20,
+			Position:        &civquestv1.Vec3{X: 0, Y: 64, Z: 0},
+			NavigationState: civquestv1.NavigationState_NAVIGATION_STATE_IDLE,
+			Inventory: []*civquestv1.ItemStackProto{
+				{Slot: 0, ItemId: "minecraft:wooden_axe", Count: 1},
+				{Slot: 1, ItemId: "minecraft:wooden_sword", Count: 1},
+				{Slot: 2, ItemId: "minecraft:torch", Count: 8},
+			},
+		},
+	}
+	if err := mockSvc.SendFrame(dayFrame); err != nil {
+		t.Fatalf("failed sending daytime frame: %v", err)
+	}
+
+	var dutyBatch *civquestv1.IntentBatch
+	select {
+	case dutyBatch = <-mockSvc.batchCh:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for PrimaryDuty IntentBatch")
+	}
+	if dutyBatch.BatchId <= handshakeBatch.BatchId {
+		t.Fatalf("expected monotonically increasing batch_id > %d, got %d", handshakeBatch.BatchId, dutyBatch.BatchId)
+	}
+	if !dutyBatch.FlushPeriphery {
+		t.Fatalf("expected FlushPeriphery=true on macro transition to Settlement/PrimaryDuty, got %+v", dutyBatch)
+	}
+
+	// 3. Send frame carrying an IntentReceipt and evening TimeOfDay -> TavernSocial transition + receipt ingestion
+	eveningFrame := &civquestv1.TelemetryFrame{
+		WorldTick: 120,
+		TimeOfDay: 11500,
+		Status: &civquestv1.AgentStatus{
+			AgentId:         "aria",
+			Health:          20.0,
+			MaxHealth:       20.0,
+			FoodLevel:       20,
+			Position:        &civquestv1.Vec3{X: 4, Y: 64, Z: 0},
+			NavigationState: civquestv1.NavigationState_NAVIGATION_STATE_IDLE,
+			Inventory:       dayFrame.Status.Inventory,
+		},
+		Receipt: &civquestv1.IntentReceipt{
+			BatchId:         dutyBatch.BatchId,
+			ActiveIndex:     0,
+			Status:          civquestv1.IntentReceipt_RECEIPT_STATUS_COMPLETED,
+			MotorStackDepth: 1,
+		},
+	}
+	if err := mockSvc.SendFrame(eveningFrame); err != nil {
+		t.Fatalf("failed sending evening frame with receipt: %v", err)
+	}
+
+	var eveningBatch *civquestv1.IntentBatch
+	select {
+	case eveningBatch = <-mockSvc.batchCh:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for TavernSocial IntentBatch")
+	}
+	if eveningBatch.BatchId <= dutyBatch.BatchId {
+		t.Fatalf("expected monotonic batch_id > %d, got %d", dutyBatch.BatchId, eveningBatch.BatchId)
+	}
+	if !eveningBatch.FlushPeriphery {
+		t.Fatalf("expected FlushPeriphery=true on PrimaryDuty -> TavernSocial transition")
+	}
+
+	rtReceipt := rt.LastReceipt()
+	if rtReceipt == nil || rtReceipt.BatchId != dutyBatch.BatchId ||
+		rtReceipt.Status != civquestv1.IntentReceipt_RECEIPT_STATUS_COMPLETED {
+		t.Fatalf("expected AgentRuntime LastReceipt batch=%d COMPLETED, got %+v", dutyBatch.BatchId, rtReceipt)
+	}
+	s1Receipt := rt.System1State().GetLastReceipt()
+	if s1Receipt == nil || s1Receipt.BatchId != dutyBatch.BatchId ||
+		s1Receipt.Status != civquestv1.IntentReceipt_RECEIPT_STATUS_COMPLETED {
+		t.Fatalf("expected System1State GetLastReceipt batch=%d COMPLETED, got %+v", dutyBatch.BatchId, s1Receipt)
+	}
+
+	rt.Stop()
+	cancel()
+	if err := <-runErrCh; err != nil {
+		t.Fatalf("expected clean Stop(), got %v", err)
+	}
+}
+
+func TestRuntime_PioneerGenesisAndNucleationLifecycle(t *testing.T) {
+	tmpDir := t.TempDir()
+	resolver := xdg.NewResolver(xdg.WithCustomRoot(tmpDir))
+	_ = resolver.InitAgentDirectories("earl")
+
+	// Case 1: Default configuration enforces Pioneer Genesis Invariant (EXPLORER / BOOTSTRAP)
+	rtDefault, err := agent.NewRuntime(agent.Config{
+		AgentID:  "earl",
+		ClanID:   "pioneers",
+		Resolver: resolver,
+	})
+	if err != nil {
+		t.Fatalf("failed creating runtime: %v", err)
+	}
+	if rtDefault.Profession() != "EXPLORER" {
+		t.Errorf("expected default profession EXPLORER, got %q", rtDefault.Profession())
+	}
+	if rtDefault.Stage() != "BOOTSTRAP" {
+		t.Errorf("expected default stage BOOTSTRAP, got %q", rtDefault.Stage())
+	}
+
+	// Case 2: Specialized profession configured but no Settlement POI exists in SpatialIndex
+	// Pioneer Genesis locks specialized profession until a hearth is consecrated
+	mockSvc, client, cleanup := setupTestBridge(t)
+	defer cleanup()
+
+	rtSpecialized, err := agent.NewRuntime(agent.Config{
+		AgentID:      "fred",
+		ClanID:       "pioneers",
+		Resolver:     resolver,
+		BridgeClient: client,
+		IdentityConfig: &xdg.AgentIdentityConfig{
+			Profession: "FARMER",
+			Stage:      "BOOTSTRAP",
+		},
+	})
+	if err != nil {
+		t.Fatalf("failed creating specialized runtime: %v", err)
+	}
+
+	if prof := rtSpecialized.Profession(); prof != "EXPLORER" {
+		t.Errorf("expected profession locked to EXPLORER before settlement genesis, got %q", prof)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	runErrCh := make(chan error, 1)
+	go func() {
+		runErrCh <- rtSpecialized.Start(ctx)
+	}()
+
+	select {
+	case <-mockSvc.streamReady:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for stream readiness")
+	}
+
+	// Ingest TelemetryFrame with a campfire (Settlement Hearth)
+	hearthFrame := &civquestv1.TelemetryFrame{
+		WorldTick: 100,
+		Status: &civquestv1.AgentStatus{
+			AgentId:   "fred",
+			Health:    20.0,
+			MaxHealth: 20.0,
+			FoodLevel: 20,
+			Position:  &civquestv1.Vec3{X: 10, Y: 64, Z: 10},
+		},
+		InterestingBlocks: []*civquestv1.VisibleBlock{
+			{
+				Pos:     &civquestv1.BlockPosProto{X: 12, Y: 64, Z: 12},
+				BlockId: "minecraft:campfire",
+			},
+		},
+	}
+
+	if err := mockSvc.SendFrame(hearthFrame); err != nil {
+		t.Fatalf("failed sending hearth frame: %v", err)
+	}
+
+	// Give runtime a moment to ingest frame and update SpatialIndex
+	time.Sleep(50 * time.Millisecond)
+
+	// After settlement hearth is indexed, specialized profession is unlocked
+	if prof := rtSpecialized.Profession(); prof != "FARMER" {
+		t.Errorf("expected profession unlocked to FARMER after settlement hearth consecrated, got %q", prof)
+	}
+
+	rtSpecialized.Stop()
 	cancel()
 	_ = <-runErrCh
 }

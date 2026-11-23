@@ -129,21 +129,30 @@ func EvaluateUtility(frame *civquestv1.TelemetryFrame, agentCfg *xdg.AgentIdenti
 		}
 	}
 
-	if hostilesCount == 0 && frame.LastDamageTaken != nil {
+	isDrowning := isDrowningDamage(frame)
+	if hostilesCount == 0 && frame.LastDamageTaken != nil &&
+		!IsPassiveOrEnvironmentalDamage(frame.LastDamageTaken) &&
+		!isDrowning {
 		sumHostileThreat += ThreatDefault
 	}
 
-	hasThreats := hostilesCount > 0 || frame.LastDamageTaken != nil
+	hasThreats := hostilesCount > 0 || (frame.LastDamageTaken != nil &&
+		!IsPassiveOrEnvironmentalDamage(frame.LastDamageTaken) &&
+		!isDrowning)
 	gearMult := CalculateGearMultiplier(status.Inventory)
 	conf := CalculateConfidence(selfHP, sumAlliesHP, sumHostileThreat, gearMult, bravery)
 
-	if ShouldPanic(selfHP, maxHP, conf, hasThreats, creeperHissingNearby) {
+	if isDrowning || ShouldPanic(selfHP, maxHP, conf, hasThreats, creeperHissingNearby) {
+		reason := "combat panic reflex"
+		if isDrowning && !ShouldPanic(selfHP, maxHP, conf, hasThreats, creeperHissingNearby) {
+			reason = "drowning emergency reflex"
+		}
 		decision := &UtilityDecision{
 			State:      RoutineEmergency,
 			Utility:    1.0,
 			Profession: profession,
 			Hobby:      hobby,
-			Reason:     "combat panic reflex",
+			Reason:     reason,
 			WorldTick:  frame.WorldTick,
 			TimeOfDay:  frame.TimeOfDay,
 		}

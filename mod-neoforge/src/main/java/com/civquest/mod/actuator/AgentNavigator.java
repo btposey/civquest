@@ -7,11 +7,15 @@ import com.mojang.logging.LogUtils;
 import net.minecraft.core.BlockPos;
 import net.minecraft.util.Mth;
 import net.minecraft.world.entity.MoverType;
+import net.minecraft.world.level.Level;
+import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.Vec3;
 import org.slf4j.Logger;
 
 import java.lang.reflect.Constructor;
 import java.lang.reflect.Method;
+import java.util.List;
 
 /**
  * Manages navigation for an {@link AgentEntity}.
@@ -310,6 +314,7 @@ public class AgentNavigator {
     private boolean enclosed = false;
     private boolean cliffDetected = false;
     private final java.util.Map<Long, Long> failedCells = new java.util.HashMap<>();
+    private final java.util.Map<BlockPos, Long> openedDoors = new java.util.HashMap<>();
     private int pillarBaseY = Integer.MIN_VALUE;
     private long lastDigTick = Long.MIN_VALUE;
 
@@ -373,19 +378,165 @@ public class AgentNavigator {
         }
     }
 
-    /** World adapter used by the local planner. */
-    private static LocalPathPlanner.World worldOf(net.minecraft.world.level.Level level) {
+    /** World adapter used by the local planner, with per-plan block lookup caching. */
+    private LocalPathPlanner.World worldOf(net.minecraft.world.level.Level level) {
+        final java.util.Map<Long, Boolean> solidCache = new java.util.HashMap<>();
+        final java.util.Map<Long, Boolean> hazardCache = new java.util.HashMap<>();
+        final java.util.Map<Long, Boolean> climbableCache = new java.util.HashMap<>();
+        final java.util.Map<Long, Boolean> waterCache = new java.util.HashMap<>();
         return new LocalPathPlanner.World() {
             @Override
             public boolean solid(int x, int y, int z) {
-                return isBlockSolid(level, new BlockPos(x, y, z));
+                return solidCache.computeIfAbsent(LocalPathPlanner.cellKey(x, y, z),
+                        k -> isBlockSolid(level, new BlockPos(x, y, z)));
             }
 
             @Override
             public boolean hazard(int x, int y, int z) {
-                return isBlockHazard(level, new BlockPos(x, y, z));
+                return hazardCache.computeIfAbsent(LocalPathPlanner.cellKey(x, y, z),
+                        k -> isBlockHazard(level, new BlockPos(x, y, z)));
+            }
+
+            @Override
+            public boolean climbable(int x, int y, int z) {
+                return climbableCache.computeIfAbsent(LocalPathPlanner.cellKey(x, y, z),
+                        k -> isBlockClimbable(level, new BlockPos(x, y, z)));
+            }
+
+            @Override
+            public boolean water(int x, int y, int z) {
+                return waterCache.computeIfAbsent(LocalPathPlanner.cellKey(x, y, z),
+                        k -> isBlockWater(level, new BlockPos(x, y, z)));
             }
         };
+    }
+
+    static boolean isBlockWater(net.minecraft.world.level.Level level, BlockPos pos) {
+        if (level == null || pos == null) {
+            return false;
+        }
+        try {
+            if (!level.hasChunkAt(pos)) {
+                return false;
+            }
+            net.minecraft.world.level.block.state.BlockState state = level.getBlockState(pos);
+            if (state == null) {
+                return false;
+            }
+            var fluid = state.getFluidState();
+            return (fluid != null && fluid.is(net.minecraft.tags.FluidTags.WATER))
+                    || state.is(net.minecraft.world.level.block.Blocks.WATER);
+        } catch (Throwable ignored) {
+            return false;
+        }
+    }
+
+    boolean isDeepWater(net.minecraft.world.level.Level level, BlockPos pos) {
+        if (!isBlockWater(level, pos)) {
+            return false;
+        }
+        BlockPos top = pos;
+        if (isBlockWater(level, pos.above())) {
+            if (isBlockWater(level, pos.above(2))) {
+                return true;
+            }
+            top = pos.above();
+        }
+        return !isBlockSolid(level, top.below()) && !isBlockSolid(level, top.below(2));
+    }
+
+    private static boolean isSafeDropBlock(Level level, BlockPos pos) {
+        if (level == null || pos == null) {
+            return false;
+        }
+        try {
+            if (!level.hasChunkAt(pos)) {
+                return false;
+            }
+            BlockState state = level.getBlockState(pos);
+            return state != null && (state.is(net.minecraft.tags.BlockTags.CLIMBABLE)
+                    || state.is(net.minecraft.world.level.block.Blocks.VINE)
+                    || state.is(net.minecraft.world.level.block.Blocks.LADDER)
+                    || state.is(net.minecraft.world.level.block.Blocks.SCAFFOLDING));
+        } catch (Throwable ignored) {
+            return false;
+        }
+    }
+
+    boolean isBlockClimbable(net.minecraft.world.level.Level level, BlockPos pos) {
+        if (level == null || pos == null) {
+            return false;
+        }
+        try {
+            if (!level.hasChunkAt(pos)) {
+                return false;
+            }
+            return isClimbableState(level.getBlockState(pos), level, pos);
+        } catch (Throwable ignored) {
+            return false;
+        }
+    }
+
+    public boolean isClimbableState(net.minecraft.world.level.block.state.BlockState state) {
+        Level level = this.agent != null ? this.agent.level() : null;
+        return isClimbableState(state, level, null);
+    }
+
+    public boolean isClimbableState(net.minecraft.world.level.block.state.BlockState state, net.minecraft.world.level.Level level, BlockPos pos) {
+        if (state == null || state.isAir()) {
+            return false;
+        }
+        if (state.is(net.minecraft.world.level.block.Blocks.VINE)) {
+            Vec3 current = getPosition();
+            if (this.targetCoords == null || current == null) {
+                return false;
+            }
+            // Allow vertical descent down a drop shaft below the agent
+            if (this.targetCoords.y < current.y && pos != null && pos.getY() < current.y) {
+                return true;
+            }
+            // Do not treat wall vines as climbable shafts unless explicitly ascending and block above is air/open
+            if (this.targetCoords.y <= current.y + 1.0) {
+                return false;
+            }
+            if (level != null && pos != null) {
+                BlockState above = level.getBlockState(pos.above());
+                if (above != null && !above.isAir()) {
+                    var shape = above.getCollisionShape(level, pos.above());
+                    if (shape != null && !shape.isEmpty()) {
+                        return false;
+                    }
+                }
+            }
+            return true;
+        }
+        return state.is(net.minecraft.tags.BlockTags.CLIMBABLE)
+                || state.is(net.minecraft.world.level.block.Blocks.LADDER);
+    }
+
+    private BlockPos findClimbablePos(net.minecraft.world.level.Level level, Vec3 pos) {
+        if (level == null || pos == null) {
+            return null;
+        }
+        BlockPos feet = BlockPos.containing(pos.x, pos.y + 0.1, pos.z);
+        if (isBlockClimbable(level, feet)) {
+            return feet;
+        }
+        BlockPos above = feet.above();
+        if (isBlockClimbable(level, above)) {
+            return above;
+        }
+        BlockPos below = feet.below();
+        if (isBlockClimbable(level, below)) {
+            return below;
+        }
+        BlockPos[] neighbors = {feet.north(), feet.south(), feet.east(), feet.west()};
+        for (BlockPos n : neighbors) {
+            if (isBlockClimbable(level, n)) {
+                return n;
+            }
+        }
+        return null;
     }
 
     static boolean isBlockHazard(net.minecraft.world.level.Level level, BlockPos pos) {
@@ -419,7 +570,7 @@ public class AgentNavigator {
         long now = navTick;
         failedCells.values().removeIf(exp -> exp <= now);
         LocalPathPlanner.Result r = LocalPathPlanner.plan(worldOf(level),
-                new LocalPathPlanner.Cell(bx, by, bz), targetCoords.x, targetCoords.z,
+                new LocalPathPlanner.Cell(bx, by, bz), targetCoords.x, targetCoords.y, targetCoords.z,
                 LocalPathPlanner.DEFAULT_RADIUS, k -> failedCells.containsKey(k));
         this.path = new java.util.ArrayList<>(r.path());
         this.enclosed = r.enclosed();
@@ -433,17 +584,25 @@ public class AgentNavigator {
         double dy = this.targetCoords.y - currentPos.y;
         double dz = this.targetCoords.z - currentPos.z;
         double horizontalDist = Math.sqrt(dx * dx + dz * dz);
+        net.minecraft.world.level.Level level = this.agent != null ? this.agent.level() : null;
+        boolean inWater = this.agent != null && this.agent.isInWater();
+        boolean onClimbable = this.agent != null && this.agent.onClimbable();
+        if (!onClimbable && level != null) {
+            onClimbable = isBlockClimbable(level, BlockPos.containing(currentPos.x, currentPos.y + 0.1, currentPos.z));
+        }
 
         // Check arrival within arrival_tolerance
-        if (horizontalDist <= (double) this.arrivalTolerance && Math.abs(dy) <= Math.max(3.5, (double) this.arrivalTolerance + 1.5)) {
+        double arrivalYAllowance = onClimbable
+                ? ((dy < 0) ? Math.max(1.35, (double) this.arrivalTolerance) : Math.max(1.0, (double) this.arrivalTolerance))
+                : Math.max(3.5, (double) this.arrivalTolerance + 1.5);
+        if (horizontalDist <= (double) this.arrivalTolerance && Math.abs(dy) <= arrivalYAllowance) {
             finishArrival();
             return;
         }
 
-        net.minecraft.world.level.Level level = this.agent != null ? this.agent.level() : null;
-
         // Local walkability search (replaces reactive deflection).
         if (level != null) {
+            handleDoorInteractions(level, currentPos);
             boolean breakingNow = this.agent != null && this.agent.getBreaker() != null && this.agent.getBreaker().isBreaking();
             if (path.isEmpty() || (enclosed && !breakingNow) || navTick - lastPlanTick >= REPLAN_INTERVAL) {
                 replan(level, currentPos);
@@ -453,9 +612,25 @@ public class AgentNavigator {
                 LocalPathPlanner.Cell c = path.get(0);
                 double ddx = c.x() + 0.5 - currentPos.x;
                 double ddz = c.z() + 0.5 - currentPos.z;
-                boolean reachedCell = (ddx * ddx + ddz * ddz < 0.64)
-                        || (Mth.floor(currentPos.x) == c.x() && Mth.floor(currentPos.z) == c.z());
-                if (reachedCell && Math.abs(c.y() - currentPos.y) < 1.5) {
+                double distSq = ddx * ddx + ddz * ddz;
+                boolean isTurn = path.size() > 1 && (path.get(1).x() != c.x() || path.get(1).z() != c.z());
+                boolean reachedCell;
+                if (isTurn) {
+                    reachedCell = (distSq < 0.20) && (Mth.floor(currentPos.x) == c.x() && Mth.floor(currentPos.z) == c.z());
+                } else {
+                    reachedCell = (distSq < 0.36) || (Mth.floor(currentPos.x) == c.x() && Mth.floor(currentPos.z) == c.z());
+                }
+                double yDiff = c.y() - currentPos.y;
+                boolean reachedY;
+                if (onClimbable) {
+                    boolean descending = yDiff < 0 || (this.targetCoords != null && this.targetCoords.y < currentPos.y);
+                    reachedY = descending ? (Math.abs(yDiff) < 1.35) : (Math.abs(yDiff) < 0.35);
+                } else if (inWater) {
+                    reachedY = Math.abs(yDiff) < 1.0;
+                } else {
+                    reachedY = yDiff <= 0.15 && Math.abs(yDiff) < 1.5;
+                }
+                if (reachedCell && reachedY) {
                     path.remove(0);
                 } else {
                     break;
@@ -473,6 +648,9 @@ public class AgentNavigator {
         }
 
         // Desired heading toward waypoint (or straight at the target when no local path exists)
+        BlockPos climbablePos = (onClimbable && level != null) ? findClimbablePos(level, currentPos) : null;
+        boolean isVineClimbable = climbablePos != null && level != null
+                && level.getBlockState(climbablePos).is(net.minecraft.world.level.block.Blocks.VINE);
         double aimX = this.targetCoords.x;
         double aimZ = this.targetCoords.z;
         boolean waypointHigher = false;
@@ -481,6 +659,11 @@ public class AgentNavigator {
             aimX = c.x() + 0.5;
             aimZ = c.z() + 0.5;
             waypointHigher = c.y() > Mth.floor(currentPos.y + 0.1);
+        } else if (climbablePos != null && Math.abs(dy) > 0.3) {
+            if (!isVineClimbable || dy > 0.3) {
+                aimX = climbablePos.getX() + 0.5;
+                aimZ = climbablePos.getZ() + 0.5;
+            }
         }
         double hx = aimX - currentPos.x;
         double hz = aimZ - currentPos.z;
@@ -510,7 +693,7 @@ public class AgentNavigator {
         // Jump logic and cliff edge drop avoidance
         boolean stepUpOneBlock = waypointHigher;
         boolean cliffAhead = false;
-        if (level != null && path.isEmpty()) {
+        if (!onClimbable && !inWater && level != null && path.isEmpty()) {
             double rad = Math.toRadians(headYaw);
             double fx = -Math.sin(rad);
             double fz = Math.cos(rad);
@@ -519,18 +702,27 @@ public class AgentNavigator {
 
             // Probe ahead for a vertical drop-off (scan ground column at currentPos.x + fx*0.75,
             // currentPos.z + fz*0.75 down to currentPos.y - 4).
-            // If no solid block within 3 blocks down (drop >= 4 blocks)
-            boolean solidGroundFound = false;
+            // Climbable blocks (ladders/vines/scaffolding) and shallow water (<= 2 blocks deep)
+            // provide safe traversal rather than a cliff; deep water is only entered if target is in water.
+            boolean safeSupportFound = false;
+            boolean targetInWater = isBlockWater(level, BlockPos.containing(this.targetCoords.x, this.targetCoords.y, this.targetCoords.z))
+                    || isBlockWater(level, BlockPos.containing(this.targetCoords.x, this.targetCoords.y - 1.0, this.targetCoords.z));
             int startY = Mth.floor(currentPos.y + 0.1);
             int minY = Mth.floor(currentPos.y - 4.0);
             for (int py = startY; py >= minY; py--) {
                 BlockPos probePos = BlockPos.containing(probeX, py, probeZ);
-                if (isBlockSolid(level, probePos)) {
-                    solidGroundFound = true;
+                if (isBlockSolid(level, probePos) || isBlockClimbable(level, probePos) || isSafeDropBlock(level, probePos)) {
+                    safeSupportFound = true;
+                    break;
+                }
+                if (isBlockWater(level, probePos)) {
+                    if (targetInWater || !isDeepWater(level, probePos)) {
+                        safeSupportFound = true;
+                    }
                     break;
                 }
             }
-            if (!solidGroundFound) {
+            if (!safeSupportFound) {
                 cliffAhead = true;
             }
 
@@ -548,7 +740,7 @@ public class AgentNavigator {
             if (this.agent != null) {
                 this.agent.setShiftKeyDown(true);
             }
-        } else if (this.cliffDetected) {
+        } else if (this.cliffDetected || onClimbable || inWater) {
             this.cliffDetected = false;
             if (this.agent != null) {
                 this.agent.setShiftKeyDown(false);
@@ -591,13 +783,100 @@ public class AgentNavigator {
         if (cliffAhead) {
             velX = 0.0;
             velZ = 0.0;
+        } else if (onClimbable && climbablePos != null && Math.abs(dy) > 0.3) {
+            if (!isVineClimbable || dy > 0.3) {
+                // Subtle horizontal centering bias toward the climbable block so the agent stays on the shaft.
+                velX += Mth.clamp((climbablePos.getX() + 0.5) - currentPos.x, -0.05, 0.05);
+                velZ += Mth.clamp((climbablePos.getZ() + 0.5) - currentPos.z, -0.05, 0.05);
+            }
         }
 
         double vy = 0.0;
         if (this.agent != null) {
             vy = this.agent.getDeltaMovement().y;
-            if (this.agent.onGround()) {
-                if (!cliffAhead && (stepUpOneBlock || (this.agent.horizontalCollision && path.isEmpty()) || (dy > 0.5 && path.isEmpty()))) {
+            if (onClimbable) {
+                double verticalDelta = dy;
+                if (Math.abs(verticalDelta) <= 0.3 && !path.isEmpty()) {
+                    verticalDelta = path.get(0).y() - currentPos.y;
+                }
+                if (verticalDelta < -0.05) {
+                    this.agent.setShiftKeyDown(false);
+                    vy = -0.15;
+                } else if (verticalDelta > 0.3) {
+                    this.agent.setShiftKeyDown(false);
+                    vy = 0.20;
+                } else {
+                    if (isVineClimbable) {
+                        // Prevent zero vertical velocity wall clinging on vines when navigating downward or horizontally
+                        this.agent.setShiftKeyDown(false);
+                        vy = -0.15;
+                    } else {
+                        vy = 0.0;
+                    }
+                }
+            } else if (inWater) {
+                // Aquatic swimming & surface buoyancy: prevent downward pull into deep water
+                if (this.agent.getAirSupply() < 200) {
+                    // Running out of air: prioritize upward movement to surface air
+                    vy = Math.max(vy, 0.15);
+                } else if (this.targetCoords.y > currentPos.y + 0.5) {
+                    vy = Math.max(vy, 0.15);
+                } else if (this.targetCoords.y >= currentPos.y - 0.2
+                        || this.agent.getAirSupply() < 280
+                        || this.agent.isEyeInFluid(net.minecraft.tags.FluidTags.WATER)) {
+                    vy = Math.max(vy, 0.08);
+                } else {
+                    // Gently damp downward drift without pulling the agent into deep water
+                    vy = Math.max(vy * 0.5, 0.0);
+                }
+                if (this.agent.horizontalCollision && (stepUpOneBlock || this.targetCoords.y >= currentPos.y - 0.5)) {
+                    vy = Math.max(vy, 0.30);
+                }
+            } else if (this.agent.onGround()) {
+                boolean jumpSuppressed = false;
+                if (level != null && this.agent != null) {
+                    BlockPos headPos = BlockPos.containing(currentPos.x, currentPos.y + 1.0, currentPos.z);
+                    BlockPos ceilingPos = BlockPos.containing(currentPos.x, currentPos.y + 2.0, currentPos.z);
+                    if (isBlockSolid(level, headPos) || isBlockSolid(level, ceilingPos)) {
+                        jumpSuppressed = true;
+                    }
+                    if (!jumpSuppressed) {
+                        try {
+                            AABB ceilingBox = new AABB(
+                                    currentPos.x - 0.3, currentPos.y + 1.8, currentPos.z - 0.3,
+                                    currentPos.x + 0.3, currentPos.y + 2.2, currentPos.z + 0.3
+                            );
+                            var collisions = level.getBlockCollisions(this.agent, ceilingBox);
+                            if (collisions != null && collisions.iterator().hasNext()) {
+                                jumpSuppressed = true;
+                            }
+                        } catch (Throwable ignored) {
+                        }
+                    }
+                    if (!jumpSuppressed) {
+                        try {
+                            AABB entityProbeBox = this.agent.getBoundingBox().inflate(0.2, 0.05, 0.2);
+                            List<net.minecraft.world.entity.Entity> nearby = level.getEntities(this.agent, entityProbeBox, e -> !e.isSpectator());
+                            if (nearby != null && !nearby.isEmpty()) {
+                                jumpSuppressed = true;
+                            }
+                        } catch (Throwable ignored) {
+                        }
+                    }
+                }
+
+                boolean jumpNeeded = stepUpOneBlock && !jumpSuppressed;
+                if (!jumpNeeded && !jumpSuppressed && this.agent.horizontalCollision && level != null) {
+                    double rad = Math.toRadians(headYaw);
+                    double fx = -Math.sin(rad);
+                    double fz = Math.cos(rad);
+                    BlockPos aheadFeet = BlockPos.containing(currentPos.x + fx * 0.6, currentPos.y + 0.1, currentPos.z + fz * 0.6);
+                    boolean clearAbove = !isBlockSolid(level, aheadFeet.above()) && !isBlockSolid(level, aheadFeet.above(2));
+                    if (clearAbove) {
+                        jumpNeeded = true;
+                    }
+                }
+                if (!cliffAhead && !jumpSuppressed && (jumpNeeded || (this.agent.horizontalCollision && path.isEmpty()) || (dy > 0.5 && path.isEmpty()))) {
                     vy = 0.42; // Jump impulse
                 } else {
                     vy = Math.max(-0.0784, vy);
@@ -632,19 +911,30 @@ public class AgentNavigator {
         double postDy = this.targetCoords.y - postPos.y;
         double postDz = this.targetCoords.z - postPos.z;
         double postH = Math.sqrt(postDx * postDx + postDz * postDz);
-        if (postH <= (double) this.arrivalTolerance && Math.abs(postDy) <= Math.max(2.0, (double) this.arrivalTolerance)) {
+        double postYAllowance = onClimbable
+                ? Math.max(1.0, (double) this.arrivalTolerance)
+                : Math.max(2.0, (double) this.arrivalTolerance);
+        if (postH <= (double) this.arrivalTolerance && Math.abs(postDy) <= postYAllowance) {
             finishArrival();
             return;
         }
 
-        // Stuck detection using horizontal displacement squared; not counted while still turning
+        // Stuck detection using displacement squared (include vertical progress when climbing or swimming)
         if (this.lastPosition != null) {
             double hdx = postPos.x - this.lastPosition.x;
             double hdz = postPos.z - this.lastPosition.z;
-            double horizontalMovedSq = hdx * hdx + hdz * hdz;
-            if (horizontalMovedSq < 0.0001 && absYawDiff < 60.0) {
+            double vdy = (onClimbable || inWater) ? (postPos.y - this.lastPosition.y) : 0.0;
+            double movedSq = hdx * hdx + hdz * hdz + vdy * vdy;
+            if (movedSq < 0.0001 && absYawDiff < 60.0) {
                 this.stuckTicks++;
-                if (this.stuckTicks >= 6 && this.stuckTicks % 6 == 0) {
+                if (this.stuckTicks >= 4 && this.agent != null && this.agent.horizontalCollision) {
+                    // Collision with corner or obstacle: trigger early replan to avoid grinding
+                    if (!path.isEmpty()) {
+                        LocalPathPlanner.Cell c = path.get(0);
+                        failedCells.put(LocalPathPlanner.cellKey(c.x(), c.y(), c.z()), navTick + FAILED_MEMORY_TICKS);
+                    }
+                    path.clear();
+                } else if (this.stuckTicks >= 6 && this.stuckTicks % 6 == 0) {
                     // Remember the failed direction for a few seconds and replan around it
                     if (!path.isEmpty()) {
                         LocalPathPlanner.Cell c = path.get(0);
@@ -661,7 +951,7 @@ public class AgentNavigator {
                         this.agent.setSprinting(false);
                     }
                 }
-            } else if (horizontalMovedSq >= 0.0001) {
+            } else if (movedSq >= 0.0001) {
                 this.stuckTicks = 0;
             }
         }
@@ -815,7 +1105,99 @@ public class AgentNavigator {
         return net.minecraft.world.item.ItemStack.EMPTY;
     }
 
-    private static boolean isBlockSolid(net.minecraft.world.level.Level level, BlockPos pos) {
+    public static boolean isPassableDoor(net.minecraft.world.level.block.state.BlockState state) {
+        if (state == null) {
+            return false;
+        }
+        try {
+            if (state.is(net.minecraft.tags.BlockTags.MOB_INTERACTABLE_DOORS)
+                    || state.is(net.minecraft.tags.BlockTags.WOODEN_DOORS)
+                    || state.is(net.minecraft.tags.BlockTags.WOODEN_TRAPDOORS)
+                    || state.is(net.minecraft.tags.BlockTags.FENCE_GATES)) {
+                return true;
+            }
+            if (state.is(net.minecraft.world.level.block.Blocks.IRON_DOOR)
+                    || state.is(net.minecraft.world.level.block.Blocks.IRON_TRAPDOOR)) {
+                return false;
+            }
+            net.minecraft.world.level.block.Block b = state.getBlock();
+            return b instanceof net.minecraft.world.level.block.DoorBlock
+                    || b instanceof net.minecraft.world.level.block.FenceGateBlock
+                    || b instanceof net.minecraft.world.level.block.TrapDoorBlock;
+        } catch (Throwable ignored) {}
+        return false;
+    }
+
+    private void handleDoorInteractions(net.minecraft.world.level.Level level, Vec3 currentPos) {
+        if (level == null || this.agent == null) {
+            return;
+        }
+
+        // 1. Auto-close doors we previously opened and have now moved away from (> 2.2 blocks)
+        if (!openedDoors.isEmpty()) {
+            java.util.Iterator<java.util.Map.Entry<BlockPos, Long>> it = openedDoors.entrySet().iterator();
+            while (it.hasNext()) {
+                var entry = it.next();
+                BlockPos pos = entry.getKey();
+                long openTick = entry.getValue();
+                double dSq = this.agent.distanceToSqr(pos.getX() + 0.5, pos.getY() + 0.5, pos.getZ() + 0.5);
+                if (dSq > 4.84 || navTick - openTick > 100) {
+                    try {
+                        net.minecraft.world.level.block.state.BlockState state = level.getBlockState(pos);
+                        if (state.getBlock() instanceof net.minecraft.world.level.block.DoorBlock door) {
+                            if (state.getValue(net.minecraft.world.level.block.state.properties.BlockStateProperties.OPEN)) {
+                                door.setOpen(this.agent, level, state, pos, false);
+                            }
+                        } else if (state.getBlock() instanceof net.minecraft.world.level.block.FenceGateBlock) {
+                            if (state.getValue(net.minecraft.world.level.block.state.properties.BlockStateProperties.OPEN)) {
+                                level.setBlockAndUpdate(pos, state.setValue(net.minecraft.world.level.block.state.properties.BlockStateProperties.OPEN, false));
+                                level.gameEvent(this.agent, net.minecraft.world.level.gameevent.GameEvent.BLOCK_CLOSE, pos);
+                            }
+                        } else if (state.getBlock() instanceof net.minecraft.world.level.block.TrapDoorBlock) {
+                            if (state.getValue(net.minecraft.world.level.block.state.properties.BlockStateProperties.OPEN)) {
+                                level.setBlockAndUpdate(pos, state.setValue(net.minecraft.world.level.block.state.properties.BlockStateProperties.OPEN, false));
+                                level.gameEvent(this.agent, net.minecraft.world.level.gameevent.GameEvent.BLOCK_CLOSE, pos);
+                            }
+                        }
+                    } catch (Throwable ignored) {}
+                    it.remove();
+                }
+            }
+        }
+
+        // 2. Open any closed passable doors directly ahead of the agent (within 1.5 blocks)
+        double rad = Math.toRadians(headYaw);
+        double fx = -Math.sin(rad);
+        double fz = Math.cos(rad);
+        for (double dist = 0.5; dist <= 1.5; dist += 0.5) {
+            double px = currentPos.x + fx * dist;
+            double pz = currentPos.z + fz * dist;
+            for (int dy = 0; dy <= 1; dy++) {
+                BlockPos checkPos = BlockPos.containing(px, currentPos.y + dy, pz);
+                try {
+                    net.minecraft.world.level.block.state.BlockState state = level.getBlockState(checkPos);
+                    if (isPassableDoor(state)) {
+                        boolean isOpen = state.hasProperty(net.minecraft.world.level.block.state.properties.BlockStateProperties.OPEN)
+                                && state.getValue(net.minecraft.world.level.block.state.properties.BlockStateProperties.OPEN);
+                        if (!isOpen) {
+                            if (state.getBlock() instanceof net.minecraft.world.level.block.DoorBlock door) {
+                                door.setOpen(this.agent, level, state, checkPos, true);
+                            } else if (state.getBlock() instanceof net.minecraft.world.level.block.FenceGateBlock) {
+                                level.setBlockAndUpdate(checkPos, state.setValue(net.minecraft.world.level.block.state.properties.BlockStateProperties.OPEN, true));
+                                level.gameEvent(this.agent, net.minecraft.world.level.gameevent.GameEvent.BLOCK_OPEN, checkPos);
+                            } else if (state.getBlock() instanceof net.minecraft.world.level.block.TrapDoorBlock) {
+                                level.setBlockAndUpdate(checkPos, state.setValue(net.minecraft.world.level.block.state.properties.BlockStateProperties.OPEN, true));
+                                level.gameEvent(this.agent, net.minecraft.world.level.gameevent.GameEvent.BLOCK_OPEN, checkPos);
+                            }
+                            openedDoors.put(checkPos.immutable(), navTick);
+                        }
+                    }
+                } catch (Throwable ignored) {}
+            }
+        }
+    }
+
+    private boolean isBlockSolid(net.minecraft.world.level.Level level, BlockPos pos) {
         if (level == null || pos == null) {
             return false;
         }
@@ -824,7 +1206,7 @@ public class AgentNavigator {
                 return false;
             }
             net.minecraft.world.level.block.state.BlockState state = level.getBlockState(pos);
-            if (state == null || state.isAir()) {
+            if (state == null || state.isAir() || isClimbableState(state, level, pos) || isPassableDoor(state)) {
                 return false;
             }
             var shape = state.getCollisionShape(level, pos);
@@ -840,6 +1222,7 @@ public class AgentNavigator {
         this.stuckTicks = 0;
         this.baritoneInactivityTicks = 0;
         this.enclosed = false;
+        this.openedDoors.clear();
         if (this.cliffDetected && this.agent != null) {
             this.agent.setShiftKeyDown(false);
         }

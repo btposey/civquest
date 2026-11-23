@@ -18,27 +18,27 @@ public final class CivQuestBridgeServiceGrpc {
   public static final java.lang.String SERVICE_NAME = "civquest.v1.CivQuestBridgeService";
 
   // Static method descriptors that strictly reflect the proto.
-  private static volatile io.grpc.MethodDescriptor<com.civquest.mod.grpc.v1.AgentIntent,
+  private static volatile io.grpc.MethodDescriptor<com.civquest.mod.grpc.v1.IntentBatch,
       com.civquest.mod.grpc.v1.TelemetryFrame> getConnectAgentMethod;
 
   @io.grpc.stub.annotations.RpcMethod(
       fullMethodName = SERVICE_NAME + '/' + "ConnectAgent",
-      requestType = com.civquest.mod.grpc.v1.AgentIntent.class,
+      requestType = com.civquest.mod.grpc.v1.IntentBatch.class,
       responseType = com.civquest.mod.grpc.v1.TelemetryFrame.class,
       methodType = io.grpc.MethodDescriptor.MethodType.BIDI_STREAMING)
-  public static io.grpc.MethodDescriptor<com.civquest.mod.grpc.v1.AgentIntent,
+  public static io.grpc.MethodDescriptor<com.civquest.mod.grpc.v1.IntentBatch,
       com.civquest.mod.grpc.v1.TelemetryFrame> getConnectAgentMethod() {
-    io.grpc.MethodDescriptor<com.civquest.mod.grpc.v1.AgentIntent, com.civquest.mod.grpc.v1.TelemetryFrame> getConnectAgentMethod;
+    io.grpc.MethodDescriptor<com.civquest.mod.grpc.v1.IntentBatch, com.civquest.mod.grpc.v1.TelemetryFrame> getConnectAgentMethod;
     if ((getConnectAgentMethod = CivQuestBridgeServiceGrpc.getConnectAgentMethod) == null) {
       synchronized (CivQuestBridgeServiceGrpc.class) {
         if ((getConnectAgentMethod = CivQuestBridgeServiceGrpc.getConnectAgentMethod) == null) {
           CivQuestBridgeServiceGrpc.getConnectAgentMethod = getConnectAgentMethod =
-              io.grpc.MethodDescriptor.<com.civquest.mod.grpc.v1.AgentIntent, com.civquest.mod.grpc.v1.TelemetryFrame>newBuilder()
+              io.grpc.MethodDescriptor.<com.civquest.mod.grpc.v1.IntentBatch, com.civquest.mod.grpc.v1.TelemetryFrame>newBuilder()
               .setType(io.grpc.MethodDescriptor.MethodType.BIDI_STREAMING)
               .setFullMethodName(generateFullMethodName(SERVICE_NAME, "ConnectAgent"))
               .setSampledToLocalTracing(true)
               .setRequestMarshaller(io.grpc.protobuf.ProtoUtils.marshaller(
-                  com.civquest.mod.grpc.v1.AgentIntent.getDefaultInstance()))
+                  com.civquest.mod.grpc.v1.IntentBatch.getDefaultInstance()))
               .setResponseMarshaller(io.grpc.protobuf.ProtoUtils.marshaller(
                   com.civquest.mod.grpc.v1.TelemetryFrame.getDefaultInstance()))
               .setSchemaDescriptor(new CivQuestBridgeServiceMethodDescriptorSupplier("ConnectAgent"))
@@ -198,7 +198,7 @@ public final class CivQuestBridgeServiceGrpc {
      * Primary per-agent bidirectional control and telemetry stream
      * </pre>
      */
-    default io.grpc.stub.StreamObserver<com.civquest.mod.grpc.v1.AgentIntent> connectAgent(
+    default io.grpc.stub.StreamObserver<com.civquest.mod.grpc.v1.IntentBatch> connectAgent(
         io.grpc.stub.StreamObserver<com.civquest.mod.grpc.v1.TelemetryFrame> responseObserver) {
       return io.grpc.stub.ServerCalls.asyncUnimplementedStreamingCall(getConnectAgentMethod(), responseObserver);
     }
@@ -266,7 +266,7 @@ public final class CivQuestBridgeServiceGrpc {
      * Primary per-agent bidirectional control and telemetry stream
      * </pre>
      */
-    public io.grpc.stub.StreamObserver<com.civquest.mod.grpc.v1.AgentIntent> connectAgent(
+    public io.grpc.stub.StreamObserver<com.civquest.mod.grpc.v1.IntentBatch> connectAgent(
         io.grpc.stub.StreamObserver<com.civquest.mod.grpc.v1.TelemetryFrame> responseObserver) {
       return io.grpc.stub.ClientCalls.asyncBidiStreamingCall(
           getChannel().newCall(getConnectAgentMethod(), getCallOptions()), responseObserver);
@@ -450,7 +450,7 @@ public final class CivQuestBridgeServiceGrpc {
           getConnectAgentMethod(),
           io.grpc.stub.ServerCalls.asyncBidiStreamingCall(
             new MethodHandlers<
-              com.civquest.mod.grpc.v1.AgentIntent,
+              com.civquest.mod.grpc.v1.IntentBatch,
               com.civquest.mod.grpc.v1.TelemetryFrame>(
                 service, METHODID_CONNECT_AGENT)))
         .addMethod(

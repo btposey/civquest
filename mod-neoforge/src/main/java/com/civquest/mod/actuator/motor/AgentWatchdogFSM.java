@@ -2,6 +2,7 @@ package com.civquest.mod.actuator.motor;
 
 import com.civquest.mod.AgentEntity;
 import com.civquest.mod.grpc.v1.AgentIntent;
+import com.civquest.mod.grpc.v1.IntentBatch;
 import com.mojang.logging.LogUtils;
 import net.minecraft.core.component.DataComponents;
 import net.minecraft.world.InteractionHand;
@@ -175,6 +176,17 @@ public class AgentWatchdogFSM {
      * Called when an intent is received over the gRPC stream.
      */
     public synchronized void onIntentReceived(AgentIntent intent) {
+        markActivityReceived();
+    }
+
+    /**
+     * Called when an intent batch is received over the gRPC stream.
+     */
+    public synchronized void onIntentReceived(IntentBatch batch) {
+        markActivityReceived();
+    }
+
+    private void markActivityReceived() {
         if (this.currentState == WatchdogState.SHUTDOWN) {
             return;
         }

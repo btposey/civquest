@@ -9,6 +9,7 @@ import com.civquest.mod.grpc.v1.DamageEvent;
 import com.civquest.mod.grpc.v1.DamageSourceType;
 import com.civquest.mod.grpc.v1.DeathEvent;
 import com.civquest.mod.grpc.v1.FarmlandSurveyEvent;
+import com.civquest.mod.grpc.v1.IntentReceipt;
 import com.civquest.mod.grpc.v1.ItemStackProto;
 import com.civquest.mod.grpc.v1.NavigationState;
 import com.civquest.mod.grpc.v1.TelemetryFrame;
@@ -234,6 +235,20 @@ public class SensoryFrustumCollector {
             frameBuilder.addAllReflexNotices(reflexNotices);
         }
 
+        // 9. MotorPDA IntentReceipt & sequence acknowledgment (Phase 2 3-Tier PDA Continuum)
+        IntentReceipt receipt = null;
+        if (agent.getIntentActuator() != null) {
+            receipt = agent.getIntentActuator().getCurrentReceipt(agent);
+        } else if (agent.getMotorFSM() != null) {
+            receipt = agent.getMotorFSM().getCurrentReceipt();
+        }
+        if (receipt != null) {
+            frameBuilder.setReceipt(receipt);
+        }
+        if (agent.getMotorFSM() != null && agent.getMotorFSM().getLastProcessedSequenceId() > 0) {
+            frameBuilder.setLastProcessedSequenceId(agent.getMotorFSM().getLastProcessedSequenceId());
+        }
+
         frameBuilder.setStatus(statusBuilder.build());
         return frameBuilder.build();
     }
@@ -333,13 +348,20 @@ public class SensoryFrustumCollector {
         BlockPos feetPos = center;
         BlockPos belowFeet = feetPos.below();
 
-        // Explicitly sample blocks at and directly below agent's feet, plus adjacent cardinal blocks at Y and Y+1
+        // Explicitly sample blocks around agent for immediate pit/trench navigation, unsticking, and staircase carving
         List<BlockPos> immediateSamples = new ArrayList<>();
         immediateSamples.add(feetPos);
         immediateSamples.add(belowFeet);
+        immediateSamples.add(feetPos.above(2)); // Overhead jump clearance
         for (net.minecraft.core.Direction dir : net.minecraft.core.Direction.Plane.HORIZONTAL) {
+            // Distance 1: feet, eye, and headroom
             immediateSamples.add(feetPos.relative(dir));
             immediateSamples.add(feetPos.above().relative(dir));
+            immediateSamples.add(feetPos.above(2).relative(dir));
+            // Distance 2: step-up ledge, eye, and headroom for continuing staircase
+            immediateSamples.add(feetPos.relative(dir, 2));
+            immediateSamples.add(feetPos.above().relative(dir, 2));
+            immediateSamples.add(feetPos.above(2).relative(dir, 2));
         }
         for (BlockPos footPos : immediateSamples) {
             if (level.hasChunkAt(footPos) && !addedPositions.contains(footPos)) {
@@ -660,6 +682,9 @@ public class SensoryFrustumCollector {
         }
         if (source.is(DamageTypeTags.IS_FIRE)) {
             return DamageSourceType.DAMAGE_SOURCE_TYPE_LAVA;
+        }
+        if (source.is(DamageTypeTags.IS_DROWNING)) {
+            return DamageSourceType.DAMAGE_SOURCE_TYPE_DROWN;
         }
         Entity attacker = source.getEntity();
         if (attacker instanceof Player) {

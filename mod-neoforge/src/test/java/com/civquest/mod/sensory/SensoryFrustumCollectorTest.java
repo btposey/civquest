@@ -1,11 +1,20 @@
 package com.civquest.mod.sensory;
 
+import com.civquest.mod.AgentEntity;
+import com.civquest.mod.actuator.AgentNavigator;
+import com.civquest.mod.actuator.IntentActuator;
+import com.civquest.mod.actuator.motor.AgentMotorFSM;
+import com.civquest.mod.actuator.motor.MotorState;
+import com.civquest.mod.grpc.v1.AgentIntent;
 import com.civquest.mod.grpc.v1.AgentStatus;
 import com.civquest.mod.grpc.v1.BlockPosProto;
 import com.civquest.mod.grpc.v1.DamageEvent;
 import com.civquest.mod.grpc.v1.DamageSourceType;
 import com.civquest.mod.grpc.v1.DeathEvent;
+import com.civquest.mod.grpc.v1.IntentBatch;
+import com.civquest.mod.grpc.v1.IntentReceipt;
 import com.civquest.mod.grpc.v1.ItemStackProto;
+import com.civquest.mod.grpc.v1.NavigateIntent;
 import com.civquest.mod.grpc.v1.NavigationState;
 import com.civquest.mod.grpc.v1.TelemetryFrame;
 import com.civquest.mod.grpc.v1.Vec3;
@@ -13,10 +22,14 @@ import com.civquest.mod.grpc.v1.VisibleBlock;
 import com.civquest.mod.grpc.v1.VisibleEntity;
 import com.civquest.mod.grpc.v1.Weather;
 import net.minecraft.core.BlockPos;
+import net.minecraft.tags.DamageTypeTags;
+import net.minecraft.world.damagesource.DamageSource;
 import net.minecraft.world.level.Level;
+import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import com.civquest.mod.test.MinecraftTestBootstrap;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.Mockito.*;
@@ -24,6 +37,11 @@ import static org.mockito.Mockito.*;
 public class SensoryFrustumCollectorTest {
 
     private SensoryFrustumCollector collector;
+
+    @BeforeAll
+    static void initMinecraft() {
+        MinecraftTestBootstrap.ensureBootstrapped();
+    }
 
     @BeforeEach
     void setUp() {
@@ -44,17 +62,17 @@ public class SensoryFrustumCollectorTest {
         assertEquals(Weather.WEATHER_CLEAR, SensoryFrustumCollector.determineWeather(null));
 
         Level thunderingLevel = mock(Level.class);
-        when(thunderingLevel.isThundering()).thenReturn(true);
+        doReturn(true).when(thunderingLevel).isThundering();
         assertEquals(Weather.WEATHER_THUNDER, SensoryFrustumCollector.determineWeather(thunderingLevel));
 
         Level rainingLevel = mock(Level.class);
-        when(rainingLevel.isThundering()).thenReturn(false);
-        when(rainingLevel.isRaining()).thenReturn(true);
+        doReturn(false).when(rainingLevel).isThundering();
+        doReturn(true).when(rainingLevel).isRaining();
         assertEquals(Weather.WEATHER_RAIN, SensoryFrustumCollector.determineWeather(rainingLevel));
 
         Level clearLevel = mock(Level.class);
-        when(clearLevel.isThundering()).thenReturn(false);
-        when(clearLevel.isRaining()).thenReturn(false);
+        doReturn(false).when(clearLevel).isThundering();
+        doReturn(false).when(clearLevel).isRaining();
         assertEquals(Weather.WEATHER_CLEAR, SensoryFrustumCollector.determineWeather(clearLevel));
     }
 
@@ -118,6 +136,14 @@ public class SensoryFrustumCollectorTest {
     @DisplayName("mapDamageSourceType returns UNSPECIFIED for null source")
     void testMapDamageSourceTypeNull() {
         assertEquals(DamageSourceType.DAMAGE_SOURCE_TYPE_UNSPECIFIED, SensoryFrustumCollector.mapDamageSourceType(null));
+    }
+
+    @Test
+    @DisplayName("mapDamageSourceType maps IS_DROWNING to DAMAGE_SOURCE_TYPE_DROWN")
+    void testMapDamageSourceTypeDrowning() {
+        DamageSource drownSource = mock(DamageSource.class);
+        when(drownSource.is(DamageTypeTags.IS_DROWNING)).thenReturn(true);
+        assertEquals(DamageSourceType.DAMAGE_SOURCE_TYPE_DROWN, SensoryFrustumCollector.mapDamageSourceType(drownSource));
     }
 
     @Test
@@ -231,5 +257,47 @@ public class SensoryFrustumCollectorTest {
         assertEquals(1, frame.getInterestingBlocksCount());
         assertEquals("minecraft:farmland", frame.getInterestingBlocks(0).getBlockId());
         assertEquals(5.0f, frame.getLastDamageTaken().getDamageAmount(), 0.001);
+    }
+
+    @Test
+    @DisplayName("collectFrame populates IntentReceipt and motor_stack_depth from agent IntentActuator and MotorPDA")
+    void testCollectFramePopulatesReceipt() {
+        AgentEntity agent = mock(AgentEntity.class);
+        IntentActuator actuator = new IntentActuator();
+        AgentMotorFSM fsm = new AgentMotorFSM(agent);
+        AgentNavigator nav = mock(AgentNavigator.class);
+        when(nav.isPathing()).thenReturn(true);
+        when(nav.isArrived()).thenReturn(false);
+        when(nav.getReportedNavigationState()).thenReturn(NavigationState.NAVIGATION_STATE_PATHING);
+        when(nav.getPosition()).thenReturn(net.minecraft.world.phys.Vec3.ZERO);
+        when(agent.getAgentId()).thenReturn("agent-receipt-test");
+        when(agent.getId()).thenReturn(7);
+        when(agent.getNavigator()).thenReturn(nav);
+        when(agent.getIntentActuator()).thenReturn(actuator);
+        when(agent.getMotorFSM()).thenReturn(fsm);
+        when(agent.pollIncomingChats()).thenReturn(java.util.Collections.emptyList());
+        when(agent.pollReflexNotices()).thenReturn(java.util.Collections.emptyList());
+
+        actuator.submitBatch(agent, IntentBatch.newBuilder()
+                .setAgentId("agent-receipt-test")
+                .setBatchId(555L)
+                .addIntents(AgentIntent.newBuilder()
+                        .setAgentId("agent-receipt-test")
+                        .setSequenceId(88L)
+                        .setNavigate(NavigateIntent.newBuilder()
+                                .setTarget(Vec3.newBuilder().setX(20).setY(64).setZ(20).build())
+                                .build())
+                        .build())
+                .build());
+        // Simulate reflex preemption depth = 1 on MotorPDA while navigating
+        assertEquals(MotorState.MOVING, fsm.getState());
+        fsm.pushState(MotorState.COMBAT_ENGAGED, "reflex");
+
+        TelemetryFrame frame = collector.collectFrame(agent);
+        assertTrue(frame.hasReceipt());
+        assertEquals(555L, frame.getReceipt().getBatchId());
+        assertEquals(IntentReceipt.ReceiptStatus.RECEIPT_STATUS_PREEMPTED_BY_REFLEX, frame.getReceipt().getStatus());
+        assertEquals(1, frame.getReceipt().getMotorStackDepth());
+        assertEquals(88L, frame.getLastProcessedSequenceId());
     }
 }

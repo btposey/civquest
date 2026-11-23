@@ -120,6 +120,39 @@ func isShield(itemID string) bool {
 	return IsShield(itemID)
 }
 
+// IsStarvationDamage returns true if the damage event represents hunger or starvation damage.
+// Starvation in Minecraft occurs without an attacker entity (AttackerEntityId == 0) and
+// DamageSourceType == DAMAGE_SOURCE_TYPE_UNSPECIFIED (or attacker name containing "starve"/"hunger").
+func IsStarvationDamage(dmg *civquestv1.DamageEvent) bool {
+	if dmg == nil {
+		return false
+	}
+	name := strings.ToLower(dmg.AttackerName)
+	if strings.Contains(name, "starv") || strings.Contains(name, "hunger") {
+		return true
+	}
+	if dmg.SourceType == civquestv1.DamageSourceType_DAMAGE_SOURCE_TYPE_UNSPECIFIED && dmg.AttackerEntityId == 0 {
+		return true
+	}
+	return false
+}
+
+// IsPassiveOrEnvironmentalDamage returns true if the damage event is from non-combat, passive,
+// or environmental sources (starvation, fall, drowning) that must not degrade combat confidence
+// or trigger fight-or-flight panic reflexes.
+func IsPassiveOrEnvironmentalDamage(dmg *civquestv1.DamageEvent) bool {
+	if dmg == nil {
+		return false
+	}
+	if dmg.SourceType == civquestv1.DamageSourceType_DAMAGE_SOURCE_TYPE_FALL {
+		return true
+	}
+	if dmg.SourceType == civquestv1.DamageSourceType_DAMAGE_SOURCE_TYPE_DROWN {
+		return true
+	}
+	return IsStarvationDamage(dmg)
+}
+
 // CalculateGearMultiplier evaluates the equipped and inventory armor, weapons, and shield,
 // returning a deterministic gear multiplier M_gear bounded within [0.5, 2.5].
 func CalculateGearMultiplier(inventory []*civquestv1.ItemStackProto) float64 {
@@ -569,6 +602,39 @@ type ReflexResult struct {
 	Intents         []*civquestv1.AgentIntent
 }
 
+func computeSurfaceTarget(selfPos *civquestv1.Vec3, blocks []*civquestv1.VisibleBlock) *civquestv1.Vec3 {
+	if selfPos == nil {
+		return &civquestv1.Vec3{X: 0, Y: 68, Z: 0}
+	}
+	bx := int32(math.Floor(selfPos.X))
+	bz := int32(math.Floor(selfPos.Z))
+	foundWater := false
+	maxWaterY := int32(math.Floor(selfPos.Y))
+
+	for _, b := range blocks {
+		if b == nil || b.Pos == nil || b.Pos.X != bx || b.Pos.Z != bz {
+			continue
+		}
+		if strings.Contains(strings.ToLower(b.BlockId), "water") {
+			if !foundWater || b.Pos.Y > maxWaterY {
+				maxWaterY = b.Pos.Y
+				foundWater = true
+			}
+		}
+	}
+
+	targetY := selfPos.Y + 4.0
+	if foundWater {
+		// Water surface sits at maxWaterY + 1; target surfaceY + 1 to clear the water column.
+		targetY = float64(maxWaterY) + 2.0
+	}
+	return &civquestv1.Vec3{
+		X: selfPos.X,
+		Y: targetY,
+		Z: selfPos.Z,
+	}
+}
+
 // EvaluateReflexes executes the deterministic System 1 Fight-or-Flight evaluation in <2ms on host CPU.
 // Emits AttackIntent, NavigateIntent, and UseItemIntent without invoking LLM tokens.
 func EvaluateReflexes(ctx ReflexContext) ReflexResult {
@@ -634,16 +700,20 @@ func EvaluateReflexes(ctx ReflexContext) ReflexResult {
 		}
 	}
 
-	// If no visible hostiles are present but agent took damage, account for unseen attacker
-	if len(hostiles) == 0 && ctx.Frame.LastDamageTaken != nil {
-		threat := ThreatDefault
-		switch ctx.Frame.LastDamageTaken.SourceType {
-		case civquestv1.DamageSourceType_DAMAGE_SOURCE_TYPE_ARROW:
-			threat = ThreatSkeleton
-		case civquestv1.DamageSourceType_DAMAGE_SOURCE_TYPE_EXPLOSION:
-			threat = ThreatCreeper
+	isDrowning := isDrowningDamage(ctx.Frame) || (status.IsInWater && len(hostiles) == 0)
+
+	// If no visible hostiles are present but agent took damage from an attacker, account for unseen attacker
+	if len(hostiles) == 0 && ctx.Frame.LastDamageTaken != nil && !isDrowning {
+		if !IsPassiveOrEnvironmentalDamage(ctx.Frame.LastDamageTaken) {
+			threat := ThreatDefault
+			switch ctx.Frame.LastDamageTaken.SourceType {
+			case civquestv1.DamageSourceType_DAMAGE_SOURCE_TYPE_ARROW:
+				threat = ThreatSkeleton
+			case civquestv1.DamageSourceType_DAMAGE_SOURCE_TYPE_EXPLOSION:
+				threat = ThreatCreeper
+			}
+			sumHostileThreat += threat
 		}
-		sumHostileThreat += threat
 	}
 
 	res.HostilesCount = len(hostiles)
@@ -655,9 +725,41 @@ func EvaluateReflexes(ctx ReflexContext) ReflexResult {
 	confidence := CalculateConfidence(selfHP, sumAlliesHP, sumHostileThreat, gearMult, ctx.Bravery)
 	res.Confidence = confidence
 
-	hasThreats := len(hostiles) > 0 || ctx.Frame.LastDamageTaken != nil
+	hasThreats := len(hostiles) > 0 || (!isDrowning && ctx.Frame.LastDamageTaken != nil && !IsPassiveOrEnvironmentalDamage(ctx.Frame.LastDamageTaken))
 	isPanic := ShouldPanic(selfHP, maxHP, confidence, hasThreats, creeperHissingNearby)
 	res.IsPanic = isPanic
+
+	if isDrowning {
+		surfaceTarget := computeSurfaceTarget(selfPos, ctx.Frame.InterestingBlocks)
+		res.ShouldAct = true
+		res.FleeTarget = surfaceTarget
+		res.Intents = append(res.Intents, &civquestv1.AgentIntent{
+			AgentId: ctx.AgentID,
+			Action: &civquestv1.AgentIntent_Navigate{
+				Navigate: &civquestv1.NavigateIntent{
+					Target:           surfaceTarget,
+					SpeedMultiplier:  1.5,
+					Sprint:           true,
+					ArrivalTolerance: 1,
+				},
+			},
+		})
+		if (foodLevel <= 6 || (isPanic && (foodLevel < 20 || selfHP < maxHP))) && ctx.CanEat {
+			if slot, found := FindBestFoodItem(inventory); found {
+				res.EatenFoodSlot = slot
+				res.Intents = append(res.Intents, &civquestv1.AgentIntent{
+					AgentId: ctx.AgentID,
+					Action: &civquestv1.AgentIntent_UseItem{
+						UseItem: &civquestv1.UseItemIntent{
+							InventorySlot:      slot,
+							IsEatingOrDrinking: true,
+						},
+					},
+				})
+			}
+		}
+		return res
+	}
 
 	if isPanic {
 		res.ShouldAct = true
@@ -667,7 +769,7 @@ func EvaluateReflexes(ctx ReflexContext) ReflexResult {
 		targetID := int32(0)
 		if priorityHostile != nil {
 			targetID = priorityHostile.EntityId
-		} else if ctx.Frame.LastDamageTaken != nil {
+		} else if ctx.Frame.LastDamageTaken != nil && !IsPassiveOrEnvironmentalDamage(ctx.Frame.LastDamageTaken) {
 			targetID = ctx.Frame.LastDamageTaken.AttackerEntityId
 		}
 

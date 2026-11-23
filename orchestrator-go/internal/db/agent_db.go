@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
 	"sort"
@@ -254,6 +255,38 @@ func (a *AgentDB) migrateMapDB(ctx context.Context) error {
 		);`,
 		`CREATE INDEX IF NOT EXISTS idx_map_edges_from ON map_edges(from_node_id);`,
 		`CREATE INDEX IF NOT EXISTS idx_map_edges_to ON map_edges(to_node_id);`,
+		`CREATE TABLE IF NOT EXISTS agent_pois (
+			poi_id TEXT PRIMARY KEY,
+			category TEXT NOT NULL CHECK(category IN ('WORKSTATION', 'CONTAINER', 'HABITATION', 'RESOURCE', 'HAZARD', 'CROP')),
+			block_id TEXT NOT NULL,
+			x REAL NOT NULL,
+			y REAL NOT NULL,
+			z REAL NOT NULL,
+			access_x REAL NOT NULL,
+			access_y REAL NOT NULL,
+			access_z REAL NOT NULL,
+			elevation_layer TEXT NOT NULL CHECK(elevation_layer IN ('SURFACE', 'DUGOUT', 'UNDERGROUND', 'ELEVATED')),
+			safety_score REAL NOT NULL CHECK(safety_score >= 0.0 AND safety_score <= 1.0),
+			discovered_tick INTEGER NOT NULL,
+			last_verified_tick INTEGER NOT NULL,
+			reliability REAL NOT NULL DEFAULT 1.0 CHECK(reliability >= 0.0 AND reliability <= 1.0),
+			is_active INTEGER NOT NULL DEFAULT 1
+		);`,
+		`CREATE INDEX IF NOT EXISTS idx_agent_pois_cat_pos ON agent_pois(category, x, y, z);`,
+		`CREATE INDEX IF NOT EXISTS idx_agent_pois_layer ON agent_pois(elevation_layer);`,
+		`CREATE INDEX IF NOT EXISTS idx_agent_pois_active ON agent_pois(is_active);`,
+		`CREATE TABLE IF NOT EXISTS trail_corridors (
+			id TEXT PRIMARY KEY,
+			from_poi_id TEXT NOT NULL,
+			to_poi_id TEXT NOT NULL,
+			waypoints_json TEXT NOT NULL,
+			total_distance REAL NOT NULL CHECK(total_distance >= 0.0),
+			is_paved INTEGER NOT NULL DEFAULT 0,
+			traverse_count INTEGER NOT NULL DEFAULT 0 CHECK(traverse_count >= 0)
+		);`,
+		`CREATE INDEX IF NOT EXISTS idx_trail_corridors_from ON trail_corridors(from_poi_id);`,
+		`CREATE INDEX IF NOT EXISTS idx_trail_corridors_to ON trail_corridors(to_poi_id);`,
+		`CREATE INDEX IF NOT EXISTS idx_trail_corridors_endpoints ON trail_corridors(from_poi_id, to_poi_id);`,
 	}
 
 	for _, q := range queries {
@@ -1180,6 +1213,328 @@ func (a *AgentDB) GetMapGraph(ctx context.Context) ([]MapNode, []MapEdge, error)
 	}
 
 	return nodes, edges, nil
+}
+
+// ==================== AGENT POIs & TRAIL CORRIDORS (ADR-022) ====================
+
+// AddOrUpdatePOI inserts or updates a persistent Point of Interest in map_graph.db.
+func (a *AgentDB) AddOrUpdatePOI(ctx context.Context, poi AgentPOI) error {
+	a.mapWriteMu.Lock()
+	defer a.mapWriteMu.Unlock()
+
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+	if a.isClosed {
+		return ErrClosed
+	}
+
+	if poi.POIID == "" {
+		return errors.New("poi_id cannot be empty")
+	}
+
+	isActive := 0
+	if poi.IsActive {
+		isActive = 1
+	}
+
+	query := `
+		INSERT INTO agent_pois (
+			poi_id, category, block_id, x, y, z,
+			access_x, access_y, access_z, elevation_layer,
+			safety_score, discovered_tick, last_verified_tick,
+			reliability, is_active
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT(poi_id) DO UPDATE SET
+			category = excluded.category,
+			block_id = excluded.block_id,
+			x = excluded.x,
+			y = excluded.y,
+			z = excluded.z,
+			access_x = excluded.access_x,
+			access_y = excluded.access_y,
+			access_z = excluded.access_z,
+			elevation_layer = excluded.elevation_layer,
+			safety_score = excluded.safety_score,
+			discovered_tick = excluded.discovered_tick,
+			last_verified_tick = excluded.last_verified_tick,
+			reliability = excluded.reliability,
+			is_active = excluded.is_active;
+	`
+	_, err := a.mapDB.ExecContext(ctx, query,
+		poi.POIID, poi.Category, poi.BlockID,
+		poi.X, poi.Y, poi.Z,
+		poi.AccessX, poi.AccessY, poi.AccessZ, poi.ElevationLayer,
+		poi.SafetyScore, poi.DiscoveredTick, poi.LastVerifiedTick,
+		poi.Reliability, isActive,
+	)
+	if err != nil {
+		return fmt.Errorf("upserting agent POI: %w", err)
+	}
+	return nil
+}
+
+// GetPOI retrieves a persistent Point of Interest by its POIID, or returns nil, nil if not found.
+func (a *AgentDB) GetPOI(ctx context.Context, poiID string) (*AgentPOI, error) {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+	if a.isClosed {
+		return nil, ErrClosed
+	}
+
+	query := `
+		SELECT poi_id, category, block_id, x, y, z,
+		       access_x, access_y, access_z, elevation_layer,
+		       safety_score, discovered_tick, last_verified_tick,
+		       reliability, is_active
+		FROM agent_pois
+		WHERE poi_id = ?;
+	`
+	var poi AgentPOI
+	var isActive int
+	err := a.mapDB.QueryRowContext(ctx, query, poiID).Scan(
+		&poi.POIID, &poi.Category, &poi.BlockID,
+		&poi.X, &poi.Y, &poi.Z,
+		&poi.AccessX, &poi.AccessY, &poi.AccessZ, &poi.ElevationLayer,
+		&poi.SafetyScore, &poi.DiscoveredTick, &poi.LastVerifiedTick,
+		&poi.Reliability, &isActive,
+	)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("querying agent POI: %w", err)
+	}
+	poi.IsActive = isActive != 0
+	return &poi, nil
+}
+
+// ListPOIs retrieves Points of Interest filtered optionally by category and active status.
+func (a *AgentDB) ListPOIs(ctx context.Context, category string, activeOnly bool) ([]AgentPOI, error) {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+	if a.isClosed {
+		return nil, ErrClosed
+	}
+
+	var clauses []string
+	var args []any
+	if category != "" {
+		clauses = append(clauses, "category = ?")
+		args = append(args, category)
+	}
+	if activeOnly {
+		clauses = append(clauses, "is_active = 1")
+	}
+
+	query := `
+		SELECT poi_id, category, block_id, x, y, z,
+		       access_x, access_y, access_z, elevation_layer,
+		       safety_score, discovered_tick, last_verified_tick,
+		       reliability, is_active
+		FROM agent_pois`
+	if len(clauses) > 0 {
+		query += " WHERE " + strings.Join(clauses, " AND ")
+	}
+	query += " ORDER BY discovered_tick ASC, poi_id ASC;"
+
+	rows, err := a.mapDB.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("listing agent POIs: %w", err)
+	}
+	defer rows.Close()
+
+	var pois []AgentPOI
+	for rows.Next() {
+		var poi AgentPOI
+		var isActive int
+		if err := rows.Scan(
+			&poi.POIID, &poi.Category, &poi.BlockID,
+			&poi.X, &poi.Y, &poi.Z,
+			&poi.AccessX, &poi.AccessY, &poi.AccessZ, &poi.ElevationLayer,
+			&poi.SafetyScore, &poi.DiscoveredTick, &poi.LastVerifiedTick,
+			&poi.Reliability, &isActive,
+		); err != nil {
+			return nil, fmt.Errorf("scanning agent POI: %w", err)
+		}
+		poi.IsActive = isActive != 0
+		pois = append(pois, poi)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterating agent POI rows: %w", err)
+	}
+	if pois == nil {
+		return []AgentPOI{}, nil
+	}
+	return pois, nil
+}
+
+// InvalidatePOI marks a Point of Interest as inactive (is_active = 0) in map_graph.db.
+// Returns ErrNotFound if no POI matches poiID.
+func (a *AgentDB) InvalidatePOI(ctx context.Context, poiID string) error {
+	a.mapWriteMu.Lock()
+	defer a.mapWriteMu.Unlock()
+
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+	if a.isClosed {
+		return ErrClosed
+	}
+
+	if poiID == "" {
+		return errors.New("poi_id cannot be empty")
+	}
+
+	res, err := a.mapDB.ExecContext(ctx, "UPDATE agent_pois SET is_active = 0 WHERE poi_id = ?;", poiID)
+	if err != nil {
+		return fmt.Errorf("invalidating agent POI: %w", err)
+	}
+	rows, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("checking rows affected: %w", err)
+	}
+	if rows == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// DecayPOIReliability reduces a POI's reliability score by delta, clamped to [0.0, 1.0].
+// Returns ErrNotFound if no POI matches poiID.
+func (a *AgentDB) DecayPOIReliability(ctx context.Context, poiID string, delta float64) error {
+	a.mapWriteMu.Lock()
+	defer a.mapWriteMu.Unlock()
+
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+	if a.isClosed {
+		return ErrClosed
+	}
+
+	if poiID == "" {
+		return errors.New("poi_id cannot be empty")
+	}
+	if math.IsNaN(delta) || math.IsInf(delta, 0) || delta < 0 {
+		return errors.New("decay delta must be a finite non-negative number")
+	}
+
+	res, err := a.mapDB.ExecContext(ctx,
+		"UPDATE agent_pois SET reliability = MAX(0.0, MIN(1.0, reliability - ?)) WHERE poi_id = ?;",
+		delta, poiID,
+	)
+	if err != nil {
+		return fmt.Errorf("decaying agent POI reliability: %w", err)
+	}
+	rows, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("checking rows affected: %w", err)
+	}
+	if rows == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// AddTrailCorridor registers or updates a learned breadcrumb waypoint corridor between two POIs.
+func (a *AgentDB) AddTrailCorridor(ctx context.Context, corridor TrailCorridor) error {
+	a.mapWriteMu.Lock()
+	defer a.mapWriteMu.Unlock()
+
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+	if a.isClosed {
+		return ErrClosed
+	}
+
+	if corridor.ID == "" {
+		return errors.New("trail corridor ID cannot be empty")
+	}
+	if corridor.FromPOIID == "" || corridor.ToPOIID == "" {
+		return errors.New("trail corridor from_poi_id and to_poi_id must not be empty")
+	}
+	if corridor.WaypointsJSON == "" {
+		corridor.WaypointsJSON = "[]"
+	}
+
+	isPaved := 0
+	if corridor.IsPaved {
+		isPaved = 1
+	}
+
+	query := `
+		INSERT INTO trail_corridors (
+			id, from_poi_id, to_poi_id, waypoints_json, total_distance, is_paved, traverse_count
+		) VALUES (?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT(id) DO UPDATE SET
+			from_poi_id = excluded.from_poi_id,
+			to_poi_id = excluded.to_poi_id,
+			waypoints_json = excluded.waypoints_json,
+			total_distance = excluded.total_distance,
+			is_paved = excluded.is_paved,
+			traverse_count = excluded.traverse_count;
+	`
+	_, err := a.mapDB.ExecContext(ctx, query,
+		corridor.ID, corridor.FromPOIID, corridor.ToPOIID,
+		corridor.WaypointsJSON, corridor.TotalDistance, isPaved, corridor.TraverseCount,
+	)
+	if err != nil {
+		return fmt.Errorf("upserting trail corridor: %w", err)
+	}
+	return nil
+}
+
+// ListTrailCorridors retrieves trail corridors filtered optionally by fromPOIID and/or toPOIID.
+func (a *AgentDB) ListTrailCorridors(ctx context.Context, fromPOIID, toPOIID string) ([]TrailCorridor, error) {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+	if a.isClosed {
+		return nil, ErrClosed
+	}
+
+	var clauses []string
+	var args []any
+	if fromPOIID != "" {
+		clauses = append(clauses, "from_poi_id = ?")
+		args = append(args, fromPOIID)
+	}
+	if toPOIID != "" {
+		clauses = append(clauses, "to_poi_id = ?")
+		args = append(args, toPOIID)
+	}
+
+	query := `
+		SELECT id, from_poi_id, to_poi_id, waypoints_json, total_distance, is_paved, traverse_count
+		FROM trail_corridors`
+	if len(clauses) > 0 {
+		query += " WHERE " + strings.Join(clauses, " AND ")
+	}
+	query += " ORDER BY traverse_count DESC, total_distance ASC, id ASC;"
+
+	rows, err := a.mapDB.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("listing trail corridors: %w", err)
+	}
+	defer rows.Close()
+
+	var corridors []TrailCorridor
+	for rows.Next() {
+		var c TrailCorridor
+		var isPaved int
+		if err := rows.Scan(
+			&c.ID, &c.FromPOIID, &c.ToPOIID, &c.WaypointsJSON,
+			&c.TotalDistance, &isPaved, &c.TraverseCount,
+		); err != nil {
+			return nil, fmt.Errorf("scanning trail corridor: %w", err)
+		}
+		c.IsPaved = isPaved != 0
+		corridors = append(corridors, c)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterating trail corridor rows: %w", err)
+	}
+	if corridors == nil {
+		return []TrailCorridor{}, nil
+	}
+	return corridors, nil
 }
 
 // Close cleanly terminates both memory.db and map_graph.db connections,

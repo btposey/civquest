@@ -42,7 +42,7 @@ var (
 
 // StreamConnector is an interface allowing abstraction over bridge.Client or custom stream providers.
 type StreamConnector interface {
-	ConnectAgent(ctx context.Context, opts ...grpc.CallOption) (civquestv1.CivQuestBridgeService_ConnectAgentClient, error)
+	ConnectAgent(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[civquestv1.IntentBatch, civquestv1.TelemetryFrame], error)
 }
 
 // Config provides initial configuration options for constructing an AgentRuntime.
@@ -111,23 +111,23 @@ type SocketStatusResponse struct {
 	Goals                 *system1.GoalHierarchy `json:"goals,omitempty"`
 
 	// Enriched fields for real-time Agent Viewer
-	Yaw            float32                   `json:"yaw,omitempty"`
-	Pitch          float32                   `json:"pitch,omitempty"`
-	MaxHealth      float32                   `json:"max_health,omitempty"`
-	Saturation     float32                   `json:"saturation,omitempty"`
-	Stamina        float32                   `json:"stamina,omitempty"`
-	IsSleeping     bool                      `json:"is_sleeping,omitempty"`
-	TimeOfDay      int64                     `json:"time_of_day,omitempty"`
-	Weather        string                    `json:"weather,omitempty"`
-	BiomeID        string                    `json:"biome_id,omitempty"`
-	Stage          string                    `json:"stage,omitempty"`
-	Routine        string                    `json:"routine,omitempty"`
-	Shift          string                    `json:"shift,omitempty"`
-	ArmorRating    int32                     `json:"armor_rating,omitempty"`
-	StateStack     []system1.StateStackFrame `json:"state_stack,omitempty"`
-	Inventory      []CachedItem              `json:"inventory,omitempty"`
-	Blackboard     map[string]system1.Fact   `json:"blackboard,omitempty"`
-	Reflections    *ViewerReflections        `json:"reflections,omitempty"`
+	Yaw         float32                   `json:"yaw,omitempty"`
+	Pitch       float32                   `json:"pitch,omitempty"`
+	MaxHealth   float32                   `json:"max_health,omitempty"`
+	Saturation  float32                   `json:"saturation,omitempty"`
+	Stamina     float32                   `json:"stamina,omitempty"`
+	IsSleeping  bool                      `json:"is_sleeping,omitempty"`
+	TimeOfDay   int64                     `json:"time_of_day,omitempty"`
+	Weather     string                    `json:"weather,omitempty"`
+	BiomeID     string                    `json:"biome_id,omitempty"`
+	Stage       string                    `json:"stage,omitempty"`
+	Routine     string                    `json:"routine,omitempty"`
+	Shift       string                    `json:"shift,omitempty"`
+	ArmorRating int32                     `json:"armor_rating,omitempty"`
+	StateStack  []system1.StateStackFrame `json:"state_stack,omitempty"`
+	Inventory   []CachedItem              `json:"inventory,omitempty"`
+	Blackboard  map[string]system1.Fact   `json:"blackboard,omitempty"`
+	Reflections *ViewerReflections        `json:"reflections,omitempty"`
 }
 
 // ViewerReflections represents recent deliberative System 2 reflections, dialogue, and chronicles.
@@ -151,9 +151,10 @@ type AgentRuntime struct {
 	bridgeClient   *bridge.Client
 	connector      StreamConnector
 
-	// Intent sequence numbering and outbound queue
-	sequenceID atomic.Int64
-	slotQueue  *SlotQueue
+	// Intent/batch sequence numbering and outbound queue
+	sequenceID  atomic.Int64
+	nextBatchID atomic.Int64
+	slotQueue   *SlotQueue
 
 	// Diagnostics & Socket
 	socketPath string
@@ -165,6 +166,8 @@ type AgentRuntime struct {
 
 	// Diagnostics Telemetry & Metrics
 	navDestination     *SocketPosition
+	navTargetPOIID     string
+	lastHarvestPos     *civquestv1.BlockPosProto
 	frameLatencyMicros atomic.Int64
 	activeLLMRequests  atomic.Int32
 
@@ -173,6 +176,7 @@ type AgentRuntime struct {
 	status             string
 	latestFrame        *civquestv1.TelemetryFrame
 	lastProcessedSeqID int64
+	lastReceipt        *civquestv1.IntentReceipt
 	isDead             bool
 	deathEvent         *civquestv1.DeathEvent
 	permadeathResult   *PermadeathResult
@@ -217,6 +221,7 @@ type AgentRuntime struct {
 	lastFollowNavTarget  *civquestv1.Vec3
 	lastFollowNavTick    int64
 	dialogueWg           sync.WaitGroup
+	poiWg                sync.WaitGroup
 	tradeActive          atomic.Bool
 	chroniclerActive     atomic.Bool
 	toponymyActive       atomic.Bool
@@ -254,6 +259,18 @@ func NewRuntime(cfg Config) (*AgentRuntime, error) {
 	clanID := cfg.ClanID
 	if clanID == "" && cfg.IdentityConfig != nil {
 		clanID = cfg.IdentityConfig.ClanID
+	}
+
+	// ADR-027: Pioneer Genesis Invariant: every agent initializes in stage BOOTSTRAP as EXPLORER.
+	if cfg.IdentityConfig == nil {
+		cfg.IdentityConfig = xdg.DefaultAgentIdentityConfig(agentID)
+	} else {
+		if strings.TrimSpace(cfg.IdentityConfig.Profession) == "" {
+			cfg.IdentityConfig.Profession = "EXPLORER"
+		}
+		if strings.TrimSpace(cfg.IdentityConfig.Stage) == "" {
+			cfg.IdentityConfig.Stage = "BOOTSTRAP"
+		}
 	}
 
 	r := cfg.Resolver
@@ -385,6 +402,7 @@ func NewRuntime(cfg Config) (*AgentRuntime, error) {
 
 	runtime.loadSafeNodes()
 	runtime.loadTradeValuations()
+	runtime.loadSpatialPOIs()
 
 	return runtime, nil
 }
@@ -463,13 +481,23 @@ func (r *AgentRuntime) IdentityConfig() *xdg.AgentIdentityConfig {
 }
 
 // Profession returns the agent's current primary profession.
+// ADR-027: If no settlement POI is recorded in SpatialIndex, specialized professions
+// fall back to EXPLORER.
 func (r *AgentRuntime) Profession() string {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	if r.identityConfig == nil {
 		return ""
 	}
-	return r.identityConfig.Profession
+	prof := r.identityConfig.Profession
+	if r.system1State != nil {
+		if si := r.system1State.SpatialIndexLocked(); si != nil && !si.HasSettlementPOI(nil, 0) {
+			if system1.IsSpecializedProfession(prof) {
+				return "EXPLORER"
+			}
+		}
+	}
+	return prof
 }
 
 // SecondaryHobby returns the agent's current secondary hobby.
@@ -821,6 +849,27 @@ func (r *AgentRuntime) LastProcessedSequenceID() int64 {
 	return r.lastProcessedSeqID
 }
 
+// LastReceipt returns a defensive copy of the most recent IntentReceipt received from the server.
+func (r *AgentRuntime) LastReceipt() *civquestv1.IntentReceipt {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	if r.lastReceipt == nil {
+		return nil
+	}
+	return proto.Clone(r.lastReceipt).(*civquestv1.IntentReceipt)
+}
+
+// SetLastReceipt stores a defensive copy of the latest IntentReceipt received from the server.
+func (r *AgentRuntime) SetLastReceipt(receipt *civquestv1.IntentReceipt) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if receipt == nil {
+		r.lastReceipt = nil
+		return
+	}
+	r.lastReceipt = proto.Clone(receipt).(*civquestv1.IntentReceipt)
+}
+
 // LatestFrame returns a defensive copy of the most recently received sensory TelemetryFrame.
 func (r *AgentRuntime) LatestFrame() *civquestv1.TelemetryFrame {
 	r.mu.RLock()
@@ -947,7 +996,7 @@ func (r *AgentRuntime) CurrentUtilityScores() *System1UtilityScores {
 			}
 		}
 		scores.Threat = totalThreat
-	} else if frame.LastDamageTaken != nil {
+	} else if frame.LastDamageTaken != nil && !system1.IsPassiveOrEnvironmentalDamage(frame.LastDamageTaken) {
 		scores.Threat = system1.ThreatDefault
 	}
 
@@ -1024,16 +1073,18 @@ func (r *AgentRuntime) QueueIntent(intent *civquestv1.AgentIntent) error {
 	}
 
 	if nav := intent.GetNavigate(); nav != nil && nav.Target != nil {
+		r.prepareNavigateIntent(intent)
+	}
+
+	if ib := intent.GetInteractBlock(); ib != nil && ib.InteractionType == civquestv1.InteractBlockIntent_HARVEST_BREAK && ib.Pos != nil {
 		r.mu.Lock()
-		r.navDestination = &SocketPosition{
-			X: nav.Target.X,
-			Y: nav.Target.Y,
-			Z: nav.Target.Z,
-		}
+		r.lastHarvestPos = &civquestv1.BlockPosProto{X: ib.Pos.X, Y: ib.Pos.Y, Z: ib.Pos.Z}
 		r.mu.Unlock()
 	}
 
 	r.slotQueue.Put(false, intent)
+	r.recordPlacedBlockPOI(intent)
+	r.PruneHarvestedBlockPOI(intent)
 	if r.debugLogger != nil {
 		r.debugLogger.Emit(r.WorldTick(), "INTENT_OUT", intentActionName(intent), map[string]any{
 			"sequence_id": intent.SequenceId,
@@ -1098,16 +1149,18 @@ func (r *AgentRuntime) QueuePriorityIntent(intent *civquestv1.AgentIntent) error
 	}
 
 	if nav := intent.GetNavigate(); nav != nil && nav.Target != nil {
+		r.prepareNavigateIntent(intent)
+	}
+
+	if ib := intent.GetInteractBlock(); ib != nil && ib.InteractionType == civquestv1.InteractBlockIntent_HARVEST_BREAK && ib.Pos != nil {
 		r.mu.Lock()
-		r.navDestination = &SocketPosition{
-			X: nav.Target.X,
-			Y: nav.Target.Y,
-			Z: nav.Target.Z,
-		}
+		r.lastHarvestPos = &civquestv1.BlockPosProto{X: ib.Pos.X, Y: ib.Pos.Y, Z: ib.Pos.Z}
 		r.mu.Unlock()
 	}
 
 	r.slotQueue.Put(true, intent)
+	r.recordPlacedBlockPOI(intent)
+	r.PruneHarvestedBlockPOI(intent)
 	if r.debugLogger != nil {
 		r.debugLogger.Emit(r.WorldTick(), "INTENT_OUT", intentActionName(intent), map[string]any{
 			"sequence_id": intent.SequenceId,
@@ -1183,17 +1236,23 @@ func (r *AgentRuntime) Start(parentCtx context.Context) error {
 		return fmt.Errorf("failed to establish ConnectAgent gRPC stream: %w", err)
 	}
 
-	// 3. Send initial handshake intent so server StreamRegistry registers this agent ID immediately
-	handshake := &civquestv1.AgentIntent{
-		AgentId:    r.agentID,
-		SequenceId: r.sequenceID.Add(1),
+	// 3. Send initial handshake IntentBatch so server StreamRegistry registers this agent ID immediately
+	handshake := &civquestv1.IntentBatch{
+		AgentId: r.agentID,
+		BatchId: r.nextBatchID.Add(1),
+		Intents: []*civquestv1.AgentIntent{
+			{
+				AgentId:    r.agentID,
+				SequenceId: r.sequenceID.Add(1),
+			},
+		},
 	}
 	if err := stream.Send(handshake); err != nil {
 		r.Stop()
 		if errors.Is(ctx.Err(), context.Canceled) {
 			return nil
 		}
-		return fmt.Errorf("failed to send handshake intent: %w", err)
+		return fmt.Errorf("failed to send handshake intent batch: %w", err)
 	}
 
 	r.mu.Lock()
@@ -1269,6 +1328,7 @@ func (r *AgentRuntime) Stop() {
 		r.toponymyActive.Store(false)
 		r.contemplationActive.Store(false)
 		r.dialogueWg.Wait()
+		r.poiWg.Wait()
 
 		// Close dialogue service if assigned
 		if r.dialogueService != nil {
@@ -1282,11 +1342,11 @@ func (r *AgentRuntime) Stop() {
 	})
 }
 
-// sendLoop reads queued AgentIntents from SlotQueue and writes them to the gRPC stream.
+// sendLoop reads queued AgentIntents from SlotQueue, wraps them in an IntentBatch, and writes them to the gRPC stream.
 // Coalesced slot intents (attacks, navigation, items, crafting, interactions) are dispatched
 // immediately with priority ordering. Ordered PlaceBlockIntents bypass the slot queue and are
 // dispatched through a 4-tick rate limiter to preserve spatial construction sequencing.
-func (r *AgentRuntime) sendLoop(ctx context.Context, cancel context.CancelFunc, stream civquestv1.CivQuestBridgeService_ConnectAgentClient, errCh chan<- error) {
+func (r *AgentRuntime) sendLoop(ctx context.Context, cancel context.CancelFunc, stream grpc.BidiStreamingClient[civquestv1.IntentBatch, civquestv1.TelemetryFrame], errCh chan<- error) {
 	var sendErr error
 	defer func() {
 		errCh <- sendErr
@@ -1301,15 +1361,10 @@ func (r *AgentRuntime) sendLoop(ctx context.Context, cancel context.CancelFunc, 
 	const placeBlockRateLimitDuration = 200 * time.Millisecond
 
 	dispatch := func() bool {
-		// 1. Drain and immediately dispatch all coalesced slot intents (priority-first)
+		// 1. Drain all coalesced slot intents (priority-first)
 		slotIntents := r.slotQueue.DrainSlots()
-		for _, in := range slotIntents {
-			if err := stream.Send(in); err != nil {
-				sendErr = err
-				cancel()
-				return false
-			}
-		}
+		intents := make([]*civquestv1.AgentIntent, 0, len(slotIntents)+1)
+		intents = append(intents, slotIntents...)
 
 		// 2. Dispatch ordered PlaceBlockIntents through the 4-tick rate limiter
 		if r.slotQueue.PlaceBlockCount() > 0 {
@@ -1330,15 +1385,28 @@ func (r *AgentRuntime) sendLoop(ctx context.Context, cancel context.CancelFunc, 
 
 			if canDispatch {
 				if pbIntent := r.slotQueue.PopPlaceBlock(); pbIntent != nil {
-					if err := stream.Send(pbIntent); err != nil {
-						sendErr = err
-						cancel()
-						return false
-					}
+					intents = append(intents, pbIntent)
 					lastPlaceBlockTick = curTick
 					lastPlaceBlockTime = now
 				}
 			}
+		}
+
+		flush := r.slotQueue.ConsumeFlushPeriphery()
+		if len(intents) == 0 && !flush {
+			return true
+		}
+
+		batch := &civquestv1.IntentBatch{
+			AgentId:        r.agentID,
+			BatchId:        r.nextBatchID.Add(1),
+			FlushPeriphery: flush,
+			Intents:        intents,
+		}
+		if err := stream.Send(batch); err != nil {
+			sendErr = err
+			cancel()
+			return false
 		}
 		return true
 	}
@@ -1364,7 +1432,7 @@ func (r *AgentRuntime) sendLoop(ctx context.Context, cancel context.CancelFunc, 
 }
 
 // recvLoop processes incoming 5 Hz TelemetryFrames from the server.
-func (r *AgentRuntime) recvLoop(ctx context.Context, stream civquestv1.CivQuestBridgeService_ConnectAgentClient) error {
+func (r *AgentRuntime) recvLoop(ctx context.Context, stream grpc.BidiStreamingClient[civquestv1.IntentBatch, civquestv1.TelemetryFrame]) error {
 	for {
 		select {
 		case <-ctx.Done():
@@ -1380,6 +1448,13 @@ func (r *AgentRuntime) recvLoop(ctx context.Context, stream civquestv1.CivQuestB
 			return err
 		}
 		r.frameLatencyMicros.Store(time.Since(recvStart).Microseconds())
+
+		if receipt := frame.GetReceipt(); receipt != nil {
+			r.SetLastReceipt(receipt)
+			if r.system1State != nil {
+				r.system1State.IngestReceipt(receipt)
+			}
+		}
 
 		r.processFrame(frame)
 
@@ -1415,8 +1490,12 @@ func (r *AgentRuntime) HandleTelemetryFrame(frame *civquestv1.TelemetryFrame) {
 	r.mu.Lock()
 	r.latestFrame = frame
 	r.lastProcessedSeqID = frame.LastProcessedSequenceId
+	if receipt := frame.GetReceipt(); receipt != nil {
+		r.lastReceipt = proto.Clone(receipt).(*civquestv1.IntentReceipt)
+	}
 	if frame.Status != nil && frame.Status.NavigationState == civquestv1.NavigationState_NAVIGATION_STATE_ARRIVED {
 		r.navDestination = nil
+		r.navTargetPOIID = ""
 	}
 
 	if frame.DeathEvent != nil {
@@ -1426,6 +1505,10 @@ func (r *AgentRuntime) HandleTelemetryFrame(frame *civquestv1.TelemetryFrame) {
 		deathEv = frame.DeathEvent
 	}
 	r.mu.Unlock()
+
+	if frame.Status != nil && frame.Status.NavigationState == civquestv1.NavigationState_NAVIGATION_STATE_STUCK {
+		r.handleNavigationStuck()
+	}
 
 	// If a terminal death event occurred, run permadeath teardown immediately
 	if deathEv != nil {
@@ -1444,6 +1527,7 @@ func (r *AgentRuntime) HandleTelemetryFrame(frame *civquestv1.TelemetryFrame) {
 		r.toponymyActive.Store(false)
 		r.contemplationActive.Store(false)
 		r.dialogueWg.Wait()
+		r.poiWg.Wait()
 
 		// 3. Stop socket server and close dialogue service to prevent IPC queries
 		r.stopSocketServer()
@@ -1512,6 +1596,43 @@ func (r *AgentRuntime) HandleTelemetryFrame(frame *civquestv1.TelemetryFrame) {
 
 	// Evaluate System 2 companion tracking and sync companion state (<1 ms)
 	r.evaluateCompanion(frame)
+
+	// Ingest periphery execution receipt into System 1 before reflexes evaluate
+	if receipt := frame.GetReceipt(); receipt != nil {
+		if r.system1State != nil {
+			r.system1State.IngestReceipt(receipt)
+		}
+		if receipt.Status == civquestv1.IntentReceipt_RECEIPT_STATUS_COMPLETED {
+			r.mu.Lock()
+			hpos := r.lastHarvestPos
+			r.lastHarvestPos = nil
+			r.mu.Unlock()
+			if hpos != nil {
+				r.PruneHarvestedBlockPos(hpos.X, hpos.Y, hpos.Z)
+			}
+		}
+	}
+
+	// Continuously ingest InterestingBlocks into System 1 SpatialIndex (ADR-022)
+	if r.system1State != nil {
+		if si := r.system1State.SpatialIndex(); si != nil {
+			currentY := 64.0
+			if frame.Status != nil && frame.Status.Position != nil {
+				currentY = frame.Status.Position.Y
+			}
+			if updatedPOIs := si.IngestSensoryBlocks(frame, currentY); len(updatedPOIs) > 0 {
+				r.persistPOIsAsync(updatedPOIs)
+			}
+			if frame.Status != nil && frame.Status.Position != nil {
+				if prunedIDs := si.VerifyCloseRangePOIs(frame.Status.Position, frame.InterestingBlocks, 3.5); len(prunedIDs) > 0 {
+					r.invalidatePOIsAsync(prunedIDs)
+				}
+			}
+		}
+	}
+
+	// Update habit trails, record breadcrumbs, advance active corridors, and consolidate arrived trails (ADR-023)
+	r.updateHabitTrails(frame)
 
 	// Evaluate deterministic System 1 survival reflexes, daily routine, biological needs, and paving (<5 ms)
 	r.evaluateSystem1Reflexes(frame)
@@ -2223,7 +2344,14 @@ func (r *AgentRuntime) dispatchAgrarian(frame *civquestv1.TelemetryFrame) {
 	}
 
 	// 1. Emergent Specialization evaluation
-	if identity != nil && agrarian.IsTransitionableProfession(identity.Profession) {
+	// ADR-027: Specialized career transitions require a consecrated Settlement POI in SpatialIndex
+	hasSettlement := false
+	if r.system1State != nil {
+		if si := r.system1State.SpatialIndexLocked(); si != nil {
+			hasSettlement = si.HasSettlementPOI(nil, 0)
+		}
+	}
+	if hasSettlement && identity != nil && agrarian.IsTransitionableProfession(identity.Profession) {
 		specCtx := agrarian.SpecializationContext{
 			AgentID:           r.agentID,
 			CurrentProfession: identity.Profession,
@@ -2739,6 +2867,551 @@ func (r *AgentRuntime) loadTradeValuations() {
 	r.mu.Unlock()
 }
 
+// loadSpatialPOIs pre-loads active Points of Interest from map_graph.db into System 1's SpatialIndex.
+func (r *AgentRuntime) loadSpatialPOIs() {
+	if r.agentDB == nil || r.system1State == nil {
+		return
+	}
+	si := r.system1State.SpatialIndex()
+	if si == nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+	pois, err := r.agentDB.ListPOIs(ctx, "", true)
+	if err == nil && len(pois) > 0 {
+		si.LoadFromPOIs(pois)
+	}
+	corridors, err := r.agentDB.ListTrailCorridors(ctx, "", "")
+	if err == nil && len(corridors) > 0 {
+		si.LoadCorridors(corridors)
+	}
+}
+
+// persistPOIsAsync asynchronously upserts newly discovered or updated POIs to map_graph.db.
+func (r *AgentRuntime) persistPOIsAsync(pois []db.AgentPOI) {
+	if r.agentDB == nil || len(pois) == 0 {
+		return
+	}
+	r.mu.RLock()
+	if r.isDead {
+		r.mu.RUnlock()
+		return
+	}
+	r.mu.RUnlock()
+
+	select {
+	case <-r.done:
+		return
+	default:
+	}
+
+	copied := make([]db.AgentPOI, len(pois))
+	copy(copied, pois)
+	agentDB := r.agentDB
+
+	r.poiWg.Add(1)
+	go func() {
+		defer r.poiWg.Done()
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		for _, p := range copied {
+			_ = agentDB.AddOrUpdatePOI(ctx, p)
+		}
+	}()
+}
+
+// recordPlacedBlockPOI immediately registers placed POI blocks (workstations, beds, containers, etc.)
+// into System 1's SpatialIndex upon outbound PLACE_BLOCK intent dispatch per ADR-022.
+func (r *AgentRuntime) recordPlacedBlockPOI(intent *civquestv1.AgentIntent) {
+	if intent == nil || r.system1State == nil {
+		return
+	}
+	ib := intent.GetInteractBlock()
+	if ib == nil || ib.InteractionType != civquestv1.InteractBlockIntent_PLACE_BLOCK || ib.Pos == nil {
+		return
+	}
+	cat, isPOI := system1.CategorizeBlockID(ib.BlockOrItemId)
+	if !isPOI {
+		return
+	}
+	si := r.system1State.SpatialIndex()
+	if si == nil {
+		return
+	}
+
+	selfPos := r.Position()
+	selfY := float64(ib.Pos.Y)
+	if selfPos != nil {
+		selfY = selfPos.Y
+	}
+	ax, ay, az := system1.ComputePOIAccessPos(ib.Pos, selfPos, nil)
+	py := float64(ib.Pos.Y)
+	safety := 1.0
+	if cat == system1.POICategoryHazard {
+		safety = 0.0
+	}
+	tick := r.WorldTick()
+	poi := db.AgentPOI{
+		POIID:            system1.FormatPOIID(cat, ib.Pos.X, ib.Pos.Y, ib.Pos.Z),
+		Category:         cat,
+		BlockID:          ib.BlockOrItemId,
+		X:                float64(ib.Pos.X) + 0.5,
+		Y:                py,
+		Z:                float64(ib.Pos.Z) + 0.5,
+		AccessX:          ax,
+		AccessY:          ay,
+		AccessZ:          az,
+		ElevationLayer:   system1.ClassifyElevationLayer(py, selfY),
+		SafetyScore:      safety,
+		DiscoveredTick:   tick,
+		LastVerifiedTick: tick,
+		Reliability:      1.0,
+		IsActive:         true,
+	}
+	si.UpsertPOI(poi)
+	r.persistPOIsAsync([]db.AgentPOI{poi})
+}
+
+// PruneHarvestedBlockPOI immediately removes harvested or destroyed POI blocks from
+// System 1's SpatialIndex upon outbound HARVEST_BREAK intent dispatch per ADR-022.
+func (r *AgentRuntime) PruneHarvestedBlockPOI(intent *civquestv1.AgentIntent) {
+	if intent == nil || r.system1State == nil {
+		return
+	}
+	ib := intent.GetInteractBlock()
+	if ib == nil || ib.InteractionType != civquestv1.InteractBlockIntent_HARVEST_BREAK || ib.Pos == nil {
+		return
+	}
+	r.PruneHarvestedBlockPos(ib.Pos.X, ib.Pos.Y, ib.Pos.Z)
+}
+
+// PruneHarvestedBlockPos removes any active POIs at the given block coordinates from
+// SpatialIndex and asynchronously marks them invalid in AgentDB.
+func (r *AgentRuntime) PruneHarvestedBlockPos(x, y, z int32) {
+	if r.system1State == nil {
+		return
+	}
+	si := r.system1State.SpatialIndex()
+	if si == nil {
+		return
+	}
+
+	pois := si.FindPOIsAtBlockPos(x, y, z)
+	if len(pois) == 0 {
+		return
+	}
+
+	for _, p := range pois {
+		si.RemovePOI(p.POIID)
+		r.invalidatePOIAsync(p.POIID)
+	}
+}
+
+// SetNavTargetPOIID explicitly sets the tracked POI target ID for navigation.
+func (r *AgentRuntime) SetNavTargetPOIID(poiID string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.navTargetPOIID = poiID
+}
+
+// NavTargetPOIID returns the currently tracked POI target ID.
+func (r *AgentRuntime) NavTargetPOIID() string {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.navTargetPOIID
+}
+
+// handleNavigationStuck handles NAVIGATION_STATE_STUCK telemetry while pathing toward a POI target.
+func (r *AgentRuntime) handleNavigationStuck() {
+	r.mu.Lock()
+	poiID := r.navTargetPOIID
+	var dest *SocketPosition
+	if r.navDestination != nil {
+		cp := *r.navDestination
+		dest = &cp
+	}
+	r.navTargetPOIID = ""
+	r.navDestination = nil
+	r.mu.Unlock()
+
+	if r.system1State == nil {
+		return
+	}
+	si := r.system1State.SpatialIndex()
+	if si == nil {
+		return
+	}
+
+	if poiID == "" && dest != nil {
+		if poi := si.FindPOIByTargetPos(&civquestv1.Vec3{X: dest.X, Y: dest.Y, Z: dest.Z}, 1.5); poi != nil {
+			poiID = poi.POIID
+		}
+	}
+
+	if poiID == "" {
+		return
+	}
+
+	r.HandleNavigationStuckForPOI(poiID)
+}
+
+// HandleNavigationStuckForPOI reduces a POI's reliability by 0.25 in SpatialIndex and AgentDB.
+// If reliability drops below threshold (<= 0.1), the POI is removed from SpatialIndex and invalidated in AgentDB.
+func (r *AgentRuntime) HandleNavigationStuckForPOI(poiID string) {
+	if poiID == "" || r.system1State == nil {
+		return
+	}
+	si := r.system1State.SpatialIndex()
+	if si == nil {
+		return
+	}
+
+	newRel, found := si.DecayPOIReliability(poiID, 0.25)
+	if !found {
+		return
+	}
+
+	shouldInvalidate := (newRel <= 0.1)
+	if shouldInvalidate {
+		si.RemovePOI(poiID)
+	}
+
+	r.decayAndOptionallyInvalidatePOIAsync(poiID, 0.25, shouldInvalidate)
+}
+
+// invalidatePOIAsync asynchronously marks a single POI as inactive in AgentDB.
+func (r *AgentRuntime) invalidatePOIAsync(poiID string) {
+	if poiID == "" {
+		return
+	}
+	r.invalidatePOIsAsync([]string{poiID})
+}
+
+// invalidatePOIsAsync asynchronously marks multiple POIs as inactive in AgentDB.
+func (r *AgentRuntime) invalidatePOIsAsync(poiIDs []string) {
+	if r.agentDB == nil || len(poiIDs) == 0 {
+		return
+	}
+	r.mu.RLock()
+	if r.isDead {
+		r.mu.RUnlock()
+		return
+	}
+	r.mu.RUnlock()
+
+	select {
+	case <-r.done:
+		return
+	default:
+	}
+
+	ids := make([]string, len(poiIDs))
+	copy(ids, poiIDs)
+	agentDB := r.agentDB
+
+	r.poiWg.Add(1)
+	go func() {
+		defer r.poiWg.Done()
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		for _, id := range ids {
+			_ = agentDB.InvalidatePOI(ctx, id)
+		}
+	}()
+}
+
+// decayPOIReliabilityAsync asynchronously decays a POI's reliability in AgentDB.
+func (r *AgentRuntime) decayPOIReliabilityAsync(poiID string, delta float64) {
+	r.decayAndOptionallyInvalidatePOIAsync(poiID, delta, false)
+}
+
+// decayAndOptionallyInvalidatePOIAsync asynchronously decays a POI's reliability in AgentDB
+// and marks it inactive if invalidate is true.
+func (r *AgentRuntime) decayAndOptionallyInvalidatePOIAsync(poiID string, delta float64, invalidate bool) {
+	if r.agentDB == nil || poiID == "" {
+		return
+	}
+	r.mu.RLock()
+	if r.isDead {
+		r.mu.RUnlock()
+		return
+	}
+	r.mu.RUnlock()
+
+	select {
+	case <-r.done:
+		return
+	default:
+	}
+
+	agentDB := r.agentDB
+	r.poiWg.Add(1)
+	go func() {
+		defer r.poiWg.Done()
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		_ = agentDB.DecayPOIReliability(ctx, poiID, delta)
+		if invalidate {
+			_ = agentDB.InvalidatePOI(ctx, poiID)
+		}
+	}()
+}
+
+// AwaitPOIPersistence waits for background POI persistence and invalidation goroutines to complete.
+func (r *AgentRuntime) AwaitPOIPersistence() {
+	r.poiWg.Wait()
+}
+
+// persistTrailCorridorAsync asynchronously upserts a learned trail corridor to map_graph.db (ADR-023).
+func (r *AgentRuntime) persistTrailCorridorAsync(corridor db.TrailCorridor) {
+	if r.agentDB == nil {
+		return
+	}
+	r.mu.RLock()
+	if r.isDead {
+		r.mu.RUnlock()
+		return
+	}
+	r.mu.RUnlock()
+
+	select {
+	case <-r.done:
+		return
+	default:
+	}
+
+	agentDB := r.agentDB
+	c := corridor
+
+	r.poiWg.Add(1)
+	go func() {
+		defer r.poiWg.Done()
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		_ = agentDB.AddTrailCorridor(ctx, c)
+	}()
+}
+
+// HabitTrailTracker returns the agent's in-memory HabitTrailTracker.
+func (r *AgentRuntime) HabitTrailTracker() *system1.HabitTrailTracker {
+	if r.system1State == nil {
+		return nil
+	}
+	return r.system1State.HabitTrailTracker()
+}
+
+// NavigateViaCorridor attempts to initiate multi-waypoint navigation along a known
+// TrailCorridor to destPOIID. Returns true if a corridor route was found and started.
+func (r *AgentRuntime) NavigateViaCorridor(destPOIID string, destPos *civquestv1.Vec3) bool {
+	if destPOIID == "" || r.system1State == nil {
+		return false
+	}
+	si := r.system1State.SpatialIndex()
+	tracker := r.system1State.HabitTrailTracker()
+	if si == nil || tracker == nil {
+		return false
+	}
+
+	destPOI, ok := si.GetPOI(destPOIID)
+	if !ok || destPOI == nil {
+		return false
+	}
+
+	targetPos := destPos
+	if targetPos == nil {
+		targetPos = &civquestv1.Vec3{X: destPOI.X, Y: destPOI.Y, Z: destPOI.Z}
+	}
+
+	originID := tracker.CurrentOriginPOIID()
+	agentPos := r.Position()
+	if originID == "" || originID == destPOIID {
+		if agentPos != nil {
+			if nearPOI := si.FindNearestPOI(agentPos, "", "", 8.0, ""); nearPOI != nil && nearPOI.POIID != destPOIID {
+				originID = nearPOI.POIID
+				tracker.SetOriginPOI(nearPOI.POIID, &civquestv1.Vec3{X: nearPOI.X, Y: nearPOI.Y, Z: nearPOI.Z})
+			}
+		}
+	}
+
+	if originID == "" || originID == destPOIID {
+		return false
+	}
+
+	corridor, ok := si.GetCorridor(originID, destPOIID)
+	if !ok || corridor == nil || corridor.WaypointsJSON == "" || corridor.WaypointsJSON == "[]" {
+		return false
+	}
+
+	tracker.SetDestinationPOI(destPOIID, targetPos)
+	firstIntent, err := tracker.StartCorridorNavigation(r.agentID, corridor, targetPos)
+	if err != nil || firstIntent == nil {
+		return false
+	}
+
+	return r.QueueIntent(firstIntent) == nil
+}
+
+// prepareNavigateIntent inspects outbound NavigateIntents, resolves target POIs,
+// and initiates corridor navigation along a known TrailCorridor if navigating > 16m away (ADR-023).
+func (r *AgentRuntime) prepareNavigateIntent(intent *civquestv1.AgentIntent) {
+	nav := intent.GetNavigate()
+	if nav == nil || nav.Target == nil {
+		return
+	}
+
+	r.mu.Lock()
+	r.navDestination = &SocketPosition{
+		X: nav.Target.X,
+		Y: nav.Target.Y,
+		Z: nav.Target.Z,
+	}
+
+	var si *system1.SpatialIndex
+	var tracker *system1.HabitTrailTracker
+	if r.system1State != nil {
+		si = r.system1State.SpatialIndex()
+		tracker = r.system1State.HabitTrailTracker()
+	}
+
+	var destPOI *db.AgentPOI
+	if si != nil {
+		destPOI = si.FindPOIByTargetPos(nav.Target, 1.5)
+		if destPOI != nil {
+			r.navTargetPOIID = destPOI.POIID
+		} else {
+			r.navTargetPOIID = ""
+		}
+	}
+	r.mu.Unlock()
+
+	if tracker == nil || si == nil || destPOI == nil {
+		return
+	}
+
+	destPos := &civquestv1.Vec3{X: destPOI.X, Y: destPOI.Y, Z: destPOI.Z}
+	tracker.SetDestinationPOI(destPOI.POIID, destPos)
+
+	if tracker.IsNavigatingCorridor() || tracker.InFinalLeg() {
+		return
+	}
+
+	agentPos := r.Position()
+	if agentPos == nil {
+		return
+	}
+
+	dist := system1.Distance3D(agentPos, nav.Target)
+	if dist <= system1.MinCorridorDistance {
+		return
+	}
+
+	originPOIID := tracker.CurrentOriginPOIID()
+	if originPOIID == "" || originPOIID == destPOI.POIID {
+		if nearPOI := si.FindNearestPOI(agentPos, "", "", 8.0, ""); nearPOI != nil && nearPOI.POIID != destPOI.POIID {
+			originPOIID = nearPOI.POIID
+			tracker.SetOriginPOI(nearPOI.POIID, &civquestv1.Vec3{X: nearPOI.X, Y: nearPOI.Y, Z: nearPOI.Z})
+		}
+	}
+
+	if originPOIID == "" || originPOIID == destPOI.POIID {
+		return
+	}
+
+	corridor, ok := si.GetCorridor(originPOIID, destPOI.POIID)
+	if !ok || corridor == nil || corridor.WaypointsJSON == "" || corridor.WaypointsJSON == "[]" {
+		return
+	}
+
+	firstIntent, err := tracker.StartCorridorNavigation(r.agentID, corridor, nav.Target)
+	if err == nil && firstIntent != nil && firstIntent.GetNavigate() != nil && firstIntent.GetNavigate().Target != nil {
+		firstTarget := firstIntent.GetNavigate().Target
+		nav.Target = &civquestv1.Vec3{
+			X: firstTarget.X,
+			Y: firstTarget.Y,
+			Z: firstTarget.Z,
+		}
+		r.mu.Lock()
+		r.navDestination = &SocketPosition{
+			X: firstTarget.X,
+			Y: firstTarget.Y,
+			Z: firstTarget.Z,
+		}
+		r.mu.Unlock()
+	}
+}
+
+// updateHabitTrails evaluates breadcrumb recording, active corridor advancement,
+// and trail corridor consolidation upon destination POI arrival (ADR-023).
+func (r *AgentRuntime) updateHabitTrails(frame *civquestv1.TelemetryFrame) {
+	if frame == nil || frame.Status == nil || frame.Status.Position == nil || r.system1State == nil {
+		return
+	}
+	tracker := r.system1State.HabitTrailTracker()
+	si := r.system1State.SpatialIndex()
+	if tracker == nil || si == nil {
+		return
+	}
+
+	agentPos := frame.Status.Position
+	navState := frame.Status.NavigationState
+
+	// 1. If stuck, clear breadcrumbs and reset active corridor navigation
+	if navState == civquestv1.NavigationState_NAVIGATION_STATE_STUCK {
+		tracker.ClearBreadcrumbs()
+		tracker.ResetNavigation()
+		return
+	}
+
+	// 2. Track origin POI: when agent is near a confirmed POI (<= 4m) and not actively in transit
+	if tracker.CurrentDestPOIID() == "" && !tracker.IsNavigatingCorridor() {
+		if nearPOI := si.FindNearestPOI(agentPos, "", "", 4.0, ""); nearPOI != nil {
+			tracker.SetOriginPOI(nearPOI.POIID, &civquestv1.Vec3{X: nearPOI.X, Y: nearPOI.Y, Z: nearPOI.Z})
+		}
+	}
+
+	// 3. Step through active corridor waypoints if navigating a corridor
+	if tracker.IsNavigatingCorridor() {
+		if nextIntent, advanced := tracker.UpdateNavigation(agentPos, navState); advanced && nextIntent != nil {
+			if nav := nextIntent.GetNavigate(); nav != nil && nav.Target != nil {
+				r.mu.Lock()
+				r.navDestination = &SocketPosition{
+					X: nav.Target.X,
+					Y: nav.Target.Y,
+					Z: nav.Target.Z,
+				}
+				r.mu.Unlock()
+			}
+			_ = r.QueueIntent(nextIntent)
+		}
+	}
+
+	// 4. Sample breadcrumb position while moving towards destination POI
+	if tracker.CurrentDestPOIID() != "" {
+		tracker.SampleBreadcrumb(agentPos)
+	}
+
+	// 5. On arrival at destination POI: consolidate corridor and persist
+	isArrived := navState == civquestv1.NavigationState_NAVIGATION_STATE_ARRIVED
+	if !isArrived && tracker.CurrentDestPos() != nil && system1.Distance3D(agentPos, tracker.CurrentDestPos()) <= 2.0 {
+		isArrived = true
+	}
+
+	if isArrived && tracker.CurrentDestPOIID() != "" {
+		if corridor, ok := tracker.ConsolidateCorridor(si, system1.DefaultRDPEpsilon); ok && corridor != nil {
+			r.persistTrailCorridorAsync(*corridor)
+		}
+		// Arrived destination becomes the new origin for subsequent legs
+		destID := tracker.CurrentDestPOIID()
+		destPos := tracker.CurrentDestPos()
+		if destID != "" && destPos != nil {
+			tracker.SetOriginPOI(destID, destPos)
+		}
+		tracker.ClearDestination()
+		tracker.ClearBreadcrumbs()
+	}
+}
+
 // buildDialogueVitals constructs comprehensive sensory, temporal, and threat context for System 2 prompts.
 func (r *AgentRuntime) buildDialogueVitals(frame *civquestv1.TelemetryFrame) *system2.DialogueVitals {
 	if frame == nil || frame.Status == nil {
@@ -3086,7 +3759,7 @@ func (r *AgentRuntime) evaluateCompanion(frame *civquestv1.TelemetryFrame) {
 	_, _, _ = compSvc.RecordSharedTravel(ctx, pUUID, pName, pPos, agentPos, frame.WorldTick)
 
 	// 4. Combat aid: if agent took damage near the player, record combat aid
-	if frame.LastDamageTaken != nil {
+	if frame.LastDamageTaken != nil && !system1.IsPassiveOrEnvironmentalDamage(frame.LastDamageTaken) {
 		dx := pPos.X - agentPos.X
 		dy := pPos.Y - agentPos.Y
 		dz := pPos.Z - agentPos.Z
@@ -3209,6 +3882,11 @@ func (r *AgentRuntime) evaluateSystem1Reflexes(frame *civquestv1.TelemetryFrame)
 		})
 	}
 
+	// Mark periphery flush before queuing intents so flush + new routine intents dispatch in the same IntentBatch
+	if result.FlushPeriphery && r.slotQueue != nil {
+		r.slotQueue.MarkFlushPeriphery()
+	}
+
 	// Dispatch emitted intents
 	for _, fsmIntent := range result.Intents {
 		if fsmIntent.Intent == nil {
@@ -3257,6 +3935,10 @@ func (r *AgentRuntime) evaluateSystem1Reflexes(frame *civquestv1.TelemetryFrame)
 		}
 	}
 
+	if result.FlushPeriphery && r.slotQueue != nil {
+		r.slotQueue.NotifyIfFlushPending()
+	}
+
 	// Reset flee target if not in emergency
 	if result.State != system1.StateEmergency {
 		r.mu.Lock()
@@ -3288,7 +3970,7 @@ func (r *AgentRuntime) evaluateSystem1Reflexes(frame *civquestv1.TelemetryFrame)
 			targetDesc = strings.Join(hostileList, ", ")
 		} else if frame.LastDamageTaken != nil && frame.LastDamageTaken.GetAttackerName() != "" {
 			targetDesc = frame.LastDamageTaken.GetAttackerName()
-		} else if frame.LastDamageTaken != nil {
+		} else if frame.LastDamageTaken != nil && !system1.IsPassiveOrEnvironmentalDamage(frame.LastDamageTaken) {
 			targetDesc = frame.LastDamageTaken.GetSourceType().String()
 		}
 		summary := fmt.Sprintf("At tick %d during %s, %s %s (HP: %.1f/%.1f).",

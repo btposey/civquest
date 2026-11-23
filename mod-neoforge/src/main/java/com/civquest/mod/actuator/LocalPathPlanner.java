@@ -22,6 +22,7 @@ public final class LocalPathPlanner {
     public static final int DEFAULT_RADIUS = 7; // 15x15 grid
     public static final int MAX_STEP_UP = 1;
     public static final int MAX_DROP = 3;
+    public static final int MAX_VERTICAL_RANGE = 32;
     private static final int ENCLOSED_MAX_CELLS = 60;
 
     /** World access abstraction so the planner can be unit tested without a Level. */
@@ -29,6 +30,14 @@ public final class LocalPathPlanner {
         boolean solid(int x, int y, int z);
 
         boolean hazard(int x, int y, int z);
+
+        default boolean climbable(int x, int y, int z) {
+            return false;
+        }
+
+        default boolean water(int x, int y, int z) {
+            return false;
+        }
     }
 
     /** A standing cell: feet block coordinates. */
@@ -81,7 +90,7 @@ public final class LocalPathPlanner {
             }
             return y + 1;
         }
-        // Level or drop: walk down the column until we find floor.
+        // Level, drop, climbable shaft entry, or water swim: walk down the column until we find floor, climbable, or water surface.
         for (int ny = y; ny >= y - MAX_DROP; ny--) {
             if (w.solid(nx, ny, nz) || w.solid(nx, ny + 1, nz)) {
                 return Integer.MIN_VALUE;
@@ -89,27 +98,63 @@ public final class LocalPathPlanner {
             if (w.hazard(nx, ny, nz) || w.hazard(nx, ny - 1, nz)) {
                 return Integer.MIN_VALUE;
             }
+            if (w.climbable(nx, ny, nz) || w.climbable(nx, ny - 1, nz)) {
+                return ny;
+            }
             if (w.solid(nx, ny - 1, nz)) {
+                return ny;
+            }
+            if (w.water(nx, ny, nz) && ((ny == y && w.water(x, y, z)) || (!w.water(nx, ny + 1, nz) && !w.solid(nx, ny + 1, nz)))) {
                 return ny;
             }
         }
         return Integer.MIN_VALUE;
     }
 
+    /** Returns true when (x, y, z) lies in or atop a water column deeper than 2 blocks. */
+    static boolean isDeepWater(World w, int x, int y, int z) {
+        if (!w.water(x, y, z) && !w.water(x, y - 1, z)) {
+            return false;
+        }
+        int wy = w.water(x, y, z) ? y : (y - 1);
+        int topY = wy;
+        if (w.water(x, wy + 1, z)) {
+            if (w.water(x, wy + 2, z)) {
+                return true;
+            }
+            topY = wy + 1;
+        }
+        return !w.solid(x, topY - 1, z) && !w.solid(x, topY - 2, z);
+    }
+
     /**
      * @param blocked cells (feet-level keys from {@link #cellKey}) temporarily treated as impassable
      */
     public static Result plan(World w, Cell start, double targetX, double targetZ, int radius, LongPredicate blocked) {
+        return plan(w, start, targetX, Double.NaN, targetZ, radius, blocked);
+    }
+
+    /**
+     * Plans a 3D voxel path to {@code (targetX, targetY, targetZ)}, supporting climbable vertical shafts.
+     *
+     * @param blocked cells (feet-level keys from {@link #cellKey}) temporarily treated as impassable
+     */
+    public static Result plan(World w, Cell start, double targetX, double targetY, double targetZ, int radius, LongPredicate blocked) {
         int tx = (int) Math.floor(targetX);
         int tz = (int) Math.floor(targetZ);
+        boolean hasTargetY = Double.isFinite(targetY);
+        int ty = hasTargetY ? (int) Math.floor(targetY) : start.y;
+        boolean targetInWater = w.water(tx, ty, tz) || (hasTargetY && w.water(tx, ty - 1, tz));
         Map<Long, Node> best = new HashMap<>();
         PriorityQueue<Node> open = new PriorityQueue<>((a, b) -> Double.compare(a.f, b.f));
-        Node s = new Node(start, null, 0.0, heuristic(start.x, start.z, tx, tz));
+        Node s = new Node(start, null, 0.0, heuristic(start.x, start.y, start.z, tx, ty, tz, hasTargetY));
         best.put(key(start.x, start.y, start.z), s);
         open.add(s);
 
         Node closest = s;
-        double closestDist = distSq(start.x, start.z, tx, tz);
+        double closestDist = hasTargetY
+                ? distSq3D(start.x, start.y, start.z, tx, ty, tz)
+                : distSq(start.x, start.z, tx, tz);
         boolean reached = false;
         boolean touchedBorder = false;
         int explored = 0;
@@ -122,12 +167,16 @@ public final class LocalPathPlanner {
                 continue;
             }
             explored++;
-            double d = distSq(cur.cell.x, cur.cell.z, tx, tz);
+            double d = hasTargetY
+                    ? distSq3D(cur.cell.x, cur.cell.y, cur.cell.z, tx, ty, tz)
+                    : distSq(cur.cell.x, cur.cell.z, tx, tz);
             if (d < closestDist - 1e-9 || (Math.abs(d - closestDist) < 1e-9 && cur.g < closest.g)) {
                 closest = cur;
                 closestDist = d;
             }
-            if (cur.cell.x == tx && cur.cell.z == tz && Math.abs(cur.cell.y - start.y) <= 3 + MAX_DROP) {
+            boolean reachedHere = cur.cell.x == tx && cur.cell.z == tz
+                    && (hasTargetY ? Math.abs(cur.cell.y - ty) <= 1 : Math.abs(cur.cell.y - start.y) <= 3 + MAX_DROP);
+            if (reachedHere) {
                 reached = true;
                 closest = cur;
                 break;
@@ -136,27 +185,52 @@ public final class LocalPathPlanner {
                 touchedBorder = true;
                 continue;
             }
-            for (int[] dir : DIRS) {
-                int ny = moveTarget(w, cur.cell.x, cur.cell.y, cur.cell.z, dir[0], dir[1]);
-                if (ny == Integer.MIN_VALUE) {
-                    continue;
+            int cx = cur.cell.x;
+            int cy = cur.cell.y;
+            int cz = cur.cell.z;
+            boolean submerged = w.water(cx, cy, cz) && w.water(cx, cy + 1, cz);
+            boolean expandHorizontal = !submerged
+                    || Math.abs(cy - start.y) <= 1
+                    || (hasTargetY && Math.abs(cy - ty) <= 1);
+            if (expandHorizontal) {
+                for (int[] dir : DIRS) {
+                    int ny = moveTarget(w, cx, cy, cz, dir[0], dir[1]);
+                    if (ny == Integer.MIN_VALUE) {
+                        continue;
+                    }
+                    int nx = cx + dir[0];
+                    int nz = cz + dir[1];
+                    double stepCost = 1.0 + (ny != cy ? 0.5 : 0.0);
+                    if (w.water(nx, ny, nz) || w.water(nx, ny - 1, nz)) {
+                        if (isDeepWater(w, nx, ny, nz)) {
+                            stepCost += targetInWater ? 1.0 : 12.0;
+                        } else {
+                            stepCost += 0.5;
+                        }
+                    }
+                    relaxNeighbor(nx, ny, nz, stepCost, cur, tx, ty, tz, hasTargetY, blocked, closed, best, open);
                 }
-                int nx = cur.cell.x + dir[0];
-                int nz = cur.cell.z + dir[1];
-                if (blocked != null && blocked.test(cellKey(nx, ny, nz))) {
-                    continue;
-                }
-                long nk = key(nx, ny, nz);
-                if (closed.containsKey(nk)) {
-                    continue;
-                }
-                double g = cur.g + 1.0 + (ny != cur.cell.y ? 0.5 : 0.0);
-                Node prev = best.get(nk);
-                if (prev == null || g < prev.g) {
-                    Node n = new Node(new Cell(nx, ny, nz), cur, g, g + heuristic(nx, nz, tx, tz));
-                    best.put(nk, n);
-                    open.add(n);
-                }
+            }
+
+            // Vertical climbable shaft transitions (ladders, vines, scaffolding)
+            if (w.climbable(cx, cy, cz)
+                    && Math.abs((cy + 1) - start.y) <= MAX_VERTICAL_RANGE
+                    && !w.solid(cx, cy + 1, cz) && !w.solid(cx, cy + 2, cz)
+                    && !w.hazard(cx, cy + 1, cz)) {
+                relaxNeighbor(cx, cy + 1, cz, 1.1, cur, tx, ty, tz, hasTargetY, blocked, closed, best, open);
+            }
+            if ((w.climbable(cx, cy, cz) || w.climbable(cx, cy - 1, cz))
+                    && Math.abs((cy - 1) - start.y) <= MAX_VERTICAL_RANGE
+                    && !w.solid(cx, cy - 1, cz) && !w.solid(cx, cy, cz)
+                    && !w.hazard(cx, cy - 1, cz)) {
+                relaxNeighbor(cx, cy - 1, cz, 1.1, cur, tx, ty, tz, hasTargetY, blocked, closed, best, open);
+            }
+            // Vertical swim-up in water to reach the surface
+            if (w.water(cx, cy, cz) && w.water(cx, cy + 1, cz)
+                    && Math.abs((cy + 1) - start.y) <= MAX_VERTICAL_RANGE
+                    && !w.solid(cx, cy + 1, cz) && !w.solid(cx, cy + 2, cz)
+                    && !w.hazard(cx, cy + 1, cz)) {
+                relaxNeighbor(cx, cy + 1, cz, 1.0, cur, tx, ty, tz, hasTargetY, blocked, closed, best, open);
             }
         }
 
@@ -169,18 +243,46 @@ public final class LocalPathPlanner {
         return new Result(path, reached, enclosed, explored);
     }
 
+    private static void relaxNeighbor(
+            int nx, int ny, int nz, double stepCost, Node cur,
+            int tx, int ty, int tz, boolean hasTargetY,
+            LongPredicate blocked, Map<Long, Boolean> closed,
+            Map<Long, Node> best, PriorityQueue<Node> open) {
+        if (blocked != null && blocked.test(cellKey(nx, ny, nz))) {
+            return;
+        }
+        long nk = key(nx, ny, nz);
+        if (closed.containsKey(nk)) {
+            return;
+        }
+        double g = cur.g + stepCost;
+        Node prev = best.get(nk);
+        if (prev == null || g < prev.g) {
+            Node n = new Node(new Cell(nx, ny, nz), cur, g, g + heuristic(nx, ny, nz, tx, ty, tz, hasTargetY));
+            best.put(nk, n);
+            open.add(n);
+        }
+    }
+
     public static long cellKey(int x, int y, int z) {
         return key(x, y, z);
     }
 
-    private static double heuristic(int x, int z, int tx, int tz) {
-        return Math.abs(x - tx) + Math.abs(z - tz);
+    private static double heuristic(int x, int y, int z, int tx, int ty, int tz, boolean hasTargetY) {
+        return Math.abs(x - tx) + Math.abs(z - tz) + (hasTargetY ? Math.abs(y - ty) : 0);
     }
 
     private static double distSq(int x, int z, int tx, int tz) {
         double dx = x - tx;
         double dz = z - tz;
         return dx * dx + dz * dz;
+    }
+
+    private static double distSq3D(int x, int y, int z, int tx, int ty, int tz) {
+        double dx = x - tx;
+        double dy = y - ty;
+        double dz = z - tz;
+        return dx * dx + dy * dy + dz * dz;
     }
 
     /** Unused helper retained for debugging: BFS count of cells reachable from start. */

@@ -456,13 +456,15 @@ func (s *permadeathMockBridgeServer) ConnectAgent(stream civquestv1.CivQuestBrid
 	s.mu.Unlock()
 
 	for {
-		intent, err := stream.Recv()
+		batch, err := stream.Recv()
 		if err != nil {
 			return err
 		}
-		select {
-		case s.intentCh <- intent:
-		default:
+		for _, intent := range batch.GetIntents() {
+			select {
+			case s.intentCh <- intent:
+			default:
+			}
 		}
 	}
 }

@@ -646,3 +646,288 @@ func TestFSM_FactGraphPredicatesInTransitionRules(t *testing.T) {
 		}
 	}
 }
+
+func TestFSM_TreeHarvestPDAPushEmergencyPreemptAndResume(t *testing.T) {
+	fsm := NewAgentFSM(StageBootstrap, nil)
+	state := NewAgentState()
+	cfg := xdg.DefaultAgentIdentityConfig("pda_logger")
+	cfg.Profession = "EXPLORER"
+
+	ctx := &FSMContext{
+		AgentID: "pda_logger",
+		State:   state,
+		Config:  cfg,
+		Frame: &civquestv1.TelemetryFrame{
+			WorldTick: 100,
+			TimeOfDay: 3000, // Work hours
+			Status: &civquestv1.AgentStatus{
+				AgentId:         "pda_logger",
+				Health:          20.0,
+				MaxHealth:       20.0,
+				FoodLevel:       20,
+				Position:        &civquestv1.Vec3{X: 0.5, Y: 64, Z: 0.5},
+				NavigationState: civquestv1.NavigationState_NAVIGATION_STATE_IDLE,
+			},
+			InterestingBlocks: []*civquestv1.VisibleBlock{
+				{Pos: &civquestv1.BlockPosProto{X: 3, Y: 64, Z: 0}, BlockId: "minecraft:oak_log"},
+				{Pos: &civquestv1.BlockPosProto{X: 3, Y: 65, Z: 0}, BlockId: "minecraft:oak_log"},
+				{Pos: &civquestv1.BlockPosProto{X: 3, Y: 66, Z: 0}, BlockId: "minecraft:oak_log"},
+			},
+		},
+	}
+
+	// Tick 1: Agent selects tree (3, 0), enters HARVEST_TREE subroutine, pushes parent onto PDA stack, and breaks Y=64
+	res0 := fsm.Tick(ctx)
+	if res0.Stage != StageBootstrap {
+		t.Fatalf("expected stage %s, got %s", StageBootstrap, res0.Stage)
+	}
+	if res0.Routine != RoutineHarvestTree {
+		t.Fatalf("expected Routine=%s when tree harvest commits, got %s", RoutineHarvestTree, res0.Routine)
+	}
+	if fsm.StackDepth() != 1 {
+		t.Fatalf("expected PDA StackDepth=1 while HarvestTree subroutine active, got %d", fsm.StackDepth())
+	}
+	if locked, tx, tz, _ := state.GetTargetTree(); !locked || tx != 3 || tz != 0 {
+		t.Fatalf("expected locked trunk (3,0), got locked=%v (%d,%d)", locked, tx, tz)
+	}
+
+	foundBreak := false
+	for _, it := range res0.Intents {
+		if it.Intent != nil && it.Intent.GetInteractBlock() != nil &&
+			it.Intent.GetInteractBlock().InteractionType == civquestv1.InteractBlockIntent_HARVEST_BREAK &&
+			it.Intent.GetInteractBlock().Pos.X == 3 && it.Intent.GetInteractBlock().Pos.Y == 64 {
+			foundBreak = true
+		}
+	}
+	if !foundBreak {
+		t.Fatalf("expected HARVEST_BREAK on (3,64,0), got intents %+v", res0.Intents)
+	}
+
+	// Tick 2 (WorldTick 105, mid-cooldown while (3,64,0) is still breaking): must stay committed without wandering
+	ctx.Frame.WorldTick = 105
+	res1 := fsm.Tick(ctx)
+	if res1.Routine != RoutineHarvestTree || fsm.StackDepth() != 1 {
+		t.Fatalf("expected Routine=%s and StackDepth=1 during harvest cooldown, got routine=%s depth=%d",
+			RoutineHarvestTree, res1.Routine, fsm.StackDepth())
+	}
+	if len(res1.Intents) != 0 {
+		t.Fatalf("expected no wander/explore intents during harvest cooldown, got %+v", res1.Intents)
+	}
+
+	// Tick 3: Y=64 broken, 1 oak_log in inventory + closer distracting tree (1, 64, 1); must stay on (3, 0)
+	ctx.Frame.WorldTick = 126
+	ctx.Frame.Status.Inventory = []*civquestv1.ItemStackProto{
+		{Slot: 0, ItemId: "minecraft:oak_log", Count: 1},
+	}
+	ctx.Frame.InterestingBlocks = []*civquestv1.VisibleBlock{
+		{Pos: &civquestv1.BlockPosProto{X: 3, Y: 65, Z: 0}, BlockId: "minecraft:oak_log"},
+		{Pos: &civquestv1.BlockPosProto{X: 3, Y: 66, Z: 0}, BlockId: "minecraft:oak_log"},
+		{Pos: &civquestv1.BlockPosProto{X: 1, Y: 64, Z: 1}, BlockId: "minecraft:birch_log"},
+	}
+	res2 := fsm.Tick(ctx)
+	if res2.Routine != RoutineHarvestTree || fsm.StackDepth() != 1 {
+		t.Fatalf("expected continued RoutineHarvestTree and StackDepth=1, got routine=%s depth=%d", res2.Routine, fsm.StackDepth())
+	}
+	foundBreak65 := false
+	for _, it := range res2.Intents {
+		if it.Intent != nil && it.Intent.GetInteractBlock() != nil &&
+			it.Intent.GetInteractBlock().Pos.X == 3 && it.Intent.GetInteractBlock().Pos.Y == 65 {
+			foundBreak65 = true
+		}
+	}
+	if !foundBreak65 {
+		t.Fatalf("expected continued HARVEST_BREAK on locked trunk (3,65,0), got %+v", res2.Intents)
+	}
+
+	// Tick 4: EMERGENCY preempts! Creeper spawns at 2.5m AND health drops <= 35%
+	ctx.Frame.WorldTick = 135
+	ctx.Frame.Status.Health = 6.0 // 30% HP
+	ctx.Frame.VisibleEntities = []*civquestv1.VisibleEntity{
+		{
+			EntityId:   901,
+			EntityType: "minecraft:creeper",
+			IsHostile:  true,
+			Distance:   2.5,
+			Position:   &civquestv1.Vec3{X: 2.5, Y: 64, Z: 0.5},
+		},
+	}
+	resEmg := fsm.Tick(ctx)
+	if resEmg.Stage != StageEmergency || resEmg.Routine != RoutineEmergency {
+		t.Fatalf("expected (StageEmergency, RoutineEmergency) on threat, got (%s, %s)", resEmg.Stage, resEmg.Routine)
+	}
+	if fsm.StackDepth() != 2 {
+		t.Fatalf("expected PDA StackDepth=2 (parent routine + interrupted HarvestTree), got %d", fsm.StackDepth())
+	}
+
+	// Remain in Emergency for 200 ticks (>150-tick progress timeout!) to prove emergency duration doesn't cause false timeout
+	ctx.Frame.WorldTick = 335
+	resEmgHold := fsm.Tick(ctx)
+	if resEmgHold.Stage != StageEmergency {
+		t.Fatalf("expected to stay in StageEmergency while threat active, got %s", resEmgHold.Stage)
+	}
+
+	// Tick 6: Threat clears and health recovers -> must pop back to RoutineHarvestTree on (3, 0)!
+	ctx.Frame.WorldTick = 350
+	ctx.Frame.Status.Health = 20.0
+	ctx.Frame.VisibleEntities = nil
+	resResume := fsm.Tick(ctx)
+	if resResume.Stage != StageBootstrap || resResume.Routine != RoutineHarvestTree {
+		t.Fatalf("expected restoration to (StageBootstrap, RoutineHarvestTree), got (%s, %s)", resResume.Stage, resResume.Routine)
+	}
+	if fsm.StackDepth() != 1 {
+		t.Fatalf("expected PDA StackDepth=1 after popping emergency back to HarvestTree, got %d", fsm.StackDepth())
+	}
+	if locked, tx, tz, _ := state.GetTargetTree(); !locked || tx != 3 || tz != 0 {
+		t.Fatalf("expected resumed tree lock on (3,0), got locked=%v (%d,%d)", locked, tx, tz)
+	}
+	foundResumedBreak := false
+	for _, it := range resResume.Intents {
+		if it.Intent != nil && it.Intent.GetInteractBlock() != nil &&
+			it.Intent.GetInteractBlock().Pos.X == 3 && it.Intent.GetInteractBlock().Pos.Y == 65 {
+			foundResumedBreak = true
+		}
+	}
+	if !foundResumedBreak {
+		t.Fatalf("expected resumed HARVEST_BREAK on (3,65,0) immediately after emergency cleared, got %+v", resResume.Intents)
+	}
+
+	// Tick 7: Remaining logs in (3, 0) column cleared, no dropped items -> pops PDA parent frame!
+	ctx.Frame.WorldTick = 375
+	ctx.Frame.Status.Inventory = []*civquestv1.ItemStackProto{
+		{Slot: 0, ItemId: "minecraft:oak_log", Count: 3},
+	}
+	ctx.Frame.InterestingBlocks = []*civquestv1.VisibleBlock{
+		{Pos: &civquestv1.BlockPosProto{X: 1, Y: 64, Z: 1}, BlockId: "minecraft:birch_log"},
+	}
+	resDone := fsm.Tick(ctx)
+	if fsm.StackDepth() != 0 {
+		t.Fatalf("expected PDA StackDepth=0 once HarvestTree completed, got %d", fsm.StackDepth())
+	}
+	if resDone.Routine != RoutinePrimaryDuty {
+		t.Fatalf("expected restored Routine=%s after task pop, got %s", RoutinePrimaryDuty, resDone.Routine)
+	}
+	if state.HasActiveTask() {
+		t.Fatalf("expected no active task after completion")
+	}
+}
+
+func TestFSM_NonPreemptibleTaskClearedOnEmergency(t *testing.T) {
+	fsm := NewAgentFSM(StageSettlement, nil)
+	state := NewAgentState()
+
+	// Install non-preemptible task
+	state.StartTask(NewTaskFSM(TaskDescriptor{
+		ID:          "non_preemptible_op",
+		Kind:        "non_preemptible",
+		Stage:       StageSettlement,
+		Routine:     RoutineSecondaryHobby,
+		Preemptible: false,
+		IsComplete: func(s *AgentState, f *civquestv1.TelemetryFrame) bool {
+			return false
+		},
+	}, 100))
+
+	ctx := &FSMContext{
+		AgentID: "non_preempt_agent",
+		State:   state,
+		Frame: &civquestv1.TelemetryFrame{
+			WorldTick: 100,
+			TimeOfDay: 3000,
+			Status: &civquestv1.AgentStatus{
+				AgentId:   "non_preempt_agent",
+				Health:    20.0,
+				MaxHealth: 20.0,
+				FoodLevel: 20,
+				Position:  &civquestv1.Vec3{X: 0, Y: 64, Z: 0},
+				Inventory: []*civquestv1.ItemStackProto{
+					{ItemId: "minecraft:wooden_axe", Count: 1},
+					{ItemId: "minecraft:wooden_sword", Count: 1},
+					{ItemId: "minecraft:torch", Count: 4},
+				},
+			},
+		},
+	}
+
+	res0 := fsm.Tick(ctx)
+	if res0.Routine != RoutineSecondaryHobby || fsm.StackDepth() != 1 {
+		t.Fatalf("expected active non-preemptible task routine=%s stack=1, got routine=%s stack=%d",
+			RoutineSecondaryHobby, res0.Routine, fsm.StackDepth())
+	}
+
+	// Emergency hits -> non-preemptible task must be cleared so it does not resume
+	ctx.Frame.WorldTick = 105
+	ctx.Frame.VisibleEntities = []*civquestv1.VisibleEntity{
+		{EntityId: 99, EntityType: "minecraft:zombie", IsHostile: true, Distance: 2.0, Position: &civquestv1.Vec3{X: 2, Y: 64, Z: 0}},
+	}
+	resEmg := fsm.Tick(ctx)
+	if resEmg.Stage != StageEmergency {
+		t.Fatalf("expected StageEmergency, got %s", resEmg.Stage)
+	}
+	if state.HasActiveTask() {
+		t.Fatalf("expected non-preemptible task cleared when emergency preempted")
+	}
+
+	// Threats clear -> emergency pops, remaining parent task frame unwinds cleanly to stack depth 0
+	ctx.Frame.WorldTick = 115
+	ctx.Frame.VisibleEntities = nil
+	resClear := fsm.Tick(ctx)
+	if resClear.Stage != StageSettlement || fsm.StackDepth() != 0 {
+		t.Fatalf("expected clean unwind to StageSettlement stack=0, got stage=%s stack=%d", resClear.Stage, fsm.StackDepth())
+	}
+}
+
+func TestFSM_MacroRoutineTransitionsEmitFlushPeriphery(t *testing.T) {
+	fsm := NewAgentFSM(StageSettlement, nil)
+	state := NewAgentState()
+
+	makeCtx := func(tick, tod int64) *FSMContext {
+		return &FSMContext{
+			AgentID: "routine_agent",
+			State:   state,
+			Frame: &civquestv1.TelemetryFrame{
+				WorldTick: tick,
+				TimeOfDay: tod,
+				Status: &civquestv1.AgentStatus{
+					AgentId:   "routine_agent",
+					Health:    20.0,
+					MaxHealth: 20.0,
+					FoodLevel: 20,
+					Position:  &civquestv1.Vec3{X: 0, Y: 64, Z: 0},
+					Inventory: []*civquestv1.ItemStackProto{
+						{ItemId: "minecraft:wooden_axe", Count: 1},
+						{ItemId: "minecraft:wooden_sword", Count: 1},
+						{ItemId: "minecraft:torch", Count: 4},
+					},
+				},
+			},
+		}
+	}
+
+	// Tick 1: DawnPrep -> PrimaryDuty (transition emits FlushPeriphery: true)
+	res1 := fsm.Tick(makeCtx(100, 2000))
+	if res1.Routine != RoutinePrimaryDuty || !res1.RoutineTransitioned || !res1.FlushPeriphery {
+		t.Fatalf("expected PrimaryDuty transition with FlushPeriphery=true, got routine=%s trans=%v flush=%v",
+			res1.Routine, res1.RoutineTransitioned, res1.FlushPeriphery)
+	}
+
+	// Tick 2: Steady state in PrimaryDuty -> FlushPeriphery: false
+	resSteady := fsm.Tick(makeCtx(120, 2500))
+	if resSteady.Routine != RoutinePrimaryDuty || resSteady.RoutineTransitioned || resSteady.FlushPeriphery {
+		t.Fatalf("expected steady PrimaryDuty with FlushPeriphery=false, got routine=%s trans=%v flush=%v",
+			resSteady.Routine, resSteady.RoutineTransitioned, resSteady.FlushPeriphery)
+	}
+
+	// Tick 3: PrimaryDuty -> TavernSocial (ToD 11500) -> FlushPeriphery: true
+	resTavern := fsm.Tick(makeCtx(200, 11500))
+	if resTavern.Routine != RoutineTavernSocial || !resTavern.RoutineTransitioned || !resTavern.FlushPeriphery {
+		t.Fatalf("expected PrimaryDuty -> TavernSocial with FlushPeriphery=true, got routine=%s trans=%v flush=%v",
+			resTavern.Routine, resTavern.RoutineTransitioned, resTavern.FlushPeriphery)
+	}
+
+	// Tick 4: TavernSocial -> Sleep (ToD 14000) -> FlushPeriphery: true
+	resSleep := fsm.Tick(makeCtx(300, 14000))
+	if resSleep.Routine != RoutineSleep || !resSleep.RoutineTransitioned || !resSleep.FlushPeriphery {
+		t.Fatalf("expected TavernSocial -> Sleep with FlushPeriphery=true, got routine=%s trans=%v flush=%v",
+			resSleep.Routine, resSleep.RoutineTransitioned, resSleep.FlushPeriphery)
+	}
+}

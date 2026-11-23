@@ -85,6 +85,13 @@ Major technical decisions are formally recorded in `doc/adr/`:
 - [ADR-019: Population-Scaled Militia Armory Maintenance and Munitions Crafting](file:///home/brian/Workspaces/btposey/civquest/doc/adr/ADR-019-population-scaled-militia-armory-maintenance-and-munitions-crafting.md)
 - [ADR-020: FactGraph Blackboard and Modular Skill Engine](file:///home/brian/Workspaces/btposey/civquest/doc/adr/ADR-020-factgraph-blackboard-and-modular-skill-engine.md)
 - [ADR-021: Blueprint Studio SPA, Token-Efficient Voxel Schematics, and Autonomous Construction Pipeline](file:///home/brian/Workspaces/btposey/civquest/doc/adr/ADR-021-blueprint-studio-spa-and-schematic-pipeline.md)
+- [ADR-022: Persistent Point-of-Interest (POI) Indexing and Environmental Object Permanence](file:///home/brian/Workspaces/btposey/civquest/doc/adr/ADR-022-persistent-poi-indexing-and-object-permanence.md)
+- [ADR-023: Breadcrumb Habit Trails and Desire Path Corridors](file:///home/brian/Workspaces/btposey/civquest/doc/adr/ADR-023-breadcrumb-habit-trails-and-desire-paths.md)
+- [ADR-024: Communal Settlement Cartography and Clan Spatial Ledger](file:///home/brian/Workspaces/btposey/civquest/doc/adr/ADR-024-communal-settlement-cartography-and-clan-spatial-ledger.md)
+- [ADR-025: Autonomous Silviculture, Tree Felling, and Sapling Replanting](file:///home/brian/Workspaces/btposey/civquest/doc/adr/ADR-025-autonomous-silviculture-and-sapling-replanting.md)
+- [ADR-026: Hierarchical Trail-Intersection Pathfinding](file:///home/brian/Workspaces/btposey/civquest/doc/adr/ADR-026-hierarchical-trail-intersection-pathfinding.md)
+- [ADR-027: Clan Settlement Genesis and Pioneer Explorer Nucleation](file:///home/brian/Workspaces/btposey/civquest/doc/adr/ADR-027-clan-settlement-genesis-and-pioneer-explorer-nucleation.md)
+- [ADR-028: Inter-Agent Collision and Stacking Suppression for FakePlayers](file:///home/brian/Workspaces/btposey/civquest/doc/adr/ADR-028-inter-agent-collision-and-stacking-suppression.md)
 
 ---
 

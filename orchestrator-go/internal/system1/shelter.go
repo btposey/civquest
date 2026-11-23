@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/btposey/civquest/orchestrator-go/internal/blueprints"
+	"github.com/btposey/civquest/orchestrator-go/internal/db"
 	civquestv1 "github.com/btposey/civquest/orchestrator-go/internal/proto/v1"
 	"github.com/btposey/civquest/orchestrator-go/internal/xdg"
 )
@@ -79,9 +80,27 @@ func evaluateDuskNightOutpostShelterLocked(
 		outpost = state.homeOrigin
 	}
 
+	isStuckOrEnclosed := navState == civquestv1.NavigationState_NAVIGATION_STATE_STUCK || frame.Status.GetNavigationEnclosed()
+
+	// ADR-022: Recall known bed or campfire from SpatialIndex before establishing a duplicate
+	// forward outpost or placing duplicate habitation blocks.
+	recalledHabPOI := findNearestReliableHabitationPOI(pos, state, "")
+	if recalledHabPOI != nil {
+		dx := recalledHabPOI.X - pos.X
+		dy := recalledHabPOI.Y + 0.5 - pos.Y
+		dz := recalledHabPOI.Z - pos.Z
+		distSq := dx*dx + dy*dy + dz*dz
+		if distSq <= 12.25 && !hasVisibleHabitationAt(frame, poiBlockPos(recalledHabPOI)) {
+			if si := state.SpatialIndexLocked(); si != nil {
+				si.RemovePOI(recalledHabPOI.POIID)
+			}
+			recalledHabPOI = nil
+		}
+	}
+
 	// If the Explorer has traveled > 32 blocks from the current outpost along their path of travel,
-	// establish a new Forward Outpost at their current frontier coordinates for the night!
-	if outpost != nil && math.Hypot(pos.X-outpost.X, pos.Z-outpost.Z) > 32.0 {
+	// and no known habitation POI exists within 64 blocks, establish a new Forward Outpost.
+	if recalledHabPOI == nil && outpost != nil && math.Hypot(pos.X-outpost.X, pos.Z-outpost.Z) > 32.0 {
 		newOutpost := &civquestv1.Vec3{X: pos.X, Y: pos.Y, Z: pos.Z}
 		state.currentOutpost = newOutpost
 		state.homeOrigin = newOutpost
@@ -103,6 +122,28 @@ func evaluateDuskNightOutpostShelterLocked(
 	targetX := pos.X
 	targetY := pos.Y
 	targetZ := pos.Z
+	if recalledHabPOI != nil && (state.ShelterPos == nil || math.Hypot(pos.X-float64(state.ShelterPos.X), pos.Z-float64(state.ShelterPos.Z)) > 32.0) {
+		accessTarget := poiAccessTarget(recalledHabPOI)
+		if math.Hypot(pos.X-recalledHabPOI.X, pos.Z-recalledHabPOI.Z) > 4.0 && !isStuckOrEnclosed {
+			if navState == civquestv1.NavigationState_NAVIGATION_STATE_PATHING {
+				return nil
+			}
+			if state.lastBootstrapNavTick == 0 || frame.WorldTick < state.lastBootstrapNavTick || frame.WorldTick-state.lastBootstrapNavTick >= 40 {
+				state.lastBootstrapNavTick = frame.WorldTick
+				return &civquestv1.AgentIntent{
+					AgentId: agentID,
+					Action: &civquestv1.AgentIntent_Navigate{
+						Navigate: &civquestv1.NavigateIntent{
+							Target:           accessTarget,
+							SpeedMultiplier:  1.0,
+							ArrivalTolerance: 2,
+						},
+					},
+				}
+			}
+			return nil
+		}
+	}
 	if state.ShelterPos != nil && math.Hypot(pos.X-float64(state.ShelterPos.X), pos.Z-float64(state.ShelterPos.Z)) <= 32.0 {
 		targetX = float64(state.ShelterPos.X) + 0.5
 		targetY = float64(state.ShelterPos.Y)
@@ -114,7 +155,6 @@ func evaluateDuskNightOutpostShelterLocked(
 	}
 
 	distToShelter := math.Hypot(pos.X-targetX, pos.Z-targetZ)
-	isStuckOrEnclosed := navState == civquestv1.NavigationState_NAVIGATION_STATE_STUCK || frame.Status.GetNavigationEnclosed()
 	if distToShelter > 4.0 && !isStuckOrEnclosed {
 		if navState == civquestv1.NavigationState_NAVIGATION_STATE_PATHING {
 			return nil
@@ -194,10 +234,15 @@ func evaluateDuskNightOutpostShelterLocked(
 		}
 	}
 
-	// 2. Harvest timber when building blocks are depleted
-	if inv.buildingBlockCount == 0 && inv.logCount == 0 && state.ShelterBuildIndex < len(cabinIntents) {
+	// 2. Harvest timber when building blocks are depleted or inventory low
+	if (inv.buildingBlockCount < 16 && inv.logCount < 4) && state.ShelterBuildIndex < len(cabinIntents) {
 		var nearestLog *civquestv1.VisibleBlock
 		bestDistSq := math.MaxFloat64
+
+		treeLocked, tx, tz, _ := state.GetTargetTreeLocked()
+		var focusedLog *civquestv1.VisibleBlock
+		focusedDistSq := math.MaxFloat64
+
 		for _, b := range frame.InterestingBlocks {
 			if b == nil || b.Pos == nil {
 				continue
@@ -208,6 +253,14 @@ func evaluateDuskNightOutpostShelterLocked(
 				dy := float64(b.Pos.Y) + 0.5 - pos.Y
 				dz := float64(b.Pos.Z) + 0.5 - pos.Z
 				dSq := dx*dx + dy*dy + dz*dz
+
+				if treeLocked && b.Pos.X == tx && b.Pos.Z == tz {
+					if dSq < focusedDistSq {
+						focusedDistSq = dSq
+						focusedLog = b
+					}
+				}
+
 				if dSq < bestDistSq {
 					bestDistSq = dSq
 					nearestLog = b
@@ -215,17 +268,25 @@ func evaluateDuskNightOutpostShelterLocked(
 			}
 		}
 
-		if nearestLog != nil {
-			if bestDistSq <= 20.25 { // Within 4.5 blocks melee/harvest reach
+		targetLog := nearestLog
+		targetDistSq := bestDistSq
+		if focusedLog != nil {
+			targetLog = focusedLog
+			targetDistSq = focusedDistSq
+		}
+
+		if targetLog != nil {
+			state.SetTargetTreeLocked(true, targetLog.Pos.X, targetLog.Pos.Z, frame.WorldTick)
+			if targetDistSq <= 20.25 { // Within 4.5 blocks melee/harvest reach
 				if state.lastHarvestTick == 0 || frame.WorldTick < state.lastHarvestTick || frame.WorldTick-state.lastHarvestTick >= 20 {
 					state.lastHarvestTick = frame.WorldTick
 					return &civquestv1.AgentIntent{
 						AgentId: agentID,
 						Action: &civquestv1.AgentIntent_InteractBlock{
 							InteractBlock: &civquestv1.InteractBlockIntent{
-								Pos:             nearestLog.Pos,
+								Pos:             targetLog.Pos,
 								InteractionType: civquestv1.InteractBlockIntent_HARVEST_BREAK,
-								BlockOrItemId:   nearestLog.BlockId,
+								BlockOrItemId:   targetLog.BlockId,
 							},
 						},
 					}
@@ -241,9 +302,9 @@ func evaluateDuskNightOutpostShelterLocked(
 						Action: &civquestv1.AgentIntent_Navigate{
 							Navigate: &civquestv1.NavigateIntent{
 								Target: &civquestv1.Vec3{
-									X: float64(nearestLog.Pos.X) + 0.5,
-									Y: float64(nearestLog.Pos.Y),
-									Z: float64(nearestLog.Pos.Z) + 0.5,
+									X: float64(targetLog.Pos.X) + 0.5,
+									Y: float64(targetLog.Pos.Y),
+									Z: float64(targetLog.Pos.Z) + 0.5,
 								},
 								SpeedMultiplier:  1.0,
 								ArrivalTolerance: 2,
@@ -253,6 +314,8 @@ func evaluateDuskNightOutpostShelterLocked(
 				}
 			}
 			return nil
+		} else if treeLocked {
+			state.ClearTargetTreeLocked()
 		}
 	}
 
@@ -271,6 +334,28 @@ func evaluateDuskNightOutpostShelterLocked(
 	}
 
 	if !hasNearbyLight {
+		// Query SpatialIndex for a known campfire or bed before placing/crafting a duplicate campfire.
+		if recalledLight := findNearestReliableHabitationPOI(pos, state, "campfire"); recalledLight != nil {
+			if math.Hypot(pos.X-recalledLight.X, pos.Z-recalledLight.Z) > 4.0 && !isStuckOrEnclosed {
+				if navState == civquestv1.NavigationState_NAVIGATION_STATE_PATHING {
+					return nil
+				}
+				if state.lastBootstrapNavTick == 0 || frame.WorldTick < state.lastBootstrapNavTick || frame.WorldTick-state.lastBootstrapNavTick >= 40 {
+					state.lastBootstrapNavTick = frame.WorldTick
+					return &civquestv1.AgentIntent{
+						AgentId: agentID,
+						Action: &civquestv1.AgentIntent_Navigate{
+							Navigate: &civquestv1.NavigateIntent{
+								Target:           poiAccessTarget(recalledLight),
+								SpeedMultiplier:  1.0,
+								ArrivalTolerance: 2,
+							},
+						},
+					}
+				}
+				return nil
+			}
+		}
 		if inv.hasLight && canPlace {
 			state.lastShelterPlaceTick = frame.WorldTick
 			lightPos := &civquestv1.BlockPosProto{
@@ -355,4 +440,52 @@ func evaluateDuskNightOutpostShelterLocked(
 	}
 
 	return nil
+}
+
+func findNearestReliableHabitationPOI(pos *civquestv1.Vec3, state *AgentState, preferredBlock string) *db.AgentPOI {
+	if pos == nil || state == nil {
+		return nil
+	}
+	si := state.SpatialIndexLocked()
+	if si == nil {
+		return nil
+	}
+	if preferredBlock != "" {
+		if poi := si.FindNearestPOI(pos, POICategoryHabitation, preferredBlock, 64.0, ElevationSurface); poi != nil && poi.Reliability >= 0.5 {
+			return poi
+		}
+		return nil
+	}
+	bedPOI := si.FindNearestPOI(pos, POICategoryHabitation, "bed", 64.0, ElevationSurface)
+	if bedPOI != nil && bedPOI.Reliability < 0.5 {
+		bedPOI = nil
+	}
+	campPOI := si.FindNearestPOI(pos, POICategoryHabitation, "campfire", 64.0, ElevationSurface)
+	if campPOI != nil && campPOI.Reliability < 0.5 {
+		campPOI = nil
+	}
+	if bedPOI == nil {
+		return campPOI
+	}
+	if campPOI == nil {
+		return bedPOI
+	}
+	bedDistSq := (bedPOI.X-pos.X)*(bedPOI.X-pos.X) + (bedPOI.Y-pos.Y)*(bedPOI.Y-pos.Y) + (bedPOI.Z-pos.Z)*(bedPOI.Z-pos.Z)
+	campDistSq := (campPOI.X-pos.X)*(campPOI.X-pos.X) + (campPOI.Y-pos.Y)*(campPOI.Y-pos.Y) + (campPOI.Z-pos.Z)*(campPOI.Z-pos.Z)
+	if bedDistSq <= campDistSq {
+		return bedPOI
+	}
+	return campPOI
+}
+
+func hasVisibleHabitationAt(frame *civquestv1.TelemetryFrame, pos *civquestv1.BlockPosProto) bool {
+	if frame == nil || pos == nil {
+		return false
+	}
+	b := FindVisibleBlockAt(frame, pos.X, pos.Y, pos.Z)
+	if b == nil {
+		return false
+	}
+	id := strings.ToLower(b.BlockId)
+	return strings.Contains(id, "bed") || strings.Contains(id, "campfire")
 }

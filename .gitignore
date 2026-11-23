@@ -25,6 +25,8 @@ orchestrator-go/dist/
 .idea/
 *.iml
 .vscode/
+.junie/
+/skills/
 *.swp
 *.swo
 *~

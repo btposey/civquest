@@ -153,7 +153,7 @@ func runEndToEndProbe(t *testing.T, meta *bridge.ServerMeta) {
 		frame.GetStatus().GetHealth(), frame.GetStatus().GetMaxHealth(),
 		frame.GetStatus().GetFoodLevel(), frame.GetWorldTick())
 
-	// Send Navigate AgentIntent
+	// Send Navigate IntentBatch
 	intent := &civquestv1.AgentIntent{
 		AgentId:    agentID,
 		SequenceId: 1,
@@ -165,8 +165,12 @@ func runEndToEndProbe(t *testing.T, meta *bridge.ServerMeta) {
 			},
 		},
 	}
-	if err := stream.Send(intent); err != nil {
-		t.Fatalf("Failed sending AgentIntent: %v", err)
+	if err := stream.Send(&civquestv1.IntentBatch{
+		AgentId: agentID,
+		BatchId: 1,
+		Intents: []*civquestv1.AgentIntent{intent},
+	}); err != nil {
+		t.Fatalf("Failed sending IntentBatch: %v", err)
 	}
 	t.Log("Sent Navigate AgentIntent successfully")
 

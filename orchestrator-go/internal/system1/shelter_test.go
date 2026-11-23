@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/btposey/civquest/orchestrator-go/internal/blueprints"
+	"github.com/btposey/civquest/orchestrator-go/internal/db"
 	civquestv1 "github.com/btposey/civquest/orchestrator-go/internal/proto/v1"
 	"github.com/btposey/civquest/orchestrator-go/internal/xdg"
 )
@@ -392,4 +393,101 @@ func TestEvaluateShelterGoalsDirect(t *testing.T) {
 		t.Errorf("EvaluateShelterGoalsDirect took %v, exceeded 5ms budget", duration)
 	}
 	_ = intent
+}
+
+func TestEvaluateShelterGoals_HabitationPOIRecall(t *testing.T) {
+	t.Run("Recalls Campfire Before Placing Duplicate", func(t *testing.T) {
+		state := NewAgentState()
+		cfg := xdg.DefaultAgentIdentityConfig("Able")
+		cfg.Profession = "EXPLORER"
+
+		state.SpatialIndex().UpsertPOI(db.AgentPOI{
+			POIID:          FormatPOIID(POICategoryHabitation, 0, 64, 0),
+			Category:       POICategoryHabitation,
+			BlockID:        "minecraft:campfire",
+			X:              0.5,
+			Y:              64.0,
+			Z:              0.5,
+			AccessX:        1.5,
+			AccessY:        64.0,
+			AccessZ:        0.5,
+			ElevationLayer: ElevationSurface,
+			SafetyScore:    1.0,
+			Reliability:    1.0,
+			IsActive:       true,
+		})
+
+		// Agent at (25, 64, 0) carrying a campfire with empty InterestingBlocks
+		frame := &civquestv1.TelemetryFrame{
+			WorldTick: 2000,
+			TimeOfDay: 12000,
+			Status: &civquestv1.AgentStatus{
+				Position:        &civquestv1.Vec3{X: 25, Y: 64, Z: 0},
+				Health:          20,
+				FoodLevel:       20,
+				NavigationState: civquestv1.NavigationState_NAVIGATION_STATE_IDLE,
+				Inventory: []*civquestv1.ItemStackProto{
+					{Slot: 0, ItemId: "minecraft:campfire", Count: 1},
+					{Slot: 1, ItemId: "minecraft:oak_planks", Count: 16},
+				},
+			},
+		}
+
+		intent := EvaluateShelterGoals("Able", frame, cfg, state)
+		if intent == nil || intent.GetNavigate() == nil || intent.GetNavigate().Target == nil {
+			t.Fatalf("expected NavigateIntent towards recalled campfire instead of placing duplicate, got %+v", intent)
+		}
+		target := intent.GetNavigate().Target
+		if target.X != 1.5 || target.Y != 64.0 || target.Z != 0.5 {
+			t.Fatalf("expected target (1.5, 64, 0.5), got %+v", target)
+		}
+	})
+
+	t.Run("Recalls Bed Beyond 32m Outpost Threshold", func(t *testing.T) {
+		state := NewAgentState()
+		state.SetHomeOrigin(&civquestv1.Vec3{X: 0, Y: 64, Z: 0})
+		cfg := xdg.DefaultAgentIdentityConfig("Able")
+		cfg.Profession = "EXPLORER"
+
+		state.SpatialIndex().UpsertPOI(db.AgentPOI{
+			POIID:          FormatPOIID(POICategoryHabitation, 25, 64, 0),
+			Category:       POICategoryHabitation,
+			BlockID:        "minecraft:red_bed",
+			X:              25.5,
+			Y:              64.0,
+			Z:              0.5,
+			AccessX:        26.5,
+			AccessY:        64.0,
+			AccessZ:        0.5,
+			ElevationLayer: ElevationSurface,
+			SafetyScore:    1.0,
+			Reliability:    1.0,
+			IsActive:       true,
+		})
+
+		// Agent at (40, 64, 0) (> 32m from homeOrigin) carrying campfire and planks
+		frame := &civquestv1.TelemetryFrame{
+			WorldTick: 2100,
+			TimeOfDay: 12000,
+			Status: &civquestv1.AgentStatus{
+				Position:        &civquestv1.Vec3{X: 40, Y: 64, Z: 0},
+				Health:          20,
+				FoodLevel:       20,
+				NavigationState: civquestv1.NavigationState_NAVIGATION_STATE_IDLE,
+				Inventory: []*civquestv1.ItemStackProto{
+					{Slot: 0, ItemId: "minecraft:campfire", Count: 1},
+					{Slot: 1, ItemId: "minecraft:oak_planks", Count: 16},
+				},
+			},
+		}
+
+		intent := EvaluateShelterGoals("Able", frame, cfg, state)
+		if intent == nil || intent.GetNavigate() == nil || intent.GetNavigate().Target == nil {
+			t.Fatalf("expected NavigateIntent towards recalled bed instead of placing duplicate campfire, got %+v", intent)
+		}
+		target := intent.GetNavigate().Target
+		if target.X != 26.5 || target.Y != 64.0 || target.Z != 0.5 {
+			t.Fatalf("expected target (26.5, 64, 0.5), got %+v", target)
+		}
+	})
 }

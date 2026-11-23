@@ -28,6 +28,12 @@ func (s *BootstrapGatherSkill) Preconditions(facts *FactGraph) bool {
 	if facts.GetBool("bootstrap.has_kit") || facts.GetBool("bootstrap.on_cooldown") {
 		return false
 	}
+	if facts.GetBool("task.active") {
+		kind := facts.GetString("task.kind")
+		if kind == "harvest_tree" || kind == "collect_items" {
+			return true
+		}
+	}
 	logCount, _ := facts.GetInt("bootstrap.log_count")
 	return logCount < 4
 }
@@ -71,6 +77,12 @@ func (s *BootstrapCraftSkill) Preconditions(facts *FactGraph) bool {
 	}
 	if facts.GetBool("bootstrap.has_kit") || facts.GetBool("bootstrap.on_cooldown") {
 		return false
+	}
+	if facts.GetBool("task.active") {
+		kind := facts.GetString("task.kind")
+		if kind == "harvest_tree" || kind == "collect_items" {
+			return false
+		}
 	}
 	logCount, _ := facts.GetInt("bootstrap.log_count")
 	plankCount, _ := facts.GetInt("bootstrap.plank_count")

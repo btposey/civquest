@@ -108,11 +108,15 @@ func AssessImmediateThreats(frame *civquestv1.TelemetryFrame, bravery float64) (
 		}
 	}
 
-	if len(hostiles) == 0 && frame.LastDamageTaken == nil {
+	if len(hostiles) == 0 && isDrowningDamage(frame) {
+		return "DROWNING — agent is drowning in water; immediate surfacing required.", 999.0, nil
+	}
+
+	if len(hostiles) == 0 && (frame.LastDamageTaken == nil || IsPassiveOrEnvironmentalDamage(frame.LastDamageTaken)) {
 		return "SAFE — 0 hostile mobs within 24 blocks; immediate area is clear and safe.", 999.0, nil
 	}
 
-	if len(hostiles) == 0 && frame.LastDamageTaken != nil {
+	if len(hostiles) == 0 && frame.LastDamageTaken != nil && !IsPassiveOrEnvironmentalDamage(frame.LastDamageTaken) {
 		sumHostileThreat += ThreatDefault
 	}
 
@@ -298,12 +302,17 @@ func EvaluateGoals(frame *civquestv1.TelemetryFrame, cfg *xdg.AgentIdentityConfi
 
 	var immediate string
 	switch {
-	case hostilesNearby || frame.LastDamageTaken != nil:
+	case hostilesNearby || (frame.LastDamageTaken != nil && !IsPassiveOrEnvironmentalDamage(frame.LastDamageTaken)):
 		immediate = "COMBAT_SURVIVAL: Defend against or evade nearby hostile threats"
 	case frame.Status.FoodLevel <= 6:
 		immediate = "CRITICAL_HUNGER: Consume food or forage immediately"
 	case state != nil && state.IsCompanionActive():
 		immediate = "ESCORT_COMPANION: Accompany and protect bonded player"
+	case state != nil && func() bool {
+		active, kind, _, _ := state.ActiveTaskInfo()
+		return active && (kind == "harvest_tree" || kind == "collect_items")
+	}():
+		immediate = "GATHER_TIMBER: Harvest committed tree trunk logs and collect dropped wood"
 	case isDuskOrNight || isThunder:
 		if frame.Status.IsSleeping {
 			immediate = "SLEEPING: Resting safely until dawn"
@@ -381,22 +390,13 @@ func EvaluateExploration(agentID string, frame *civquestv1.TelemetryFrame, cfg *
 		state.ShelterBuildIndex = 0
 	}
 
-	// 1. Immediate terrain/hill unsticking or tool-aware dig-out when navigation reports NAVIGATION_STATE_STUCK
-	if navState == civquestv1.NavigationState_NAVIGATION_STATE_STUCK {
-		if obstruct := findObstructingBlockToDig(frame, pos); obstruct != nil {
-			if state.lastHarvestTick == 0 || frame.WorldTick < state.lastHarvestTick || frame.WorldTick-state.lastHarvestTick >= 20 {
-				state.lastHarvestTick = frame.WorldTick
-				return &civquestv1.AgentIntent{
-					AgentId: agentID,
-					Action: &civquestv1.AgentIntent_InteractBlock{
-						InteractBlock: &civquestv1.InteractBlockIntent{
-							Pos:             obstruct.Pos,
-							InteractionType: civquestv1.InteractBlockIntent_HARVEST_BREAK,
-							BlockOrItemId:   obstruct.BlockId,
-						},
-					},
-				}
-			}
+	// 1. Immediate terrain/hill unsticking or tool-aware dig-out when navigation reports NAVIGATION_STATE_STUCK or ENCLOSED
+	if navState == civquestv1.NavigationState_NAVIGATION_STATE_STUCK || frame.Status.GetNavigationEnclosed() {
+		if unstuckIntent := EvaluateUnstuck(agentID, frame, pos, state); unstuckIntent != nil {
+			return unstuckIntent
+		}
+		if locked, _, _, _, _, _ := state.GetUnstuckLockLocked(); locked {
+			return nil // Waiting on excavation sequence, do NOT rotate heading
 		}
 		if (isDuskOrNight || isThunder) && state.AssignedBed == nil {
 			if shelterIntent := evaluateDuskNightOutpostShelterLocked(agentID, frame, pos, navState, state); shelterIntent != nil {
@@ -454,13 +454,20 @@ func EvaluateExploration(agentID string, frame *civquestv1.TelemetryFrame, cfg *
 	}
 
 	routine := state.CurrentRoutine
-	if routine != RoutinePrimaryDuty && routine != RoutineSecondaryHobby && routine != RoutineDawnAwakening && routine != RoutineTavernSocial {
+	if !state.HasActiveTaskLocked() &&
+		routine != RoutinePrimaryDuty && routine != RoutineSecondaryHobby &&
+		routine != RoutineDawnAwakening && routine != RoutineTavernSocial &&
+		routine != RoutineHarvestTree && routine != RoutineCollectItems {
 		return nil
 	}
 
 	// 3. Daytime Bootstrap Survival Goals (Gather Timber & Craft Basic Tools)
 	if bootstrapIntent := evaluateBootstrapGoalsLocked(agentID, frame, pos, navState, state); bootstrapIntent != nil {
 		return bootstrapIntent
+	}
+	if state.HasActiveTaskLocked() || state.navigatingToPOI {
+		// Suppress terrain and frontier exploration while a committed TaskSubroutine or POI recall navigation is active
+		return nil
 	}
 
 	// 4. Terrain-Aware Exploration Strategies (Valleys, Ridges, Fords, Rims, Flatlands, Canopy Trailblazing)

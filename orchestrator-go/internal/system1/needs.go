@@ -4,6 +4,7 @@ import (
 	"math"
 	"strings"
 
+	"github.com/btposey/civquest/orchestrator-go/internal/db"
 	civquestv1 "github.com/btposey/civquest/orchestrator-go/internal/proto/v1"
 )
 
@@ -248,7 +249,8 @@ func EvaluateSleep(agentID string, frame *civquestv1.TelemetryFrame, state *Agen
 		return nil
 	}
 
-	// Auto-detect and record bed pos and shelter blocks from interesting_blocks
+	// Auto-detect and record bed pos and shelter blocks from interesting_blocks or SpatialIndex (ADR-022)
+	var recalledBedPOI *db.AgentPOI
 	if state != nil {
 		hasBed := state.GetAssignedBed() != nil
 		hasShelter := state.GetShelterPos() != nil
@@ -266,6 +268,23 @@ func EvaluateSleep(agentID string, frame *civquestv1.TelemetryFrame, state *Agen
 					strings.Contains(id, "torch") || strings.Contains(id, "door")) {
 					state.SetShelterPos(b.Pos)
 					hasShelter = true
+				}
+			}
+			if (!hasBed || !hasShelter) && frame.Status.Position != nil {
+				if si := state.SpatialIndex(); si != nil {
+					if !hasBed {
+						if poi := si.FindNearestPOI(frame.Status.Position, POICategoryHabitation, "bed", 64.0, ElevationSurface); poi != nil && poi.Reliability >= 0.5 {
+							state.SetAssignedBed(poiBlockPos(poi))
+							recalledBedPOI = poi
+							hasBed = true
+						}
+					}
+					if !hasShelter {
+						if poi := si.FindNearestPOI(frame.Status.Position, POICategoryHabitation, "campfire", 64.0, ElevationSurface); poi != nil && poi.Reliability >= 0.5 {
+							state.SetShelterPos(poiBlockPos(poi))
+							hasShelter = true
+						}
+					}
 				}
 			}
 		}
@@ -359,15 +378,29 @@ func EvaluateSleep(agentID string, frame *civquestv1.TelemetryFrame, state *Agen
 		if frame.Status.NavigationState == civquestv1.NavigationState_NAVIGATION_STATE_PATHING {
 			return nil
 		}
+		target := &civquestv1.Vec3{
+			X: float64(bedPos.X) + 0.5,
+			Y: float64(bedPos.Y),
+			Z: float64(bedPos.Z) + 0.5,
+		}
+		if recalledBedPOI == nil && state != nil {
+			if si := state.SpatialIndex(); si != nil {
+				if poi := si.FindNearestPOI(agentPos, POICategoryHabitation, "bed", 64.0, ElevationSurface); poi != nil && poi.Reliability >= 0.5 {
+					bpos := poiBlockPos(poi)
+					if bpos.X == bedPos.X && bpos.Y == bedPos.Y && bpos.Z == bedPos.Z {
+						recalledBedPOI = poi
+					}
+				}
+			}
+		}
+		if recalledBedPOI != nil {
+			target = poiAccessTarget(recalledBedPOI)
+		}
 		return &civquestv1.AgentIntent{
 			AgentId: agentID,
 			Action: &civquestv1.AgentIntent_Navigate{
 				Navigate: &civquestv1.NavigateIntent{
-					Target: &civquestv1.Vec3{
-						X: float64(bedPos.X) + 0.5,
-						Y: float64(bedPos.Y),
-						Z: float64(bedPos.Z) + 0.5,
-					},
+					Target:           target,
 					SpeedMultiplier:  1.0,
 					ArrivalTolerance: 1,
 				},
