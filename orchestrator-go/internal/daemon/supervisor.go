@@ -428,6 +428,7 @@ func (s *DaemonSupervisor) Run(ctx context.Context) error {
 	s.startTime = time.Now()
 	s.ctx, s.cancel = context.WithCancel(ctx)
 	s.mu.Unlock()
+	defer close(s.done)
 
 	// Clean up any stale files from previous unclean shutdowns
 	_ = CleanupStaleFiles(s.resolver)
@@ -482,7 +483,6 @@ func (s *DaemonSupervisor) Run(ctx context.Context) error {
 			s.logSupervisorEvent("Supervisor shutdown signal received; stopping all managed workers...")
 			s.shutdownWorkers()
 			s.logSupervisorEvent("All managed workers stopped cleanly.")
-			close(s.done)
 			return nil
 
 		case <-ticker.C:

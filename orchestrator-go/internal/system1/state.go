@@ -1,8 +1,10 @@
 package system1
 
 import (
+	"strings"
 	"sync"
 
+	"github.com/btposey/civquest/orchestrator-go/internal/crafting"
 	civquestv1 "github.com/btposey/civquest/orchestrator-go/internal/proto/v1"
 	"google.golang.org/protobuf/proto"
 )
@@ -98,6 +100,15 @@ type GoalHierarchy struct {
 	LongTermGoal  string `json:"long_term_goal"`
 }
 
+// StrategicDirectiveState stores the active executable System 2 directive bridged into System 1 (ADR-031).
+type StrategicDirectiveState struct {
+	Action        string `json:"action"`
+	Target        string `json:"target,omitempty"`
+	ImmediateGoal string `json:"immediate_goal,omitempty"`
+	IssuedTick    int64  `json:"issued_tick"`
+	ExpiresTick   int64  `json:"expires_tick"`
+}
+
 // AgentState tracks volatile in-memory System 1 agent routine, needs, and paving state.
 type AgentState struct {
 	mu                        sync.RWMutex
@@ -172,6 +183,15 @@ type AgentState struct {
 
 	// Breadcrumb habit trail and corridor navigation tracker (ADR-023)
 	habitTrailTracker *HabitTrailTracker
+
+	// Dynamic runtime crafting recipe catalog synced from server RecipeManager (ADR-029)
+	recipeGraph *crafting.RecipeGraph
+
+	// Active System 2 -> System 1 strategic directive bridge state (ADR-031)
+	strategicDirective      *StrategicDirectiveState
+	directiveScoutTarget    *civquestv1.Vec3
+	lastDirectiveActionTick int64
+	lastDirectiveNavKey     string
 }
 
 // NewAgentState creates an initialized AgentState.
@@ -1471,4 +1491,60 @@ func (s *AgentState) IsWorkstationUnreachableLocked(x, y, z int32, tick int64) b
 		return false
 	}
 	return true
+}
+
+// SetStrategicDirective installs or replaces the active System 2 strategic directive (ADR-031).
+func (s *AgentState) SetStrategicDirective(action, target, immediateGoal string, issuedTick, expiresTick int64) {
+	if s == nil {
+		return
+	}
+	normAction := strings.ToUpper(strings.TrimSpace(action))
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if normAction == "" {
+		s.strategicDirective = nil
+		s.directiveScoutTarget = nil
+		s.lastDirectiveActionTick = 0
+		s.lastDirectiveNavKey = ""
+		return
+	}
+	s.strategicDirective = &StrategicDirectiveState{
+		Action:        normAction,
+		Target:        strings.TrimSpace(target),
+		ImmediateGoal: strings.TrimSpace(immediateGoal),
+		IssuedTick:    issuedTick,
+		ExpiresTick:   expiresTick,
+	}
+	s.directiveScoutTarget = nil
+	s.lastDirectiveActionTick = 0
+	s.lastDirectiveNavKey = ""
+}
+
+// ActiveStrategicDirective returns the current non-expired StrategicDirectiveState, if any.
+func (s *AgentState) ActiveStrategicDirective(worldTick int64) (StrategicDirectiveState, bool) {
+	if s == nil {
+		return StrategicDirectiveState{}, false
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if s.strategicDirective == nil || s.strategicDirective.Action == "" {
+		return StrategicDirectiveState{}, false
+	}
+	if s.strategicDirective.ExpiresTick > 0 && worldTick >= s.strategicDirective.ExpiresTick {
+		return StrategicDirectiveState{}, false
+	}
+	return *s.strategicDirective, true
+}
+
+// ClearStrategicDirective clears any active System 2 strategic directive.
+func (s *AgentState) ClearStrategicDirective() {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.strategicDirective = nil
+	s.directiveScoutTarget = nil
+	s.lastDirectiveActionTick = 0
+	s.lastDirectiveNavKey = ""
 }

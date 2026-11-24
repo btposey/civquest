@@ -236,6 +236,7 @@ func TestBootstrapCraftSkill_Execute(t *testing.T) {
 		},
 	}
 	state := NewAgentState()
+	state.SetRecipeGraph(newTestRecipeGraph())
 	skillCtx := &SkillContext{
 		AgentID: "agent-craft",
 		Frame:   frame,
@@ -256,8 +257,8 @@ func TestBootstrapCraftSkill_Execute(t *testing.T) {
 	if craft == nil {
 		t.Fatalf("expected CraftItem intent, got %+v", intents[0].Action)
 	}
-	if craft.RecipeId != "minecraft:crafting_table" {
-		t.Errorf("expected recipe minecraft:crafting_table, got %s", craft.RecipeId)
+	if craft.RecipeId != "minecraft:oak_planks" {
+		t.Errorf("expected recipe minecraft:oak_planks as first multi-step craft from logs, got %s", craft.RecipeId)
 	}
 }
 
@@ -322,6 +323,7 @@ func TestFSMIntegration_BootstrapAndShelterSkills(t *testing.T) {
 		},
 	}
 	state := NewAgentState()
+	state.SetRecipeGraph(newTestRecipeGraph())
 	ctx := &FSMContext{
 		AgentID: "fsm-agent",
 		Frame:   frame,

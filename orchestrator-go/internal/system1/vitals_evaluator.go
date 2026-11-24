@@ -41,6 +41,7 @@ func (e *VitalsEvaluator) Evaluate(ctx *EvaluatorContext, graph *FactGraph) erro
 	var isOnFire bool = false
 	var isSleeping bool = false
 	var canEat bool = false
+	var needsForaging bool = false
 
 	if ctx != nil && ctx.Frame != nil && ctx.Frame.Status != nil {
 		status := ctx.Frame.Status
@@ -62,6 +63,7 @@ func (e *VitalsEvaluator) Evaluate(ctx *EvaluatorContext, graph *FactGraph) erro
 		isOnFire = status.IsOnFire
 		isSleeping = status.IsSleeping
 		canEat = (foodLevel < 20 && hasFood)
+		needsForaging = (foodLevel <= 12 && !hasFood)
 	}
 
 	graph.SetFloat("vitals.health", "vitals", health, fmt.Sprintf("Health: %.1f", health))
@@ -75,6 +77,7 @@ func (e *VitalsEvaluator) Evaluate(ctx *EvaluatorContext, graph *FactGraph) erro
 	graph.SetBool("vitals.is_on_fire", "vitals", isOnFire, fmt.Sprintf("Agent on fire: %t", isOnFire))
 	graph.SetBool("vitals.is_sleeping", "vitals", isSleeping, fmt.Sprintf("Agent sleeping: %t", isSleeping))
 	graph.SetBool("vitals.can_eat", "vitals", canEat, fmt.Sprintf("Can eat (food < 20 and has edible food): %t", canEat))
+	graph.SetBool("vitals.needs_foraging", "vitals", needsForaging, fmt.Sprintf("Hungry (<= 12) without edible food: %t", needsForaging))
 
 	return nil
 }
@@ -201,21 +204,13 @@ func (e *ThreatEvaluator) Evaluate(ctx *EvaluatorContext, graph *FactGraph) erro
 		}
 	}
 
-	shouldPanic := ShouldPanic(selfHP, maxHP, conf, hostilesPresent, creeperNearby)
+	shouldPanic := ShouldPanic(selfHP, maxHP, conf, hostilesPresent || damageTaken, creeperNearby)
 
 	var inventory []*civquestv1.ItemStackProto
 	if frame != nil && frame.Status != nil {
 		inventory = frame.Status.Inventory
 	}
 	hasShield, hasWeapon, weaponSlot := ScanInventoryCombatItems(inventory)
-
-	// Check vitals facts (or compute fallback from frame) for threats_cleared calculation
-	isCriticalHealth := false
-	if f, ok := graph.Get("vitals.is_health_critical"); ok {
-		isCriticalHealth = f.Value.Bool
-	} else if frame != nil && frame.Status != nil {
-		isCriticalHealth = selfHP <= LowHPThresholdRatio*maxHP
-	}
 
 	isOnFire := false
 	if f, ok := graph.Get("vitals.is_on_fire"); ok {
@@ -233,7 +228,9 @@ func (e *ThreatEvaluator) Evaluate(ctx *EvaluatorContext, graph *FactGraph) erro
 		}
 	}
 
-	isEmergency := hostilesPresent || damageTaken || isCriticalHealth || isOnFire || isCriticalHunger || shouldPanic || isDrowning
+	// Low HP with zero hostile threats or combat damage (e.g. starvation) is a recovery/foraging
+	// concern, not a combat-flee EMERGENCY lock.
+	isEmergency := hostilesPresent || damageTaken || isOnFire || isCriticalHunger || shouldPanic || isDrowning
 	threatsCleared := !isEmergency
 
 	threatType := "NONE"

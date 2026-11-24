@@ -34,7 +34,7 @@ func TestSurvivalKitEvaluator_IncompleteKit(t *testing.T) {
 	ctx := &EvaluatorContext{
 		AgentID: "agent-eval-1",
 		Frame:   frame,
-		State:   NewAgentState(),
+		State:   func() *AgentState { s := NewAgentState(); s.SetRecipeGraph(newTestRecipeGraph()); return s }(),
 	}
 
 	if err := eval.Evaluate(ctx, graph); err != nil {

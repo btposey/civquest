@@ -4,10 +4,121 @@ import (
 	"testing"
 	"time"
 
+	"github.com/btposey/civquest/orchestrator-go/internal/crafting"
 	"github.com/btposey/civquest/orchestrator-go/internal/db"
 	civquestv1 "github.com/btposey/civquest/orchestrator-go/internal/proto/v1"
 	"github.com/btposey/civquest/orchestrator-go/internal/xdg"
 )
+
+func newTestRecipeGraph() *crafting.RecipeGraph {
+	planks := []string{"minecraft:birch_planks", "minecraft:oak_planks", "minecraft:spruce_planks"}
+	logs := []string{"minecraft:birch_log", "minecraft:oak_log", "minecraft:spruce_log"}
+	coals := []string{"minecraft:charcoal", "minecraft:coal"}
+	cobble := []string{"minecraft:cobbled_deepslate", "minecraft:cobblestone"}
+
+	return crafting.NewRecipeGraph([]*civquestv1.RecipeNode{
+		{
+			RecipeId:     "minecraft:oak_planks",
+			RecipeType:   "minecraft:crafting_shapeless",
+			Requires_3X3: false,
+			IngredientSlots: []*civquestv1.RecipeIngredientSlot{
+				{AcceptedItemIds: []string{"minecraft:oak_log"}, Count: 1},
+			},
+			Result: &civquestv1.ItemStackProto{ItemId: "minecraft:oak_planks", Count: 4},
+		},
+		{
+			RecipeId:     "minecraft:birch_planks",
+			RecipeType:   "minecraft:crafting_shapeless",
+			Requires_3X3: false,
+			IngredientSlots: []*civquestv1.RecipeIngredientSlot{
+				{AcceptedItemIds: []string{"minecraft:birch_log"}, Count: 1},
+			},
+			Result: &civquestv1.ItemStackProto{ItemId: "minecraft:birch_planks", Count: 4},
+		},
+		{
+			RecipeId:     "minecraft:spruce_planks",
+			RecipeType:   "minecraft:crafting_shapeless",
+			Requires_3X3: false,
+			IngredientSlots: []*civquestv1.RecipeIngredientSlot{
+				{AcceptedItemIds: []string{"minecraft:spruce_log"}, Count: 1},
+			},
+			Result: &civquestv1.ItemStackProto{ItemId: "minecraft:spruce_planks", Count: 4},
+		},
+		{
+			RecipeId:     "minecraft:stick",
+			RecipeType:   "minecraft:crafting_shaped",
+			Requires_3X3: false,
+			IngredientSlots: []*civquestv1.RecipeIngredientSlot{
+				{AcceptedItemIds: planks, Count: 2},
+			},
+			Result: &civquestv1.ItemStackProto{ItemId: "minecraft:stick", Count: 4},
+		},
+		{
+			RecipeId:     "minecraft:crafting_table",
+			RecipeType:   "minecraft:crafting_shaped",
+			Requires_3X3: false,
+			IngredientSlots: []*civquestv1.RecipeIngredientSlot{
+				{AcceptedItemIds: planks, Count: 4},
+			},
+			Result: &civquestv1.ItemStackProto{ItemId: "minecraft:crafting_table", Count: 1},
+		},
+		{
+			RecipeId:         "minecraft:wooden_axe",
+			RecipeType:       "minecraft:crafting_shaped",
+			WorkstationBlock: "minecraft:crafting_table",
+			Requires_3X3:     true,
+			IngredientSlots: []*civquestv1.RecipeIngredientSlot{
+				{AcceptedItemIds: planks, Count: 3},
+				{AcceptedItemIds: []string{"minecraft:stick"}, Count: 2},
+			},
+			Result: &civquestv1.ItemStackProto{ItemId: "minecraft:wooden_axe", Count: 1},
+		},
+		{
+			RecipeId:         "minecraft:wooden_sword",
+			RecipeType:       "minecraft:crafting_shaped",
+			WorkstationBlock: "minecraft:crafting_table",
+			Requires_3X3:     true,
+			IngredientSlots: []*civquestv1.RecipeIngredientSlot{
+				{AcceptedItemIds: planks, Count: 2},
+				{AcceptedItemIds: []string{"minecraft:stick"}, Count: 1},
+			},
+			Result: &civquestv1.ItemStackProto{ItemId: "minecraft:wooden_sword", Count: 1},
+		},
+		{
+			RecipeId:         "minecraft:stone_sword",
+			RecipeType:       "minecraft:crafting_shaped",
+			WorkstationBlock: "minecraft:crafting_table",
+			Requires_3X3:     true,
+			IngredientSlots: []*civquestv1.RecipeIngredientSlot{
+				{AcceptedItemIds: cobble, Count: 2},
+				{AcceptedItemIds: []string{"minecraft:stick"}, Count: 1},
+			},
+			Result: &civquestv1.ItemStackProto{ItemId: "minecraft:stone_sword", Count: 1},
+		},
+		{
+			RecipeId:     "minecraft:torch",
+			RecipeType:   "minecraft:crafting_shaped",
+			Requires_3X3: false,
+			IngredientSlots: []*civquestv1.RecipeIngredientSlot{
+				{AcceptedItemIds: coals, Count: 1},
+				{AcceptedItemIds: []string{"minecraft:stick"}, Count: 1},
+			},
+			Result: &civquestv1.ItemStackProto{ItemId: "minecraft:torch", Count: 4},
+		},
+		{
+			RecipeId:         "minecraft:campfire",
+			RecipeType:       "minecraft:crafting_shaped",
+			WorkstationBlock: "minecraft:crafting_table",
+			Requires_3X3:     true,
+			IngredientSlots: []*civquestv1.RecipeIngredientSlot{
+				{AcceptedItemIds: []string{"minecraft:stick"}, Count: 3},
+				{AcceptedItemIds: coals, Count: 1},
+				{AcceptedItemIds: logs, Count: 3},
+			},
+			Result: &civquestv1.ItemStackProto{ItemId: "minecraft:campfire", Count: 1},
+		},
+	})
+}
 
 func TestHasSurvivalKit(t *testing.T) {
 	cases := []struct {
@@ -65,6 +176,7 @@ func TestHasSurvivalKit(t *testing.T) {
 
 func TestEvaluateBootstrapTimberAndCrafting(t *testing.T) {
 	state := NewAgentState()
+	state.SetRecipeGraph(newTestRecipeGraph())
 	cfg := xdg.DefaultAgentIdentityConfig("Able")
 	cfg.Profession = "EXPLORER"
 
@@ -104,7 +216,8 @@ func TestEvaluateBootstrapTimberAndCrafting(t *testing.T) {
 		t.Fatalf("expected HARVEST_BREAK intent for nearby oak_log, got %+v", harvestIntent)
 	}
 
-	// Frame 3: Agent now has 2 oak_logs in inventory, no crafting table placed -> should craft crafting_table!
+	// Frame 3: Agent now has 2 oak_logs in inventory, no crafting table placed ->
+	// RecipeGraph plans multi-step chain: oak_planks -> stick -> oak_planks -> crafting_table!
 	frame3 := &civquestv1.TelemetryFrame{
 		WorldTick: 180,
 		TimeOfDay: 2080,
@@ -118,12 +231,32 @@ func TestEvaluateBootstrapTimberAndCrafting(t *testing.T) {
 			},
 		},
 	}
-	craftTableIntent := EvaluateBootstrapGoals("Able", frame3, cfg, state)
+	craftPlanksIntent := EvaluateBootstrapGoals("Able", frame3, cfg, state)
+	if craftPlanksIntent == nil || craftPlanksIntent.GetCraftItem() == nil || craftPlanksIntent.GetCraftItem().RecipeId != "minecraft:oak_planks" {
+		t.Fatalf("expected CraftItemIntent for minecraft:oak_planks first, got %+v", craftPlanksIntent)
+	}
+
+	// Frame 3b: Agent now has oak_planks: 6, stick: 4 -> pocket-crafts crafting_table!
+	frame3b := &civquestv1.TelemetryFrame{
+		WorldTick: 200,
+		TimeOfDay: 2100,
+		Status: &civquestv1.AgentStatus{
+			Position:        &civquestv1.Vec3{X: 0, Y: 64, Z: 0},
+			Health:          20,
+			FoodLevel:       20,
+			NavigationState: civquestv1.NavigationState_NAVIGATION_STATE_IDLE,
+			Inventory: []*civquestv1.ItemStackProto{
+				{Slot: 0, ItemId: "minecraft:oak_planks", Count: 6},
+				{Slot: 1, ItemId: "minecraft:stick", Count: 4},
+			},
+		},
+	}
+	craftTableIntent := EvaluateBootstrapGoals("Able", frame3b, cfg, state)
 	if craftTableIntent == nil || craftTableIntent.GetCraftItem() == nil || craftTableIntent.GetCraftItem().RecipeId != "minecraft:crafting_table" {
 		t.Fatalf("expected CraftItemIntent for minecraft:crafting_table, got %+v", craftTableIntent)
 	}
 
-	// Frame 4: Agent now has 1 oak_log and 1 crafting_table in inventory -> should place crafting table!
+	// Frame 4: Agent now has planks + sticks + 1 crafting_table in inventory -> should place crafting table!
 	frame4 := &civquestv1.TelemetryFrame{
 		WorldTick: 220,
 		TimeOfDay: 2120,
@@ -133,8 +266,9 @@ func TestEvaluateBootstrapTimberAndCrafting(t *testing.T) {
 			FoodLevel:       20,
 			NavigationState: civquestv1.NavigationState_NAVIGATION_STATE_IDLE,
 			Inventory: []*civquestv1.ItemStackProto{
-				{Slot: 0, ItemId: "minecraft:oak_log", Count: 1},
-				{Slot: 1, ItemId: "minecraft:crafting_table", Count: 1},
+				{Slot: 0, ItemId: "minecraft:oak_planks", Count: 3},
+				{Slot: 1, ItemId: "minecraft:stick", Count: 2},
+				{Slot: 2, ItemId: "minecraft:crafting_table", Count: 1},
 			},
 		},
 	}
@@ -156,7 +290,8 @@ func TestEvaluateBootstrapTimberAndCrafting(t *testing.T) {
 			FoodLevel:       20,
 			NavigationState: civquestv1.NavigationState_NAVIGATION_STATE_IDLE,
 			Inventory: []*civquestv1.ItemStackProto{
-				{Slot: 0, ItemId: "minecraft:oak_log", Count: 1},
+				{Slot: 0, ItemId: "minecraft:oak_planks", Count: 3},
+				{Slot: 1, ItemId: "minecraft:stick", Count: 2},
 			},
 		},
 		InterestingBlocks: []*civquestv1.VisibleBlock{
@@ -179,12 +314,13 @@ func TestEvaluateBootstrapTimberAndCrafting(t *testing.T) {
 
 func TestCraftingTableDistantNavigation(t *testing.T) {
 	state := NewAgentState()
+	state.SetRecipeGraph(newTestRecipeGraph())
 	state.telemetryFramesSeen = 5
 	state.lastExploreTick = 100
 	cfg := xdg.DefaultAgentIdentityConfig("Able")
 	cfg.Profession = "EXPLORER"
 
-	// Agent at (0, 64, 0), crafting table at (10, 64, 0) (distance 10 > 4.5 reach)
+	// Agent at (0, 64, 0) with planks + sticks ready for 3x3 wooden_axe, crafting table at (10, 64, 0) (distance 10 > 4.5 reach)
 	frame := &civquestv1.TelemetryFrame{
 		WorldTick: 500,
 		TimeOfDay: 2000,
@@ -194,7 +330,8 @@ func TestCraftingTableDistantNavigation(t *testing.T) {
 			FoodLevel:       20,
 			NavigationState: civquestv1.NavigationState_NAVIGATION_STATE_IDLE,
 			Inventory: []*civquestv1.ItemStackProto{
-				{Slot: 0, ItemId: "minecraft:oak_log", Count: 2},
+				{Slot: 0, ItemId: "minecraft:oak_planks", Count: 3},
+				{Slot: 1, ItemId: "minecraft:stick", Count: 2},
 			},
 		},
 		InterestingBlocks: []*civquestv1.VisibleBlock{
@@ -206,7 +343,7 @@ func TestCraftingTableDistantNavigation(t *testing.T) {
 	}
 	navIntent := EvaluateBootstrapGoals("Able", frame, cfg, state)
 	if navIntent == nil || navIntent.GetNavigate() == nil {
-		t.Fatalf("expected NavigateIntent towards distant crafting table, got %+v", navIntent)
+		t.Fatalf("expected NavigateIntent towards distant crafting table when ready for 3x3 craft, got %+v", navIntent)
 	}
 	target := navIntent.GetNavigate().Target
 	if target == nil || target.X != 10.5 || target.Z != 0.5 {
@@ -216,12 +353,13 @@ func TestCraftingTableDistantNavigation(t *testing.T) {
 
 func TestCraftingTableUndergroundIgnoredInFavorOfPocketCrafting(t *testing.T) {
 	state := NewAgentState()
+	state.SetRecipeGraph(newTestRecipeGraph())
 	state.telemetryFramesSeen = 5
 	state.lastExploreTick = 100
 	cfg := xdg.DefaultAgentIdentityConfig("Able")
 	cfg.Profession = "EXPLORER"
 
-	// Agent on surface at (0, 64, 0) needing tools, carrying 2 oak logs.
+	// Agent on surface at (0, 64, 0) needing tools, carrying 6 oak planks and 4 sticks.
 	// Crafting table exists in a dugout cave directly below at (0, 50, 0) (dy = -14, hDist = 0).
 	// Because dy > 3 and hDist < |dy|*1.5, the table is unreachable.
 	// The agent must NOT navigate towards the underground table; it should craft a new table in pocket crafting!
@@ -234,7 +372,8 @@ func TestCraftingTableUndergroundIgnoredInFavorOfPocketCrafting(t *testing.T) {
 			FoodLevel:       20,
 			NavigationState: civquestv1.NavigationState_NAVIGATION_STATE_IDLE,
 			Inventory: []*civquestv1.ItemStackProto{
-				{Slot: 0, ItemId: "minecraft:oak_log", Count: 2},
+				{Slot: 0, ItemId: "minecraft:oak_planks", Count: 6},
+				{Slot: 1, ItemId: "minecraft:stick", Count: 4},
 			},
 		},
 		InterestingBlocks: []*civquestv1.VisibleBlock{
@@ -256,6 +395,7 @@ func TestCraftingTableUndergroundIgnoredInFavorOfPocketCrafting(t *testing.T) {
 
 func TestCraftingTableStoneUpgrade(t *testing.T) {
 	state := NewAgentState()
+	state.SetRecipeGraph(newTestRecipeGraph())
 	state.telemetryFramesSeen = 5
 	cfg := xdg.DefaultAgentIdentityConfig("Able")
 	cfg.Profession = "EXPLORER"
@@ -606,6 +746,7 @@ func TestHarvestTreeTask_HardTimeoutUnlocksAndCoolsDown(t *testing.T) {
 
 func TestHarvestTreeTask_CollectsDroppedWoodThenTransitionsCleanly(t *testing.T) {
 	state := NewAgentState()
+	state.SetRecipeGraph(newTestRecipeGraph())
 	state.telemetryFramesSeen = 5
 	cfg := xdg.DefaultAgentIdentityConfig("Collector")
 
@@ -641,7 +782,7 @@ func TestHarvestTreeTask_CollectsDroppedWoodThenTransitionsCleanly(t *testing.T)
 		t.Fatalf("expected active collect_items / COLLECT_ITEMS task, got active=%v kind=%s routine=%s", active, kind, routine)
 	}
 
-	// Item picked up (VisibleEntities empty, 2 oak_log now in inventory) -> transitions cleanly to crafting_table!
+	// Item picked up (VisibleEntities empty, 2 oak_log now in inventory) -> transitions cleanly to oak_planks (first step)!
 	frame.WorldTick = 160
 	frame.VisibleEntities = nil
 	frame.Status.Position = &civquestv1.Vec3{X: 4.0, Y: 64, Z: 0.5}
@@ -649,8 +790,8 @@ func TestHarvestTreeTask_CollectsDroppedWoodThenTransitionsCleanly(t *testing.T)
 		{Slot: 0, ItemId: "minecraft:oak_log", Count: 2},
 	}
 	craftIntent := EvaluateBootstrapGoals("Collector", frame, cfg, state)
-	if craftIntent == nil || craftIntent.GetCraftItem() == nil || craftIntent.GetCraftItem().RecipeId != "minecraft:crafting_table" {
-		t.Fatalf("expected clean transition to CraftItemIntent(minecraft:crafting_table), got %+v", craftIntent)
+	if craftIntent == nil || craftIntent.GetCraftItem() == nil || craftIntent.GetCraftItem().RecipeId != "minecraft:oak_planks" {
+		t.Fatalf("expected clean transition to CraftItemIntent(minecraft:oak_planks), got %+v", craftIntent)
 	}
 	if state.HasActiveTask() {
 		t.Fatalf("expected collect_items task cleared once drops collected")
@@ -824,11 +965,12 @@ func TestDistributedTreeSelection_AcrossAgents(t *testing.T) {
 
 func TestCraftingTableSelfPlacement_IgnoresDistantTable(t *testing.T) {
 	state := NewAgentState()
+	state.SetRecipeGraph(newTestRecipeGraph())
 	state.telemetryFramesSeen = 5
 	cfg := xdg.DefaultAgentIdentityConfig("Able")
 	cfg.Profession = "EXPLORER"
 
-	// Able has a crafting_table in inventory, stands at (0, 64, 0) facing +Z (Yaw=0),
+	// Able has planks + sticks + crafting_table in inventory, stands at (0, 64, 0) facing +Z (Yaw=0),
 	// and sees another agent's distant crafting table at (40, 64, 0).
 	// Able MUST place its own crafting table immediately in front instead of navigating to (40, 64, 0).
 	frame := &civquestv1.TelemetryFrame{
@@ -841,8 +983,9 @@ func TestCraftingTableSelfPlacement_IgnoresDistantTable(t *testing.T) {
 			FoodLevel:       20,
 			NavigationState: civquestv1.NavigationState_NAVIGATION_STATE_IDLE,
 			Inventory: []*civquestv1.ItemStackProto{
-				{Slot: 0, ItemId: "minecraft:oak_log", Count: 2},
-				{Slot: 1, ItemId: "minecraft:crafting_table", Count: 1},
+				{Slot: 0, ItemId: "minecraft:oak_planks", Count: 3},
+				{Slot: 1, ItemId: "minecraft:stick", Count: 2},
+				{Slot: 2, ItemId: "minecraft:crafting_table", Count: 1},
 			},
 		},
 		InterestingBlocks: []*civquestv1.VisibleBlock{
@@ -864,7 +1007,8 @@ func TestCraftingTableSelfPlacement_IgnoresDistantTable(t *testing.T) {
 	// Next tick: placed crafting table appears at (0, 64, 1), consumed from inventory -> crafts wooden_axe!
 	frame.WorldTick = 325
 	frame.Status.Inventory = []*civquestv1.ItemStackProto{
-		{Slot: 0, ItemId: "minecraft:oak_log", Count: 2},
+		{Slot: 0, ItemId: "minecraft:oak_planks", Count: 3},
+		{Slot: 1, ItemId: "minecraft:stick", Count: 2},
 	}
 	frame.InterestingBlocks = append(frame.InterestingBlocks, &civquestv1.VisibleBlock{
 		Pos:     placedPos,
@@ -878,6 +1022,7 @@ func TestCraftingTableSelfPlacement_IgnoresDistantTable(t *testing.T) {
 
 func TestBootstrap_CraftingTableRecallFromSpatialIndex(t *testing.T) {
 	state := NewAgentState()
+	state.SetRecipeGraph(newTestRecipeGraph())
 	state.telemetryFramesSeen = 5
 	cfg := xdg.DefaultAgentIdentityConfig("Able")
 	cfg.Profession = "EXPLORER"
@@ -908,7 +1053,8 @@ func TestBootstrap_CraftingTableRecallFromSpatialIndex(t *testing.T) {
 			FoodLevel:       20,
 			NavigationState: civquestv1.NavigationState_NAVIGATION_STATE_IDLE,
 			Inventory: []*civquestv1.ItemStackProto{
-				{Slot: 0, ItemId: "minecraft:oak_log", Count: 2},
+				{Slot: 0, ItemId: "minecraft:oak_planks", Count: 6},
+				{Slot: 1, ItemId: "minecraft:stick", Count: 4},
 			},
 		},
 	}
@@ -944,6 +1090,7 @@ func TestBootstrap_CraftingTableRecallFromSpatialIndex(t *testing.T) {
 
 	// Low reliability (< 0.5) table is ignored -> falls back to pocket crafting a new table
 	state2 := NewAgentState()
+	state2.SetRecipeGraph(newTestRecipeGraph())
 	state2.telemetryFramesSeen = 5
 	state2.SpatialIndex().UpsertPOI(db.AgentPOI{
 		POIID:          FormatPOIID(POICategoryWorkstation, 30, 64, 0),
@@ -1292,15 +1439,29 @@ func TestBootstrapLightCrafting_ADR029StrictRecipes(t *testing.T) {
 			wantRecipe: "",
 		},
 		{
-			name: "No sticks with 3 logs and 1 coal and table does not craft campfire or torch",
+			name: "No sticks with 3 logs and 1 coal and table crafts oak_planks then stick then torch",
 			extraItems: []*civquestv1.ItemStackProto{
-				{Slot: 2, ItemId: "minecraft:oak_log", Count: 6},
+				{Slot: 2, ItemId: "minecraft:oak_log", Count: 3},
 				{Slot: 3, ItemId: "minecraft:coal", Count: 1},
 			},
 			interestingBlocks: []*civquestv1.VisibleBlock{
 				{Pos: &civquestv1.BlockPosProto{X: 1, Y: 64, Z: 0}, BlockId: "minecraft:crafting_table"},
 			},
-			wantRecipe: "",
+			wantRecipe:      "minecraft:oak_planks",
+			wantWorkstation: false,
+		},
+		{
+			name: "Campfire crafts sticks first when 3 logs + 4 planks + 1 coal at table",
+			extraItems: []*civquestv1.ItemStackProto{
+				{Slot: 2, ItemId: "minecraft:oak_log", Count: 3},
+				{Slot: 3, ItemId: "minecraft:oak_planks", Count: 4},
+				{Slot: 4, ItemId: "minecraft:coal", Count: 1},
+			},
+			interestingBlocks: []*civquestv1.VisibleBlock{
+				{Pos: &civquestv1.BlockPosProto{X: 1, Y: 64, Z: 0}, BlockId: "minecraft:crafting_table"},
+			},
+			wantRecipe:      "minecraft:stick",
+			wantWorkstation: false,
 		},
 		{
 			name: "Table out of horizontal reach falls back to 2x2 pocket torch instead of campfire",
@@ -1342,9 +1503,9 @@ func TestBootstrapLightCrafting_ADR029StrictRecipes(t *testing.T) {
 			wantWorkstation: false,
 		},
 		{
-			name: "Fewer than 3 sticks with 3 logs and coal crafts 2x2 pocket torch instead of campfire",
+			name: "Fewer than 3 sticks with exactly 3 logs (no spare logs for sticks) and coal crafts 2x2 pocket torch instead of campfire",
 			extraItems: []*civquestv1.ItemStackProto{
-				{Slot: 2, ItemId: "minecraft:oak_log", Count: 6},
+				{Slot: 2, ItemId: "minecraft:oak_log", Count: 3},
 				{Slot: 3, ItemId: "minecraft:stick", Count: 2},
 				{Slot: 4, ItemId: "minecraft:coal", Count: 1},
 			},
@@ -1392,6 +1553,7 @@ func TestBootstrapLightCrafting_ADR029StrictRecipes(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			state := NewAgentState()
+			state.SetRecipeGraph(newTestRecipeGraph())
 			pos := &civquestv1.Vec3{X: 0, Y: 64, Z: 0}
 			inv := append([]*civquestv1.ItemStackProto{}, baseTools...)
 			inv = append(inv, tc.extraItems...)
@@ -1435,6 +1597,7 @@ func TestBootstrapLightCrafting_ADR029StrictRecipes(t *testing.T) {
 
 func TestBootstrapNoCoalDoesNotEmitBogusCraftOrInfiniteChop(t *testing.T) {
 	state := NewAgentState()
+	state.SetRecipeGraph(newTestRecipeGraph())
 	pos := &civquestv1.Vec3{X: 0, Y: 64, Z: 0}
 	frame := &civquestv1.TelemetryFrame{
 		WorldTick: 200,
@@ -1460,5 +1623,182 @@ func TestBootstrapNoCoalDoesNotEmitBogusCraftOrInfiniteChop(t *testing.T) {
 	intent := EvaluateBootstrapGoalsDirect("Able", frame, pos, civquestv1.NavigationState_NAVIGATION_STATE_IDLE, state)
 	if intent != nil {
 		t.Fatalf("expected nil bootstrap intent when agent has tools, >= 6 logs, and no coal/charcoal, got %+v", intent)
+	}
+}
+
+func TestBootstrapDynamicRecipeGraph_BirchLogToWoodenAxeStepByStep(t *testing.T) {
+	state := NewAgentState()
+	state.SetRecipeGraph(newTestRecipeGraph())
+	state.telemetryFramesSeen = 5
+	cfg := xdg.DefaultAgentIdentityConfig("BirchCrafter")
+	cfg.Profession = "EXPLORER"
+
+	inv := map[string]int{"minecraft:birch_log": 4}
+	toProtoInv := func(m map[string]int) []*civquestv1.ItemStackProto {
+		var out []*civquestv1.ItemStackProto
+		var slot int32
+		for id, cnt := range m {
+			if cnt > 0 {
+				out = append(out, &civquestv1.ItemStackProto{Slot: slot, ItemId: id, Count: int32(cnt)})
+				slot++
+			}
+		}
+		return out
+	}
+
+	tableBlock := &civquestv1.VisibleBlock{
+		Pos:     &civquestv1.BlockPosProto{X: 1, Y: 64, Z: 0},
+		BlockId: "minecraft:crafting_table",
+	}
+
+	expectedSequence := []string{
+		"minecraft:birch_planks",
+		"minecraft:stick",
+		"minecraft:birch_planks",
+		"minecraft:wooden_axe",
+	}
+
+	for stepIdx, wantRecipe := range expectedSequence {
+		frame := &civquestv1.TelemetryFrame{
+			WorldTick: int64(100 + stepIdx*25),
+			TimeOfDay: 2000,
+			Status: &civquestv1.AgentStatus{
+				Position:        &civquestv1.Vec3{X: 0, Y: 64, Z: 0},
+				Health:          20,
+				FoodLevel:       20,
+				NavigationState: civquestv1.NavigationState_NAVIGATION_STATE_IDLE,
+				Inventory:       toProtoInv(inv),
+			},
+			InterestingBlocks: []*civquestv1.VisibleBlock{tableBlock},
+		}
+		intent := EvaluateBootstrapGoals("BirchCrafter", frame, cfg, state)
+		craft := intent.GetCraftItem()
+		if craft == nil {
+			t.Fatalf("step %d: expected CraftItemIntent(%s), got %+v", stepIdx, wantRecipe, intent)
+		}
+		if craft.RecipeId != wantRecipe {
+			t.Fatalf("step %d: expected recipe %q, got %q", stepIdx, wantRecipe, craft.RecipeId)
+		}
+
+		switch wantRecipe {
+		case "minecraft:birch_planks":
+			if craft.WorkstationPos != nil {
+				t.Fatalf("step %d: expected nil WorkstationPos for 2x2 birch_planks, got %+v", stepIdx, craft.WorkstationPos)
+			}
+			inv["minecraft:birch_log"]--
+			inv["minecraft:birch_planks"] += 4
+		case "minecraft:stick":
+			if craft.WorkstationPos != nil {
+				t.Fatalf("step %d: expected nil WorkstationPos for 2x2 stick, got %+v", stepIdx, craft.WorkstationPos)
+			}
+			inv["minecraft:birch_planks"] -= 2
+			inv["minecraft:stick"] += 4
+		case "minecraft:wooden_axe":
+			if craft.WorkstationPos == nil || craft.WorkstationPos.X != 1 {
+				t.Fatalf("step %d: expected WorkstationPos at table (1,64,0), got %+v", stepIdx, craft.WorkstationPos)
+			}
+			inv["minecraft:birch_planks"] -= 3
+			inv["minecraft:stick"] -= 2
+			inv["minecraft:wooden_axe"]++
+		}
+	}
+}
+
+func TestBootstrapDynamicRecipeGraph_NoCraftingTableMagnetismWith1Log(t *testing.T) {
+	state := NewAgentState()
+	state.SetRecipeGraph(newTestRecipeGraph())
+	state.telemetryFramesSeen = 5
+	cfg := xdg.DefaultAgentIdentityConfig("Forager")
+	cfg.Profession = "EXPLORER"
+
+	// Recalled crafting table 30 blocks away in SpatialIndex
+	state.SpatialIndex().UpsertPOI(db.AgentPOI{
+		POIID:          FormatPOIID(POICategoryWorkstation, 30, 64, 0),
+		Category:       POICategoryWorkstation,
+		BlockID:        "minecraft:crafting_table",
+		X:              30.5,
+		Y:              64.0,
+		Z:              0.5,
+		AccessX:        29.5,
+		AccessY:        64.0,
+		AccessZ:        0.5,
+		ElevationLayer: ElevationSurface,
+		SafetyScore:    1.0,
+		Reliability:    1.0,
+		IsActive:       true,
+	})
+
+	// Agent already has wooden_sword, needs wooden_axe, holds only 1 birch_log (insufficient for wooden_axe!),
+	// and sees a nearby birch_log tree at (3, 64, 0).
+	// Must NOT walk back to the crafting table at (30, 64, 0); must harvest the nearby tree!
+	frame := &civquestv1.TelemetryFrame{
+		WorldTick: 200,
+		TimeOfDay: 2000,
+		Status: &civquestv1.AgentStatus{
+			Position:        &civquestv1.Vec3{X: 0, Y: 64, Z: 0},
+			Health:          20,
+			FoodLevel:       20,
+			NavigationState: civquestv1.NavigationState_NAVIGATION_STATE_IDLE,
+			Inventory: []*civquestv1.ItemStackProto{
+				{Slot: 0, ItemId: "minecraft:wooden_sword", Count: 1},
+				{Slot: 1, ItemId: "minecraft:birch_log", Count: 1},
+			},
+		},
+		InterestingBlocks: []*civquestv1.VisibleBlock{
+			{Pos: &civquestv1.BlockPosProto{X: 3, Y: 64, Z: 0}, BlockId: "minecraft:birch_log"},
+		},
+	}
+
+	intent := EvaluateBootstrapGoals("Forager", frame, cfg, state)
+	if intent == nil || intent.GetInteractBlock() == nil ||
+		intent.GetInteractBlock().InteractionType != civquestv1.InteractBlockIntent_HARVEST_BREAK {
+		t.Fatalf("expected HARVEST_BREAK on nearby tree instead of walking to distant table with 1 log, got %+v", intent)
+	}
+
+	// With 2 birch_logs >4.5m from table and still missing planks/sticks, crafts 2x2 birch_planks first!
+	frame.WorldTick = 240
+	state.ClearActiveTask()
+	frame.Status.Inventory = []*civquestv1.ItemStackProto{
+		{Slot: 0, ItemId: "minecraft:wooden_sword", Count: 1},
+		{Slot: 1, ItemId: "minecraft:birch_log", Count: 2},
+	}
+	pocketIntent := EvaluateBootstrapGoals("Forager", frame, cfg, state)
+	if pocketIntent == nil || pocketIntent.GetCraftItem() == nil || pocketIntent.GetCraftItem().RecipeId != "minecraft:birch_planks" {
+		t.Fatalf("expected 2x2 pocket craft birch_planks before walking to distant table, got %+v", pocketIntent)
+	}
+}
+
+func TestBootstrapDynamicRecipeGraph_FailClosedWithoutSyncedCatalog(t *testing.T) {
+	state := NewAgentState() // recipeGraph is nil (not yet synced)
+	state.telemetryFramesSeen = 5
+	cfg := xdg.DefaultAgentIdentityConfig("NoRecipes")
+	cfg.Profession = "EXPLORER"
+
+	frame := &civquestv1.TelemetryFrame{
+		WorldTick: 200,
+		TimeOfDay: 2000,
+		Status: &civquestv1.AgentStatus{
+			Position:        &civquestv1.Vec3{X: 0, Y: 64, Z: 0},
+			Health:          20,
+			FoodLevel:       20,
+			NavigationState: civquestv1.NavigationState_NAVIGATION_STATE_IDLE,
+			Inventory: []*civquestv1.ItemStackProto{
+				{Slot: 0, ItemId: "minecraft:oak_planks", Count: 6},
+				{Slot: 1, ItemId: "minecraft:stick", Count: 4},
+			},
+		},
+		InterestingBlocks: []*civquestv1.VisibleBlock{
+			{Pos: &civquestv1.BlockPosProto{X: 1, Y: 64, Z: 0}, BlockId: "minecraft:crafting_table"},
+			{Pos: &civquestv1.BlockPosProto{X: 3, Y: 64, Z: 0}, BlockId: "minecraft:oak_log"},
+		},
+	}
+
+	intent := EvaluateBootstrapGoals("NoRecipes", frame, cfg, state)
+	if intent != nil && intent.GetCraftItem() != nil {
+		t.Fatalf("expected fail-closed behavior (no CraftItemIntent) when RecipeGraph is nil, got %+v", intent)
+	}
+	if intent == nil || intent.GetInteractBlock() == nil ||
+		intent.GetInteractBlock().InteractionType != civquestv1.InteractBlockIntent_HARVEST_BREAK {
+		t.Fatalf("expected fallback to timber harvesting when RecipeGraph is nil, got %+v", intent)
 	}
 }

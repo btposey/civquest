@@ -6,6 +6,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/btposey/civquest/orchestrator-go/internal/crafting"
 	"github.com/btposey/civquest/orchestrator-go/internal/db"
 	civquestv1 "github.com/btposey/civquest/orchestrator-go/internal/proto/v1"
 	"github.com/btposey/civquest/orchestrator-go/internal/xdg"
@@ -224,6 +225,7 @@ func evaluateBootstrapGoalsLocked(
 
 	// 0. Execute any committed TaskSubroutine (e.g. harvest_tree, collect_items) before evaluating other goals.
 	// While committed, the agent MUST NOT switch tasks, craft prematurely, re-target another tree, or wander away.
+	justFinishedHarvest := false
 	if state.activeTask != nil {
 		taskKind := state.activeTask.Spec.Kind
 		targetPos := cloneBlockPos(state.activeTask.Spec.Target.BlockPos)
@@ -232,13 +234,16 @@ func evaluateBootstrapGoalsLocked(
 			return stepRes.Intent
 		}
 		// Task reached COMPLETE or FAILED: transition cleanly
-		if stepRes.Done && taskKind == "harvest_tree" && stepRes.Phase == TaskPhaseComplete && targetPos != nil {
-			if drop := findNearestDroppedWoodItem(frame, targetPos.X, targetPos.Z); drop != nil {
-				collectTask := NewCollectItemsTask(targetPos.X, targetPos.Y, targetPos.Z, state.stage, frame.WorldTick)
-				state.StartTaskLocked(collectTask)
-				collectRes := state.StepActiveTaskLocked(agentID, frame)
-				if collectRes.Active {
-					return collectRes.Intent
+		if stepRes.Done && taskKind == "harvest_tree" && stepRes.Phase == TaskPhaseComplete {
+			justFinishedHarvest = true
+			if targetPos != nil {
+				if drop := findNearestDroppedWoodItem(frame, targetPos.X, targetPos.Z); drop != nil {
+					collectTask := NewCollectItemsTask(targetPos.X, targetPos.Y, targetPos.Z, state.stage, frame.WorldTick)
+					state.StartTaskLocked(collectTask)
+					collectRes := state.StepActiveTaskLocked(agentID, frame)
+					if collectRes.Active {
+						return collectRes.Intent
+					}
 				}
 			}
 		}
@@ -266,150 +271,158 @@ func evaluateBootstrapGoalsLocked(
 	}
 
 	inv := inspectBootstrapInventory(frame.Status.Inventory)
+	invMap := crafting.InventoryMapFromProtos(frame.Status.Inventory)
+	recipeGraph := state.RecipeGraphLocked()
 
 	canCraft := state.lastCraftTick == 0 || frame.WorldTick < state.lastCraftTick || frame.WorldTick-state.lastCraftTick >= 20
 	canPlace := state.lastShelterPlaceTick == 0 || frame.WorldTick < state.lastShelterPlaceTick || frame.WorldTick-state.lastShelterPlaceTick >= 20
 
-	needsStoneUpgrade := !inv.hasStoneGear && inv.cobbleCount >= 3 && (inv.logCount >= 1 || inv.planksCount >= 1 || inv.stickCount >= 1)
-	needsWoodenTools := (!inv.hasAxe || !inv.hasSword) && (inv.logCount >= 1 || inv.planksCount >= 4)
-	needsTools := needsStoneUpgrade || needsWoodenTools
-
 	var nearestCraftingTable *civquestv1.VisibleBlock
 	var recalledTablePOI *db.AgentPOI
 	bestTableDistSq := math.MaxFloat64
-	if needsTools || (!inv.hasLight && canCraft && inv.coalCount >= 1 && inv.logCount >= 3 && inv.stickCount >= 3) {
+	if !recipeGraph.IsEmpty() && (!inv.hasStoneGear || !inv.hasAxe || !inv.hasSword || !inv.hasLight) {
 		nearestCraftingTable, recalledTablePOI, bestTableDistSq = findNearestCraftingTableLocked(frame, pos, state)
 	}
+	tableInReach := isCraftingTableWithinReach(nearestCraftingTable, bestTableDistSq, pos)
 
-	if needsTools {
-		if isCraftingTableWithinReach(nearestCraftingTable, bestTableDistSq, pos) {
-			if needsStoneUpgrade && canCraft {
+	if !recipeGraph.IsEmpty() {
+		var toolTargets []string
+		if !inv.hasStoneGear {
+			toolTargets = append(toolTargets, "minecraft:stone_sword")
+		}
+		if !inv.hasAxe {
+			toolTargets = append(toolTargets, "minecraft:wooden_axe")
+		} else if !inv.hasSword {
+			toolTargets = append(toolTargets, "minecraft:wooden_sword")
+		}
+
+		for _, targetID := range toolTargets {
+			step, ok := recipeGraph.PlanNextStep(targetID, invMap, tableInReach)
+			if !ok {
+				continue
+			}
+			if step.CanExecuteNow {
+				if !canCraft {
+					return nil
+				}
 				state.lastCraftTick = frame.WorldTick
+				craftIntent := &civquestv1.CraftItemIntent{
+					RecipeId:   step.RecipeID,
+					BatchCount: 1,
+				}
+				if step.Requires3x3 && nearestCraftingTable != nil {
+					craftIntent.WorkstationPos = nearestCraftingTable.Pos
+				}
 				return &civquestv1.AgentIntent{
 					AgentId: agentID,
 					Action: &civquestv1.AgentIntent_CraftItem{
-						CraftItem: &civquestv1.CraftItemIntent{
-							RecipeId:       "minecraft:stone_sword",
-							WorkstationPos: nearestCraftingTable.Pos,
-							BatchCount:     1,
-						},
+						CraftItem: craftIntent,
 					},
 				}
 			}
-			if needsWoodenTools && canCraft {
-				recipe := "minecraft:wooden_axe"
-				if inv.hasAxe && !inv.hasSword {
-					recipe = "minecraft:wooden_sword"
-				}
-				state.lastCraftTick = frame.WorldTick
-				return &civquestv1.AgentIntent{
-					AgentId: agentID,
-					Action: &civquestv1.AgentIntent_CraftItem{
-						CraftItem: &civquestv1.CraftItemIntent{
-							RecipeId:       recipe,
-							WorkstationPos: nearestCraftingTable.Pos,
-							BatchCount:     1,
-						},
-					},
-				}
-			}
-		} else if recalledTablePOI != nil {
-			if navState == civquestv1.NavigationState_NAVIGATION_STATE_STUCK {
-				state.MarkWorkstationUnreachableLocked(nearestCraftingTable.Pos.X, nearestCraftingTable.Pos.Y, nearestCraftingTable.Pos.Z, frame.WorldTick)
-				if si := state.SpatialIndexLocked(); si != nil {
-					si.DecayPOIReliability(recalledTablePOI.POIID, 0.3)
-				}
-				return nil
-			}
-			state.navigatingToPOI = true
-			if navState != civquestv1.NavigationState_NAVIGATION_STATE_PATHING {
-				if state.lastBootstrapNavTick == 0 || frame.WorldTick < state.lastBootstrapNavTick || frame.WorldTick-state.lastBootstrapNavTick >= 40 {
-					state.lastBootstrapNavTick = frame.WorldTick
-					return &civquestv1.AgentIntent{
-						AgentId: agentID,
-						Action: &civquestv1.AgentIntent_Navigate{
-							Navigate: &civquestv1.NavigateIntent{
-								Target:           poiAccessTarget(recalledTablePOI),
-								SpeedMultiplier:  1.0,
-								ArrivalTolerance: 2,
-							},
-						},
+			if step.NeedsTable {
+				if recalledTablePOI != nil {
+					if navState == civquestv1.NavigationState_NAVIGATION_STATE_STUCK {
+						state.MarkWorkstationUnreachableLocked(nearestCraftingTable.Pos.X, nearestCraftingTable.Pos.Y, nearestCraftingTable.Pos.Z, frame.WorldTick)
+						if si := state.SpatialIndexLocked(); si != nil {
+							si.DecayPOIReliability(recalledTablePOI.POIID, 0.3)
+						}
+						return nil
 					}
-				}
-			}
-			return nil
-		} else if inv.hasCraftingTable {
-			// Self-placement: when carrying a crafting table and none is within reach,
-			// place it immediately in front of the agent instead of trekking to a distant visible table.
-			if canPlace {
-				state.lastShelterPlaceTick = frame.WorldTick
-				placePos := selectAdjacentCraftingTablePos(frame, pos)
-				return &civquestv1.AgentIntent{
-					AgentId: agentID,
-					Action: &civquestv1.AgentIntent_InteractBlock{
-						InteractBlock: &civquestv1.InteractBlockIntent{
-							Pos:             placePos,
-							InteractionType: civquestv1.InteractBlockIntent_PLACE_BLOCK,
-							BlockOrItemId:   "minecraft:crafting_table",
-						},
-					},
-				}
-			}
-			return nil
-		} else if nearestCraftingTable != nil {
-			if navState == civquestv1.NavigationState_NAVIGATION_STATE_STUCK {
-				// We became stuck trying to reach this table! Mark it unreachable so we don't repeat this futile attempt.
-				state.MarkWorkstationUnreachableLocked(nearestCraftingTable.Pos.X, nearestCraftingTable.Pos.Y, nearestCraftingTable.Pos.Z, frame.WorldTick)
-				return nil
-			}
-			if navState != civquestv1.NavigationState_NAVIGATION_STATE_PATHING {
-				if state.lastExploreTick == 0 || frame.WorldTick < state.lastExploreTick || frame.WorldTick-state.lastExploreTick >= 40 {
-					state.lastExploreTick = frame.WorldTick
-					return &civquestv1.AgentIntent{
-						AgentId: agentID,
-						Action: &civquestv1.AgentIntent_Navigate{
-							Navigate: &civquestv1.NavigateIntent{
-								Target: &civquestv1.Vec3{
-									X: float64(nearestCraftingTable.Pos.X) + 0.5,
-									Y: float64(nearestCraftingTable.Pos.Y),
-									Z: float64(nearestCraftingTable.Pos.Z) + 0.5,
+					state.navigatingToPOI = true
+					if navState != civquestv1.NavigationState_NAVIGATION_STATE_PATHING {
+						if state.lastBootstrapNavTick == 0 || frame.WorldTick < state.lastBootstrapNavTick || frame.WorldTick-state.lastBootstrapNavTick >= 40 {
+							state.lastBootstrapNavTick = frame.WorldTick
+							return &civquestv1.AgentIntent{
+								AgentId: agentID,
+								Action: &civquestv1.AgentIntent_Navigate{
+									Navigate: &civquestv1.NavigateIntent{
+										Target:           poiAccessTarget(recalledTablePOI),
+										SpeedMultiplier:  1.0,
+										ArrivalTolerance: 2,
+									},
 								},
-								SpeedMultiplier:  1.0,
-								ArrivalTolerance: 2,
-							},
-						},
+							}
+						}
 					}
+					return nil
+				} else if inv.hasCraftingTable {
+					// Self-placement: when carrying a crafting table and none is within reach,
+					// place it immediately in front of the agent instead of trekking to a distant visible table.
+					if canPlace {
+						state.lastShelterPlaceTick = frame.WorldTick
+						placePos := selectAdjacentCraftingTablePos(frame, pos)
+						return &civquestv1.AgentIntent{
+							AgentId: agentID,
+							Action: &civquestv1.AgentIntent_InteractBlock{
+								InteractBlock: &civquestv1.InteractBlockIntent{
+									Pos:             placePos,
+									InteractionType: civquestv1.InteractBlockIntent_PLACE_BLOCK,
+									BlockOrItemId:   "minecraft:crafting_table",
+								},
+							},
+						}
+					}
+					return nil
+				} else if nearestCraftingTable != nil {
+					if navState == civquestv1.NavigationState_NAVIGATION_STATE_STUCK {
+						// We became stuck trying to reach this table! Mark it unreachable so we don't repeat this futile attempt.
+						state.MarkWorkstationUnreachableLocked(nearestCraftingTable.Pos.X, nearestCraftingTable.Pos.Y, nearestCraftingTable.Pos.Z, frame.WorldTick)
+						return nil
+					}
+					if navState != civquestv1.NavigationState_NAVIGATION_STATE_PATHING {
+						if state.lastExploreTick == 0 || frame.WorldTick < state.lastExploreTick || frame.WorldTick-state.lastExploreTick >= 40 {
+							state.lastExploreTick = frame.WorldTick
+							return &civquestv1.AgentIntent{
+								AgentId: agentID,
+								Action: &civquestv1.AgentIntent_Navigate{
+									Navigate: &civquestv1.NavigateIntent{
+										Target: &civquestv1.Vec3{
+											X: float64(nearestCraftingTable.Pos.X) + 0.5,
+											Y: float64(nearestCraftingTable.Pos.Y),
+											Z: float64(nearestCraftingTable.Pos.Z) + 0.5,
+										},
+										SpeedMultiplier:  1.0,
+										ArrivalTolerance: 2,
+									},
+								},
+							}
+						}
+					}
+					return nil
+				} else if tableStep, tableOK := recipeGraph.PlanNextStep("minecraft:crafting_table", invMap, false); tableOK && tableStep.CanExecuteNow {
+					// Autonomous self-reliance: craft our own table in 2x2 pocket crafting
+					// if no reachable crafting table exists.
+					if canCraft {
+						state.lastCraftTick = frame.WorldTick
+						return &civquestv1.AgentIntent{
+							AgentId: agentID,
+							Action: &civquestv1.AgentIntent_CraftItem{
+								CraftItem: &civquestv1.CraftItemIntent{
+									RecipeId:   tableStep.RecipeID,
+									BatchCount: 1,
+								},
+							},
+						}
+					}
+					return nil
 				}
 			}
-			return nil
-		} else if inv.logCount >= 1 || inv.planksCount >= 4 {
-			// Autonomous self-reliance: craft our own table in 2x2 pocket crafting
-			// if no reachable crafting table exists.
-			if canCraft {
-				state.lastCraftTick = frame.WorldTick
-				return &civquestv1.AgentIntent{
-					AgentId: agentID,
-					Action: &civquestv1.AgentIntent_CraftItem{
-						CraftItem: &civquestv1.CraftItemIntent{
-							RecipeId:   "minecraft:crafting_table",
-							BatchCount: 1,
-						},
-					},
-				}
-			}
-			return nil
+			break
 		}
 	}
 
-	if !inv.hasLight && canCraft {
-		if craftIntent := craftLightSourceIntentLocked(agentID, frame.WorldTick, inv, nearestCraftingTable, bestTableDistSq, pos, state); craftIntent != nil {
+	if !inv.hasLight && canCraft && !recipeGraph.IsEmpty() {
+		if craftIntent := craftLightSourceIntentLocked(agentID, frame.WorldTick, invMap, nearestCraftingTable, bestTableDistSq, pos, state); craftIntent != nil {
 			return craftIntent
 		}
 	}
 
-	// 3. Gather timber if the agent lacks basic tools or has < 6 logs
+	// 3. Gather timber if the agent lacks basic tools or has < 6 logs.
+	// If a harvest_tree task just completed on this tick, allow the HFSM PDA stack to pop cleanly
+	// before starting another harvest_tree task on the next tick.
 	needsTimber := (!inv.hasAxe || !inv.hasSword || inv.logCount < 6)
-	if needsTimber {
+	if needsTimber && !justFinishedHarvest {
 		targetLog, recalledTreePOI := findNearestTreeTrunk(agentID, frame, pos, state)
 		if targetLog != nil {
 			treeTask := NewHarvestTreeTask(targetLog.Pos.X, targetLog.Pos.Y, targetLog.Pos.Z, state.stage, frame.WorldTick)
@@ -578,46 +591,62 @@ func isCraftingTableWithinReach(table *civquestv1.VisibleBlock, distSq float64, 
 }
 
 // craftLightSourceIntentLocked crafts a campfire (3x3 at reachable crafting table) or
-// pocket-crafts a torch (2x2) strictly adhering to vanilla Minecraft / ADR-029 recipes.
-// Returns nil without emitting bogus craft intents when coal/charcoal or required materials are absent.
+// pocket-crafts a torch (2x2) by querying the dynamic RecipeGraph (ADR-029).
+// Returns nil without emitting bogus craft intents when required materials or loaded recipes are absent.
 func craftLightSourceIntentLocked(
 	agentID string,
 	worldTick int64,
-	inv bootstrapInventorySummary,
+	invMap map[string]int,
 	nearestCraftingTable *civquestv1.VisibleBlock,
 	bestTableDistSq float64,
 	pos *civquestv1.Vec3,
 	state *AgentState,
 ) *civquestv1.AgentIntent {
-	if state == nil || inv.coalCount < 1 {
+	if state == nil {
 		return nil
 	}
-	if isCraftingTableWithinReach(nearestCraftingTable, bestTableDistSq, pos) &&
-		inv.logCount >= 3 && inv.stickCount >= 3 {
+	recipeGraph := state.RecipeGraphLocked()
+	if recipeGraph.IsEmpty() {
+		return nil
+	}
+
+	tableInReach := isCraftingTableWithinReach(nearestCraftingTable, bestTableDistSq, pos)
+	if tableInReach {
+		if step, ok := recipeGraph.PlanNextStep("minecraft:campfire", invMap, true); ok && step.CanExecuteNow {
+			state.lastCraftTick = worldTick
+			craftIntent := &civquestv1.CraftItemIntent{
+				RecipeId:   step.RecipeID,
+				BatchCount: 1,
+			}
+			if step.Requires3x3 && nearestCraftingTable != nil {
+				craftIntent.WorkstationPos = nearestCraftingTable.Pos
+			}
+			return &civquestv1.AgentIntent{
+				AgentId: agentID,
+				Action: &civquestv1.AgentIntent_CraftItem{
+					CraftItem: craftIntent,
+				},
+			}
+		}
+	}
+
+	if step, ok := recipeGraph.PlanNextStep("minecraft:torch", invMap, tableInReach); ok && step.CanExecuteNow {
 		state.lastCraftTick = worldTick
+		craftIntent := &civquestv1.CraftItemIntent{
+			RecipeId:   step.RecipeID,
+			BatchCount: 1,
+		}
+		if step.Requires3x3 && tableInReach && nearestCraftingTable != nil {
+			craftIntent.WorkstationPos = nearestCraftingTable.Pos
+		}
 		return &civquestv1.AgentIntent{
 			AgentId: agentID,
 			Action: &civquestv1.AgentIntent_CraftItem{
-				CraftItem: &civquestv1.CraftItemIntent{
-					RecipeId:       "minecraft:campfire",
-					WorkstationPos: nearestCraftingTable.Pos,
-					BatchCount:     1,
-				},
+				CraftItem: craftIntent,
 			},
 		}
 	}
-	if inv.stickCount >= 1 {
-		state.lastCraftTick = worldTick
-		return &civquestv1.AgentIntent{
-			AgentId: agentID,
-			Action: &civquestv1.AgentIntent_CraftItem{
-				CraftItem: &civquestv1.CraftItemIntent{
-					RecipeId:   "minecraft:torch",
-					BatchCount: 1,
-				},
-			},
-		}
-	}
+
 	return nil
 }
 

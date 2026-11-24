@@ -201,40 +201,48 @@ type AgentRuntime struct {
 	lastTradeReassessTick int64
 
 	// System 2 Deliberative Dialogue Pipeline
-	dialogueService      *system2.DialogueService
-	chroniclerService    *system2.ChroniclerService
-	toponymyService      *system2.ToponymyService
-	companionService     *system2.CompanionService
-	landmarksDB          *db.LandmarksDB
-	contractsDB          *db.ContractsDB
-	civicRegistryDB      *db.CivicRegistryDB
-	rumorsDB             *db.RumorsDB
-	diplomacyDB          *db.DiplomacyDB
-	contemplationService *system2.ContemplationService
-	lastContemplatedDay  int64
-	contemplationActive  atomic.Bool
-	sharecroppingEngine  *agrarian.SharecroppingEngine
-	lastChronicleAttempt time.Time
-	lastChronicleTick    int64
-	lastToponymyAttempt  time.Time
-	lastToponymyTick     int64
-	lastToponymyPos      *civquestv1.Vec3
-	lastFollowNavTarget  *civquestv1.Vec3
-	lastFollowNavTick    int64
-	dialogueWg           sync.WaitGroup
-	poiWg                sync.WaitGroup
-	tradeActive          atomic.Bool
-	chroniclerActive     atomic.Bool
-	toponymyActive       atomic.Bool
-	lastTradeTick        int64
-	lastTradePlayerUUID  string
-	lastTradeAttemptAt   time.Time
-	debugLogger          *DebugLogger
-	lastLoggedRoutine    system1.RoutineState
-	lastLoggedGoal       string
-	latestThought        string
-	latestDialogue       string
-	latestChronicle      string
+	dialogueService            *system2.DialogueService
+	chroniclerService          *system2.ChroniclerService
+	toponymyService            *system2.ToponymyService
+	companionService           *system2.CompanionService
+	landmarksDB                *db.LandmarksDB
+	contractsDB                *db.ContractsDB
+	civicRegistryDB            *db.CivicRegistryDB
+	rumorsDB                   *db.RumorsDB
+	diplomacyDB                *db.DiplomacyDB
+	contemplationService       *system2.ContemplationService
+	lastContemplatedDay        int64
+	lastIdleContemplationTick  int64
+	idleStartTick              int64
+	hasIdleStartTick           bool
+	lastActivePos              [3]float64
+	hasLastActivePos           bool
+	idleContemplationThreshold int64
+	idleContemplationCooldown  int64
+	peerReplyJitterDisabled    bool
+	contemplationActive        atomic.Bool
+	sharecroppingEngine        *agrarian.SharecroppingEngine
+	lastChronicleAttempt       time.Time
+	lastChronicleTick          int64
+	lastToponymyAttempt        time.Time
+	lastToponymyTick           int64
+	lastToponymyPos            *civquestv1.Vec3
+	lastFollowNavTarget        *civquestv1.Vec3
+	lastFollowNavTick          int64
+	dialogueWg                 sync.WaitGroup
+	poiWg                      sync.WaitGroup
+	tradeActive                atomic.Bool
+	chroniclerActive           atomic.Bool
+	toponymyActive             atomic.Bool
+	lastTradeTick              int64
+	lastTradePlayerUUID        string
+	lastTradeAttemptAt         time.Time
+	debugLogger                *DebugLogger
+	lastLoggedRoutine          system1.RoutineState
+	lastLoggedGoal             string
+	latestThought              string
+	latestDialogue             string
+	latestChronicle            string
 
 	// Callbacks
 	onDeath func(*civquestv1.DeathEvent)
@@ -363,7 +371,9 @@ func NewRuntime(cfg Config) (*AgentRuntime, error) {
 			}
 			return nil
 		}(),
-		lastContemplatedDay: -1,
+		lastContemplatedDay:        -1,
+		idleContemplationThreshold: 300,
+		idleContemplationCooldown:  3600,
 		sharecroppingEngine: func() *agrarian.SharecroppingEngine {
 			if cfg.SharecroppingEngine != nil {
 				return cfg.SharecroppingEngine
@@ -635,6 +645,23 @@ func (r *AgentRuntime) SetContemplationService(c *system2.ContemplationService) 
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.contemplationService = c
+}
+
+// SetPeerReplyJitterDisabled configures whether staggered peer-reply jitter is disabled (for deterministic tests).
+func (r *AgentRuntime) SetPeerReplyJitterDisabled(disabled bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.peerReplyJitterDisabled = disabled
+}
+
+func (r *AgentRuntime) peerReplyDelay(listenerName string) time.Duration {
+	r.mu.RLock()
+	disabled := r.peerReplyJitterDisabled
+	r.mu.RUnlock()
+	if disabled {
+		return 0
+	}
+	return peerReplyJitterDelay(listenerName)
 }
 
 // LastContemplatedDay returns the last in-game day on which contemplation completed.
@@ -1269,6 +1296,9 @@ func (r *AgentRuntime) Start(parentCtx context.Context) error {
 	r.startTime = time.Now().UTC()
 	r.mu.Unlock()
 
+	// 3b. Sync dynamic runtime crafting recipe catalog from server (ADR-029 §4)
+	_ = r.syncRecipeGraph(streamCtx, r.bridgeClient)
+
 	// 4. Run intent sender goroutine
 	sendErrCh := make(chan error, 1)
 	go r.sendLoop(streamCtx, streamCancel, stream, sendErrCh)
@@ -1796,16 +1826,34 @@ func (r *AgentRuntime) dispatchDialogue(frame *civquestv1.TelemetryFrame) {
 				return
 			}
 
-			// ADR-030: pairwise anti-loop cooldown against runaway agent-to-agent LLM ping-pong
-			if isPeerAgentChat(c) && !r.peerGate.Allow(c.SenderUuid, worldTick, peerChatBypassesCooldown(c.Message)) {
-				log.Printf("[civquest-agent] %s peer dialogue cooldown active for %s; heard but not replying", r.agentID, c.SenderName)
-				if r.debugLogger != nil {
-					r.debugLogger.Emit(worldTick, "PEER_DIALOGUE_COOLDOWN", fmt.Sprintf("Suppressed reply to %s (90s cooldown)", c.SenderName), map[string]any{
-						"sender_name": c.SenderName,
-						"sender_uuid": c.SenderUuid,
-					})
+			// ADR-030 / ADR-031: peer-chat LLM contention relief (election, 30s global + 90s pairwise cooldowns)
+			if isPeerAgentChat(c) {
+				listenerName := r.agentID
+				if r.identityConfig != nil && r.identityConfig.Name != "" {
+					listenerName = r.identityConfig.Name
 				}
-				return
+				allowed, gateReason := r.peerGate.AllowPeerChat(listenerName, c.SenderUuid, c.Message, worldTick)
+				if !allowed {
+					log.Printf("[civquest-agent] %s peer dialogue gated for %s (%s); heard but not replying", r.agentID, c.SenderName, gateReason)
+					if r.debugLogger != nil {
+						r.debugLogger.Emit(worldTick, "PEER_DIALOGUE_COOLDOWN", fmt.Sprintf("Suppressed reply to %s (%s)", c.SenderName, gateReason), map[string]any{
+							"sender_name": c.SenderName,
+							"sender_uuid": c.SenderUuid,
+							"reason":      gateReason,
+						})
+					}
+					return
+				}
+
+				if delay := r.peerReplyDelay(listenerName); delay > 0 {
+					timer := time.NewTimer(delay)
+					select {
+					case <-ctx.Done():
+						timer.Stop()
+						return
+					case <-timer.C:
+					}
+				}
 			}
 
 			r.activeLLMRequests.Add(1)
@@ -2418,7 +2466,7 @@ func (r *AgentRuntime) dispatchAgrarian(frame *civquestv1.TelemetryFrame) {
 }
 
 // dispatchContemplation evaluates conditions for nighttime strategic contemplation (SLEEP routine / ticks 13000-23500)
-// and runs deliberative inference asynchronously with a per-in-game-day debounce.
+// or daytime idle-triggered strategic contemplation (ADR-031), running deliberative inference asynchronously.
 func (r *AgentRuntime) dispatchContemplation(frame *civquestv1.TelemetryFrame) {
 	if frame == nil {
 		return
@@ -2435,18 +2483,37 @@ func (r *AgentRuntime) dispatchContemplation(frame *civquestv1.TelemetryFrame) {
 	isSleeping := (frame.Status != nil && frame.Status.IsSleeping) ||
 		(r.system1State != nil && r.system1State.GetCurrentRoutine() == system1.RoutineSleep)
 
-	if !isBedtimeHours && !isSleeping {
-		r.mu.RUnlock()
-		return
-	}
-
 	// Calculate in-game day index: 24,000 ticks per day
 	currentDay := frame.WorldTick / 24000
 	if frame.WorldTick < 0 {
 		currentDay = (frame.WorldTick - 23999) / 24000
 	}
 
-	if r.lastContemplatedDay >= currentDay {
+	nightReady := (isBedtimeHours || isSleeping) && r.lastContemplatedDay < currentDay
+
+	inEmergency := (r.agentFSM != nil && r.agentFSM.CurrentStage() == system1.StageEmergency) ||
+		(r.system1State != nil && r.system1State.Stage() == system1.StageEmergency)
+	hasActiveDirective := false
+	if r.system1State != nil {
+		_, hasActiveDirective = r.system1State.ActiveStrategicDirective(frame.WorldTick)
+	}
+	threshold := r.idleContemplationThreshold
+	if threshold <= 0 {
+		threshold = 300
+	}
+	cooldown := r.idleContemplationCooldown
+	if cooldown <= 0 {
+		cooldown = 3600
+	}
+	idleDurationOK := r.hasIdleStartTick && frame.WorldTick >= r.idleStartTick &&
+		(frame.WorldTick-r.idleStartTick) >= threshold
+	idleCooldownOK := r.lastIdleContemplationTick == 0 ||
+		frame.WorldTick < r.lastIdleContemplationTick ||
+		(frame.WorldTick-r.lastIdleContemplationTick) >= cooldown
+	daytimeIdleReady := !isBedtimeHours && !isSleeping && !inEmergency &&
+		!hasActiveDirective && idleDurationOK && idleCooldownOK
+
+	if !nightReady && !daytimeIdleReady {
 		r.mu.RUnlock()
 		return
 	}
@@ -2459,8 +2526,14 @@ func (r *AgentRuntime) dispatchContemplation(frame *civquestv1.TelemetryFrame) {
 	r.dialogueWg.Add(1)
 	r.mu.RUnlock()
 
+	triggerReason := "nighttime"
 	r.mu.Lock()
-	r.lastContemplatedDay = currentDay
+	if nightReady {
+		r.lastContemplatedDay = currentDay
+	} else {
+		triggerReason = "daytime_idle"
+		r.lastIdleContemplationTick = frame.WorldTick
+	}
 	r.mu.Unlock()
 
 	go func() {
@@ -2590,8 +2663,9 @@ func (r *AgentRuntime) dispatchContemplation(frame *civquestv1.TelemetryFrame) {
 			return
 		}
 
-		// 1. Update goals thread-safely
+		// 1. Update goals thread-safely and publish System 1 executable directive (ADR-031)
 		r.UpdateGoals(resp.ImmediateGoal, resp.ShortTermGoal, resp.LongTermGoal)
+		r.applyContemplationDirective(resp, frame.WorldTick)
 
 		// 2. Update trade valuations in agentDB and runtime cache
 		if len(resp.TradeAdjustments) > 0 && agentDB != nil {
@@ -2648,8 +2722,14 @@ func (r *AgentRuntime) dispatchContemplation(frame *civquestv1.TelemetryFrame) {
 		}
 
 		if r.debugLogger != nil {
+			dirAction := ""
+			if resp.Directive != nil {
+				dirAction = resp.Directive.Action
+			}
 			r.debugLogger.Emit(frame.WorldTick, "STRATEGIC_CONTEMPLATION",
-				fmt.Sprintf("Contemplation complete: %s", resp.ImmediateGoal), map[string]any{
+				fmt.Sprintf("Contemplation complete (%s): %s", triggerReason, resp.ImmediateGoal), map[string]any{
+					"trigger":           triggerReason,
+					"directive_action":  dirAction,
 					"immediate_goal":    resp.ImmediateGoal,
 					"short_term_goal":   resp.ShortTermGoal,
 					"long_term_goal":    resp.LongTermGoal,
@@ -2771,6 +2851,7 @@ func (r *AgentRuntime) TriggerContemplation(ctx context.Context, frame *civquest
 	}
 
 	r.UpdateGoals(resp.ImmediateGoal, resp.ShortTermGoal, resp.LongTermGoal)
+	r.applyContemplationDirective(resp, frame.WorldTick)
 
 	if len(resp.TradeAdjustments) > 0 && agentDB != nil {
 		var valuations []db.TradeValuation
@@ -2824,6 +2905,101 @@ func (r *AgentRuntime) TriggerContemplation(ctx context.Context, frame *civquest
 	}
 
 	return resp, nil
+}
+
+const strategicDirectiveTTLTicks int64 = 6000
+
+func (r *AgentRuntime) applyContemplationDirective(resp *system2.StrategicContemplationResponse, worldTick int64) {
+	if resp == nil {
+		return
+	}
+	if r.system1State != nil {
+		action := system2.DirectiveGatherTimber
+		target := ""
+		if resp.Directive != nil {
+			if strings.TrimSpace(resp.Directive.Action) != "" {
+				action = resp.Directive.Action
+			}
+			target = resp.Directive.Target
+		}
+		r.system1State.SetStrategicDirective(action, target, resp.ImmediateGoal, worldTick, worldTick+strategicDirectiveTTLTicks)
+	}
+	r.mu.Lock()
+	r.idleStartTick = worldTick
+	r.hasIdleStartTick = true
+	if r.latestFrame != nil && r.latestFrame.Status != nil && r.latestFrame.Status.Position != nil {
+		p := r.latestFrame.Status.Position
+		r.lastActivePos = [3]float64{p.X, p.Y, p.Z}
+		r.hasLastActivePos = true
+	}
+	r.mu.Unlock()
+}
+
+func (r *AgentRuntime) updateIdleTracker(frame *civquestv1.TelemetryFrame, result system1.FSMResult) {
+	if frame == nil || frame.Status == nil {
+		return
+	}
+	isSleeping := frame.Status.IsSleeping ||
+		(r.system1State != nil && r.system1State.GetCurrentRoutine() == system1.RoutineSleep)
+	inEmergency := result.Stage == system1.StageEmergency || result.Stage == system1.StageDead
+	hasActiveTask := r.system1State != nil && r.system1State.HasActiveTask()
+
+	emittedProductive := false
+	for _, fi := range result.Intents {
+		if fi.Intent == nil {
+			continue
+		}
+		if fi.Intent.GetCraftItem() != nil ||
+			fi.Intent.GetInteractBlock() != nil ||
+			fi.Intent.GetAttack() != nil ||
+			fi.Intent.GetUseItem() != nil {
+			emittedProductive = true
+			break
+		}
+	}
+
+	pos := frame.Status.Position
+	navState := frame.Status.NavigationState
+
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	if r.isDead || inEmergency || isSleeping {
+		r.idleStartTick = 0
+		r.hasIdleStartTick = false
+		r.hasLastActivePos = false
+		return
+	}
+
+	if hasActiveTask || emittedProductive {
+		r.idleStartTick = frame.WorldTick
+		r.hasIdleStartTick = true
+		if pos != nil {
+			r.lastActivePos = [3]float64{pos.X, pos.Y, pos.Z}
+			r.hasLastActivePos = true
+		}
+		return
+	}
+
+	if !r.hasIdleStartTick || frame.WorldTick < r.idleStartTick {
+		r.idleStartTick = frame.WorldTick
+		r.hasIdleStartTick = true
+		if pos != nil {
+			r.lastActivePos = [3]float64{pos.X, pos.Y, pos.Z}
+			r.hasLastActivePos = true
+		}
+		return
+	}
+
+	if pos != nil && r.hasLastActivePos {
+		dx := pos.X - r.lastActivePos[0]
+		dy := pos.Y - r.lastActivePos[1]
+		dz := pos.Z - r.lastActivePos[2]
+		if dx*dx+dy*dy+dz*dz >= 1.5*1.5 && navState == civquestv1.NavigationState_NAVIGATION_STATE_PATHING {
+			r.idleStartTick = frame.WorldTick
+			r.lastActivePos = [3]float64{pos.X, pos.Y, pos.Z}
+		}
+	}
 }
 
 // ContractsDB returns the handle to the clan contracts database.
@@ -3886,6 +4062,9 @@ func (r *AgentRuntime) evaluateSystem1Reflexes(frame *civquestv1.TelemetryFrame)
 
 	// Execute formal HFSM tick
 	result := fsm.Tick(ctx)
+
+	// Track idle/unproductive dwell duration for daytime System 2 contemplation (ADR-031)
+	r.updateIdleTracker(frame, result)
 
 	// Log FSM transitions
 	if result.Transitioned && r.debugLogger != nil {

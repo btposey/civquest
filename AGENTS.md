@@ -94,6 +94,7 @@ Major technical decisions are formally recorded in `doc/adr/`:
 - [ADR-028: Inter-Agent Collision and Stacking Suppression for FakePlayers](file:///home/brian/Workspaces/btposey/civquest/doc/adr/ADR-028-inter-agent-collision-and-stacking-suppression.md)
 - [ADR-029: Data-Driven Runtime Recipe Resolution & Dynamic Orchestrator Crafting Catalog](file:///home/brian/Workspaces/btposey/civquest/doc/adr/ADR-029-data-driven-runtime-recipe-resolution.md)
 - [ADR-030: Local Inter-Agent Acoustic Perception & Community Awareness](file:///home/brian/Workspaces/btposey/civquest/doc/adr/ADR-030-local-inter-agent-discourse.md)
+- [ADR-031: Idle-Triggered System 2 Strategic Directive Bridge & LLM Contention Control](file:///home/brian/Workspaces/btposey/civquest/doc/adr/ADR-031-idle-system2-directive-bridge.md)
 
 ---
 

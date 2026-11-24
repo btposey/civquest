@@ -459,3 +459,75 @@ func TestThreatEvaluator_DrowningNotTreatedAsCombatThreat(t *testing.T) {
 		t.Errorf("expected threat.is_emergency = true for unspecified water damage")
 	}
 }
+
+func TestThreatEvaluator_StarvationLowHPZeroHostilesNotEmergency(t *testing.T) {
+	vitalsEval := NewVitalsEvaluator()
+	threatEval := NewThreatEvaluator()
+
+	// 1. Starving agent at 5/20 HP with 0 food and 0 hostiles: NOT a combat-flee EMERGENCY.
+	frameStarve := &civquestv1.TelemetryFrame{
+		WorldTick: 700,
+		Status: &civquestv1.AgentStatus{
+			Health:    5.0,
+			MaxHealth: 20.0,
+			FoodLevel: 2,
+			Position:  &civquestv1.Vec3{X: 0, Y: 64, Z: 0},
+		},
+		LastDamageTaken: &civquestv1.DamageEvent{
+			DamageAmount:     1.0,
+			SourceType:       civquestv1.DamageSourceType_DAMAGE_SOURCE_TYPE_UNSPECIFIED,
+			AttackerEntityId: 0,
+		},
+	}
+	graphStarve := NewFactGraph()
+	ctxStarve := &EvaluatorContext{AgentID: "Carl", Frame: frameStarve}
+	_ = vitalsEval.Evaluate(ctxStarve, graphStarve)
+	_ = threatEval.Evaluate(ctxStarve, graphStarve)
+
+	if !graphStarve.GetBool("vitals.is_health_critical") {
+		t.Errorf("expected vitals.is_health_critical=true at 5/20 HP")
+	}
+	if !graphStarve.GetBool("vitals.needs_foraging") {
+		t.Errorf("expected vitals.needs_foraging=true when FoodLevel=2 and no food in inventory")
+	}
+	if graphStarve.GetBool("threat.should_panic") {
+		t.Errorf("expected threat.should_panic=false when hostileCount == 0")
+	}
+	if graphStarve.GetBool("threat.is_emergency") {
+		t.Errorf("expected threat.is_emergency=false when HP low from starvation and hostileCount == 0")
+	}
+	if !graphStarve.GetBool("threat.threats_cleared") {
+		t.Errorf("expected threat.threats_cleared=true when hostileCount == 0")
+	}
+	if got := graphStarve.GetString("threat.threatType"); got != "NONE" {
+		t.Errorf("expected threat.threatType=NONE, got %q", got)
+	}
+
+	// 2. Contrast: 5/20 HP WITH a visible hostile zombie -> panic & combat emergency.
+	frameHostile := &civquestv1.TelemetryFrame{
+		WorldTick: 701,
+		Status: &civquestv1.AgentStatus{
+			Health:    5.0,
+			MaxHealth: 20.0,
+			FoodLevel: 2,
+			Position:  &civquestv1.Vec3{X: 0, Y: 64, Z: 0},
+		},
+		VisibleEntities: []*civquestv1.VisibleEntity{
+			{EntityId: 12, EntityType: "minecraft:zombie", IsHostile: true, Distance: 10.0, Position: &civquestv1.Vec3{X: 10, Y: 64, Z: 0}},
+		},
+	}
+	graphHostile := NewFactGraph()
+	ctxHostile := &EvaluatorContext{AgentID: "Carl", Frame: frameHostile}
+	_ = vitalsEval.Evaluate(ctxHostile, graphHostile)
+	_ = threatEval.Evaluate(ctxHostile, graphHostile)
+
+	if !graphHostile.GetBool("threat.should_panic") {
+		t.Errorf("expected threat.should_panic=true at 5/20 HP with hostile zombie present")
+	}
+	if !graphHostile.GetBool("threat.is_emergency") {
+		t.Errorf("expected threat.is_emergency=true at 5/20 HP with hostile zombie present")
+	}
+	if got := graphHostile.GetString("threat.threatType"); got != "COMBAT" {
+		t.Errorf("expected threat.threatType=COMBAT, got %q", got)
+	}
+}

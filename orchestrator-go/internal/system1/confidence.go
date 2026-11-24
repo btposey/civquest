@@ -306,7 +306,7 @@ func CalculateConfidence(selfHP float64, alliesHP float64, threatHostiles float6
 }
 
 // ShouldPanic checks the SURVIVAL_PANIC override rules:
-// 1. HP_self <= 0.35 * HP_max
+// 1. hostilesPresent && HP_self <= 0.35 * HP_max
 // 2. Confidence < 1.0 or NaN (when hostiles present within R=16)
 // 3. Creeper within 5 blocks has fuse_ticks > 0.
 func ShouldPanic(selfHP float64, maxHP float64, confidence float64, hostilesPresent bool, creeperHissingNearby bool) bool {
@@ -316,7 +316,7 @@ func ShouldPanic(selfHP float64, maxHP float64, confidence float64, hostilesPres
 	if maxHP <= 0 || math.IsNaN(maxHP) || math.IsInf(maxHP, 0) {
 		maxHP = 20.0
 	}
-	if selfHP <= LowHPThresholdRatio*maxHP {
+	if hostilesPresent && selfHP <= LowHPThresholdRatio*maxHP {
 		return true
 	}
 	if creeperHissingNearby {

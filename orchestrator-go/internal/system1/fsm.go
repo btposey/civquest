@@ -158,7 +158,7 @@ func (c *FSMContext) ShouldPanic() bool {
 			break
 		}
 	}
-	return ShouldPanic(selfHP, maxHP, conf, len(hostiles) > 0, creeperNearby)
+	return ShouldPanic(selfHP, maxHP, conf, len(hostiles) > 0 || c.DamageTaken(), creeperNearby)
 }
 
 // IsEmergency evaluates whether any high-priority emergency condition is active.
@@ -174,10 +174,10 @@ func (c *FSMContext) IsEmergency() bool {
 	if c == nil {
 		return false
 	}
-	return c.HostilesPresent() || c.DamageTaken() || c.IsHealthCritical() || c.IsOnFire() || c.IsCriticalHunger() || c.ShouldPanic() || c.IsDrowning()
+	return c.HostilesPresent() || c.DamageTaken() || c.IsOnFire() || c.IsCriticalHunger() || c.ShouldPanic() || c.IsDrowning()
 }
 
-// ThreatsCleared evaluates whether all hostiles, panic, critical health, and critical hunger issues have cleared.
+// ThreatsCleared evaluates whether all hostiles, panic, fire, drowning, and critical hunger issues have cleared.
 func (c *FSMContext) ThreatsCleared() bool {
 	if c != nil && c.Facts != nil {
 		if _, exists := c.Facts.Get("threat.threats_cleared"); exists {
@@ -190,7 +190,7 @@ func (c *FSMContext) ThreatsCleared() bool {
 	if c == nil {
 		return true
 	}
-	return !c.HostilesPresent() && !c.DamageTaken() && !c.IsHealthCritical() && !c.IsOnFire() && !c.IsCriticalHunger() && !c.ShouldPanic() && !c.IsDrowning()
+	return !c.HostilesPresent() && !c.DamageTaken() && !c.IsOnFire() && !c.IsCriticalHunger() && !c.ShouldPanic() && !c.IsDrowning()
 }
 
 // HasSurvivalKit returns true if the agent holds an axe, weapon/sword, and light source.
@@ -589,6 +589,39 @@ func defaultTransitionRules() []StageTransitionRule {
 	}
 }
 
+func tryForagingPreemption(ctx *FSMContext, skillCtx *SkillContext) ([]FSMIntent, bool) {
+	if ctx == nil || ctx.Frame == nil || ctx.Frame.Status == nil {
+		return nil, false
+	}
+	if len(ctx.Frame.IncomingChats) > 0 || ctx.Frame.PendingTrade != nil || ctx.Frame.Status.IsSleeping {
+		return nil, false
+	}
+	if ctx.IsDuskOrNight() && ctx.Frame.Status.FoodLevel > 6 {
+		return nil, false
+	}
+	var fSkill Skill = NewForagingSkill()
+	if s, ok := DefaultRegistry.GetSkill("foraging"); ok && s != nil {
+		fSkill = s
+	}
+	if !fSkill.Preconditions(ctx.Facts) {
+		return nil, false
+	}
+	if ctx.State != nil && ctx.State.HasActiveTask() {
+		ctx.State.PauseActiveTask(ctx.Frame.WorldTick)
+	}
+	si, err := fSkill.Execute(skillCtx, ctx.Facts)
+	if err != nil {
+		return nil, true
+	}
+	var out []FSMIntent
+	for _, intent := range si {
+		if intent != nil {
+			out = append(out, FSMIntent{Intent: intent, Priority: false})
+		}
+	}
+	return out, true
+}
+
 // BootstrapStateHandler handles survival kit bootstrap goals.
 type BootstrapStateHandler struct{}
 
@@ -666,6 +699,12 @@ func (h *BootstrapStateHandler) OnTick(ctx *FSMContext) []FSMIntent {
 		}
 	}
 
+	// Hungry without food: preempt normal bootstrap/shelter to forage or hunt
+	if forageIntents, preempted := tryForagingPreemption(ctx, skillCtx); preempted {
+		intents = append(intents, forageIntents...)
+		return intents
+	}
+
 	// In dusk/night with no bed: prioritize shelter construction, otherwise bootstrap
 	if len(ctx.Frame.IncomingChats) == 0 && ctx.Frame.PendingTrade == nil {
 		if (ctx.IsDuskOrNight() || (ctx.State != nil && ctx.State.Routine() == RoutineSleep)) && !ctx.HasAssignedBed() && !ctx.IsShelterComplete() {
@@ -680,6 +719,7 @@ func (h *BootstrapStateHandler) OnTick(ctx *FSMContext) []FSMIntent {
 			}
 		} else if !ctx.IsDuskOrNight() && (ctx.State == nil || ctx.State.Routine() != RoutineSleep) {
 			if ctx.State != nil && ctx.State.HasActiveTask() {
+				ctx.State.ResumeActiveTask(ctx.Frame.WorldTick)
 				_, kind, _, _ := ctx.State.ActiveTaskInfo()
 				if kind != "harvest_tree" && kind != "collect_items" {
 					stepRes := ctx.State.StepActiveTask(ctx.AgentID, ctx.Frame)
@@ -693,6 +733,13 @@ func (h *BootstrapStateHandler) OnTick(ctx *FSMContext) []FSMIntent {
 					if bootstrapIntent := EvaluateBootstrapGoals(ctx.AgentID, ctx.Frame, ctx.Config, ctx.State); bootstrapIntent != nil {
 						intents = append(intents, FSMIntent{Intent: bootstrapIntent, Priority: false})
 					}
+					return intents
+				}
+			}
+			if ctx.Facts != nil && ctx.Facts.GetBool("system2.directive_active") &&
+				(HasSurvivalKit(ctx.Frame.Status.Inventory) || !canExecuteImmediateBootstrapCraft(ctx.Frame, ctx.State)) {
+				if dirIntent := EvaluateStrategicDirectiveWithID(ctx.AgentID, ctx.Frame, ctx.State, ctx.Config); dirIntent != nil {
+					intents = append(intents, FSMIntent{Intent: dirIntent, Priority: false})
 					return intents
 				}
 			}
@@ -805,6 +852,14 @@ func (h *SettlementStateHandler) OnTick(ctx *FSMContext) []FSMIntent {
 		routine = ctx.State.Routine()
 	}
 
+	// Hungry without food: preempt daily settlement duties (except in-inventory armory crafting) to forage/hunt
+	if routine != RoutineArmoryMaintenance {
+		if forageIntents, preempted := tryForagingPreemption(ctx, skillCtx); preempted {
+			intents = append(intents, forageIntents...)
+			return intents
+		}
+	}
+
 	// In dusk/night without an assigned bed: prioritize outpost shelter construction
 	if (ctx.IsDuskOrNight() || routine == RoutineSleep) && !ctx.HasAssignedBed() && !ctx.IsShelterComplete() && !ctx.IsShelterOnCooldown() {
 		if len(ctx.Frame.IncomingChats) == 0 && ctx.Frame.PendingTrade == nil {
@@ -817,12 +872,24 @@ func (h *SettlementStateHandler) OnTick(ctx *FSMContext) []FSMIntent {
 
 	// Execute any committed TaskSubroutine before falling back to circadian patrol/exploration
 	if ctx.State != nil && ctx.State.HasActiveTask() && len(ctx.Frame.IncomingChats) == 0 && ctx.Frame.PendingTrade == nil {
+		ctx.State.ResumeActiveTask(ctx.Frame.WorldTick)
 		stepRes := ctx.State.StepActiveTask(ctx.AgentID, ctx.Frame)
 		if stepRes.Intent != nil {
 			intents = append(intents, FSMIntent{Intent: stepRes.Intent, Priority: false})
 		}
 		if stepRes.Active {
 			return intents
+		}
+	}
+
+	// Execute active System 2 strategic directive during normal awake daytime settlement ticks (ADR-031)
+	if routine != RoutineSleep && routine != RoutineArmoryMaintenance &&
+		len(ctx.Frame.IncomingChats) == 0 && ctx.Frame.PendingTrade == nil && !ctx.IsDuskOrNight() {
+		if ctx.Facts != nil && ctx.Facts.GetBool("system2.directive_active") {
+			if dirIntent := EvaluateStrategicDirectiveWithID(ctx.AgentID, ctx.Frame, ctx.State, ctx.Config); dirIntent != nil {
+				intents = append(intents, FSMIntent{Intent: dirIntent, Priority: false})
+				return intents
+			}
 		}
 	}
 
@@ -874,7 +941,7 @@ func (h *SettlementStateHandler) OnTick(ctx *FSMContext) []FSMIntent {
 				State:   ctx.State,
 				CivicDB: ctx.CivicDB,
 			}
-			if skillIntents, _, ok := DefaultRegistry.SelectAndExecuteSkill(skillCtx, ctx.Facts); ok && len(skillIntents) > 0 {
+			if skillIntents, _, ok := DefaultRegistry.SelectAndExecuteSkill(skillCtx, ctx.Facts, "Armory"); ok && len(skillIntents) > 0 {
 				for _, si := range skillIntents {
 					if si != nil {
 						intents = append(intents, FSMIntent{Intent: si, Priority: false})
@@ -885,6 +952,10 @@ func (h *SettlementStateHandler) OnTick(ctx *FSMContext) []FSMIntent {
 			} else {
 				if ctx.State != nil {
 					ctx.State.SetArmoryMaintenanceNeeded(false)
+				}
+				if forageIntents, preempted := tryForagingPreemption(ctx, skillCtx); preempted {
+					intents = append(intents, forageIntents...)
+					return intents
 				}
 				if patrolIntent := EvaluatePatrol(ctx.AgentID, ctx.Frame, ctx.Config, ctx.State); patrolIntent != nil {
 					intents = append(intents, FSMIntent{Intent: patrolIntent, Priority: false})
@@ -901,7 +972,7 @@ func (h *SettlementStateHandler) OnTick(ctx *FSMContext) []FSMIntent {
 					State:   ctx.State,
 					CivicDB: ctx.CivicDB,
 				}
-				if skillIntents, _, ok := DefaultRegistry.SelectAndExecuteSkill(skillCtx, ctx.Facts); ok && len(skillIntents) > 0 {
+				if skillIntents, _, ok := DefaultRegistry.SelectAndExecuteSkill(skillCtx, ctx.Facts, "Armory"); ok && len(skillIntents) > 0 {
 					for _, si := range skillIntents {
 						if si != nil {
 							intents = append(intents, FSMIntent{Intent: si, Priority: false})
@@ -999,6 +1070,11 @@ func (h *ColonizeStateHandler) OnTick(ctx *FSMContext) []FSMIntent {
 		routine = ctx.State.Routine()
 	}
 
+	if forageIntents, preempted := tryForagingPreemption(ctx, skillCtx); preempted {
+		intents = append(intents, forageIntents...)
+		return intents
+	}
+
 	if (ctx.IsDuskOrNight() || routine == RoutineSleep) && !ctx.HasAssignedBed() && !ctx.IsShelterComplete() && !ctx.IsShelterOnCooldown() {
 		if len(ctx.Frame.IncomingChats) == 0 && ctx.Frame.PendingTrade == nil {
 			if shelterIntent := EvaluateShelterGoals(ctx.AgentID, ctx.Frame, ctx.Config, ctx.State); shelterIntent != nil {
@@ -1007,6 +1083,15 @@ func (h *ColonizeStateHandler) OnTick(ctx *FSMContext) []FSMIntent {
 			}
 		}
 	} else if len(ctx.Frame.IncomingChats) == 0 && ctx.Frame.PendingTrade == nil {
+		if !ctx.IsDuskOrNight() && (ctx.State == nil || ctx.State.Routine() != RoutineSleep) {
+			if ctx.Facts != nil && ctx.Facts.GetBool("system2.directive_active") &&
+				(HasSurvivalKit(ctx.Frame.Status.Inventory) || !canExecuteImmediateBootstrapCraft(ctx.Frame, ctx.State)) {
+				if dirIntent := EvaluateStrategicDirectiveWithID(ctx.AgentID, ctx.Frame, ctx.State, ctx.Config); dirIntent != nil {
+					intents = append(intents, FSMIntent{Intent: dirIntent, Priority: false})
+					return intents
+				}
+			}
+		}
 		// Colonization duties: harvest timber, establish core starter shelter, scout perimeter
 		if bootstrapIntent := EvaluateBootstrapGoals(ctx.AgentID, ctx.Frame, ctx.Config, ctx.State); bootstrapIntent != nil {
 			intents = append(intents, FSMIntent{Intent: bootstrapIntent, Priority: false})
@@ -1294,18 +1379,21 @@ func NewAgentFSM(initial State, onTransition func(from, to State, reason string)
 	if initial == "" {
 		initial = StageBootstrap
 	}
+	initialRoutine := RoutineDawnPrep
+	if initial == StageEmergency {
+		initialRoutine = RoutineEmergency
+	} else if initial == StageDead {
+		initialRoutine = RoutineDead
+	}
 	fsm := &AgentFSM{
 		currentStage:      initial,
-		currentRoutine:    RoutineDawnPrep,
+		previousStage:     initial,
+		currentRoutine:    initialRoutine,
+		previousRoutine:   initialRoutine,
 		maxStackDepth:     8,
 		handlers:          make(map[Stage]StateHandler),
 		transitions:       defaultTransitionRules(),
 		onStageTransition: onTransition,
-	}
-	if initial == StageEmergency {
-		fsm.currentRoutine = RoutineEmergency
-	} else if initial == StageDead {
-		fsm.currentRoutine = RoutineDead
 	}
 	fsm.RegisterHandler(&BootstrapStateHandler{})
 	fsm.RegisterHandler(&SettlementStateHandler{})
@@ -2033,6 +2121,11 @@ func (fsm *AgentFSM) Tick(ctx *FSMContext) FSMResult {
 		goals = EvaluateGoals(ctx.Frame, ctx.Config, ctx.State)
 	}
 
+	stageTransitioned = stageTransitioned && fsm.previousStage != fsm.currentStage
+	if !stageTransitioned {
+		transitionReason = ""
+	}
+
 	return FSMResult{
 		Stage:               fsm.currentStage,
 		Routine:             fsm.currentRoutine,
@@ -2040,7 +2133,7 @@ func (fsm *AgentFSM) Tick(ctx *FSMContext) FSMResult {
 		PreviousRoutine:     fsm.previousRoutine,
 		StageTransitioned:   stageTransitioned,
 		RoutineTransitioned: routineTransitioned,
-		Transitioned:        stageTransitioned || routineTransitioned,
+		Transitioned:        stageTransitioned,
 		FlushPeriphery:      routineTransitioned || stageTransitioned,
 		State:               fsm.currentStage,
 		PreviousState:       fsm.previousStage,

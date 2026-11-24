@@ -280,4 +280,76 @@ public class LocalPathPlannerTest {
         assertTrue(waterTargetRoute.reachedTarget(),
                 "Path to an in-water target must still reach the water cell");
     }
+
+    @Test
+    @DisplayName("Distant plateau target in lower hollow (|dy|=7) returns partial path to ridge edge, then descends")
+    void distantPlateauDescentToHollowProducesPartialPath() {
+        // Upper plateau at y=86 (floor y<=85) for x <= 8, stepping down 1 block per X from x=9..15 down to y=79 (floor y<=78)
+        LocalPathPlanner.World ridgeWorld = new LocalPathPlanner.World() {
+            private int floorY(int x) {
+                if (x <= 8) {
+                    return 85;
+                }
+                if (x >= 15) {
+                    return 78;
+                }
+                return 85 - (x - 8);
+            }
+
+            @Override
+            public boolean solid(int x, int y, int z) {
+                return y <= floorY(x);
+            }
+
+            @Override
+            public boolean hazard(int x, int y, int z) {
+                return false;
+            }
+        };
+
+        // 1. From (0, 86, 0), the slope is beyond DEFAULT_RADIUS=7, so border is still at y=86;
+        //    must still emit a partial path toward the ridge edge reducing horizontal distance.
+        LocalPathPlanner.Result plateauStep = LocalPathPlanner.plan(ridgeWorld,
+                new LocalPathPlanner.Cell(0, 86, 0), 15.5, 79.0, 0.5, LocalPathPlanner.DEFAULT_RADIUS, null);
+        assertFalse(plateauStep.reachedTarget());
+        assertTrue(plateauStep.hasPath(), "Plateau descent must emit partial path toward ridge edge");
+        LocalPathPlanner.Cell borderEnd = plateauStep.path().get(plateauStep.path().size() - 1);
+        assertEquals(7, borderEnd.x(), "Partial path must advance to +X border toward hollow");
+        assertEquals(86, borderEnd.y());
+
+        // 2. Once at (8, 86, 0), the descending slope enters local radius and reaches (15, 79, 0)
+        LocalPathPlanner.Result descent = LocalPathPlanner.plan(ridgeWorld,
+                new LocalPathPlanner.Cell(8, 86, 0), 15.5, 79.0, 0.5, LocalPathPlanner.DEFAULT_RADIUS, null);
+        assertTrue(descent.reachedTarget(), "From ridge edge, planner must descend slope to hollow target");
+        assertTrue(descent.hasPath());
+    }
+
+    @Test
+    @DisplayName("ADR-026: Directly overhead or below unreachable target with small horizontal distance rejects partial path")
+    void localBelowUnreachableTargetReturnsNoPath() {
+        // Solid plateau floor at y<=85 everywhere (no way down to hollow/cave at y=79)
+        LocalPathPlanner.World sealedRoof = new LocalPathPlanner.World() {
+            @Override
+            public boolean solid(int x, int y, int z) {
+                return y <= 85 && y >= 81;
+            }
+
+            @Override
+            public boolean hazard(int x, int y, int z) {
+                return false;
+            }
+        };
+
+        // Target directly below within local radius (dx=2, dy=-7) -> must reject partial path
+        LocalPathPlanner.Result localBelow = LocalPathPlanner.plan(sealedRoof,
+                new LocalPathPlanner.Cell(0, 86, 0), 2.5, 79.0, 0.5, LocalPathPlanner.DEFAULT_RADIUS, null);
+        assertFalse(localBelow.reachedTarget());
+        assertFalse(localBelow.hasPath(), "Unreachable target below solid roof within local radius must return empty path");
+
+        // Target overhead within local radius (dx=2, dy=+8) -> must reject partial path
+        LocalPathPlanner.Result localAbove = LocalPathPlanner.plan(sealedRoof,
+                new LocalPathPlanner.Cell(0, 86, 0), 2.5, 94.0, 0.5, LocalPathPlanner.DEFAULT_RADIUS, null);
+        assertFalse(localAbove.reachedTarget());
+        assertFalse(localAbove.hasPath(), "Unreachable overhead target within local radius must return empty path");
+    }
 }

@@ -111,12 +111,19 @@ message DespawnAgentResponse {
 
 message ExportRecipeRequest {}
 
+message RecipeIngredientSlot {
+  repeated string accepted_item_ids = 1;
+  int32 count = 2;
+}
+
 message RecipeNode {
   string recipe_id = 1;
   string recipe_type = 2;       // e.g., "minecraft:crafting_shaped", "farmersdelight:cooking"
   string workstation_block = 3; // e.g., "minecraft:crafting_table", "farmersdelight:cooking_pot"
   repeated ItemStackProto ingredients = 4;
   ItemStackProto result = 5;
+  repeated RecipeIngredientSlot ingredient_slots = 6;
+  bool requires_3x3 = 7;
 }
 
 message ExportRecipeResponse {

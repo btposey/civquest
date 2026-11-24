@@ -713,3 +713,181 @@ func TestContemplate_InjectsCommunityDialogueSection(t *testing.T) {
 		t.Errorf("community dialogue not injected into prompt: %s", captured)
 	}
 }
+
+func TestContemplate_StrategicDirectiveParsingAndPrompt(t *testing.T) {
+	var capturedPrompt string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var req system2.ChatCompletionRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		for _, m := range req.Messages {
+			if m.Role == "system" {
+				capturedPrompt = m.Content
+			}
+		}
+		payload, _ := json.Marshal(map[string]any{
+			"immediate_goal":    "MINE_STONE: Gather coal and cobblestone from northern ridge",
+			"short_term_goal":   "UPGRADE_TOOLS",
+			"long_term_goal":    "BUILD_FORGE",
+			"reflective_memory": "Bran is already chopping timber, so I will mine stone.",
+			"directive": map[string]any{
+				"action": "mine stone",
+				"target": "northern ridge",
+				"reason": "avoid duplicating Bran's timber run",
+			},
+			"rationale": "Coordinate with peers",
+		})
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(system2.ChatCompletionResponse{
+			ID: "directive-test-1",
+			Choices: []system2.ChatCompletionChoice{{
+				Message:      system2.ChatMessage{Role: "assistant", Content: string(payload)},
+				FinishReason: "stop",
+			}},
+		})
+	}))
+	defer server.Close()
+
+	client, err := system2.NewClient(
+		&xdg.GlobalConfig{LLMGateway: xdg.LLMGatewayConfig{BaseURL: server.URL + "/v1", Model: "mock-model"}},
+		system2.WithHTTPClient(server.Client()),
+	)
+	if err != nil {
+		t.Fatalf("NewClient: %v", err)
+	}
+	defer client.Close()
+
+	svc := system2.NewContemplationService(client)
+	ledger := &system2.StrategicLedger{
+		AgentID:           "aria",
+		ClanID:            "clan_pioneers",
+		WorldTick:         4000,
+		CommunityDialogue: "[COMMUNITY DIALOGUE & RECENT PEER STATEMENTS]\n- Bran (4m away, 5s ago): \"I am gathering timber\"",
+		PersonalProfile: system2.PersonalProfile{
+			AgentID:    "aria",
+			Profession: "EXPLORER",
+		},
+	}
+
+	resp, err := svc.Contemplate(context.Background(), ledger)
+	if err != nil {
+		t.Fatalf("Contemplate: %v", err)
+	}
+
+	for _, action := range []string{
+		system2.DirectiveGatherTimber,
+		system2.DirectiveMineStone,
+		system2.DirectiveForageFood,
+		system2.DirectiveCraftSurvivalKit,
+		system2.DirectiveBuildShelter,
+		system2.DirectiveScoutFrontier,
+		system2.DirectiveSocialize,
+	} {
+		if !strings.Contains(capturedPrompt, action) {
+			t.Errorf("expected prompt to include canonical directive action %s", action)
+		}
+	}
+	if !strings.Contains(capturedPrompt, "avoid duplicating peers") {
+		t.Errorf("expected prompt to mention avoiding duplicating peers")
+	}
+
+	if resp.Directive == nil {
+		t.Fatal("expected normalized non-nil Directive")
+	}
+	if resp.Directive.Action != system2.DirectiveMineStone {
+		t.Errorf("expected MINE_STONE, got %q", resp.Directive.Action)
+	}
+	if resp.Directive.Target != "northern ridge" {
+		t.Errorf("expected target 'northern ridge', got %q", resp.Directive.Target)
+	}
+	if resp.Directive.Reason != "avoid duplicating Bran's timber run" {
+		t.Errorf("unexpected reason %q", resp.Directive.Reason)
+	}
+}
+
+func TestNormalizeDirective_FallbackInference(t *testing.T) {
+	cases := []struct {
+		name          string
+		directive     *system2.StrategicDirective
+		immediateGoal string
+		role          string
+		want          string
+	}{
+		{
+			name:          "canonical exact",
+			directive:     &system2.StrategicDirective{Action: "SOCIALIZE"},
+			immediateGoal: "GATHER_TIMBER",
+			want:          system2.DirectiveSocialize,
+		},
+		{
+			name:          "lowercase hyphen variant",
+			directive:     &system2.StrategicDirective{Action: "craft-survival-kit"},
+			immediateGoal: "",
+			want:          system2.DirectiveCraftSurvivalKit,
+		},
+		{
+			name:          "nil directive infers scout",
+			directive:     nil,
+			immediateGoal: "SCOUT_FRONTIER: Map eastern valley",
+			want:          system2.DirectiveScoutFrontier,
+		},
+		{
+			name:          "unknown directive infers forage from harvest crops",
+			directive:     &system2.StrategicDirective{Action: "DO_SOMETHING"},
+			immediateGoal: "HARVEST_CROPS: Tend wheat and berries",
+			want:          system2.DirectiveForageFood,
+		},
+		{
+			name:          "infers mine stone",
+			directive:     nil,
+			immediateGoal: "MINE_COAL: Extract coal ore",
+			want:          system2.DirectiveMineStone,
+		},
+		{
+			name:          "infers build shelter from pave road",
+			directive:     nil,
+			immediateGoal: "PAVE_ROAD: Lay stone slabs along trail",
+			want:          system2.DirectiveBuildShelter,
+		},
+		{
+			name:          "infers craft survival kit",
+			directive:     nil,
+			immediateGoal: "CRAFT_TOOLS: Craft wooden axe and sword",
+			want:          system2.DirectiveCraftSurvivalKit,
+		},
+		{
+			name:          "infers socialize from tavern",
+			directive:     nil,
+			immediateGoal: "TAVERN_MEET: Catch up with neighbors",
+			want:          system2.DirectiveSocialize,
+		},
+		{
+			name:          "generic goal falls back to role",
+			directive:     nil,
+			immediateGoal: "DO_WORK",
+			role:          "FARMER",
+			want:          system2.DirectiveForageFood,
+		},
+		{
+			name:          "default fallback is GATHER_TIMBER",
+			directive:     nil,
+			immediateGoal: "GATHER_RESOURCES",
+			role:          "SETTLER",
+			want:          system2.DirectiveGatherTimber,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := system2.NormalizeDirective(tc.directive, tc.immediateGoal, tc.role)
+			if got == nil {
+				t.Fatal("NormalizeDirective returned nil")
+			}
+			if got.Action != tc.want {
+				t.Errorf("got action %q, want %q", got.Action, tc.want)
+			}
+		})
+	}
+}

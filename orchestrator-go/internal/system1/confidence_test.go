@@ -110,15 +110,24 @@ func TestCalculateConfidence(t *testing.T) {
 }
 
 func TestPanicOverride_LowHP(t *testing.T) {
-	// HP_self <= 0.35 * HP_max (7.0 for 20 HP)
-	if !ShouldPanic(7.0, 20.0, 5.0, false, false) {
-		t.Fatal("expected panic at HP = 7.0 (<= 0.35*20)")
+	// HP_self <= 0.35 * HP_max (7.0 for 20 HP) triggers panic ONLY when hostiles are present.
+	if !ShouldPanic(7.0, 20.0, 5.0, true, false) {
+		t.Fatal("expected panic at HP = 7.0 (<= 0.35*20) when hostiles are present")
 	}
-	if !ShouldPanic(5.0, 20.0, 5.0, false, false) {
-		t.Fatal("expected panic at HP = 5.0")
+	if !ShouldPanic(5.0, 20.0, 5.0, true, false) {
+		t.Fatal("expected panic at HP = 5.0 when hostiles are present")
+	}
+	if ShouldPanic(7.0, 20.0, 5.0, false, false) {
+		t.Fatal("expected no combat panic at HP = 7.0 when hostileCount == 0")
+	}
+	if ShouldPanic(5.0, 20.0, 5.0, false, false) {
+		t.Fatal("expected no combat panic at HP = 5.0 when hostileCount == 0 (e.g. starvation)")
 	}
 	if ShouldPanic(8.0, 20.0, 2.0, false, false) {
 		t.Fatal("expected no panic at HP = 8.0 with high confidence and no hostiles")
+	}
+	if ShouldPanic(8.0, 20.0, 2.0, true, false) {
+		t.Fatal("expected no panic at HP = 8.0 with confidence >= 1.0")
 	}
 }
 
@@ -1039,5 +1048,37 @@ func TestEvaluateReflexes_StarvationAndPassiveDamageIgnored(t *testing.T) {
 	if !resHostile.IsPanic || !resHostile.ShouldAct {
 		t.Errorf("expected panic and action for hostile mob attack, got isPanic=%v shouldAct=%v",
 			resHostile.IsPanic, resHostile.ShouldAct)
+	}
+}
+
+func TestEvaluateReflexes_StarvationLowHPZeroHostilesNoFleeSpam(t *testing.T) {
+	frame := &civquestv1.TelemetryFrame{
+		WorldTick: 600,
+		Status: &civquestv1.AgentStatus{
+			AgentId:   "Fred",
+			Health:    4.0, // <= 0.35 * 20
+			MaxHealth: 20.0,
+			FoodLevel: 1, // starving with 0 food in inventory
+			Position:  &civquestv1.Vec3{X: 50, Y: 64, Z: 50},
+		},
+		LastDamageTaken: &civquestv1.DamageEvent{
+			DamageAmount:     1.0,
+			SourceType:       civquestv1.DamageSourceType_DAMAGE_SOURCE_TYPE_UNSPECIFIED,
+			AttackerEntityId: 0,
+		},
+	}
+
+	res := EvaluateReflexes(ReflexContext{
+		AgentID: "Fred",
+		Bravery: 0.5,
+		Frame:   frame,
+	})
+
+	if res.IsPanic {
+		t.Fatalf("expected IsPanic=false for low-HP starvation with 0 hostiles")
+	}
+	if res.ShouldAct || len(res.Intents) > 0 {
+		t.Fatalf("expected 0 combat/flee intents for low-HP starvation with 0 hostiles, got shouldAct=%v intents=%+v",
+			res.ShouldAct, res.Intents)
 	}
 }

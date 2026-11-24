@@ -185,7 +185,8 @@ public class IntentActuator {
         }
 
         synchronized (session) {
-            if (queueBatch.getFlushPeriphery()) {
+            AgentMotorFSM fsm = agent.getMotorFSM();
+            if (queueBatch.getFlushPeriphery() || isWakeUpOrSleepPreempt(agent, fsm, queueBatch)) {
                 flushSessionAndMotor(agent, session);
                 if (queueBatch.getIntentsCount() == 0) {
                     session.activeBatch = queueBatch;
@@ -220,6 +221,23 @@ public class IntentActuator {
             syncReceiptToMotor(agent, session);
             advanceBatch(agent, session);
         }
+    }
+
+    private static boolean isWakeUpOrSleepPreempt(AgentEntity agent, AgentMotorFSM fsm, IntentBatch batch) {
+        if (batch == null || batch.getIntentsCount() == 0) {
+            return false;
+        }
+        boolean sleeping = (fsm != null && fsm.getState() == MotorState.SLEEPING) || (agent != null && agent.isSleeping());
+        if (!sleeping) {
+            return false;
+        }
+        for (AgentIntent intent : batch.getIntentsList()) {
+            if (intent.hasInteractBlock()
+                    && intent.getInteractBlock().getInteractionType() == InteractBlockIntent.InteractionType.WAKE_UP) {
+                return true;
+            }
+        }
+        return fsm != null && fsm.getState() == MotorState.SLEEPING && fsm.canPreempt(batch.getIntents(0));
     }
 
     public void actuateIntentBatch(AgentEntity agent, IntentBatch batch) {

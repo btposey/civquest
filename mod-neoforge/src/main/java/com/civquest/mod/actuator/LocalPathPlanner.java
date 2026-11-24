@@ -249,7 +249,10 @@ public final class LocalPathPlanner {
         // 1. The target was reached (reached == true), OR
         // 2. The target is beyond local radius horizontally, a border cell was reached (touchedBorder == true),
         //    the best border cell reduces horizontal distance to the target compared to start,
-        //    and if hasTargetY and vertical difference is large (> 4), the border cell made vertical progress.
+        //    and if hasTargetY and vertical difference is large (> 4):
+        //      - either the border cell made vertical progress, OR
+        //      - the target is below start (descending from a ridge/plateau toward a hollow), so the agent
+        //        walks to the slope/ridge edge and descends once the drop-off enters the local window.
         boolean allowPartialPath = false;
         Node targetNode = closest;
         if (!reached && touchedBorder && bestBorderNode != null) {
@@ -260,7 +263,8 @@ public final class LocalPathPlanner {
                 if (borderDistSq < startDistSq - 1e-5) {
                     if (hasTargetY && Math.abs(ty - start.y) > 4) {
                         boolean verticalProgress = Math.abs(bestBorderNode.cell.y - ty) < Math.abs(start.y - ty);
-                        if (verticalProgress) {
+                        boolean descendingPlateau = ty < start.y && bestBorderNode.cell.y <= start.y + 1;
+                        if (verticalProgress || descendingPlateau) {
                             allowPartialPath = true;
                             targetNode = bestBorderNode;
                         }

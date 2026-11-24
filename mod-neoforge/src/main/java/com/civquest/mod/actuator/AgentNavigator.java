@@ -840,7 +840,16 @@ public class AgentNavigator {
                 }
             } else if (this.agent.onGround()) {
                 boolean jumpSuppressed = false;
+                double rad = Math.toRadians(headYaw);
+                double fx = -Math.sin(rad);
+                double fz = Math.cos(rad);
+                boolean hasSolidStepUpAhead = false;
                 if (level != null && this.agent != null) {
+                    BlockPos aheadFeet = BlockPos.containing(currentPos.x + fx * 0.6, currentPos.y + 0.1, currentPos.z + fz * 0.6);
+                    hasSolidStepUpAhead = isBlockSolid(level, aheadFeet)
+                            && !isBlockSolid(level, aheadFeet.above())
+                            && !isBlockSolid(level, aheadFeet.above(2));
+
                     BlockPos headPos = BlockPos.containing(currentPos.x, currentPos.y + 1.0, currentPos.z);
                     BlockPos ceilingPos = BlockPos.containing(currentPos.x, currentPos.y + 2.0, currentPos.z);
                     if (isBlockSolid(level, headPos) || isBlockSolid(level, ceilingPos)) {
@@ -861,10 +870,54 @@ public class AgentNavigator {
                     }
                     if (!jumpSuppressed) {
                         try {
-                            AABB entityProbeBox = this.agent.getBoundingBox().inflate(0.2, 0.05, 0.2);
-                            List<net.minecraft.world.entity.Entity> nearby = level.getEntities(this.agent, entityProbeBox, e -> !e.isSpectator());
-                            if (nearby != null && !nearby.isEmpty()) {
-                                jumpSuppressed = true;
+                            AABB agentBox = this.agent.getBoundingBox();
+                            if (agentBox != null) {
+                                // 1. Always suppress jump if another entity is directly stacked on top of this agent.
+                                AABB overheadBox = new AABB(
+                                        agentBox.minX, agentBox.maxY - 0.25, agentBox.minZ,
+                                        agentBox.maxX, agentBox.maxY + 0.5, agentBox.maxZ
+                                );
+                                List<net.minecraft.world.entity.Entity> overhead = level.getEntities(
+                                        this.agent, overheadBox,
+                                        e -> e != null && !e.isSpectator()
+                                                && e.getBoundingBox() != null
+                                                && e.getBoundingBox().minY >= agentBox.maxY - 0.25);
+                                if (overhead != null && !overhead.isEmpty()) {
+                                    jumpSuppressed = true;
+                                }
+
+                                // 2. When there is no solid 1-block terrain step-up ahead, suppress jumps near any
+                                //    non-spectator entity to prevent flat-ground hopping onto entities (ADR-028).
+                                //    When stepping onto solid terrain, only suppress if a collidable non-agent entity
+                                //    or an elevated stacked agent occupies the forward jump column.
+                                if (!jumpSuppressed) {
+                                    boolean solidStepUp = stepUpOneBlock || hasSolidStepUpAhead;
+                                    if (!solidStepUp) {
+                                        AABB entityProbeBox = agentBox.inflate(0.2, 0.05, 0.2);
+                                        List<net.minecraft.world.entity.Entity> nearby = level.getEntities(
+                                                this.agent, entityProbeBox, e -> e != null && !e.isSpectator());
+                                        if (nearby != null && !nearby.isEmpty()) {
+                                            jumpSuppressed = true;
+                                        }
+                                    } else {
+                                        AABB forwardJumpColumn = new AABB(
+                                                currentPos.x + fx * 0.6 - 0.2, currentPos.y + 0.5, currentPos.z + fz * 0.6 - 0.2,
+                                                currentPos.x + fx * 0.6 + 0.2, currentPos.y + 2.0, currentPos.z + fz * 0.6 + 0.2
+                                        );
+                                        List<net.minecraft.world.entity.Entity> blockingAhead = level.getEntities(
+                                                this.agent, forwardJumpColumn,
+                                                e -> e != null && !e.isSpectator()
+                                                        && ((!(e instanceof AgentEntity)
+                                                                && (e.canBeCollidedWith()
+                                                                    || (e instanceof net.minecraft.world.entity.LivingEntity && e.isAlive())))
+                                                            || (e instanceof AgentEntity
+                                                                && e.getBoundingBox() != null
+                                                                && e.getBoundingBox().minY >= currentPos.y + 1.5)));
+                                        if (blockingAhead != null && !blockingAhead.isEmpty()) {
+                                            jumpSuppressed = true;
+                                        }
+                                    }
+                                }
                             }
                         } catch (Throwable ignored) {
                         }
@@ -872,15 +925,8 @@ public class AgentNavigator {
                 }
 
                 boolean jumpNeeded = stepUpOneBlock && !jumpSuppressed;
-                if (!jumpNeeded && !jumpSuppressed && this.agent.horizontalCollision && level != null) {
-                    double rad = Math.toRadians(headYaw);
-                    double fx = -Math.sin(rad);
-                    double fz = Math.cos(rad);
-                    BlockPos aheadFeet = BlockPos.containing(currentPos.x + fx * 0.6, currentPos.y + 0.1, currentPos.z + fz * 0.6);
-                    boolean clearAbove = !isBlockSolid(level, aheadFeet.above()) && !isBlockSolid(level, aheadFeet.above(2));
-                    if (clearAbove) {
-                        jumpNeeded = true;
-                    }
+                if (!jumpNeeded && !jumpSuppressed && this.agent.horizontalCollision && hasSolidStepUpAhead) {
+                    jumpNeeded = true;
                 }
                 boolean activelyMovingForward = moveSpeed > 0.05
                         && align > 0.15

@@ -66,6 +66,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -1452,5 +1453,89 @@ public class IntentActuatorTest {
 
         // 5. Speaker does NOT receive its own chat
         verify(speaker, never()).queueIncomingChat(any());
+    }
+
+    @Test
+    @DisplayName("WAKE_UP batch without flush_periphery immediately preempts active SLEEP_IN_BED batch and clears sleeping")
+    void testWakeUpPreemptsInFlightSleepBatchWithoutQueueDeadlock() {
+        AgentEntity agent = mock(AgentEntity.class);
+        Level level = mock(Level.class);
+        BlockPos bedPos = new BlockPos(4, 64, 4);
+
+        when(agent.getAgentId()).thenReturn("wake-agent");
+        when(agent.isAlive()).thenReturn(true);
+        when(agent.level()).thenReturn(level);
+        when(agent.distanceToSqr(anyDouble(), anyDouble(), anyDouble())).thenReturn(1.0);
+        when(level.hasChunkAt(bedPos)).thenReturn(true);
+        when(level.isNight()).thenReturn(true);
+
+        BlockState headBedState = mock(BlockState.class);
+        when(headBedState.is(net.minecraft.tags.BlockTags.BEDS)).thenReturn(true);
+        when(headBedState.getBlock()).thenReturn(Blocks.WHITE_BED);
+        when(headBedState.hasProperty(BedBlock.PART)).thenReturn(true);
+        when(headBedState.getValue(BedBlock.PART)).thenReturn(BedPart.HEAD);
+        when(headBedState.hasProperty(BedBlock.OCCUPIED)).thenReturn(true);
+        when(headBedState.getValue(BedBlock.OCCUPIED)).thenReturn(false);
+        when(level.getBlockState(bedPos)).thenReturn(headBedState);
+
+        Inventory inventory = new Inventory(mock(Player.class));
+        when(agent.getInventory()).thenReturn(inventory);
+        when(agent.getMainHandItem()).thenReturn(ItemStack.EMPTY);
+        when(agent.getOffhandItem()).thenReturn(ItemStack.EMPTY);
+
+        AtomicBoolean sleepingState = new AtomicBoolean(false);
+        when(agent.isSleeping()).thenAnswer(inv -> sleepingState.get());
+        doAnswer(inv -> {
+            sleepingState.set(true);
+            return null;
+        }).when(agent).startSleeping(any(BlockPos.class));
+        doAnswer(inv -> {
+            sleepingState.set(false);
+            return null;
+        }).when(agent).stopSleeping();
+
+        com.civquest.mod.actuator.motor.AgentMotorFSM fsm = new com.civquest.mod.actuator.motor.AgentMotorFSM(agent);
+        when(agent.getMotorFSM()).thenReturn(fsm);
+
+        // 1. Submit SLEEP_IN_BED batch: session remains EXECUTING in MotorState.SLEEPING
+        IntentBatch sleepBatch = IntentBatch.newBuilder()
+                .setAgentId("wake-agent")
+                .setBatchId(701L)
+                .addIntents(AgentIntent.newBuilder()
+                        .setAgentId("wake-agent")
+                        .setInteractBlock(InteractBlockIntent.newBuilder()
+                                .setPos(BlockPosProto.newBuilder().setX(4).setY(64).setZ(4).build())
+                                .setInteractionType(InteractBlockIntent.InteractionType.SLEEP_IN_BED)
+                                .build())
+                        .build())
+                .build();
+        actuator.submitBatch(agent, sleepBatch);
+        assertTrue(agent.isSleeping(), "Agent must be sleeping after SLEEP_IN_BED");
+        assertEquals(com.civquest.mod.actuator.motor.MotorState.SLEEPING, fsm.getState());
+        assertEquals(IntentReceipt.ReceiptStatus.RECEIPT_STATUS_EXECUTING,
+                actuator.getCurrentReceipt(agent).getStatus());
+
+        // 2. Submit WAKE_UP batch with flush_periphery=false -> must wake immediately, NOT queue behind sleep batch
+        IntentBatch wakeBatch = IntentBatch.newBuilder()
+                .setAgentId("wake-agent")
+                .setBatchId(702L)
+                .setFlushPeriphery(false)
+                .addIntents(AgentIntent.newBuilder()
+                        .setAgentId("wake-agent")
+                        .setInteractBlock(InteractBlockIntent.newBuilder()
+                                .setPos(BlockPosProto.newBuilder().setX(4).setY(64).setZ(4).build())
+                                .setInteractionType(InteractBlockIntent.InteractionType.WAKE_UP)
+                                .build())
+                        .build())
+                .build();
+        actuator.submitBatch(agent, wakeBatch);
+
+        assertFalse(agent.isSleeping(), "WAKE_UP must immediately clear isSleeping()");
+        assertEquals(com.civquest.mod.actuator.motor.MotorState.IDLE, fsm.getState());
+        assertEquals(0, actuator.getQueuedBatchCount(agent), "WAKE_UP must not queue behind sleeping batch");
+        IntentReceipt wakeReceipt = actuator.getCurrentReceipt(agent);
+        assertEquals(702L, wakeReceipt.getBatchId());
+        assertEquals(IntentReceipt.ReceiptStatus.RECEIPT_STATUS_COMPLETED, wakeReceipt.getStatus());
+        verify(agent, atLeastOnce()).stopSleeping();
     }
 }

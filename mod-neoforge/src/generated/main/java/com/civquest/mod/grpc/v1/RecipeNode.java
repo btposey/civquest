@@ -31,6 +31,7 @@ private static final long serialVersionUID = 0L;
     recipeType_ = "";
     workstationBlock_ = "";
     ingredients_ = java.util.Collections.emptyList();
+    ingredientSlots_ = java.util.Collections.emptyList();
   }
 
   public static final com.google.protobuf.Descriptors.Descriptor
@@ -247,6 +248,58 @@ private static final long serialVersionUID = 0L;
     return result_ == null ? com.civquest.mod.grpc.v1.ItemStackProto.getDefaultInstance() : result_;
   }
 
+  public static final int INGREDIENT_SLOTS_FIELD_NUMBER = 6;
+  @SuppressWarnings("serial")
+  private java.util.List<com.civquest.mod.grpc.v1.RecipeIngredientSlot> ingredientSlots_;
+  /**
+   * <code>repeated .civquest.v1.RecipeIngredientSlot ingredient_slots = 6;</code>
+   */
+  @java.lang.Override
+  public java.util.List<com.civquest.mod.grpc.v1.RecipeIngredientSlot> getIngredientSlotsList() {
+    return ingredientSlots_;
+  }
+  /**
+   * <code>repeated .civquest.v1.RecipeIngredientSlot ingredient_slots = 6;</code>
+   */
+  @java.lang.Override
+  public java.util.List<? extends com.civquest.mod.grpc.v1.RecipeIngredientSlotOrBuilder> 
+      getIngredientSlotsOrBuilderList() {
+    return ingredientSlots_;
+  }
+  /**
+   * <code>repeated .civquest.v1.RecipeIngredientSlot ingredient_slots = 6;</code>
+   */
+  @java.lang.Override
+  public int getIngredientSlotsCount() {
+    return ingredientSlots_.size();
+  }
+  /**
+   * <code>repeated .civquest.v1.RecipeIngredientSlot ingredient_slots = 6;</code>
+   */
+  @java.lang.Override
+  public com.civquest.mod.grpc.v1.RecipeIngredientSlot getIngredientSlots(int index) {
+    return ingredientSlots_.get(index);
+  }
+  /**
+   * <code>repeated .civquest.v1.RecipeIngredientSlot ingredient_slots = 6;</code>
+   */
+  @java.lang.Override
+  public com.civquest.mod.grpc.v1.RecipeIngredientSlotOrBuilder getIngredientSlotsOrBuilder(
+      int index) {
+    return ingredientSlots_.get(index);
+  }
+
+  public static final int REQUIRES_3X3_FIELD_NUMBER = 7;
+  private boolean requires3X3_ = false;
+  /**
+   * <code>bool requires_3x3 = 7;</code>
+   * @return The requires3x3.
+   */
+  @java.lang.Override
+  public boolean getRequires3X3() {
+    return requires3X3_;
+  }
+
   private byte memoizedIsInitialized = -1;
   @java.lang.Override
   public final boolean isInitialized() {
@@ -276,6 +329,12 @@ private static final long serialVersionUID = 0L;
     if (((bitField0_ & 0x00000001) != 0)) {
       output.writeMessage(5, getResult());
     }
+    for (int i = 0; i < ingredientSlots_.size(); i++) {
+      output.writeMessage(6, ingredientSlots_.get(i));
+    }
+    if (requires3X3_ != false) {
+      output.writeBool(7, requires3X3_);
+    }
     getUnknownFields().writeTo(output);
   }
 
@@ -301,6 +360,14 @@ private static final long serialVersionUID = 0L;
     if (((bitField0_ & 0x00000001) != 0)) {
       size += com.google.protobuf.CodedOutputStream
         .computeMessageSize(5, getResult());
+    }
+    for (int i = 0; i < ingredientSlots_.size(); i++) {
+      size += com.google.protobuf.CodedOutputStream
+        .computeMessageSize(6, ingredientSlots_.get(i));
+    }
+    if (requires3X3_ != false) {
+      size += com.google.protobuf.CodedOutputStream
+        .computeBoolSize(7, requires3X3_);
     }
     size += getUnknownFields().getSerializedSize();
     memoizedSize = size;
@@ -330,6 +397,10 @@ private static final long serialVersionUID = 0L;
       if (!getResult()
           .equals(other.getResult())) return false;
     }
+    if (!getIngredientSlotsList()
+        .equals(other.getIngredientSlotsList())) return false;
+    if (getRequires3X3()
+        != other.getRequires3X3()) return false;
     if (!getUnknownFields().equals(other.getUnknownFields())) return false;
     return true;
   }
@@ -355,6 +426,13 @@ private static final long serialVersionUID = 0L;
       hash = (37 * hash) + RESULT_FIELD_NUMBER;
       hash = (53 * hash) + getResult().hashCode();
     }
+    if (getIngredientSlotsCount() > 0) {
+      hash = (37 * hash) + INGREDIENT_SLOTS_FIELD_NUMBER;
+      hash = (53 * hash) + getIngredientSlotsList().hashCode();
+    }
+    hash = (37 * hash) + REQUIRES_3X3_FIELD_NUMBER;
+    hash = (53 * hash) + com.google.protobuf.Internal.hashBoolean(
+        getRequires3X3());
     hash = (29 * hash) + getUnknownFields().hashCode();
     memoizedHashCode = hash;
     return hash;
@@ -487,6 +565,7 @@ private static final long serialVersionUID = 0L;
               .alwaysUseFieldBuilders) {
         getIngredientsFieldBuilder();
         getResultFieldBuilder();
+        getIngredientSlotsFieldBuilder();
       }
     }
     @java.lang.Override
@@ -508,6 +587,14 @@ private static final long serialVersionUID = 0L;
         resultBuilder_.dispose();
         resultBuilder_ = null;
       }
+      if (ingredientSlotsBuilder_ == null) {
+        ingredientSlots_ = java.util.Collections.emptyList();
+      } else {
+        ingredientSlots_ = null;
+        ingredientSlotsBuilder_.clear();
+      }
+      bitField0_ = (bitField0_ & ~0x00000020);
+      requires3X3_ = false;
       return this;
     }
 
@@ -550,6 +637,15 @@ private static final long serialVersionUID = 0L;
       } else {
         result.ingredients_ = ingredientsBuilder_.build();
       }
+      if (ingredientSlotsBuilder_ == null) {
+        if (((bitField0_ & 0x00000020) != 0)) {
+          ingredientSlots_ = java.util.Collections.unmodifiableList(ingredientSlots_);
+          bitField0_ = (bitField0_ & ~0x00000020);
+        }
+        result.ingredientSlots_ = ingredientSlots_;
+      } else {
+        result.ingredientSlots_ = ingredientSlotsBuilder_.build();
+      }
     }
 
     private void buildPartial0(com.civquest.mod.grpc.v1.RecipeNode result) {
@@ -569,6 +665,9 @@ private static final long serialVersionUID = 0L;
             ? result_
             : resultBuilder_.build();
         to_bitField0_ |= 0x00000001;
+      }
+      if (((from_bitField0_ & 0x00000040) != 0)) {
+        result.requires3X3_ = requires3X3_;
       }
       result.bitField0_ |= to_bitField0_;
     }
@@ -628,6 +727,35 @@ private static final long serialVersionUID = 0L;
       }
       if (other.hasResult()) {
         mergeResult(other.getResult());
+      }
+      if (ingredientSlotsBuilder_ == null) {
+        if (!other.ingredientSlots_.isEmpty()) {
+          if (ingredientSlots_.isEmpty()) {
+            ingredientSlots_ = other.ingredientSlots_;
+            bitField0_ = (bitField0_ & ~0x00000020);
+          } else {
+            ensureIngredientSlotsIsMutable();
+            ingredientSlots_.addAll(other.ingredientSlots_);
+          }
+          onChanged();
+        }
+      } else {
+        if (!other.ingredientSlots_.isEmpty()) {
+          if (ingredientSlotsBuilder_.isEmpty()) {
+            ingredientSlotsBuilder_.dispose();
+            ingredientSlotsBuilder_ = null;
+            ingredientSlots_ = other.ingredientSlots_;
+            bitField0_ = (bitField0_ & ~0x00000020);
+            ingredientSlotsBuilder_ = 
+              com.google.protobuf.GeneratedMessage.alwaysUseFieldBuilders ?
+                 getIngredientSlotsFieldBuilder() : null;
+          } else {
+            ingredientSlotsBuilder_.addAllMessages(other.ingredientSlots_);
+          }
+        }
+      }
+      if (other.getRequires3X3() != false) {
+        setRequires3X3(other.getRequires3X3());
       }
       this.mergeUnknownFields(other.getUnknownFields());
       onChanged();
@@ -690,6 +818,24 @@ private static final long serialVersionUID = 0L;
               bitField0_ |= 0x00000010;
               break;
             } // case 42
+            case 50: {
+              com.civquest.mod.grpc.v1.RecipeIngredientSlot m =
+                  input.readMessage(
+                      com.civquest.mod.grpc.v1.RecipeIngredientSlot.parser(),
+                      extensionRegistry);
+              if (ingredientSlotsBuilder_ == null) {
+                ensureIngredientSlotsIsMutable();
+                ingredientSlots_.add(m);
+              } else {
+                ingredientSlotsBuilder_.addMessage(m);
+              }
+              break;
+            } // case 50
+            case 56: {
+              requires3X3_ = input.readBool();
+              bitField0_ |= 0x00000040;
+              break;
+            } // case 56
             default: {
               if (!super.parseUnknownField(input, extensionRegistry, tag)) {
                 done = true; // was an endgroup tag
@@ -1322,6 +1468,278 @@ private static final long serialVersionUID = 0L;
         result_ = null;
       }
       return resultBuilder_;
+    }
+
+    private java.util.List<com.civquest.mod.grpc.v1.RecipeIngredientSlot> ingredientSlots_ =
+      java.util.Collections.emptyList();
+    private void ensureIngredientSlotsIsMutable() {
+      if (!((bitField0_ & 0x00000020) != 0)) {
+        ingredientSlots_ = new java.util.ArrayList<com.civquest.mod.grpc.v1.RecipeIngredientSlot>(ingredientSlots_);
+        bitField0_ |= 0x00000020;
+       }
+    }
+
+    private com.google.protobuf.RepeatedFieldBuilder<
+        com.civquest.mod.grpc.v1.RecipeIngredientSlot, com.civquest.mod.grpc.v1.RecipeIngredientSlot.Builder, com.civquest.mod.grpc.v1.RecipeIngredientSlotOrBuilder> ingredientSlotsBuilder_;
+
+    /**
+     * <code>repeated .civquest.v1.RecipeIngredientSlot ingredient_slots = 6;</code>
+     */
+    public java.util.List<com.civquest.mod.grpc.v1.RecipeIngredientSlot> getIngredientSlotsList() {
+      if (ingredientSlotsBuilder_ == null) {
+        return java.util.Collections.unmodifiableList(ingredientSlots_);
+      } else {
+        return ingredientSlotsBuilder_.getMessageList();
+      }
+    }
+    /**
+     * <code>repeated .civquest.v1.RecipeIngredientSlot ingredient_slots = 6;</code>
+     */
+    public int getIngredientSlotsCount() {
+      if (ingredientSlotsBuilder_ == null) {
+        return ingredientSlots_.size();
+      } else {
+        return ingredientSlotsBuilder_.getCount();
+      }
+    }
+    /**
+     * <code>repeated .civquest.v1.RecipeIngredientSlot ingredient_slots = 6;</code>
+     */
+    public com.civquest.mod.grpc.v1.RecipeIngredientSlot getIngredientSlots(int index) {
+      if (ingredientSlotsBuilder_ == null) {
+        return ingredientSlots_.get(index);
+      } else {
+        return ingredientSlotsBuilder_.getMessage(index);
+      }
+    }
+    /**
+     * <code>repeated .civquest.v1.RecipeIngredientSlot ingredient_slots = 6;</code>
+     */
+    public Builder setIngredientSlots(
+        int index, com.civquest.mod.grpc.v1.RecipeIngredientSlot value) {
+      if (ingredientSlotsBuilder_ == null) {
+        if (value == null) {
+          throw new NullPointerException();
+        }
+        ensureIngredientSlotsIsMutable();
+        ingredientSlots_.set(index, value);
+        onChanged();
+      } else {
+        ingredientSlotsBuilder_.setMessage(index, value);
+      }
+      return this;
+    }
+    /**
+     * <code>repeated .civquest.v1.RecipeIngredientSlot ingredient_slots = 6;</code>
+     */
+    public Builder setIngredientSlots(
+        int index, com.civquest.mod.grpc.v1.RecipeIngredientSlot.Builder builderForValue) {
+      if (ingredientSlotsBuilder_ == null) {
+        ensureIngredientSlotsIsMutable();
+        ingredientSlots_.set(index, builderForValue.build());
+        onChanged();
+      } else {
+        ingredientSlotsBuilder_.setMessage(index, builderForValue.build());
+      }
+      return this;
+    }
+    /**
+     * <code>repeated .civquest.v1.RecipeIngredientSlot ingredient_slots = 6;</code>
+     */
+    public Builder addIngredientSlots(com.civquest.mod.grpc.v1.RecipeIngredientSlot value) {
+      if (ingredientSlotsBuilder_ == null) {
+        if (value == null) {
+          throw new NullPointerException();
+        }
+        ensureIngredientSlotsIsMutable();
+        ingredientSlots_.add(value);
+        onChanged();
+      } else {
+        ingredientSlotsBuilder_.addMessage(value);
+      }
+      return this;
+    }
+    /**
+     * <code>repeated .civquest.v1.RecipeIngredientSlot ingredient_slots = 6;</code>
+     */
+    public Builder addIngredientSlots(
+        int index, com.civquest.mod.grpc.v1.RecipeIngredientSlot value) {
+      if (ingredientSlotsBuilder_ == null) {
+        if (value == null) {
+          throw new NullPointerException();
+        }
+        ensureIngredientSlotsIsMutable();
+        ingredientSlots_.add(index, value);
+        onChanged();
+      } else {
+        ingredientSlotsBuilder_.addMessage(index, value);
+      }
+      return this;
+    }
+    /**
+     * <code>repeated .civquest.v1.RecipeIngredientSlot ingredient_slots = 6;</code>
+     */
+    public Builder addIngredientSlots(
+        com.civquest.mod.grpc.v1.RecipeIngredientSlot.Builder builderForValue) {
+      if (ingredientSlotsBuilder_ == null) {
+        ensureIngredientSlotsIsMutable();
+        ingredientSlots_.add(builderForValue.build());
+        onChanged();
+      } else {
+        ingredientSlotsBuilder_.addMessage(builderForValue.build());
+      }
+      return this;
+    }
+    /**
+     * <code>repeated .civquest.v1.RecipeIngredientSlot ingredient_slots = 6;</code>
+     */
+    public Builder addIngredientSlots(
+        int index, com.civquest.mod.grpc.v1.RecipeIngredientSlot.Builder builderForValue) {
+      if (ingredientSlotsBuilder_ == null) {
+        ensureIngredientSlotsIsMutable();
+        ingredientSlots_.add(index, builderForValue.build());
+        onChanged();
+      } else {
+        ingredientSlotsBuilder_.addMessage(index, builderForValue.build());
+      }
+      return this;
+    }
+    /**
+     * <code>repeated .civquest.v1.RecipeIngredientSlot ingredient_slots = 6;</code>
+     */
+    public Builder addAllIngredientSlots(
+        java.lang.Iterable<? extends com.civquest.mod.grpc.v1.RecipeIngredientSlot> values) {
+      if (ingredientSlotsBuilder_ == null) {
+        ensureIngredientSlotsIsMutable();
+        com.google.protobuf.AbstractMessageLite.Builder.addAll(
+            values, ingredientSlots_);
+        onChanged();
+      } else {
+        ingredientSlotsBuilder_.addAllMessages(values);
+      }
+      return this;
+    }
+    /**
+     * <code>repeated .civquest.v1.RecipeIngredientSlot ingredient_slots = 6;</code>
+     */
+    public Builder clearIngredientSlots() {
+      if (ingredientSlotsBuilder_ == null) {
+        ingredientSlots_ = java.util.Collections.emptyList();
+        bitField0_ = (bitField0_ & ~0x00000020);
+        onChanged();
+      } else {
+        ingredientSlotsBuilder_.clear();
+      }
+      return this;
+    }
+    /**
+     * <code>repeated .civquest.v1.RecipeIngredientSlot ingredient_slots = 6;</code>
+     */
+    public Builder removeIngredientSlots(int index) {
+      if (ingredientSlotsBuilder_ == null) {
+        ensureIngredientSlotsIsMutable();
+        ingredientSlots_.remove(index);
+        onChanged();
+      } else {
+        ingredientSlotsBuilder_.remove(index);
+      }
+      return this;
+    }
+    /**
+     * <code>repeated .civquest.v1.RecipeIngredientSlot ingredient_slots = 6;</code>
+     */
+    public com.civquest.mod.grpc.v1.RecipeIngredientSlot.Builder getIngredientSlotsBuilder(
+        int index) {
+      return getIngredientSlotsFieldBuilder().getBuilder(index);
+    }
+    /**
+     * <code>repeated .civquest.v1.RecipeIngredientSlot ingredient_slots = 6;</code>
+     */
+    public com.civquest.mod.grpc.v1.RecipeIngredientSlotOrBuilder getIngredientSlotsOrBuilder(
+        int index) {
+      if (ingredientSlotsBuilder_ == null) {
+        return ingredientSlots_.get(index);  } else {
+        return ingredientSlotsBuilder_.getMessageOrBuilder(index);
+      }
+    }
+    /**
+     * <code>repeated .civquest.v1.RecipeIngredientSlot ingredient_slots = 6;</code>
+     */
+    public java.util.List<? extends com.civquest.mod.grpc.v1.RecipeIngredientSlotOrBuilder> 
+         getIngredientSlotsOrBuilderList() {
+      if (ingredientSlotsBuilder_ != null) {
+        return ingredientSlotsBuilder_.getMessageOrBuilderList();
+      } else {
+        return java.util.Collections.unmodifiableList(ingredientSlots_);
+      }
+    }
+    /**
+     * <code>repeated .civquest.v1.RecipeIngredientSlot ingredient_slots = 6;</code>
+     */
+    public com.civquest.mod.grpc.v1.RecipeIngredientSlot.Builder addIngredientSlotsBuilder() {
+      return getIngredientSlotsFieldBuilder().addBuilder(
+          com.civquest.mod.grpc.v1.RecipeIngredientSlot.getDefaultInstance());
+    }
+    /**
+     * <code>repeated .civquest.v1.RecipeIngredientSlot ingredient_slots = 6;</code>
+     */
+    public com.civquest.mod.grpc.v1.RecipeIngredientSlot.Builder addIngredientSlotsBuilder(
+        int index) {
+      return getIngredientSlotsFieldBuilder().addBuilder(
+          index, com.civquest.mod.grpc.v1.RecipeIngredientSlot.getDefaultInstance());
+    }
+    /**
+     * <code>repeated .civquest.v1.RecipeIngredientSlot ingredient_slots = 6;</code>
+     */
+    public java.util.List<com.civquest.mod.grpc.v1.RecipeIngredientSlot.Builder> 
+         getIngredientSlotsBuilderList() {
+      return getIngredientSlotsFieldBuilder().getBuilderList();
+    }
+    private com.google.protobuf.RepeatedFieldBuilder<
+        com.civquest.mod.grpc.v1.RecipeIngredientSlot, com.civquest.mod.grpc.v1.RecipeIngredientSlot.Builder, com.civquest.mod.grpc.v1.RecipeIngredientSlotOrBuilder> 
+        getIngredientSlotsFieldBuilder() {
+      if (ingredientSlotsBuilder_ == null) {
+        ingredientSlotsBuilder_ = new com.google.protobuf.RepeatedFieldBuilder<
+            com.civquest.mod.grpc.v1.RecipeIngredientSlot, com.civquest.mod.grpc.v1.RecipeIngredientSlot.Builder, com.civquest.mod.grpc.v1.RecipeIngredientSlotOrBuilder>(
+                ingredientSlots_,
+                ((bitField0_ & 0x00000020) != 0),
+                getParentForChildren(),
+                isClean());
+        ingredientSlots_ = null;
+      }
+      return ingredientSlotsBuilder_;
+    }
+
+    private boolean requires3X3_ ;
+    /**
+     * <code>bool requires_3x3 = 7;</code>
+     * @return The requires3x3.
+     */
+    @java.lang.Override
+    public boolean getRequires3X3() {
+      return requires3X3_;
+    }
+    /**
+     * <code>bool requires_3x3 = 7;</code>
+     * @param value The requires3x3 to set.
+     * @return This builder for chaining.
+     */
+    public Builder setRequires3X3(boolean value) {
+
+      requires3X3_ = value;
+      bitField0_ |= 0x00000040;
+      onChanged();
+      return this;
+    }
+    /**
+     * <code>bool requires_3x3 = 7;</code>
+     * @return This builder for chaining.
+     */
+    public Builder clearRequires3X3() {
+      bitField0_ = (bitField0_ & ~0x00000040);
+      requires3X3_ = false;
+      onChanged();
+      return this;
     }
 
     // @@protoc_insertion_point(builder_scope:civquest.v1.RecipeNode)

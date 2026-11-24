@@ -7,6 +7,7 @@ import com.civquest.mod.grpc.v1.DespawnAgentResponse;
 import com.civquest.mod.grpc.v1.ExportRecipeRequest;
 import com.civquest.mod.grpc.v1.ExportRecipeResponse;
 import com.civquest.mod.grpc.v1.IntentBatch;
+import com.civquest.mod.grpc.v1.RecipeNode;
 import com.civquest.mod.grpc.v1.SpawnAgentRequest;
 import com.civquest.mod.grpc.v1.SpawnAgentResponse;
 import com.civquest.mod.grpc.v1.TelemetryFrame;
@@ -20,6 +21,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.util.Base64;
+import java.util.List;
 import java.util.Objects;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
@@ -470,8 +472,36 @@ public class CivQuestBridgeServiceImpl extends CivQuestBridgeServiceGrpc.CivQues
     public void exportRecipeGraph(ExportRecipeRequest request, StreamObserver<ExportRecipeResponse> responseObserver) {
         LOGGER.info("ExportRecipeGraph requested");
 
-        ExportRecipeResponse response = ExportRecipeResponse.newBuilder()
-                .build();
+        ExportRecipeResponse.Builder builder = ExportRecipeResponse.newBuilder();
+        MinecraftServer server = getServer();
+        if (server != null) {
+            List<RecipeNode> nodes = List.of();
+            if (server.isRunning()) {
+                try {
+                    nodes = server.submit(() -> RecipeCatalogExporter.exportCraftingRecipes(
+                            server.getRecipeManager(),
+                            server.registryAccess()
+                    )).get(5, TimeUnit.SECONDS);
+                } catch (Exception e) {
+                    LOGGER.error("Failed to export recipe graph on server thread: {}", e.getMessage(), e);
+                    synchronized (responseObserver) {
+                        responseObserver.onError(Status.INTERNAL
+                                .withDescription("Failed to export recipe graph: " + e.getMessage())
+                                .asRuntimeException());
+                    }
+                    return;
+                }
+            } else {
+                nodes = RecipeCatalogExporter.exportCraftingRecipes(
+                        server.getRecipeManager(),
+                        server.registryAccess()
+                );
+            }
+            builder.addAllRecipes(nodes);
+            LOGGER.info("ExportRecipeGraph returning {} crafting recipes", nodes.size());
+        }
+
+        ExportRecipeResponse response = builder.build();
         synchronized (responseObserver) {
             responseObserver.onNext(response);
             responseObserver.onCompleted();

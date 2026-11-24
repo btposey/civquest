@@ -99,4 +99,34 @@ public interface RecipeNodeOrBuilder extends
    * <code>.civquest.v1.ItemStackProto result = 5;</code>
    */
   com.civquest.mod.grpc.v1.ItemStackProtoOrBuilder getResultOrBuilder();
+
+  /**
+   * <code>repeated .civquest.v1.RecipeIngredientSlot ingredient_slots = 6;</code>
+   */
+  java.util.List<com.civquest.mod.grpc.v1.RecipeIngredientSlot> 
+      getIngredientSlotsList();
+  /**
+   * <code>repeated .civquest.v1.RecipeIngredientSlot ingredient_slots = 6;</code>
+   */
+  com.civquest.mod.grpc.v1.RecipeIngredientSlot getIngredientSlots(int index);
+  /**
+   * <code>repeated .civquest.v1.RecipeIngredientSlot ingredient_slots = 6;</code>
+   */
+  int getIngredientSlotsCount();
+  /**
+   * <code>repeated .civquest.v1.RecipeIngredientSlot ingredient_slots = 6;</code>
+   */
+  java.util.List<? extends com.civquest.mod.grpc.v1.RecipeIngredientSlotOrBuilder> 
+      getIngredientSlotsOrBuilderList();
+  /**
+   * <code>repeated .civquest.v1.RecipeIngredientSlot ingredient_slots = 6;</code>
+   */
+  com.civquest.mod.grpc.v1.RecipeIngredientSlotOrBuilder getIngredientSlotsOrBuilder(
+      int index);
+
+  /**
+   * <code>bool requires_3x3 = 7;</code>
+   * @return The requires3x3.
+   */
+  boolean getRequires3X3();
 }

@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/btposey/civquest/orchestrator-go/internal/blueprints"
+	"github.com/btposey/civquest/orchestrator-go/internal/crafting"
 	"github.com/btposey/civquest/orchestrator-go/internal/db"
 	civquestv1 "github.com/btposey/civquest/orchestrator-go/internal/proto/v1"
 	"github.com/btposey/civquest/orchestrator-go/internal/xdg"
@@ -180,6 +181,8 @@ func evaluateDuskNightOutpostShelterLocked(
 	}
 
 	inv := inspectBootstrapInventory(frame.Status.Inventory)
+	invMap := crafting.InventoryMapFromProtos(frame.Status.Inventory)
+	recipeGraph := state.RecipeGraphLocked()
 	canCraft := state.lastCraftTick == 0 || frame.WorldTick < state.lastCraftTick || frame.WorldTick-state.lastCraftTick >= 20
 	canPlace := state.lastShelterPlaceTick == 0 || frame.WorldTick < state.lastShelterPlaceTick || frame.WorldTick-state.lastShelterPlaceTick >= 20
 
@@ -220,17 +223,19 @@ func evaluateDuskNightOutpostShelterLocked(
 		return nil
 	}
 
-	// 1. Convert logs in inventory into oak_planks if building blocks are needed
-	if inv.logCount >= 1 && (inv.nonLogBuildingCount < 16 || state.ShelterBuildIndex < len(cabinIntents)) && canCraft {
-		state.lastCraftTick = frame.WorldTick
-		return &civquestv1.AgentIntent{
-			AgentId: agentID,
-			Action: &civquestv1.AgentIntent_CraftItem{
-				CraftItem: &civquestv1.CraftItemIntent{
-					RecipeId:   "minecraft:oak_planks",
-					BatchCount: 1,
+	// 1. Convert logs in inventory into planks via dynamic RecipeGraph if building blocks are needed
+	if inv.logCount >= 1 && (inv.nonLogBuildingCount < 16 || state.ShelterBuildIndex < len(cabinIntents)) && canCraft && !recipeGraph.IsEmpty() {
+		if plankStep, ok := recipeGraph.PlanNextStepForSuffix("_planks", invMap, false); ok && plankStep.CanExecuteNow {
+			state.lastCraftTick = frame.WorldTick
+			return &civquestv1.AgentIntent{
+				AgentId: agentID,
+				Action: &civquestv1.AgentIntent_CraftItem{
+					CraftItem: &civquestv1.CraftItemIntent{
+						RecipeId:   plankStep.RecipeID,
+						BatchCount: 1,
+					},
 				},
-			},
+			}
 		}
 	}
 
@@ -377,13 +382,9 @@ func evaluateDuskNightOutpostShelterLocked(
 				},
 			}
 		}
-		if !inv.hasLight && canCraft && inv.coalCount >= 1 {
-			var nearestTable *civquestv1.VisibleBlock
-			bestTableDistSq := math.MaxFloat64
-			if inv.logCount >= 3 && inv.stickCount >= 3 {
-				nearestTable, _, bestTableDistSq = findNearestCraftingTableLocked(frame, pos, state)
-			}
-			if craftIntent := craftLightSourceIntentLocked(agentID, frame.WorldTick, inv, nearestTable, bestTableDistSq, pos, state); craftIntent != nil {
+		if !inv.hasLight && canCraft && !recipeGraph.IsEmpty() {
+			nearestTable, _, bestTableDistSq := findNearestCraftingTableLocked(frame, pos, state)
+			if craftIntent := craftLightSourceIntentLocked(agentID, frame.WorldTick, invMap, nearestTable, bestTableDistSq, pos, state); craftIntent != nil {
 				return craftIntent
 			}
 		}

@@ -834,4 +834,97 @@ public class AgentNavigatorTest {
         assertTrue(Math.hypot(appliedDelta.get().x, appliedDelta.get().z) > 0.0,
                 "Active jump must be accompanied by forward horizontal acceleration");
     }
+
+    @Test
+    @DisplayName("Adjacent peer agent beside 1-block solid step-up allows step-up jump while head-stacked peer suppresses jump")
+    void testClusteredStepUpAllowedForAdjacentPeerButSuppressedWhenStackedOnHead() {
+        AgentEntity agent = mock(AgentEntity.class);
+        Level level = mock(Level.class);
+        when(agent.level()).thenReturn(level);
+        when(agent.position()).thenReturn(new Vec3(0.5, 64.0, 0.5));
+        net.minecraft.world.phys.AABB agentBox = new net.minecraft.world.phys.AABB(0.2, 64.0, 0.2, 0.8, 65.8, 0.8);
+        when(agent.getBoundingBox()).thenReturn(agentBox);
+        when(agent.getDeltaMovement()).thenReturn(Vec3.ZERO);
+        when(agent.onGround()).thenReturn(true);
+        when(agent.getYRot()).thenReturn(-90.0f); // Facing +X
+        when(level.hasChunkAt(any(BlockPos.class))).thenReturn(true);
+
+        BlockState solidBlock = mock(BlockState.class);
+        when(solidBlock.isAir()).thenReturn(false);
+        when(solidBlock.getCollisionShape(any(), any())).thenReturn(Shapes.block());
+
+        BlockState airBlock = mock(BlockState.class);
+        when(airBlock.isAir()).thenReturn(true);
+        when(airBlock.getCollisionShape(any(), any())).thenReturn(Shapes.empty());
+
+        // Floor at y<=63 everywhere, plus 1-block solid terrain step-up at x>=1 (y==64 solid, y>=65 air)
+        when(level.getBlockState(any(BlockPos.class))).thenAnswer(inv -> {
+            BlockPos pos = inv.getArgument(0);
+            if (pos.getY() <= 63 || (pos.getY() == 64 && pos.getX() >= 1)) {
+                return solidBlock;
+            }
+            return airBlock;
+        });
+
+        // Adjacent peer AgentEntity standing beside at z=0.8 (within 0.2m inflate box, same Y=64.0)
+        AgentEntity adjacentPeer = mock(AgentEntity.class);
+        net.minecraft.world.phys.AABB adjacentBox = new net.minecraft.world.phys.AABB(0.2, 64.0, 0.7, 0.8, 65.8, 1.3);
+        when(adjacentPeer.getBoundingBox()).thenReturn(adjacentBox);
+        when(adjacentPeer.isSpectator()).thenReturn(false);
+
+        // Stacked peer AgentEntity directly on top of agent's head (minY = 65.8)
+        AgentEntity stackedPeer = mock(AgentEntity.class);
+        net.minecraft.world.phys.AABB stackedBox = new net.minecraft.world.phys.AABB(0.2, 65.8, 0.2, 0.8, 67.6, 0.8);
+        when(stackedPeer.getBoundingBox()).thenReturn(stackedBox);
+        when(stackedPeer.isSpectator()).thenReturn(false);
+
+        java.util.List<net.minecraft.world.entity.Entity> activeEntities = new java.util.ArrayList<>();
+        activeEntities.add(adjacentPeer);
+        when(level.getEntities(eq(agent), any(net.minecraft.world.phys.AABB.class), any())).thenAnswer(inv -> {
+            net.minecraft.world.phys.AABB box = inv.getArgument(1);
+            @SuppressWarnings("unchecked")
+            java.util.function.Predicate<net.minecraft.world.entity.Entity> pred = inv.getArgument(2);
+            java.util.List<net.minecraft.world.entity.Entity> out = new java.util.ArrayList<>();
+            for (net.minecraft.world.entity.Entity e : activeEntities) {
+                if (e.getBoundingBox().intersects(box) && (pred == null || pred.test(e))) {
+                    out.add(e);
+                }
+            }
+            return out;
+        });
+
+        AtomicReference<Vec3> appliedDelta = new AtomicReference<>(Vec3.ZERO);
+        doAnswer(inv -> {
+            appliedDelta.set(inv.getArgument(0));
+            return null;
+        }).when(agent).setDeltaMovement(any(Vec3.class));
+
+        // 1. With adjacent peer beside 1-block step-up -> step-up jump MUST succeed (vy == 0.42)
+        AgentNavigator navStepUp = new AgentNavigator(agent);
+        navStepUp.navigate(10.5, 65.0, 0.5, 1.0f, false, false, false, 1);
+        navStepUp.tick();
+        assertEquals(0.42, appliedDelta.get().y, 1e-4,
+                "Adjacent peer beside a 1-block solid terrain step-up must not disable legitimate step-up jump");
+
+        // 2. With peer stacked directly on top of agent's head -> jump MUST remain suppressed (ADR-028)
+        activeEntities.clear();
+        activeEntities.add(stackedPeer);
+        AgentNavigator navStacked = new AgentNavigator(agent);
+        navStacked.navigate(10.5, 65.0, 0.5, 1.0f, false, false, false, 1);
+        navStacked.tick();
+        assertNotEquals(0.42, appliedDelta.get().y, 1e-4,
+                "Peer stacked directly on top of agent must still suppress jumping (ADR-028)");
+
+        // 3. On flat ground (no step-up block ahead) with horizontalCollision against adjacent peer -> suppressed (ADR-028)
+        activeEntities.clear();
+        activeEntities.add(adjacentPeer);
+        when(level.getBlockState(any(BlockPos.class))).thenAnswer(inv ->
+                ((BlockPos) inv.getArgument(0)).getY() <= 63 ? solidBlock : airBlock);
+        agent.horizontalCollision = true;
+        AgentNavigator navFlat = new AgentNavigator(agent);
+        navFlat.navigate(10.5, 64.0, 0.5, 1.0f, false, false, false, 1);
+        navFlat.tick();
+        assertNotEquals(0.42, appliedDelta.get().y, 1e-4,
+                "Entity collision on flat ground without solid step-up ahead must not trigger jumping");
+    }
 }

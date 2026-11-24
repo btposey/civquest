@@ -277,3 +277,78 @@ func TestHarvestTreeTask_SaplingReplanting(t *testing.T) {
 		t.Fatalf("expected task to complete on next tick after planting, got done=%v phase=%v", res2.Done, res2.Phase)
 	}
 }
+
+func TestTaskSubroutine_IgnoresStalePreTaskFailedReceipt(t *testing.T) {
+	state := NewAgentState()
+	// Simulate a prior CraftItemIntent failure from before harvest_tree was created.
+	staleReceipt := &civquestv1.IntentReceipt{
+		BatchId:       42,
+		Status:        civquestv1.IntentReceipt_RECEIPT_STATUS_FAILED,
+		FailureReason: "craft failed: missing planks",
+	}
+	state.IngestReceipt(staleReceipt)
+
+	task := NewHarvestTreeTask(20, 64, 0, StageBootstrap, 100)
+	state.StartTask(task)
+
+	frame := &civquestv1.TelemetryFrame{
+		WorldTick: 100,
+		Status: &civquestv1.AgentStatus{
+			Position:        &civquestv1.Vec3{X: 0.5, Y: 64, Z: 0.5},
+			NavigationState: civquestv1.NavigationState_NAVIGATION_STATE_IDLE,
+		},
+		InterestingBlocks: []*civquestv1.VisibleBlock{
+			{Pos: &civquestv1.BlockPosProto{X: 20, Y: 64, Z: 0}, BlockId: "minecraft:oak_log"},
+		},
+		Receipt: staleReceipt,
+	}
+
+	// Tick 100: brand-new harvest_tree must NOT count the stale CraftItemIntent FAILED receipt.
+	res1 := state.StepActiveTask("agent", frame)
+	if !res1.Active || res1.Done {
+		t.Fatalf("expected active harvest_tree task on first tick, got %+v", res1)
+	}
+	if res1.Intent == nil || res1.Intent.GetNavigate() == nil {
+		t.Fatalf("expected APPROACH NavigateIntent toward tree, got %+v", res1)
+	}
+	if task.ConsecutiveFailures != 0 {
+		t.Fatalf("expected ConsecutiveFailures=0 despite stale pre-task FAILED receipt, got %d", task.ConsecutiveFailures)
+	}
+	if task.StartReceiptBatchID != 42 || task.IssuedBatchCount != 1 {
+		t.Fatalf("expected StartReceiptBatchID=42 and IssuedBatchCount=1, got start=%d issued=%d",
+			task.StartReceiptBatchID, task.IssuedBatchCount)
+	}
+
+	// Tick 101: frame still echoes stale batch 42 FAILED -> must still be ignored.
+	frame.WorldTick = 101
+	res2 := state.StepActiveTask("agent", frame)
+	if !res2.Active || res2.Done || task.ConsecutiveFailures != 0 {
+		t.Fatalf("expected repeated stale receipt (batch 42) to remain ignored, got res=%+v failures=%d",
+			res2, task.ConsecutiveFailures)
+	}
+
+	// Tick 102: a failure belonging to THIS task's batch (43 > 42) counts as 1 and recovers.
+	frame.WorldTick = 102
+	frame.Receipt = &civquestv1.IntentReceipt{
+		BatchId:       43,
+		Status:        civquestv1.IntentReceipt_RECEIPT_STATUS_FAILED,
+		FailureReason: "nav stuck",
+	}
+	res3 := state.StepActiveTask("agent", frame)
+	if !res3.Active || res3.Done || task.ConsecutiveFailures != 1 {
+		t.Fatalf("expected first task-owned failure to recover with ConsecutiveFailures=1, got res=%+v failures=%d",
+			res3, task.ConsecutiveFailures)
+	}
+
+	// Tick 103: second task-owned failure (44) exceeds MaxReceiptFailures=2 and fails cleanly.
+	frame.WorldTick = 103
+	frame.Receipt = &civquestv1.IntentReceipt{
+		BatchId:       44,
+		Status:        civquestv1.IntentReceipt_RECEIPT_STATUS_FAILED,
+		FailureReason: "nav unreachable",
+	}
+	res4 := state.StepActiveTask("agent", frame)
+	if !res4.Done || res4.Phase != TaskPhaseFailed {
+		t.Fatalf("expected TaskPhaseFailed on second task-owned failure, got %+v", res4)
+	}
+}

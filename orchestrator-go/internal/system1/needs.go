@@ -204,8 +204,14 @@ func EvaluateHunger(agentID string, frame *civquestv1.TelemetryFrame, state *Age
 	}
 
 	foodLevel := frame.Status.FoodLevel
+	maxHP := float64(frame.Status.MaxHealth)
+	if maxHP <= 0 {
+		maxHP = 20.0
+	}
 	shouldEat := false
 	if foodLevel <= 6 {
+		shouldEat = true
+	} else if frame.Status.Health > 0 && float64(frame.Status.Health) <= LowHPThresholdRatio*maxHP && foodLevel < 20 {
 		shouldEat = true
 	} else if restingOrIdle && foodLevel < 14 {
 		shouldEat = true
@@ -423,6 +429,19 @@ func EvaluateSleep(agentID string, frame *civquestv1.TelemetryFrame, state *Agen
 	}
 
 	return nil
+}
+
+// NeedsForaging returns true when the agent is hungry (FoodLevel <= 12) and has no
+// edible food in inventory, meaning System 1 must forage or hunt for food.
+func NeedsForaging(frame *civquestv1.TelemetryFrame) bool {
+	if frame == nil || frame.Status == nil {
+		return false
+	}
+	if frame.Status.FoodLevel > 12 {
+		return false
+	}
+	_, _, hasFood := FindOptimalFood(frame.Status.Inventory)
+	return !hasFood
 }
 
 // EvaluateBiologicalNeeds combines hunger and sleep evaluation, returning any required intents.

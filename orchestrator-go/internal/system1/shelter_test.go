@@ -68,6 +68,7 @@ func TestExplorerForwardOutpostAtDuskAndGoals(t *testing.T) {
 
 func TestDuskEmergencyShelterFromLogsBottomUp(t *testing.T) {
 	state := NewAgentState()
+	state.SetRecipeGraph(newTestRecipeGraph())
 	cfg := xdg.DefaultAgentIdentityConfig("Able")
 	cfg.Profession = "EXPLORER"
 
@@ -495,6 +496,7 @@ func TestEvaluateShelterGoals_HabitationPOIRecall(t *testing.T) {
 func TestShelterLightCrafting_NoCampfireShortcutWithoutCoal(t *testing.T) {
 	t.Run("No coal skips bogus campfire craft and places shelter block", func(t *testing.T) {
 		state := NewAgentState()
+		state.SetRecipeGraph(newTestRecipeGraph())
 		state.telemetryFramesSeen = 5
 		state.ShelterPos = &civquestv1.BlockPosProto{X: 0, Y: 64, Z: 0}
 		cfg := xdg.DefaultAgentIdentityConfig("Able")
@@ -527,6 +529,7 @@ func TestShelterLightCrafting_NoCampfireShortcutWithoutCoal(t *testing.T) {
 
 	t.Run("Stick and coal without nearby light pocket-crafts torch", func(t *testing.T) {
 		state := NewAgentState()
+		state.SetRecipeGraph(newTestRecipeGraph())
 		state.telemetryFramesSeen = 5
 		state.ShelterPos = &civquestv1.BlockPosProto{X: 0, Y: 64, Z: 0}
 		cfg := xdg.DefaultAgentIdentityConfig("Able")
@@ -552,6 +555,44 @@ func TestShelterLightCrafting_NoCampfireShortcutWithoutCoal(t *testing.T) {
 		craft := intent.GetCraftItem()
 		if craft == nil || craft.RecipeId != "minecraft:torch" {
 			t.Fatalf("expected CraftItemIntent(minecraft:torch), got %+v", intent)
+		}
+	})
+
+	t.Run("Birch logs in shelter craft birch_planks dynamically and planks+coal crafts stick first for torch", func(t *testing.T) {
+		state := NewAgentState()
+		state.SetRecipeGraph(newTestRecipeGraph())
+		state.telemetryFramesSeen = 5
+		state.ShelterPos = &civquestv1.BlockPosProto{X: 0, Y: 64, Z: 0}
+		cfg := xdg.DefaultAgentIdentityConfig("Able")
+		cfg.Profession = "EXPLORER"
+
+		frame := &civquestv1.TelemetryFrame{
+			WorldTick: 500,
+			TimeOfDay: 13000,
+			Status: &civquestv1.AgentStatus{
+				Position:        &civquestv1.Vec3{X: 0.5, Y: 64, Z: 0.5},
+				Health:          20,
+				FoodLevel:       20,
+				NavigationState: civquestv1.NavigationState_NAVIGATION_STATE_IDLE,
+				Inventory: []*civquestv1.ItemStackProto{
+					{Slot: 0, ItemId: "minecraft:birch_log", Count: 2},
+				},
+			},
+		}
+		intent := EvaluateShelterGoals("Able", frame, cfg, state)
+		if intent == nil || intent.GetCraftItem() == nil || intent.GetCraftItem().RecipeId != "minecraft:birch_planks" {
+			t.Fatalf("expected CraftItemIntent(minecraft:birch_planks) from birch_log, got %+v", intent)
+		}
+
+		// With 20 birch_planks and 1 coal (0 sticks), light crafting crafts sticks first for torch!
+		frame.WorldTick = 530
+		frame.Status.Inventory = []*civquestv1.ItemStackProto{
+			{Slot: 0, ItemId: "minecraft:birch_planks", Count: 20},
+			{Slot: 1, ItemId: "minecraft:coal", Count: 1},
+		}
+		stickIntent := EvaluateShelterGoals("Able", frame, cfg, state)
+		if stickIntent == nil || stickIntent.GetCraftItem() == nil || stickIntent.GetCraftItem().RecipeId != "minecraft:stick" {
+			t.Fatalf("expected CraftItemIntent(minecraft:stick) as prerequisite for torch, got %+v", stickIntent)
 		}
 	})
 }

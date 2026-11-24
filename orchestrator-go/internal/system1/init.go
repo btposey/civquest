@@ -16,6 +16,7 @@ func RegisterDefaultEvaluatorsAndSkills() {
 	DefaultRegistry.RegisterEvaluator(NewInfrastructureEvaluator())
 	DefaultRegistry.RegisterEvaluator(NewColonizeEvaluator())
 	DefaultRegistry.RegisterEvaluator(NewBlueprintEvaluator())
+	DefaultRegistry.RegisterEvaluator(NewDirectiveEvaluator())
 
 	DefaultRegistry.RegisterSkill(NewCombatDefenseSkill())
 	DefaultRegistry.RegisterSkill(NewBiologicalNeedsSkill())

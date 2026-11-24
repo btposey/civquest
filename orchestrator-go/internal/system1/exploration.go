@@ -300,19 +300,17 @@ func EvaluateGoals(frame *civquestv1.TelemetryFrame, cfg *xdg.AgentIdentityConfi
 		}
 	}
 
+	_, _, hasEdibleFood := FindOptimalFood(frame.Status.Inventory)
 	var immediate string
 	switch {
 	case hostilesNearby || (frame.LastDamageTaken != nil && !IsPassiveOrEnvironmentalDamage(frame.LastDamageTaken)):
 		immediate = "COMBAT_SURVIVAL: Defend against or evade nearby hostile threats"
+	case frame.Status.FoodLevel <= 12 && !hasEdibleFood && !frame.Status.IsSleeping:
+		immediate = ForagingGoalText
 	case frame.Status.FoodLevel <= 6:
 		immediate = "CRITICAL_HUNGER: Consume food or forage immediately"
 	case state != nil && state.IsCompanionActive():
 		immediate = "ESCORT_COMPANION: Accompany and protect bonded player"
-	case state != nil && func() bool {
-		active, kind, _, _ := state.ActiveTaskInfo()
-		return active && (kind == "harvest_tree" || kind == "collect_items")
-	}():
-		immediate = "GATHER_TIMBER: Harvest committed tree trunk logs and collect dropped wood"
 	case isDuskOrNight || isThunder:
 		if frame.Status.IsSleeping {
 			immediate = "SLEEPING: Resting safely until dawn"
@@ -323,6 +321,24 @@ func EvaluateGoals(frame *civquestv1.TelemetryFrame, cfg *xdg.AgentIdentityConfi
 		} else {
 			immediate = "ESTABLISH_OUTPOST: Secure and light forward outpost shelter for the night"
 		}
+	case state != nil && func() bool {
+		_, active := state.ActiveStrategicDirective(frame.WorldTick)
+		return active
+	}():
+		dir, _ := state.ActiveStrategicDirective(frame.WorldTick)
+		switch {
+		case dir.ImmediateGoal != "":
+			immediate = dir.ImmediateGoal
+		case dir.Target != "":
+			immediate = dir.Action + ": " + dir.Target
+		default:
+			immediate = dir.Action
+		}
+	case state != nil && func() bool {
+		active, kind, _, _ := state.ActiveTaskInfo()
+		return active && (kind == "harvest_tree" || kind == "collect_items")
+	}():
+		immediate = "GATHER_TIMBER: Harvest committed tree trunk logs and collect dropped wood"
 	case !inv.hasWeapon && !inv.hasAxe:
 		if inv.logCount < 2 && inv.planksCount < 4 {
 			immediate = "GATHER_TIMBER: Harvest nearby tree logs to craft basic survival tools"

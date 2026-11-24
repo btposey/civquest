@@ -118,6 +118,8 @@ type TaskSubroutine struct {
 	PushedToPDA         bool
 	LastReceiptBatchID  int64
 	LastReceiptStatus   civquestv1.IntentReceipt_ReceiptStatus
+	StartReceiptBatchID int64
+	IssuedBatchCount    int
 	ConsecutiveFailures int
 	FailureReason       string
 	Metadata            map[string]string
@@ -230,89 +232,97 @@ func (t *TaskSubroutine) TickWithReceipt(agentID string, state *AgentState, fram
 		t.LastProgressTick = frame.WorldTick
 	}
 
-	// 0. Process IntentReceipt from periphery for immediate step progression or failure recovery
+	// 0. Process IntentReceipt from periphery for immediate step progression or failure recovery.
+	// Ignore any pre-existing receipt carried over from before this task emitted its first intent.
 	if receipt != nil {
-		alreadyProcessed := receipt.BatchId > 0 &&
-			receipt.BatchId == t.LastReceiptBatchID &&
-			receipt.Status == t.LastReceiptStatus
-		if !alreadyProcessed {
-			if receipt.BatchId > 0 {
-				t.LastReceiptBatchID = receipt.BatchId
+		if t.IssuedBatchCount == 0 {
+			if receipt.BatchId > t.StartReceiptBatchID {
+				t.StartReceiptBatchID = receipt.BatchId
 			}
-			t.LastReceiptStatus = receipt.Status
-
-			switch receipt.Status {
-			case civquestv1.IntentReceipt_RECEIPT_STATUS_COMPLETED:
-				prevPhase := t.Phase
-				prevLastNavTick := t.LastNavigateTick
-				t.ConsecutiveFailures = 0
-				t.LastProgressTick = frame.WorldTick
-				t.LastActionTick = 0
-				t.LastNavigateTick = 0
-
-				// If navigating in APPROACH and motor reports completion, advance immediately to PREPARE
-				if prevPhase == TaskPhaseApproach {
-					reach := t.Spec.ReachRadius
-					if reach <= 0 {
-						reach = 4.5
-					}
-					tol := t.Spec.ArrivalTolerance
-					if tol <= 0 {
-						tol = 2
-					}
-					distSq := distanceSqToSubTarget(frame.Status.Position, t.ActiveApproachPos, t.ActiveSubTarget)
-					maxArrival := reach + float64(tol) + 1.0
-					if t.ActiveApproachPos == nil && t.ActiveSubTarget == nil {
-						t.Phase = TaskPhasePrepare
-					} else if prevLastNavTick > 0 &&
-						frame.Status.NavigationState != civquestv1.NavigationState_NAVIGATION_STATE_PATHING &&
-						distSq <= maxArrival*maxArrival {
-						t.Phase = TaskPhasePrepare
-					}
+		} else {
+			isStalePreTask := t.StartReceiptBatchID > 0 && receipt.BatchId > 0 && receipt.BatchId <= t.StartReceiptBatchID
+			alreadyProcessed := receipt.BatchId > 0 &&
+				receipt.BatchId == t.LastReceiptBatchID &&
+				receipt.Status == t.LastReceiptStatus
+			if !isStalePreTask && !alreadyProcessed {
+				if receipt.BatchId > 0 {
+					t.LastReceiptBatchID = receipt.BatchId
 				}
+				t.LastReceiptStatus = receipt.Status
 
-			case civquestv1.IntentReceipt_RECEIPT_STATUS_FAILED:
-				t.LastActionTick = 0
-				t.LastNavigateTick = 0
-				t.ConsecutiveFailures++
-				if t.Metadata == nil {
-					t.Metadata = make(map[string]string)
-				}
-				reason := strings.TrimSpace(receipt.FailureReason)
-				if reason == "" {
-					reason = "intent execution failed"
-				}
-				t.Metadata["last_failure_reason"] = reason
-				t.Metadata["recovery_attempts"] = fmt.Sprintf("%d", t.ConsecutiveFailures)
+				switch receipt.Status {
+				case civquestv1.IntentReceipt_RECEIPT_STATUS_COMPLETED:
+					prevPhase := t.Phase
+					prevLastNavTick := t.LastNavigateTick
+					t.ConsecutiveFailures = 0
+					t.LastProgressTick = frame.WorldTick
+					t.LastActionTick = 0
+					t.LastNavigateTick = 0
 
-				maxFailures := t.Spec.MaxReceiptFailures
-				if maxFailures <= 0 {
-					maxFailures = 2
-				}
-				if t.ConsecutiveFailures >= maxFailures {
-					t.Phase = TaskPhaseFailed
-					t.FailureReason = fmt.Sprintf("intent failed (%d attempts): %s", t.ConsecutiveFailures, reason)
-					if t.Spec.OnFail != nil {
-						t.Spec.OnFail(state, frame, t, t.FailureReason)
+					// If navigating in APPROACH and motor reports completion, advance immediately to PREPARE
+					if prevPhase == TaskPhaseApproach {
+						reach := t.Spec.ReachRadius
+						if reach <= 0 {
+							reach = 4.5
+						}
+						tol := t.Spec.ArrivalTolerance
+						if tol <= 0 {
+							tol = 2
+						}
+						distSq := distanceSqToSubTarget(frame.Status.Position, t.ActiveApproachPos, t.ActiveSubTarget)
+						maxArrival := reach + float64(tol) + 1.0
+						if t.ActiveApproachPos == nil && t.ActiveSubTarget == nil {
+							t.Phase = TaskPhasePrepare
+						} else if prevLastNavTick > 0 &&
+							frame.Status.NavigationState != civquestv1.NavigationState_NAVIGATION_STATE_PATHING &&
+							distSq <= maxArrival*maxArrival {
+							t.Phase = TaskPhasePrepare
+						}
 					}
-					return TaskStepResult{
-						Phase:  TaskPhaseFailed,
-						Active: false,
-						Done:   true,
-						Reason: t.FailureReason,
-					}
-				}
-				// Recover by re-evaluating / re-approaching sub-target immediately
-				t.Phase = TaskPhaseEvaluate
-				t.ActiveApproachPos = nil
 
-			case civquestv1.IntentReceipt_RECEIPT_STATUS_PREEMPTED_BY_REFLEX,
-				civquestv1.IntentReceipt_RECEIPT_STATUS_ABORTED:
-				t.LastProgressTick = frame.WorldTick
-				t.LastActionTick = 0
-				t.LastNavigateTick = 0
-				t.Phase = TaskPhaseEvaluate
-				t.ActiveApproachPos = nil
+				case civquestv1.IntentReceipt_RECEIPT_STATUS_FAILED:
+					t.LastActionTick = 0
+					t.LastNavigateTick = 0
+					t.ConsecutiveFailures++
+					if t.Metadata == nil {
+						t.Metadata = make(map[string]string)
+					}
+					reason := strings.TrimSpace(receipt.FailureReason)
+					if reason == "" {
+						reason = "intent execution failed"
+					}
+					t.Metadata["last_failure_reason"] = reason
+					t.Metadata["recovery_attempts"] = fmt.Sprintf("%d", t.ConsecutiveFailures)
+
+					maxFailures := t.Spec.MaxReceiptFailures
+					if maxFailures <= 0 {
+						maxFailures = 2
+					}
+					if t.ConsecutiveFailures >= maxFailures {
+						t.Phase = TaskPhaseFailed
+						t.FailureReason = fmt.Sprintf("intent failed (%d attempts): %s", t.ConsecutiveFailures, reason)
+						if t.Spec.OnFail != nil {
+							t.Spec.OnFail(state, frame, t, t.FailureReason)
+						}
+						return TaskStepResult{
+							Phase:  TaskPhaseFailed,
+							Active: false,
+							Done:   true,
+							Reason: t.FailureReason,
+						}
+					}
+					// Recover by re-evaluating / re-approaching sub-target immediately
+					t.Phase = TaskPhaseEvaluate
+					t.ActiveApproachPos = nil
+
+				case civquestv1.IntentReceipt_RECEIPT_STATUS_PREEMPTED_BY_REFLEX,
+					civquestv1.IntentReceipt_RECEIPT_STATUS_ABORTED:
+					t.LastProgressTick = frame.WorldTick
+					t.LastActionTick = 0
+					t.LastNavigateTick = 0
+					t.Phase = TaskPhaseEvaluate
+					t.ActiveApproachPos = nil
+				}
 			}
 		}
 	}
@@ -463,6 +473,7 @@ func (t *TaskSubroutine) TickWithReceipt(agentID string, state *AgentState, fram
 					},
 				},
 			}
+			t.IssuedBatchCount++
 			return TaskStepResult{Phase: TaskPhaseApproach, Intent: navIntent, Active: true}
 		}
 		return TaskStepResult{Phase: TaskPhaseApproach, Active: true}
@@ -485,6 +496,7 @@ func (t *TaskSubroutine) TickWithReceipt(agentID string, state *AgentState, fram
 		if !actExecutingForCurrentTarget && t.Spec.PrepareIntent != nil {
 			if prepIntent := t.Spec.PrepareIntent(agentID, state, frame, t); prepIntent != nil {
 				t.Phase = TaskPhaseAct
+				t.IssuedBatchCount++
 				return TaskStepResult{Phase: TaskPhasePrepare, Intent: prepIntent, Active: true}
 			}
 		}
@@ -508,6 +520,7 @@ func (t *TaskSubroutine) TickWithReceipt(agentID string, state *AgentState, fram
 			t.LastActionSubTarget = cloneBlockPos(t.ActiveSubTarget)
 			t.LastActionTargetID = t.ActiveTargetID
 			t.ActionsEmitted++
+			t.IssuedBatchCount++
 			t.Phase = TaskPhaseEvaluate
 			return TaskStepResult{Phase: TaskPhaseAct, Intent: actIntent, Active: true}
 		}

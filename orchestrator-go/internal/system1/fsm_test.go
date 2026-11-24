@@ -931,3 +931,94 @@ func TestFSM_MacroRoutineTransitionsEmitFlushPeriphery(t *testing.T) {
 			resSleep.Routine, resSleep.RoutineTransitioned, resSleep.FlushPeriphery)
 	}
 }
+
+func TestFSM_PreviousStageInitializedAndNoEmptyStageTransition(t *testing.T) {
+	fsm := NewAgentFSM(StageBootstrap, nil)
+	if fsm.PreviousStage() != StageBootstrap {
+		t.Fatalf("expected initial PreviousStage=%s, got %q", StageBootstrap, fsm.PreviousStage())
+	}
+	if fsm.PreviousRoutine() != RoutineDawnPrep {
+		t.Fatalf("expected initial PreviousRoutine=%s, got %q", RoutineDawnPrep, fsm.PreviousRoutine())
+	}
+
+	state := NewAgentState()
+	ctx := &FSMContext{
+		AgentID: "stage_check_agent",
+		State:   state,
+		Config:  &xdg.AgentIdentityConfig{Shift: xdg.ShiftFirst},
+		Frame: &civquestv1.TelemetryFrame{
+			WorldTick: 100,
+			TimeOfDay: 2000, // RoutinePrimaryDuty (routine transitions from DAWN_PREP)
+			Status: &civquestv1.AgentStatus{
+				AgentId:   "stage_check_agent",
+				Health:    20,
+				MaxHealth: 20,
+				FoodLevel: 20,
+				Position:  &civquestv1.Vec3{X: 0, Y: 64, Z: 0},
+			},
+		},
+	}
+
+	res := fsm.Tick(ctx)
+	if !res.RoutineTransitioned || !res.FlushPeriphery {
+		t.Fatalf("expected RoutineTransitioned=true and FlushPeriphery=true, got %+v", res)
+	}
+	if res.StageTransitioned || res.Transitioned {
+		t.Fatalf("expected StageTransitioned=false and Transitioned=false on routine-only transition, got stage=%v trans=%v",
+			res.StageTransitioned, res.Transitioned)
+	}
+	if res.PreviousStage != StageBootstrap || res.PreviousState != StageBootstrap {
+		t.Fatalf("expected non-empty PreviousStage=%s, got stage=%q state=%q",
+			StageBootstrap, res.PreviousStage, res.PreviousState)
+	}
+}
+
+func TestFSM_StarvationLowHPZeroHostilesDoesNotLockInEmergency(t *testing.T) {
+	fsm := NewAgentFSM(StageBootstrap, nil)
+	state := NewAgentState()
+
+	ctx := &FSMContext{
+		AgentID: "carl",
+		State:   state,
+		Config:  &xdg.AgentIdentityConfig{Shift: xdg.ShiftFirst, Traits: xdg.AgentTraits{Bravery: 0.5}},
+		Frame: &civquestv1.TelemetryFrame{
+			WorldTick: 500,
+			TimeOfDay: 3000,
+			Status: &civquestv1.AgentStatus{
+				AgentId:         "carl",
+				Health:          5.0, // <= 35% HP from starvation
+				MaxHealth:       20.0,
+				FoodLevel:       2, // critical hunger, 0 food in inventory
+				Position:        &civquestv1.Vec3{X: 10, Y: 64, Z: 10},
+				NavigationState: civquestv1.NavigationState_NAVIGATION_STATE_IDLE,
+			},
+			LastDamageTaken: &civquestv1.DamageEvent{
+				DamageAmount:     1.0,
+				SourceType:       civquestv1.DamageSourceType_DAMAGE_SOURCE_TYPE_UNSPECIFIED,
+				AttackerEntityId: 0,
+			},
+			InterestingBlocks: []*civquestv1.VisibleBlock{
+				{Pos: &civquestv1.BlockPosProto{X: 11, Y: 64, Z: 10}, BlockId: "minecraft:sweet_berry_bush"},
+			},
+		},
+	}
+
+	res := fsm.Tick(ctx)
+	if res.Stage == StageEmergency {
+		t.Fatalf("expected starving agent with 0 hostiles NOT to lock in StageEmergency, got %s", res.Stage)
+	}
+	if ctx.ShouldPanic() {
+		t.Fatalf("expected ctx.ShouldPanic()=false when 0 hostiles")
+	}
+	for _, it := range res.Intents {
+		if att := it.Intent.GetAttack(); att != nil && att.FleeImmediately {
+			t.Fatalf("expected no combat-flee AttackIntent during starvation with 0 hostiles, got %+v", att)
+		}
+	}
+	if len(res.Intents) == 0 || res.Intents[0].Intent.GetInteractBlock() == nil {
+		t.Fatalf("expected foraging InteractBlock intent on nearby berry bush, got %+v", res.Intents)
+	}
+	if res.GoalHierarchy == nil || res.GoalHierarchy.ImmediateGoal != ForagingGoalText {
+		t.Fatalf("expected ImmediateGoal=%q, got %+v", ForagingGoalText, res.GoalHierarchy)
+	}
+}
