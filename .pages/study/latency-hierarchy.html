@@ -1,0 +1,284 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<!-- Copyright (c) 2026 Brian Posey. MIT-style license, see LICENSE. -->
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Three Clocks, One Body — CivQuest Study</title>
+<meta name="description" content="How the CivQuest agent harness partitions control across three latency tiers, where that partition has failed, and what is and is not measured.">
+<link rel="stylesheet" href="../assets/css/study.css">
+</head>
+<body>
+<nav class="site" aria-label="Site">
+  <a class="brand" href="../index.html">CivQuest</a>
+  <a href="../gameplay.html">Play</a>
+  <a href="../getting-started.html">Install</a>
+  <a href="latency-hierarchy.html" aria-current="page">Study</a>
+  <span class="sp"></span>
+  <a href="https://github.com/btposey/civquest">Source</a>
+</nav>
+
+<div class="wrap">
+<aside class="toc" aria-label="Contents">
+  <b>Contents</b>
+  <a href="#problem">Problem</a>
+  <a href="#clocks">Three clocks</a>
+  <a href="#mechanism">The loop</a>
+  <a href="#contracts">Tier contracts</a>
+  <a href="#failures">Where it failed</a>
+  <a href="#evidence">Evidence &amp; limits</a>
+  <a href="#robots">Toward robots</a>
+  <a href="#sources">Sources</a>
+</aside>
+
+<article>
+<div class="eyebrow">Study · Architecture</div>
+<h1>Three Clocks, One Body</h1>
+<div class="byline">
+  <span>The latency hierarchy of the CivQuest agent harness</span>
+  <span>Verified against commit <code>d951ea6</code> · 2026-11-24</span>
+  <span>Numbers are tagged <span class="tag design">design budget</span> or <span class="tag gap">not measured</span></span>
+</div>
+
+<p class="abstract">An embodied agent has to react to a hazard in milliseconds and to decide what to build over seconds. A language model cannot do the first, and a reflex loop cannot do the second. CivQuest splits control across three clocks, 20 Hz inside the game engine, 5 Hz in a Go controller, and an asynchronous LLM planner, and constrains how information may cross between them. This page states that partition as testable claims, shows the data path, and marks which numbers are design targets rather than measurements.</p>
+
+<ol class="claims">
+  <li><div><b>A hazard outruns the harness.</b> A reflex that must cross a process boundary is a slower reflex, so survival reflexes execute inside the engine tick and never wait for the controller.</div></li>
+  <li><div><b>Slow cognition must not hold the controller.</b> Planner output re-enters control asynchronously, and the controller keeps running whether or not it arrives.</div></li>
+  <li><div><b>The way back in is narrow by design.</b> Planner output reaches control only as a schema-validated directive from a fixed vocabulary. That keeps System 1 deterministic, and it caps what the planner can ask for.</div></li>
+</ol>
+
+<h2 id="problem"><span class="n">1</span>The problem</h2>
+<p>CivQuest agents are server-side avatars in a Minecraft world. Each has a body that the game engine simulates at 20 ticks per second, and a mind that lives in a separate Go process. Between them is a gRPC stream. Three requirements pull against each other:</p>
+<p><b>Survive.</b> Projectiles, fall damage and fire act within a tick or two. <b>Act coherently.</b> Walking to a tree, placing blocks and sleeping are multi-second behaviours that must resume correctly after interruption. <b>Think.</b> Dialogue, bartering and choosing where to settle take an LLM seconds, and a local model on shared hardware takes longer under load. No single loop can satisfy all three, so the architecture gives each requirement its own clock and its own failure budget.</p>
+
+<h2 id="clocks"><span class="n">2</span>Three clocks, one axis</h2>
+<p>Figure 1 puts every operation on the same logarithmic time axis. The bars are not equally trustworthy, and the figure says which: ceilings are budgets that the code is designed to meet, and ranges are estimates.<span class="sn">One server tick is 50 ms. Telemetry is emitted on every fourth tick, offset per agent by a hash of its UUID, so 5 Hz agents do not all collect frames on the same tick.</span></p>
+
+<figure id="fig1">
+<svg viewBox="0 44 920 328" role="img" aria-label="Log-scale timeline from 0.01 milliseconds to 100 seconds. Layer 1A reflexes have a 0.1 ms budget, Layer 1B System 1 has a 5 ms budget, loopback IPC takes 5 to 20 ms, and System 2 LLM calls take 0.5 to 3 seconds with a 30 second timeout. The fastest LLM call is about 100 times the entire System 1 budget." class="fig">
+<defs><marker id="ar1" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="currentColor"/></marker></defs>
+<line x1="170.0" y1="76" x2="170.0" y2="300" class="grid"/>
+<text x="170.0" y="322" class="tick" text-anchor="middle">0.01 ms</text>
+<line x1="270.0" y1="76" x2="270.0" y2="300" class="grid"/>
+<text x="270.0" y="322" class="tick" text-anchor="middle">0.1 ms</text>
+<line x1="370.0" y1="76" x2="370.0" y2="300" class="grid"/>
+<text x="370.0" y="322" class="tick" text-anchor="middle">1 ms</text>
+<line x1="470.0" y1="76" x2="470.0" y2="300" class="grid"/>
+<text x="470.0" y="322" class="tick" text-anchor="middle">10 ms</text>
+<line x1="570.0" y1="76" x2="570.0" y2="300" class="grid"/>
+<text x="570.0" y="322" class="tick" text-anchor="middle">100 ms</text>
+<line x1="670.0" y1="76" x2="670.0" y2="300" class="grid"/>
+<text x="670.0" y="322" class="tick" text-anchor="middle">1 s</text>
+<line x1="770.0" y1="76" x2="770.0" y2="300" class="grid"/>
+<text x="770.0" y="322" class="tick" text-anchor="middle">10 s</text>
+<line x1="870.0" y1="76" x2="870.0" y2="300" class="grid"/>
+<text x="870.0" y="322" class="tick" text-anchor="middle">100 s</text>
+<line x1="170" y1="300" x2="870" y2="300" class="axis"/>
+<text x="520" y="350" class="sub" text-anchor="middle">wall-clock time per operation (log scale, one gridline per decade)</text>
+<line x1="539.9" y1="62" x2="539.9" y2="300" class="ref"/>
+<text x="534.9" y="58" class="sub" text-anchor="end">50 ms · one server tick (20 Hz)</text>
+<line x1="600.1" y1="62" x2="600.1" y2="300" class="ref"/>
+<text x="605.1" y="58" class="sub" text-anchor="start">200 ms · one telemetry frame (5 Hz)</text>
+<text x="10" y="110" class="lab" text-anchor="start">Layer 1A · reflex</text>
+<text x="10" y="125" class="sub" text-anchor="start">Java · in-engine tick</text>
+<text x="10" y="160" class="lab" text-anchor="start">Layer 1B · System 1</text>
+<text x="10" y="175" class="sub" text-anchor="start">Go · per frame</text>
+<text x="10" y="210" class="lab" text-anchor="start">IPC round trip</text>
+<text x="10" y="225" class="sub" text-anchor="start">gRPC over loopback</text>
+<text x="10" y="260" class="lab" text-anchor="start">Layer 2 · System 2</text>
+<text x="10" y="275" class="sub" text-anchor="start">LLM call · async</text>
+<rect x="170.0" y="102" width="100.0" height="20" class="bar r soft"/>
+<line x1="270.0" y1="98" x2="270.0" y2="126" class="cap r"/>
+<text x="280.0" y="116" class="val halo" text-anchor="start">≤ 0.1 ms budget · zero IPC, zero allocation</text>
+<rect x="170.0" y="152" width="269.9" height="20" class="bar p soft"/>
+<line x1="439.9" y1="148" x2="439.9" y2="176" class="cap p"/>
+<text x="449.9" y="166" class="val halo" text-anchor="start">≤ 5 ms budget · 0 LLM tokens</text>
+<rect x="439.9" y="202" width="60.2" height="20" class="bar n"/>
+<text x="510.1" y="216" class="val halo" text-anchor="start">5–20 ms (estimate)</text>
+<rect x="639.9" y="252" width="77.8" height="20" class="bar d"/>
+<line x1="717.7" y1="262" x2="817.7" y2="262" class="ext d"/>
+<line x1="817.7" y1="248" x2="817.7" y2="276" class="cap d"/>
+<text x="825.7" y="266" class="val halo" text-anchor="start">30 s timeout</text>
+<text x="639.9" y="290" class="val halo" text-anchor="start">0.5–3 s typical</text>
+<line x1="439.9" y1="188" x2="639.9" y2="188" class="gap" marker-start="url(#ar1)" marker-end="url(#ar1)"/>
+<line x1="439.9" y1="176" x2="439.9" y2="200" class="gap thin"/>
+<line x1="639.9" y1="176" x2="639.9" y2="244" class="gap thin"/>
+<text x="539.9" y="183" class="gaplab halo" text-anchor="middle">×100</text>
+</svg>
+<figcaption><b>Figure 1.</b> Time per operation, log scale. Soft bars with a solid cap are budget ceilings (<span class="tag design">design budget</span>); solid bars are ranges. The ×100 span marks the gap between System 1's entire budget and the fastest typical LLM call: the controller cannot wait on the planner, and has to be built so it never needs to.</figcaption>
+</figure>
+
+<p>Two readings matter. First, the reflex tier sits left of the IPC bar. A reflex that depends on a round trip to Go sits to its right, past 5 ms and potentially past a server tick, which is why reflexes live in <code>AgentEntity.tick()</code>. Second, there is nothing between 20 ms and 500 ms. The harness has no middle tier. Everything slower than the controller is treated as <i>unboundedly</i> slow, and the 30 s request timeout is how that case surfaces (Section 5).</p>
+
+<h2 id="mechanism"><span class="n">3</span>The loop, with the boundaries marked</h2>
+<p>Figure 2 shows what moves between the tiers. The encoding is fixed across the study section.</p>
+<div class="legend"><span><i class="r"></i>reflex (Layer 1A)</span><span><i class="p"></i>System 1 (Layer 1B)</span><span><i class="d"></i>System 2</span><span><i class="n"></i>transport / other</span><span><s></s>synchronous in a tick or frame</span><span><s class="dash"></s>asynchronous, may arrive late or never</span></div>
+
+<figure id="fig2">
+<svg viewBox="0 0 880 520" role="img" aria-label="Three stacked components. At the bottom the Minecraft JVM runs reflexes inside the server tick and exchanges telemetry frames and intent batches over gRPC with the Go agent process above it. The Go process holds System 1 and System 2 dispatchers; System 2 calls an external LLM gateway and returns directives that System 1 reads only through the fact graph." class="fig">
+<defs><marker id="ar2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="currentColor"/></marker></defs>
+<rect x="20" y="96" width="840" height="206" rx="10" class="panel"/>
+<text x="844" y="118" class="ptitle" text-anchor="end">civquest-agent · Go · one OS process per agent</text>
+<rect x="20" y="368" width="840" height="136" rx="10" class="panel"/>
+<text x="36" y="390" class="ptitle" text-anchor="start">Minecraft server · JVM · NeoForge mod · 20 Hz tick</text>
+<rect x="40" y="14" width="280" height="52" rx="6" class="box n"/>
+<text x="180.0" y="36" class="bt" text-anchor="middle">LLM gateway (Ollama / vLLM)</text>
+<text x="180.0" y="54" class="sub" text-anchor="middle">OpenAI-compatible, external to the agent</text>
+<rect x="40" y="142" width="280" height="110" rx="6" class="box d"/>
+<text x="180.0" y="164" class="bt" text-anchor="middle">System 2 dispatchers</text>
+<text x="180.0" y="182" class="sub" text-anchor="middle">dialogue · chronicler · toponymy</text>
+<text x="180.0" y="197" class="sub" text-anchor="middle">contemplation · agrarian</text>
+<text x="180.0" y="212" class="sub" text-anchor="middle">goroutines bounded by a governor</text>
+<rect x="520" y="142" width="320" height="110" rx="6" class="box p"/>
+<text x="680.0" y="164" class="bt" text-anchor="middle">System 1</text>
+<text x="680.0" y="182" class="sub" text-anchor="middle">FactGraph → HTPDA state stack → skills</text>
+<text x="680.0" y="197" class="sub" text-anchor="middle">SlotQueue coalesces intents</text>
+<text x="680.0" y="212" class="sub" text-anchor="middle">≤ 5 ms · 0 tokens · synchronous</text>
+<line x1="110" y1="66" x2="110" y2="142" class="flow async" marker-end="url(#ar2)"/>
+<text x="118" y="88" class="sub" text-anchor="start">prompt</text>
+<line x1="250" y1="142" x2="250" y2="66" class="flow async" marker-end="url(#ar2)"/>
+<text x="258" y="88" class="sub" text-anchor="start">schema-validated JSON, ≤ 2 retries</text>
+<line x1="520" y1="176" x2="320" y2="176" class="flow" marker-end="url(#ar2)"/>
+<text x="420" y="168" class="sub" text-anchor="middle">FactGraph snapshot → prompt</text>
+<line x1="320" y1="222" x2="520" y2="222" class="flow async" marker-end="url(#ar2)"/>
+<text x="420" y="214" class="sub" text-anchor="middle">StrategicDirective → FactGraph</text>
+<text x="420" y="239" class="note" text-anchor="middle">async; may arrive late or never</text>
+<rect x="40" y="404" width="260" height="84" rx="6" class="box r"/>
+<text x="170.0" y="426" class="bt" text-anchor="middle">Reflexes · AgentEntity.tick</text>
+<text x="170.0" y="444" class="sub" text-anchor="middle">shield raise, item pickup, step climb</text>
+<text x="170.0" y="459" class="sub" text-anchor="middle">no IPC · may not emit intents</text>
+<rect x="380" y="404" width="220" height="84" rx="6" class="box n"/>
+<text x="490.0" y="426" class="bt" text-anchor="middle">Sensory collector</text>
+<text x="490.0" y="444" class="sub" text-anchor="middle">16-block scan + entity list</text>
+<text x="490.0" y="459" class="sub" text-anchor="middle">every 4th tick (5 Hz)</text>
+<rect x="660" y="404" width="180" height="84" rx="6" class="box n"/>
+<text x="750.0" y="426" class="bt" text-anchor="middle">IntentActuator</text>
+<text x="750.0" y="444" class="sub" text-anchor="middle">AgentMotorFSM</text>
+<text x="750.0" y="459" class="sub" text-anchor="middle">executes, emits receipt</text>
+<line x1="300" y1="446" x2="380" y2="446" class="flow" marker-end="url(#ar2)"/>
+<text x="340" y="438" class="sub" text-anchor="middle">ReflexNotice</text>
+<line x1="660" y1="446" x2="600" y2="446" class="flow" marker-end="url(#ar2)"/>
+<text x="630" y="438" class="sub" text-anchor="middle">receipt</text>
+<line x1="520" y1="404" x2="520" y2="252" class="flow" marker-end="url(#ar2)"/>
+<text x="510" y="334" class="lab" text-anchor="end">TelemetryFrame · 5 Hz</text>
+<text x="510" y="350" class="sub" text-anchor="end">+ ReflexNotice, IntentReceipt</text>
+<line x1="760" y1="252" x2="760" y2="404" class="flow" marker-end="url(#ar2)"/>
+<text x="750" y="334" class="lab" text-anchor="end">IntentBatch</text>
+<text x="750" y="350" class="sub" text-anchor="end">one pending intent per slot</text>
+<line x1="20" y1="335" x2="350" y2="335" class="bound"/>
+<text x="36" y="326" class="sub" text-anchor="start">gRPC · loopback · one bidirectional stream</text>
+</svg>
+<figcaption><b>Figure 2.</b> Data path for one agent. Telemetry flows up and intents flow down once per frame. System 2 reads a <i>snapshot</i> of the FactGraph and writes back a <i>directive</i>, so it never touches System 1's state directly and never blocks it. Reflexes act on the entity without sending intents, and tell System 1 afterwards through <code>ReflexNotice</code>.</figcaption>
+</figure>
+
+<p>Three mechanisms keep the clocks decoupled. <b>Coalesced slots:</b> <code>SlotQueue</code> keeps one pending intent per type (navigate, attack, use-item, craft, interact), so a controller running faster than the actuator overwrites stale intent instead of queueing it. <b>Receipts:</b> each batch carries a sequence number and the body answers with an <code>IntentReceipt</code>, which is how System 1 learns an action was refused or finished rather than assuming. <b>Snapshot in, directive out:</b> System 2 gets the FactGraph rendered as text, and it can only influence behaviour through a schema-validated directive that System 1 chooses whether to act on.</p>
+
+<h2 id="contracts"><span class="n">4</span>Tier contracts</h2>
+<p>Each tier is defined by what it may do, what it may not, and what it costs. These are the invariants the rest of the codebase is expected to preserve.</p>
+<table>
+<thead><tr><th>Tier</th><th>Clock</th><th>Budget</th><th>May</th><th>May not</th></tr></thead>
+<tbody>
+<tr><td><span class="sw r"></span>1A Reflex<br><small>Java</small></td><td>20 Hz, server tick</td><td>≤ 0.1 ms per agent <span class="tag design">design budget</span></td><td>Raise shield on projectile path, collect nearby items (2.5 blocks), climb steps, smooth gaze.</td><td>Emit <code>AgentIntent</code>; wait on Go; allocate on the hot path.</td></tr>
+<tr><td><span class="sw p"></span>1B System 1<br><small>Go</small></td><td>5 Hz, per telemetry frame</td><td>≤ 5 ms, 0 tokens <span class="tag design">design budget</span></td><td>Read facts, run the state stack, emit intents.</td><td>Call an LLM; block on System 2; resume a dead agent (death is absorbing).</td></tr>
+<tr><td><span class="sw d"></span>2 System 2<br><small>Go goroutines</small></td><td>Event-driven, async</td><td>0.5–3 s typical, 30 s timeout</td><td>Read a FactGraph snapshot; return validated JSON or text.</td><td>Mutate System 1 state; emit intents directly; run unbounded (governor caps concurrency).</td></tr>
+</tbody></table>
+
+<p>The pushdown state stack is what lets System 1 be interrupted by an emergency and return to what it was doing. The FactGraph is the read surface shared by System 1 guards and System 2 prompts.<span class="sn">The biological analogy is a design constraint here, not an explanation. "Spinal reflex" is shorthand for "acts without waiting for the planner, then reports". The project makes no claim about neural fidelity.</span></p>
+
+<h2 id="failures"><span class="n">5</span>Crossing the boundary</h2>
+<p>The two fast tiers share a tick-and-frame rhythm. The seam to System 2 is where timing stops being predictable, so it is the most constrained part of the design.</p>
+
+<h3>Planner to controller: directives</h3>
+<p>Contemplation returns goals as text and, alongside them, a structured <code>StrategicDirective</code> whose action is one of seven values: <code>GATHER_TIMBER</code>, <code>MINE_STONE</code>, <code>FORAGE_FOOD</code>, <code>CRAFT_SURVIVAL_KIT</code>, <code>BUILD_SHELTER</code>, <code>SCOUT_FRONTIER</code>, <code>SOCIALIZE</code>. If the model omits the field, a deterministic fallback infers one from the goal text. The directive is written into the FactGraph, and System 1 skills act on it through their ordinary preconditions. The planner never emits intents, so a bad or late directive can only change what System 1 prefers, never bypass its guards. The cost is a ceiling: the planner can only ask for things in this list.</p>
+
+<h3>Peer speech: who is allowed to call the model</h3>
+<p>When an agent speaks, every listener within 20 m would otherwise start its own LLM request. Figure 3 shows the gate that prevents it. Every listener records the statement to episodic memory, which costs no tokens. Whether it also <i>replies</i> depends on the message: a direct address or a hazard keyword bypasses the ambient election; otherwise a hash of (speaker, message, listener) elects roughly one listener in four (one in three if the message contains a question mark). Elected replies wait a name-derived 0.25–1.5 s, and each agent keeps a 30 s global cooldown across peers plus a 90 s per-peer cooldown. Hazard alerts bypass the cooldowns.</p>
+
+<figure id="fig3" class="narrow">
+<svg viewBox="0 0 440 320" role="img" aria-label="One agent speaks within 20 metres of five peers. All five record the statement to memory at no token cost. Only the listener elected by a name hash, or one that is addressed, sends an LLM request, after a short jitter, to a governor with four slots." class="fig">
+<defs><marker id="ar3" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="currentColor"/></marker></defs>
+<rect x="10" y="8" width="420" height="304" rx="10" class="panel"/>
+<text x="26" y="30" class="ptitle" text-anchor="start">Peer speech: all remember, few reply</text>
+<circle cx="64" cy="170" r="20" class="box n"/>
+<text x="64" y="208" class="lab" text-anchor="middle">speaker</text>
+<text x="64" y="224" class="sub" text-anchor="middle">heard within 20 m</text>
+<rect x="160" y="56" width="82" height="28" rx="5" class="box n"/>
+<text x="201" y="74" class="sub" text-anchor="middle">peer 1</text>
+<line x1="84" y1="170" x2="160" y2="70" class="flow thin"/>
+<text x="250" y="74" class="sub">memory</text>
+<rect x="160" y="101" width="82" height="28" rx="5" class="box n"/>
+<text x="201" y="119" class="sub" text-anchor="middle">peer 2</text>
+<line x1="84" y1="170" x2="160" y2="115" class="flow thin"/>
+<text x="250" y="119" class="sub">memory</text>
+<rect x="160" y="146" width="82" height="28" rx="5" class="box d"/>
+<text x="201" y="164" class="sub" text-anchor="middle">peer 3</text>
+<line x1="84" y1="170" x2="160" y2="160" class="flow thin"/>
+<line x1="242" y1="160" x2="302" y2="150" class="flow" marker-end="url(#ar3)"/>
+<rect x="160" y="191" width="82" height="28" rx="5" class="box n"/>
+<text x="201" y="209" class="sub" text-anchor="middle">peer 4</text>
+<line x1="84" y1="170" x2="160" y2="205" class="flow thin"/>
+<text x="250" y="209" class="sub">memory</text>
+<rect x="160" y="236" width="82" height="28" rx="5" class="box n"/>
+<text x="201" y="254" class="sub" text-anchor="middle">peer 5</text>
+<line x1="84" y1="170" x2="160" y2="250" class="flow thin"/>
+<text x="250" y="254" class="sub">memory</text>
+<rect x="304" y="96" width="112" height="140" rx="6" class="box p"/>
+<text x="360" y="116" class="bt" text-anchor="middle">governor</text>
+<text x="360" y="226" class="sub" text-anchor="middle">4 slots</text>
+<rect x="316" y="132" width="20" height="20" class="slot on"/>
+<rect x="340" y="132" width="20" height="20" class="slot"/>
+<rect x="364" y="132" width="20" height="20" class="slot"/>
+<rect x="388" y="132" width="20" height="20" class="slot"/>
+<text x="360" y="198" class="sub" text-anchor="middle">1 request</text>
+<text x="360" y="211" class="sub" text-anchor="middle">+0.25–1.5 s jitter</text>
+<text x="26" y="296" class="note" text-anchor="start">ambient speech: ~1 in 4 listeners elected by name-hash</text>
+</svg>
+<figcaption><b>Figure 3.</b> Peer speech gating for one utterance and five listeners. Grey peers only remember; the elected peer sends one request through the governor (four slots by default, configurable) after jitter. The governor bounds concurrency; the gate bounds demand.</figcaption>
+</figure>
+
+<p>What the harness lacks is a policy for overload. When the gateway is saturated, requests wait and then fail at the 30 s timeout. There is no priority between a player's message and ambient agent chatter, and no deterministic fallback reply.</p>
+
+<h2 id="evidence"><span class="n">6</span>What is measured, and what is not</h2>
+<p>This section exists because a design page without it overstates.</p>
+<table>
+<thead><tr><th>Claim</th><th>Status</th><th>Basis</th></tr></thead>
+<tbody>
+<tr><td>Reflex ≤ 0.1 ms/agent</td><td><span class="tag design">design budget</span></td><td>A design target. No per-agent timing is collected.</td></tr>
+<tr><td>System 1 ≤ 5 ms/frame</td><td><span class="tag design">design budget</span></td><td>A design target. A frame-latency gauge exists, but no distribution is published.</td></tr>
+<tr><td>IPC 5–20 ms</td><td><span class="tag design">design budget</span></td><td>An estimate for loopback gRPC, not a measurement.</td></tr>
+<tr><td>LLM 0.5–3 s</td><td><span class="tag design">design budget</span></td><td>Typical for a local model. Varies with hardware and load.</td></tr>
+<tr><td>Peer gating reduces gateway load</td><td><span class="tag gap">not measured</span></td><td>The gate is implemented. Its effect on timeout rate has not been measured under load.</td></tr>
+<tr><td>Tier rules are enforced</td><td><span class="tag gap">not measured</span></td><td>No test currently asserts that a reflex cannot emit an intent or that System 2 cannot mutate System 1 state.</td></tr>
+<tr><td>Behaviour at 25–50 agents</td><td><span class="tag gap">not measured</span></td><td>No soak harness exists. The sensory scan runs on the server thread, once per agent.</td></tr>
+</tbody></table>
+<p>The pattern is that the architecture's structure is documented and tested at the unit level, while its timing claims are asserted. Closing that gap is the highest-value change to this page.</p>
+
+<h2 id="robots"><span class="n">7</span>Toward robots</h2>
+<p>The project's second aim is a harness that could drive an embodied agent outside a game. The latency partition is the part most likely to carry over, so this page tests it against the obvious mapping and lists where it breaks.</p>
+<table>
+<thead><tr><th>Here</th><th>On a robot</th><th>Transfers?</th></tr></thead>
+<tbody>
+<tr><td>Reflex tier in the tick</td><td>Firmware or servo-level safety controller</td><td>Yes. The rule that a reflex acts first and reports afterwards matches common safety-controller practice.</td></tr>
+<tr><td>System 1, 5 Hz frame</td><td>Real-time controller / behaviour tree on the robot</td><td>Mostly. A real controller usually runs faster than 5 Hz and cannot assume a clean frame.</td></tr>
+<tr><td>System 2 LLM</td><td>Task planner or VLM, possibly off-board</td><td>Yes, and a network hop makes its slowness worse.</td></tr>
+<tr><td><code>TelemetryFrame</code></td><td>Fused sensor state</td><td>No. Frames here are exact. There is no sensor noise, occlusion, calibration drift or state estimation.</td></tr>
+<tr><td><code>IntentReceipt</code></td><td>Actuation feedback</td><td>Partly. Here the engine knows whether an action finished. A robot may only infer it.</td></tr>
+<tr><td>Loopback gRPC</td><td>Radio, bus or wired link</td><td>No. The 5–20 ms IPC bar would be larger, variable and lossy.</td></tr>
+</tbody></table>
+<p>The honest summary is that the partition and the receipt discipline are plausible to carry over, and the perception side does not carry over at all, because a voxel world gives the harness exact ground truth for free.</p>
+
+<footer class="src" id="sources">
+<h2>Sources</h2>
+<p><b>Code:</b> <code>mod-neoforge/…/AgentEntityManager.java</code> (telemetry stagger), <code>…/actuator/motor/AgentMotorFSM.java</code>, <code>orchestrator-go/internal/agent/runtime.go</code> (<code>HandleTelemetryFrame</code>), <code>…/agent/slotqueue.go</code>, <code>…/agent/peer_dialogue.go</code>, <code>…/system1/directive.go</code>, <code>…/system2/governor.go</code>, <code>proto/civquest/v1/civquest.proto</code>.</p>
+<p>Figures are hand-authored from the code at the commit named above.</p>
+</footer>
+</article>
+</div>
+<script>
+(function(){var l=[].slice.call(document.querySelectorAll('.toc a')),s=l.map(function(a){return document.querySelector(a.getAttribute('href'))});
+function f(){var y=window.scrollY+120,c=0;s.forEach(function(e,i){if(e&&e.offsetTop<=y)c=i});l.forEach(function(a,i){a.classList.toggle('on',i===c)})}
+window.addEventListener('scroll',f,{passive:true});f();})();
+</script>
+</body>
+</html>
