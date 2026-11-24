@@ -16,6 +16,7 @@ type bootstrapInventorySummary struct {
 	planksCount         int32
 	stickCount          int32
 	cobbleCount         int32
+	coalCount           int32
 	nonLogBuildingCount int32
 	buildingBlockCount  int32
 	placeableBlockID    string
@@ -53,6 +54,10 @@ func inspectBootstrapInventory(inventory []*civquestv1.ItemStackProto) bootstrap
 			}
 		case id == "minecraft:stick" || strings.HasSuffix(id, ":stick") || id == "stick":
 			s.stickCount += it.Count
+		case id == "minecraft:coal" || id == "minecraft:charcoal" ||
+			strings.HasSuffix(id, ":coal") || strings.HasSuffix(id, ":charcoal") ||
+			id == "coal" || id == "charcoal":
+			s.coalCount += it.Count
 		case strings.Contains(id, "cobblestone") || strings.Contains(id, "cobbled_deepslate") || strings.Contains(id, "blackstone"):
 			s.cobbleCount += it.Count
 			s.nonLogBuildingCount += it.Count
@@ -272,75 +277,12 @@ func evaluateBootstrapGoalsLocked(
 	var nearestCraftingTable *civquestv1.VisibleBlock
 	var recalledTablePOI *db.AgentPOI
 	bestTableDistSq := math.MaxFloat64
-	for _, b := range frame.InterestingBlocks {
-		if b == nil || b.Pos == nil {
-			continue
-		}
-		id := strings.ToLower(b.BlockId)
-		if strings.Contains(id, "crafting_table") {
-			dx := float64(b.Pos.X) + 0.5 - pos.X
-			dy := float64(b.Pos.Y) + 0.5 - pos.Y
-			dz := float64(b.Pos.Z) + 0.5 - pos.Z
-			// Check reachability: reject tables vertically separated by > 3 blocks unless there is a gradual horizontal slope,
-			// or tables recently marked unreachable.
-			hDist := math.Hypot(dx, dz)
-			absDy := math.Abs(dy)
-			if absDy > 3.0 && hDist < absDy*1.5 {
-				continue
-			}
-			if state != nil && state.IsWorkstationUnreachableLocked(b.Pos.X, b.Pos.Y, b.Pos.Z, frame.WorldTick) {
-				continue
-			}
-			dSq := dx*dx + dy*dy + dz*dz
-			if dSq < bestTableDistSq {
-				bestTableDistSq = dSq
-				nearestCraftingTable = b
-			}
-		}
-	}
-
-	// ADR-022 / ADR-026: If no reachable crafting table is visible in the frustum, query SpatialIndex.
-	if nearestCraftingTable == nil && state != nil {
-		if si := state.SpatialIndexLocked(); si != nil {
-			agentLayer := ClassifyElevationLayer(pos.Y, 64.0)
-			poi := si.FindNearestPOI(pos, POICategoryWorkstation, "minecraft:crafting_table", 64.0, agentLayer)
-			if poi == nil && (agentLayer == ElevationDugout || agentLayer == ElevationUnderground) {
-				// If underground without a local table, only target surface workstation if connected by a corridor
-				originID := ""
-				if tracker := state.HabitTrailTrackerLocked(); tracker != nil {
-					originID = tracker.CurrentOriginPOIID()
-				}
-				if surfacePOI := si.FindNearestPOI(pos, POICategoryWorkstation, "minecraft:crafting_table", 64.0, ElevationSurface); surfacePOI != nil {
-					if originID != "" && si.HasCorridorBetween(originID, surfacePOI.POIID) {
-						poi = surfacePOI
-					}
-				}
-			} else if poi == nil {
-				poi = si.FindNearestPOI(pos, POICategoryWorkstation, "minecraft:crafting_table", 64.0, "")
-			}
-			if poi != nil && poi.Reliability >= 0.5 {
-				bpos := poiBlockPos(poi)
-				if !state.IsWorkstationUnreachableLocked(bpos.X, bpos.Y, bpos.Z, frame.WorldTick) {
-					dx := poi.X - pos.X
-					dy := poi.Y + 0.5 - pos.Y
-					dz := poi.Z - pos.Z
-					hDist := math.Hypot(dx, dz)
-					absDy := math.Abs(dy)
-					if absDy <= 3.0 || hDist >= absDy*1.5 {
-						recalledTablePOI = poi
-						bestTableDistSq = dx*dx + dy*dy + dz*dz
-						nearestCraftingTable = &civquestv1.VisibleBlock{
-							Pos:     bpos,
-							BlockId: poi.BlockID,
-						}
-					}
-				}
-			}
-		}
+	if needsTools || (!inv.hasLight && canCraft && inv.coalCount >= 1 && inv.logCount >= 3 && inv.stickCount >= 3) {
+		nearestCraftingTable, recalledTablePOI, bestTableDistSq = findNearestCraftingTableLocked(frame, pos, state)
 	}
 
 	if needsTools {
-		if nearestCraftingTable != nil && bestTableDistSq <= 20.25 && math.Abs(float64(nearestCraftingTable.Pos.Y)+0.5-pos.Y) <= 2.5 {
+		if isCraftingTableWithinReach(nearestCraftingTable, bestTableDistSq, pos) {
 			if needsStoneUpgrade && canCraft {
 				state.lastCraftTick = frame.WorldTick
 				return &civquestv1.AgentIntent{
@@ -459,21 +401,14 @@ func evaluateBootstrapGoalsLocked(
 		}
 	}
 
-	if !inv.hasLight && (inv.logCount >= 1 || inv.planksCount >= 1 || inv.stickCount >= 1) && canCraft {
-		state.lastCraftTick = frame.WorldTick
-		return &civquestv1.AgentIntent{
-			AgentId: agentID,
-			Action: &civquestv1.AgentIntent_CraftItem{
-				CraftItem: &civquestv1.CraftItemIntent{
-					RecipeId:   "minecraft:campfire",
-					BatchCount: 1,
-				},
-			},
+	if !inv.hasLight && canCraft {
+		if craftIntent := craftLightSourceIntentLocked(agentID, frame.WorldTick, inv, nearestCraftingTable, bestTableDistSq, pos, state); craftIntent != nil {
+			return craftIntent
 		}
 	}
 
-	// 3. Gather timber if the agent lacks basic survival kit or has < 6 logs
-	needsTimber := (!inv.hasAxe || !inv.hasSword || !inv.hasLight || inv.logCount < 6)
+	// 3. Gather timber if the agent lacks basic tools or has < 6 logs
+	needsTimber := (!inv.hasAxe || !inv.hasSword || inv.logCount < 6)
 	if needsTimber {
 		targetLog, recalledTreePOI := findNearestTreeTrunk(agentID, frame, pos, state)
 		if targetLog != nil {
@@ -545,6 +480,144 @@ func evaluateBootstrapGoalsLocked(
 		}
 	}
 
+	return nil
+}
+
+// findNearestCraftingTableLocked locates the nearest reachable crafting table from visible blocks
+// or SpatialIndex POIs (ADR-022 / ADR-026). Caller must hold state.mu if state is non-nil.
+func findNearestCraftingTableLocked(
+	frame *civquestv1.TelemetryFrame,
+	pos *civquestv1.Vec3,
+	state *AgentState,
+) (*civquestv1.VisibleBlock, *db.AgentPOI, float64) {
+	var nearestCraftingTable *civquestv1.VisibleBlock
+	var recalledTablePOI *db.AgentPOI
+	bestTableDistSq := math.MaxFloat64
+	if frame == nil || pos == nil {
+		return nil, nil, bestTableDistSq
+	}
+
+	for _, b := range frame.InterestingBlocks {
+		if b == nil || b.Pos == nil {
+			continue
+		}
+		id := strings.ToLower(b.BlockId)
+		if !strings.Contains(id, "crafting_table") {
+			continue
+		}
+		dx := float64(b.Pos.X) + 0.5 - pos.X
+		dy := float64(b.Pos.Y) + 0.5 - pos.Y
+		dz := float64(b.Pos.Z) + 0.5 - pos.Z
+		// Reject tables vertically separated by > 3 blocks unless there is a gradual horizontal slope,
+		// or tables recently marked unreachable.
+		hDist := math.Hypot(dx, dz)
+		absDy := math.Abs(dy)
+		if absDy > 3.0 && hDist < absDy*1.5 {
+			continue
+		}
+		if state != nil && state.IsWorkstationUnreachableLocked(b.Pos.X, b.Pos.Y, b.Pos.Z, frame.WorldTick) {
+			continue
+		}
+		dSq := dx*dx + dy*dy + dz*dz
+		if dSq < bestTableDistSq {
+			bestTableDistSq = dSq
+			nearestCraftingTable = b
+		}
+	}
+
+	// ADR-022 / ADR-026: If no reachable crafting table is visible in the frustum, query SpatialIndex.
+	if nearestCraftingTable == nil && state != nil {
+		if si := state.SpatialIndexLocked(); si != nil {
+			agentLayer := ClassifyElevationLayer(pos.Y, 64.0)
+			poi := si.FindNearestPOI(pos, POICategoryWorkstation, "minecraft:crafting_table", 64.0, agentLayer)
+			if poi == nil && (agentLayer == ElevationDugout || agentLayer == ElevationUnderground) {
+				// If underground without a local table, only target surface workstation if connected by a corridor.
+				originID := ""
+				if tracker := state.HabitTrailTrackerLocked(); tracker != nil {
+					originID = tracker.CurrentOriginPOIID()
+				}
+				if surfacePOI := si.FindNearestPOI(pos, POICategoryWorkstation, "minecraft:crafting_table", 64.0, ElevationSurface); surfacePOI != nil {
+					if originID != "" && si.HasCorridorBetween(originID, surfacePOI.POIID) {
+						poi = surfacePOI
+					}
+				}
+			} else if poi == nil {
+				poi = si.FindNearestPOI(pos, POICategoryWorkstation, "minecraft:crafting_table", 64.0, "")
+			}
+			if poi != nil && poi.Reliability >= 0.5 {
+				bpos := poiBlockPos(poi)
+				if !state.IsWorkstationUnreachableLocked(bpos.X, bpos.Y, bpos.Z, frame.WorldTick) {
+					dx := poi.X - pos.X
+					dy := poi.Y + 0.5 - pos.Y
+					dz := poi.Z - pos.Z
+					hDist := math.Hypot(dx, dz)
+					absDy := math.Abs(dy)
+					if absDy <= 3.0 || hDist >= absDy*1.5 {
+						recalledTablePOI = poi
+						bestTableDistSq = dx*dx + dy*dy + dz*dz
+						nearestCraftingTable = &civquestv1.VisibleBlock{
+							Pos:     bpos,
+							BlockId: poi.BlockID,
+						}
+					}
+				}
+			}
+		}
+	}
+
+	return nearestCraftingTable, recalledTablePOI, bestTableDistSq
+}
+
+// isCraftingTableWithinReach returns true if a crafting table is within 4.5m reach and 2.5m vertical reach.
+func isCraftingTableWithinReach(table *civquestv1.VisibleBlock, distSq float64, pos *civquestv1.Vec3) bool {
+	if table == nil || table.Pos == nil || pos == nil {
+		return false
+	}
+	dy := math.Abs(float64(table.Pos.Y) + 0.5 - pos.Y)
+	return distSq <= 20.25 && dy <= 2.5
+}
+
+// craftLightSourceIntentLocked crafts a campfire (3x3 at reachable crafting table) or
+// pocket-crafts a torch (2x2) strictly adhering to vanilla Minecraft / ADR-029 recipes.
+// Returns nil without emitting bogus craft intents when coal/charcoal or required materials are absent.
+func craftLightSourceIntentLocked(
+	agentID string,
+	worldTick int64,
+	inv bootstrapInventorySummary,
+	nearestCraftingTable *civquestv1.VisibleBlock,
+	bestTableDistSq float64,
+	pos *civquestv1.Vec3,
+	state *AgentState,
+) *civquestv1.AgentIntent {
+	if state == nil || inv.coalCount < 1 {
+		return nil
+	}
+	if isCraftingTableWithinReach(nearestCraftingTable, bestTableDistSq, pos) &&
+		inv.logCount >= 3 && inv.stickCount >= 3 {
+		state.lastCraftTick = worldTick
+		return &civquestv1.AgentIntent{
+			AgentId: agentID,
+			Action: &civquestv1.AgentIntent_CraftItem{
+				CraftItem: &civquestv1.CraftItemIntent{
+					RecipeId:       "minecraft:campfire",
+					WorkstationPos: nearestCraftingTable.Pos,
+					BatchCount:     1,
+				},
+			},
+		}
+	}
+	if inv.stickCount >= 1 {
+		state.lastCraftTick = worldTick
+		return &civquestv1.AgentIntent{
+			AgentId: agentID,
+			Action: &civquestv1.AgentIntent_CraftItem{
+				CraftItem: &civquestv1.CraftItemIntent{
+					RecipeId:   "minecraft:torch",
+					BatchCount: 1,
+				},
+			},
+		}
+	}
 	return nil
 }
 

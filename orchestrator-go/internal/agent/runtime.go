@@ -194,6 +194,7 @@ type AgentRuntime struct {
 	agentFSM              *system1.AgentFSM
 	pavingTracker         *system1.RoadPavingTracker
 	memoryPipeline        *memory.Pipeline
+	peerGate              peerConversationGate
 	lastCombatMemoryTick  int64
 	lastCombatSummary     string
 	lastMapPersistTick    int64
@@ -1720,6 +1721,9 @@ func (r *AgentRuntime) dispatchDialogue(frame *civquestv1.TelemetryFrame) {
 				})
 			}
 
+			// ADR-030: record every heard statement in episodic memory so System 2 gains community awareness
+			r.ingestPeerChat(ctx, c, frame, worldTick)
+
 			// 1. Check for companion voice/chat command ('follow me', 'wait here', 'return home')
 			r.mu.RLock()
 			compSvc := r.companionService
@@ -1789,6 +1793,18 @@ func (r *AgentRuntime) dispatchDialogue(frame *civquestv1.TelemetryFrame) {
 
 			// If not a companion command, proceed with LLM dialogue service
 			if svc == nil {
+				return
+			}
+
+			// ADR-030: pairwise anti-loop cooldown against runaway agent-to-agent LLM ping-pong
+			if isPeerAgentChat(c) && !r.peerGate.Allow(c.SenderUuid, worldTick, peerChatBypassesCooldown(c.Message)) {
+				log.Printf("[civquest-agent] %s peer dialogue cooldown active for %s; heard but not replying", r.agentID, c.SenderName)
+				if r.debugLogger != nil {
+					r.debugLogger.Emit(worldTick, "PEER_DIALOGUE_COOLDOWN", fmt.Sprintf("Suppressed reply to %s (90s cooldown)", c.SenderName), map[string]any{
+						"sender_name": c.SenderName,
+						"sender_uuid": c.SenderUuid,
+					})
+				}
 				return
 			}
 

@@ -1218,3 +1218,247 @@ func TestHierarchicalPathfinding_UndergroundRejectsDistantSurfaceTreeWithoutCorr
 		t.Fatalf("expected first waypoint (10, 58, 20), got (%v, %v, %v)", target.X, target.Y, target.Z)
 	}
 }
+
+func TestInspectBootstrapInventory_CoalAndCharcoal(t *testing.T) {
+	inv := inspectBootstrapInventory([]*civquestv1.ItemStackProto{
+		{Slot: 0, ItemId: "minecraft:oak_log", Count: 2},
+		{Slot: 1, ItemId: "minecraft:crimson_stem", Count: 1},
+		{Slot: 2, ItemId: "minecraft:stick", Count: 3},
+		{Slot: 3, ItemId: "minecraft:coal", Count: 2},
+		{Slot: 4, ItemId: "minecraft:charcoal", Count: 4},
+		{Slot: 5, ItemId: "minecraft:coal_ore", Count: 5},
+		{Slot: 6, ItemId: "minecraft:coal_block", Count: 1},
+	})
+	if inv.logCount != 3 {
+		t.Errorf("expected logCount 3, got %d", inv.logCount)
+	}
+	if inv.stickCount != 3 {
+		t.Errorf("expected stickCount 3, got %d", inv.stickCount)
+	}
+	if inv.coalCount != 6 {
+		t.Errorf("expected coalCount 6 (2 coal + 4 charcoal, excluding coal_ore/coal_block), got %d", inv.coalCount)
+	}
+}
+
+func TestBootstrapLightCrafting_ADR029StrictRecipes(t *testing.T) {
+	baseTools := []*civquestv1.ItemStackProto{
+		{Slot: 0, ItemId: "minecraft:wooden_axe", Count: 1},
+		{Slot: 1, ItemId: "minecraft:wooden_sword", Count: 1},
+	}
+
+	cases := []struct {
+		name              string
+		extraItems        []*civquestv1.ItemStackProto
+		interestingBlocks []*civquestv1.VisibleBlock
+		wantRecipe        string // "" expects nil intent
+		wantWorkstation   bool
+	}{
+		{
+			name: "Campfire crafted with table in reach, 3 logs, 3 sticks, 1 coal",
+			extraItems: []*civquestv1.ItemStackProto{
+				{Slot: 2, ItemId: "minecraft:oak_log", Count: 3},
+				{Slot: 3, ItemId: "minecraft:stick", Count: 3},
+				{Slot: 4, ItemId: "minecraft:coal", Count: 1},
+			},
+			interestingBlocks: []*civquestv1.VisibleBlock{
+				{Pos: &civquestv1.BlockPosProto{X: 1, Y: 64, Z: 0}, BlockId: "minecraft:crafting_table"},
+			},
+			wantRecipe:      "minecraft:campfire",
+			wantWorkstation: true,
+		},
+		{
+			name: "Campfire crafted with table in reach, 3 logs, 3 sticks, 1 charcoal",
+			extraItems: []*civquestv1.ItemStackProto{
+				{Slot: 2, ItemId: "minecraft:birch_log", Count: 3},
+				{Slot: 3, ItemId: "minecraft:stick", Count: 3},
+				{Slot: 4, ItemId: "minecraft:charcoal", Count: 1},
+			},
+			interestingBlocks: []*civquestv1.VisibleBlock{
+				{Pos: &civquestv1.BlockPosProto{X: 1, Y: 64, Z: 0}, BlockId: "minecraft:crafting_table"},
+			},
+			wantRecipe:      "minecraft:campfire",
+			wantWorkstation: true,
+		},
+		{
+			name: "No coal or charcoal blocks campfire and torch even with logs, planks, sticks, and table",
+			extraItems: []*civquestv1.ItemStackProto{
+				{Slot: 2, ItemId: "minecraft:oak_log", Count: 6},
+				{Slot: 3, ItemId: "minecraft:oak_planks", Count: 8},
+				{Slot: 4, ItemId: "minecraft:stick", Count: 6},
+			},
+			interestingBlocks: []*civquestv1.VisibleBlock{
+				{Pos: &civquestv1.BlockPosProto{X: 1, Y: 64, Z: 0}, BlockId: "minecraft:crafting_table"},
+			},
+			wantRecipe: "",
+		},
+		{
+			name: "No sticks with 3 logs and 1 coal and table does not craft campfire or torch",
+			extraItems: []*civquestv1.ItemStackProto{
+				{Slot: 2, ItemId: "minecraft:oak_log", Count: 6},
+				{Slot: 3, ItemId: "minecraft:coal", Count: 1},
+			},
+			interestingBlocks: []*civquestv1.VisibleBlock{
+				{Pos: &civquestv1.BlockPosProto{X: 1, Y: 64, Z: 0}, BlockId: "minecraft:crafting_table"},
+			},
+			wantRecipe: "",
+		},
+		{
+			name: "Table out of horizontal reach falls back to 2x2 pocket torch instead of campfire",
+			extraItems: []*civquestv1.ItemStackProto{
+				{Slot: 2, ItemId: "minecraft:oak_log", Count: 3},
+				{Slot: 3, ItemId: "minecraft:stick", Count: 3},
+				{Slot: 4, ItemId: "minecraft:coal", Count: 1},
+			},
+			interestingBlocks: []*civquestv1.VisibleBlock{
+				{Pos: &civquestv1.BlockPosProto{X: 5, Y: 64, Z: 0}, BlockId: "minecraft:crafting_table"},
+			},
+			wantRecipe:      "minecraft:torch",
+			wantWorkstation: false,
+		},
+		{
+			name: "Table out of vertical reach (dy > 2.5) falls back to 2x2 pocket torch",
+			extraItems: []*civquestv1.ItemStackProto{
+				{Slot: 2, ItemId: "minecraft:oak_log", Count: 3},
+				{Slot: 3, ItemId: "minecraft:stick", Count: 3},
+				{Slot: 4, ItemId: "minecraft:coal", Count: 1},
+			},
+			interestingBlocks: []*civquestv1.VisibleBlock{
+				{Pos: &civquestv1.BlockPosProto{X: 1, Y: 67, Z: 0}, BlockId: "minecraft:crafting_table"},
+			},
+			wantRecipe:      "minecraft:torch",
+			wantWorkstation: false,
+		},
+		{
+			name: "Fewer than 3 logs with sticks and coal crafts 2x2 pocket torch instead of campfire",
+			extraItems: []*civquestv1.ItemStackProto{
+				{Slot: 2, ItemId: "minecraft:oak_log", Count: 2},
+				{Slot: 3, ItemId: "minecraft:stick", Count: 3},
+				{Slot: 4, ItemId: "minecraft:coal", Count: 1},
+			},
+			interestingBlocks: []*civquestv1.VisibleBlock{
+				{Pos: &civquestv1.BlockPosProto{X: 1, Y: 64, Z: 0}, BlockId: "minecraft:crafting_table"},
+			},
+			wantRecipe:      "minecraft:torch",
+			wantWorkstation: false,
+		},
+		{
+			name: "Fewer than 3 sticks with 3 logs and coal crafts 2x2 pocket torch instead of campfire",
+			extraItems: []*civquestv1.ItemStackProto{
+				{Slot: 2, ItemId: "minecraft:oak_log", Count: 6},
+				{Slot: 3, ItemId: "minecraft:stick", Count: 2},
+				{Slot: 4, ItemId: "minecraft:coal", Count: 1},
+			},
+			interestingBlocks: []*civquestv1.VisibleBlock{
+				{Pos: &civquestv1.BlockPosProto{X: 1, Y: 64, Z: 0}, BlockId: "minecraft:crafting_table"},
+			},
+			wantRecipe:      "minecraft:torch",
+			wantWorkstation: false,
+		},
+		{
+			name: "Pocket craft torch without crafting table using 1 stick and 1 coal",
+			extraItems: []*civquestv1.ItemStackProto{
+				{Slot: 2, ItemId: "minecraft:oak_log", Count: 6},
+				{Slot: 3, ItemId: "minecraft:stick", Count: 1},
+				{Slot: 4, ItemId: "minecraft:coal", Count: 1},
+			},
+			wantRecipe:      "minecraft:torch",
+			wantWorkstation: false,
+		},
+		{
+			name: "Pocket craft torch without crafting table using 1 stick and 1 charcoal",
+			extraItems: []*civquestv1.ItemStackProto{
+				{Slot: 2, ItemId: "minecraft:oak_log", Count: 6},
+				{Slot: 3, ItemId: "minecraft:stick", Count: 1},
+				{Slot: 4, ItemId: "minecraft:charcoal", Count: 1},
+			},
+			wantRecipe:      "minecraft:torch",
+			wantWorkstation: false,
+		},
+		{
+			name: "Already has light source emits no light craft intent",
+			extraItems: []*civquestv1.ItemStackProto{
+				{Slot: 2, ItemId: "minecraft:oak_log", Count: 6},
+				{Slot: 3, ItemId: "minecraft:stick", Count: 3},
+				{Slot: 4, ItemId: "minecraft:coal", Count: 1},
+				{Slot: 5, ItemId: "minecraft:torch", Count: 4},
+			},
+			interestingBlocks: []*civquestv1.VisibleBlock{
+				{Pos: &civquestv1.BlockPosProto{X: 1, Y: 64, Z: 0}, BlockId: "minecraft:crafting_table"},
+			},
+			wantRecipe: "",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			state := NewAgentState()
+			pos := &civquestv1.Vec3{X: 0, Y: 64, Z: 0}
+			inv := append([]*civquestv1.ItemStackProto{}, baseTools...)
+			inv = append(inv, tc.extraItems...)
+			frame := &civquestv1.TelemetryFrame{
+				WorldTick: 200,
+				TimeOfDay: 2000,
+				Status: &civquestv1.AgentStatus{
+					Position:        pos,
+					Health:          20,
+					FoodLevel:       20,
+					NavigationState: civquestv1.NavigationState_NAVIGATION_STATE_IDLE,
+					Inventory:       inv,
+				},
+				InterestingBlocks: tc.interestingBlocks,
+			}
+
+			intent := EvaluateBootstrapGoalsDirect("Able", frame, pos, civquestv1.NavigationState_NAVIGATION_STATE_IDLE, state)
+			if tc.wantRecipe == "" {
+				if intent != nil {
+					t.Fatalf("expected nil intent, got %+v", intent)
+				}
+				return
+			}
+			craft := intent.GetCraftItem()
+			if craft == nil {
+				t.Fatalf("expected CraftItemIntent(%s), got %+v", tc.wantRecipe, intent)
+			}
+			if craft.RecipeId != tc.wantRecipe {
+				t.Fatalf("expected RecipeId %q, got %q", tc.wantRecipe, craft.RecipeId)
+			}
+			if tc.wantWorkstation {
+				if craft.WorkstationPos == nil || craft.WorkstationPos.X != 1 || craft.WorkstationPos.Y != 64 || craft.WorkstationPos.Z != 0 {
+					t.Fatalf("expected WorkstationPos (1, 64, 0), got %+v", craft.WorkstationPos)
+				}
+			} else if craft.WorkstationPos != nil {
+				t.Fatalf("expected nil WorkstationPos for 2x2 pocket craft, got %+v", craft.WorkstationPos)
+			}
+		})
+	}
+}
+
+func TestBootstrapNoCoalDoesNotEmitBogusCraftOrInfiniteChop(t *testing.T) {
+	state := NewAgentState()
+	pos := &civquestv1.Vec3{X: 0, Y: 64, Z: 0}
+	frame := &civquestv1.TelemetryFrame{
+		WorldTick: 200,
+		TimeOfDay: 2000,
+		Status: &civquestv1.AgentStatus{
+			Position:        pos,
+			Health:          20,
+			FoodLevel:       20,
+			NavigationState: civquestv1.NavigationState_NAVIGATION_STATE_IDLE,
+			Inventory: []*civquestv1.ItemStackProto{
+				{Slot: 0, ItemId: "minecraft:wooden_axe", Count: 1},
+				{Slot: 1, ItemId: "minecraft:wooden_sword", Count: 1},
+				{Slot: 2, ItemId: "minecraft:oak_log", Count: 6},
+				{Slot: 3, ItemId: "minecraft:stick", Count: 4},
+			},
+		},
+		InterestingBlocks: []*civquestv1.VisibleBlock{
+			{Pos: &civquestv1.BlockPosProto{X: 1, Y: 64, Z: 0}, BlockId: "minecraft:crafting_table"},
+			{Pos: &civquestv1.BlockPosProto{X: 3, Y: 64, Z: 0}, BlockId: "minecraft:oak_log"},
+		},
+	}
+
+	intent := EvaluateBootstrapGoalsDirect("Able", frame, pos, civquestv1.NavigationState_NAVIGATION_STATE_IDLE, state)
+	if intent != nil {
+		t.Fatalf("expected nil bootstrap intent when agent has tools, >= 6 logs, and no coal/charcoal, got %+v", intent)
+	}
+}

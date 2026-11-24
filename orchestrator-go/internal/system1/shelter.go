@@ -377,16 +377,14 @@ func evaluateDuskNightOutpostShelterLocked(
 				},
 			}
 		}
-		if !inv.hasLight && (inv.logCount >= 1 || inv.planksCount >= 1 || inv.stickCount >= 1) && canCraft {
-			state.lastCraftTick = frame.WorldTick
-			return &civquestv1.AgentIntent{
-				AgentId: agentID,
-				Action: &civquestv1.AgentIntent_CraftItem{
-					CraftItem: &civquestv1.CraftItemIntent{
-						RecipeId:   "minecraft:campfire",
-						BatchCount: 1,
-					},
-				},
+		if !inv.hasLight && canCraft && inv.coalCount >= 1 {
+			var nearestTable *civquestv1.VisibleBlock
+			bestTableDistSq := math.MaxFloat64
+			if inv.logCount >= 3 && inv.stickCount >= 3 {
+				nearestTable, _, bestTableDistSq = findNearestCraftingTableLocked(frame, pos, state)
+			}
+			if craftIntent := craftLightSourceIntentLocked(agentID, frame.WorldTick, inv, nearestTable, bestTableDistSq, pos, state); craftIntent != nil {
+				return craftIntent
 			}
 		}
 	}

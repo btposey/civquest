@@ -86,7 +86,9 @@ func (s *BootstrapCraftSkill) Preconditions(facts *FactGraph) bool {
 	}
 	logCount, _ := facts.GetInt("bootstrap.log_count")
 	plankCount, _ := facts.GetInt("bootstrap.plank_count")
-	return logCount >= 1 || plankCount >= 4
+	stickCount, _ := facts.GetInt("bootstrap.stick_count")
+	coalCount, _ := facts.GetInt("bootstrap.coal_count")
+	return logCount >= 1 || plankCount >= 4 || (stickCount >= 1 && coalCount >= 1)
 }
 
 func (s *BootstrapCraftSkill) Interruptible() bool {

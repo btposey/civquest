@@ -712,4 +712,126 @@ public class AgentNavigatorTest {
         assertNotEquals(0.42, appliedDelta.get().y, 1e-4,
                 "Jumping must be suppressed when headroom is less than 2.2m");
     }
+
+    @Test
+    @DisplayName("Unreachable distant target with empty path and zero moveSpeed does not trigger in-place jumping despite dy > 1.0")
+    void testNoInPlaceJumpForUnreachableDistantTarget() {
+        AgentEntity agent = mock(AgentEntity.class);
+        Level level = mock(Level.class);
+        when(agent.level()).thenReturn(level);
+        when(agent.position()).thenReturn(new Vec3(0.5, 64.0, 0.5));
+        when(agent.getDeltaMovement()).thenReturn(Vec3.ZERO);
+        when(agent.onGround()).thenReturn(true);
+        when(agent.getYRot()).thenReturn(-90.0f); // Facing +X directly toward target
+        when(level.hasChunkAt(any(BlockPos.class))).thenReturn(true);
+
+        BlockState solidBlock = mock(BlockState.class);
+        when(solidBlock.isAir()).thenReturn(false);
+        when(solidBlock.getCollisionShape(any(), any())).thenReturn(Shapes.block());
+
+        BlockState airBlock = mock(BlockState.class);
+        when(airBlock.isAir()).thenReturn(true);
+        when(airBlock.getCollisionShape(any(), any())).thenReturn(Shapes.empty());
+
+        // Flat ground at y <= 63: target at (20.5, 72.0, 0.5) cannot make vertical progress within local radius -> path.isEmpty(), moveSpeed == 0.0
+        when(level.getBlockState(any(BlockPos.class))).thenAnswer(inv -> {
+            BlockPos pos = inv.getArgument(0);
+            return pos.getY() <= 63 ? solidBlock : airBlock;
+        });
+
+        java.util.List<Vec3> deltas = new java.util.ArrayList<>();
+        doAnswer(inv -> {
+            deltas.add(inv.getArgument(0));
+            return null;
+        }).when(agent).setDeltaMovement(any(Vec3.class));
+
+        AgentNavigator navigator = new AgentNavigator(agent);
+        navigator.navigate(20.5, 72.0, 0.5, 1.0f, false, false, false, 1);
+
+        // 1. Multiple ticks on ground with dy = 8.0 > 1.0 -> zero horizontal speed and never vy = 0.42
+        for (int i = 0; i < 5; i++) {
+            navigator.tick();
+        }
+        // 2. Also verify horizontalCollision while path.isEmpty() and moveSpeed == 0.0 never triggers a jump
+        agent.horizontalCollision = true;
+        navigator.tick();
+
+        assertEquals(6, deltas.size());
+        for (Vec3 delta : deltas) {
+            assertEquals(0.0, Math.hypot(delta.x, delta.z), 1e-6,
+                    "Distant unreachable target with empty path must keep horizontal velocity at 0.0");
+            assertNotEquals(0.42, delta.y, 1e-4,
+                    "Agent must not jump in place when path is empty and moveSpeed is 0.0");
+            assertTrue(delta.y <= 0.0, "Vertical velocity must remain non-positive on ground without jump");
+        }
+    }
+
+    @Test
+    @DisplayName("Jumping occurs only when actively moving forward (moveSpeed > 0.05 and align > 0.15) with stepUpOneBlock")
+    void testJumpRequiresActiveForwardMovementWithStepUp() {
+        AgentEntity agent = mock(AgentEntity.class);
+        Level level = mock(Level.class);
+        when(agent.level()).thenReturn(level);
+        when(agent.position()).thenReturn(new Vec3(0.5, 64.0, 0.5));
+        when(agent.getDeltaMovement()).thenReturn(Vec3.ZERO);
+        when(agent.onGround()).thenReturn(true);
+        when(level.hasChunkAt(any(BlockPos.class))).thenReturn(true);
+
+        BlockState solidBlock = mock(BlockState.class);
+        when(solidBlock.isAir()).thenReturn(false);
+        when(solidBlock.getCollisionShape(any(), any())).thenReturn(Shapes.block());
+
+        BlockState airBlock = mock(BlockState.class);
+        when(airBlock.isAir()).thenReturn(true);
+        when(airBlock.getCollisionShape(any(), any())).thenReturn(Shapes.empty());
+
+        // Floor at y <= 63 everywhere, plus a 1-block step-up starting at x >= 1 (y == 64 solid)
+        when(level.getBlockState(any(BlockPos.class))).thenAnswer(inv -> {
+            BlockPos pos = inv.getArgument(0);
+            if (pos.getY() <= 63 || (pos.getY() == 64 && pos.getX() >= 1)) {
+                return solidBlock;
+            }
+            return airBlock;
+        });
+
+        AtomicReference<Vec3> appliedDelta = new AtomicReference<>(Vec3.ZERO);
+        doAnswer(inv -> {
+            appliedDelta.set(inv.getArgument(0));
+            return null;
+        }).when(agent).setDeltaMovement(any(Vec3.class));
+
+        // Case 1: Facing away from step-up (+X) -> align == 0.0 (<= 0.15), must NOT jump
+        when(agent.getYRot()).thenReturn(90.0f); // Facing -X (180 deg away from +X)
+        AgentNavigator navAway = new AgentNavigator(agent);
+        navAway.navigate(10.5, 65.0, 0.5, 1.0f, false, false, false, 1);
+        navAway.tick();
+        assertNotEquals(0.42, appliedDelta.get().y, 1e-4,
+                "Must not jump when facing away from step-up (align <= 0.15)");
+
+        // Case 2: Facing perpendicular (+Z = 0 deg) -> align == 0.15 (not > 0.15), must NOT jump on tick 1
+        when(agent.getYRot()).thenReturn(0.0f);
+        AgentNavigator navPerp = new AgentNavigator(agent);
+        navPerp.navigate(10.5, 65.0, 0.5, 1.0f, false, false, false, 1);
+        navPerp.tick();
+        assertNotEquals(0.42, appliedDelta.get().y, 1e-4,
+                "Must not jump when heading alignment is at or below 0.15 floor");
+
+        // Case 3: Facing directly toward 1-block step-up (-90 deg = +X), but moveSpeed <= 0.05
+        // (within arrivalRange 1.5 at horizontalDist=1.05, speedMultiplier=0.5 -> moveSpeed=0.049 <= 0.05, unreachable y=70 -> path.isEmpty())
+        when(agent.getYRot()).thenReturn(-90.0f);
+        AgentNavigator navSlow = new AgentNavigator(agent);
+        navSlow.navigate(1.55, 70.0, 0.5, 0.5f, false, false, false, 1);
+        navSlow.tick();
+        assertNotEquals(0.42, appliedDelta.get().y, 1e-4,
+                "Must not jump when moveSpeed <= 0.05 even with stepUpOneBlock ahead");
+
+        // Case 4: Actively moving forward (moveSpeed == 0.14 > 0.05, align == 1.0 > 0.15) with stepUpOneBlock -> jumps!
+        AgentNavigator navForward = new AgentNavigator(agent);
+        navForward.navigate(10.5, 65.0, 0.5, 1.0f, false, false, false, 1);
+        navForward.tick();
+        assertEquals(0.42, appliedDelta.get().y, 1e-4,
+                "Actively moving forward with stepUpOneBlock must trigger 0.42 jump impulse");
+        assertTrue(Math.hypot(appliedDelta.get().x, appliedDelta.get().z) > 0.0,
+                "Active jump must be accompanied by forward horizontal acceleration");
+    }
 }

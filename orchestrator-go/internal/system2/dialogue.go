@@ -462,6 +462,12 @@ func (s *DialogueService) ProcessChat(ctx context.Context, req ChatDialogueReque
 	if memPipe != nil {
 		query := fmt.Sprintf("%s: %s", cleanPlayerName, cleanMessage)
 		historicalContext = retrieveCombinedMemories(ctx, memPipe, query, 3)
+		if community := memPipe.RecentCommunityDialogue(ctx, req.WorldTick); community != "" {
+			if historicalContext != "" {
+				historicalContext += "\n\n"
+			}
+			historicalContext += community
+		}
 	}
 
 	// 3. Assemble prompt

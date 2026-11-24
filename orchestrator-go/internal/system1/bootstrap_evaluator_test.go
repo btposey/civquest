@@ -68,6 +68,14 @@ func TestSurvivalKitEvaluator_IncompleteKit(t *testing.T) {
 	if cobbleCount != 0 {
 		t.Errorf("expected cobblestone_count 0, got %d", cobbleCount)
 	}
+	stickCount, _ := graph.GetInt("bootstrap.stick_count")
+	if stickCount != 0 {
+		t.Errorf("expected stick_count 0, got %d", stickCount)
+	}
+	coalCount, _ := graph.GetInt("bootstrap.coal_count")
+	if coalCount != 0 {
+		t.Errorf("expected coal_count 0, got %d", coalCount)
+	}
 	if graph.GetBool("bootstrap.has_crafting_table") {
 		t.Errorf("expected has_crafting_table false")
 	}
@@ -141,6 +149,7 @@ func TestSurvivalKitEvaluator_StoneUpgradeNeeds(t *testing.T) {
 				{ItemId: "minecraft:torch", Count: 4},
 				{ItemId: "minecraft:cobblestone", Count: 8},
 				{ItemId: "minecraft:stick", Count: 4},
+				{ItemId: "minecraft:charcoal", Count: 2},
 			},
 		},
 	}
@@ -160,6 +169,14 @@ func TestSurvivalKitEvaluator_StoneUpgradeNeeds(t *testing.T) {
 	cobble, _ := graph.GetInt("bootstrap.cobblestone_count")
 	if cobble != 8 {
 		t.Errorf("expected cobblestone_count 8, got %d", cobble)
+	}
+	sticks, _ := graph.GetInt("bootstrap.stick_count")
+	if sticks != 4 {
+		t.Errorf("expected stick_count 4, got %d", sticks)
+	}
+	coal, _ := graph.GetInt("bootstrap.coal_count")
+	if coal != 2 {
+		t.Errorf("expected coal_count 2, got %d", coal)
 	}
 	if !graph.GetBool("bootstrap.needs_tools") {
 		t.Errorf("expected needs_tools true for available stone gear upgrade")

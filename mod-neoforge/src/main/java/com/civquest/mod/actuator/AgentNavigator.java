@@ -751,11 +751,11 @@ public class AgentNavigator {
         double baseSpeed = sprintNow ? SPRINT_SPEED : WALK_SPEED;
         double mult = Math.max(0.5, Math.min(1.5, this.speedMultiplier));
         double moveSpeed = baseSpeed * mult;
+        double arrivalRange = Math.max(1.5, (double) this.arrivalTolerance);
 
         if (cliffAhead) {
             moveSpeed = 0.0;
         } else if (path.isEmpty()) {
-            double arrivalRange = Math.max(1.5, (double) this.arrivalTolerance);
             if (horizontalDist <= arrivalRange) {
                 moveSpeed *= Math.max(0.25, horizontalDist / arrivalRange);
             } else if (level != null) {
@@ -882,7 +882,10 @@ public class AgentNavigator {
                         jumpNeeded = true;
                     }
                 }
-                if (!cliffAhead && !jumpSuppressed && (jumpNeeded || (this.agent.horizontalCollision && path.isEmpty()) || (dy > 0.5 && path.isEmpty()))) {
+                boolean activelyMovingForward = moveSpeed > 0.05
+                        && align > 0.15
+                        && !(path.isEmpty() && horizontalDist > arrivalRange);
+                if (!cliffAhead && !jumpSuppressed && jumpNeeded && activelyMovingForward) {
                     vy = 0.42; // Jump impulse
                 } else {
                     vy = Math.max(-0.0784, vy);

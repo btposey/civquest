@@ -1320,6 +1320,8 @@ public class AgentGameTest {
                 helper.setBlock(new BlockPos(x, 2, z), Blocks.AIR);
             }
         }
+        // Provide physical crafting table within reach for 3x3 campfire recipe (ADR-029)
+        helper.setBlock(new BlockPos(0, 1, 0), Blocks.CRAFTING_TABLE);
 
         BlockPos spawnPos = helper.absolutePos(new BlockPos(1, 1, 1));
         AgentEntity agent = manager.spawnAgent(server, level, SpawnAgentRequest.newBuilder()
@@ -1329,8 +1331,10 @@ public class AgentGameTest {
                 .setSpawnCoords(Vec3.newBuilder().setX(spawnPos.getX() + 0.5).setY(spawnPos.getY()).setZ(spawnPos.getZ() + 0.5).build())
                 .build()).join();
 
-        // Give agent 4 oak logs at dusk
+        // Give agent authentic crafting materials for 1x oak_planks (1 log) + 1x campfire (3 logs, 3 sticks, 1 coal)
         agent.getInventory().add(new ItemStack(Items.OAK_LOG, 4));
+        agent.getInventory().add(new ItemStack(Items.STICK, 3));
+        agent.getInventory().add(new ItemStack(Items.COAL, 1));
 
         // 1. Craft oak planks and campfire from logs
         manager.handleIntent(server, AgentIntent.newBuilder()

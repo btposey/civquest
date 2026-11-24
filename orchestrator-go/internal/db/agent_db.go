@@ -1713,3 +1713,43 @@ func (a *AgentDB) GetTradeValuations(ctx context.Context) (map[string]TradeValua
 	}
 	return result, nil
 }
+
+// GetRecentMemoriesByCategory retrieves episodic memories of a single category whose
+// world_tick is >= minTick, ordered newest first (up to limit).
+func (a *AgentDB) GetRecentMemoriesByCategory(ctx context.Context, category string, minTick int64, limit int) ([]EpisodicMemory, error) {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+	if a.isClosed {
+		return nil, ErrClosed
+	}
+	if limit <= 0 {
+		limit = 5
+	}
+	rows, err := a.memoryDB.QueryContext(ctx, `
+		SELECT id, world_tick, event_category, saliency_score, actors_json, location_coords, summary_text, chronicled
+		FROM episodic_memories
+		WHERE event_category = ? AND world_tick >= ?
+		ORDER BY world_tick DESC, id DESC
+		LIMIT ?;
+	`, category, minTick, limit)
+	if err != nil {
+		return nil, fmt.Errorf("querying recent memories by category: %w", err)
+	}
+	defer rows.Close()
+
+	var memories []EpisodicMemory
+	for rows.Next() {
+		var m EpisodicMemory
+		if err := rows.Scan(
+			&m.ID, &m.WorldTick, &m.EventCategory, &m.SaliencyScore,
+			&m.ActorsJSON, &m.LocationCoords, &m.SummaryText, &m.Chronicled,
+		); err != nil {
+			return nil, fmt.Errorf("scanning recent category memory row: %w", err)
+		}
+		memories = append(memories, m)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterating recent category memory rows: %w", err)
+	}
+	return memories, nil
+}

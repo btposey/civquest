@@ -668,3 +668,48 @@ func TestContemplate_VerifiedFactsInStrategicLedger(t *testing.T) {
 		t.Errorf("expected capturedSystemPrompt to contain fact evidence, got:\n%s", capturedSystemPrompt)
 	}
 }
+
+func TestContemplate_InjectsCommunityDialogueSection(t *testing.T) {
+	var captured string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var req system2.ChatCompletionRequest
+		_ = json.NewDecoder(r.Body).Decode(&req)
+		for _, m := range req.Messages {
+			captured += m.Content + "\n"
+		}
+		payload, _ := json.Marshal(map[string]any{
+			"immediate_goal": "SCOUT_FRONTIER", "short_term_goal": "a", "long_term_goal": "b",
+			"reflective_memory": "c", "rationale": "d",
+		})
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(system2.ChatCompletionResponse{
+			ID: "x",
+			Choices: []system2.ChatCompletionChoice{{
+				Message:      system2.ChatMessage{Role: "assistant", Content: string(payload)},
+				FinishReason: "stop",
+			}},
+		})
+	}))
+	defer server.Close()
+
+	client, err := system2.NewClient(
+		&xdg.GlobalConfig{LLMGateway: xdg.LLMGatewayConfig{BaseURL: server.URL + "/v1", Model: "mock-model"}},
+		system2.WithHTTPClient(server.Client()),
+	)
+	if err != nil {
+		t.Fatalf("failed creating client: %v", err)
+	}
+	defer client.Close()
+
+	svc := system2.NewContemplationService(client)
+	ledger := &system2.StrategicLedger{
+		AgentID:           "aria",
+		CommunityDialogue: "[COMMUNITY DIALOGUE & RECENT PEER STATEMENTS]\n- Bran (5m away, 3s ago): \"need logs\"",
+	}
+	if _, err := svc.Contemplate(context.Background(), ledger); err != nil {
+		t.Fatalf("Contemplate: %v", err)
+	}
+	if !strings.Contains(captured, "[COMMUNITY DIALOGUE & RECENT PEER STATEMENTS]") || !strings.Contains(captured, "need logs") {
+		t.Errorf("community dialogue not injected into prompt: %s", captured)
+	}
+}

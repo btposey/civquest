@@ -6,6 +6,7 @@ import com.civquest.mod.actuator.motor.MotorState;
 import com.civquest.mod.grpc.v1.AgentIntent;
 import com.civquest.mod.grpc.v1.AttackIntent;
 import com.civquest.mod.grpc.v1.ChatChannel;
+import com.civquest.mod.grpc.v1.ChatEvent;
 import com.civquest.mod.grpc.v1.CreateWrittenBookIntent;
 import com.civquest.mod.grpc.v1.IntentBatch;
 import com.civquest.mod.grpc.v1.IntentReceipt;
@@ -16,8 +17,13 @@ import com.civquest.mod.grpc.v1.RespondTradeIntent;
 import com.civquest.mod.grpc.v1.SendChatIntent;
 import com.civquest.mod.grpc.v1.UseItemIntent;
 import com.mojang.logging.LogUtils;
+import it.unimi.dsi.fastutil.ints.IntArrayList;
+import it.unimi.dsi.fastutil.ints.IntList;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
+import net.minecraft.core.HolderLookup;
+import net.minecraft.core.NonNullList;
+import net.minecraft.core.RegistryAccess;
 import net.minecraft.core.component.DataComponents;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.network.chat.Component;
@@ -34,7 +40,9 @@ import net.minecraft.util.Mth;
 import net.minecraft.world.InteractionHand;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.EquipmentSlot;
+import net.minecraft.world.entity.player.Inventory;
 import net.minecraft.world.entity.player.Player;
+import net.minecraft.world.entity.player.StackedContents;
 import net.minecraft.world.food.FoodProperties;
 import net.minecraft.world.item.BlockItem;
 import net.minecraft.world.item.BowItem;
@@ -49,6 +57,13 @@ import net.minecraft.world.item.SwordItem;
 import net.minecraft.world.item.TieredItem;
 import net.minecraft.world.item.TridentItem;
 import net.minecraft.world.item.component.WrittenBookContent;
+import net.minecraft.world.item.crafting.CraftingInput;
+import net.minecraft.world.item.crafting.CraftingRecipe;
+import net.minecraft.world.item.crafting.Ingredient;
+import net.minecraft.world.item.crafting.RecipeHolder;
+import net.minecraft.world.item.crafting.RecipeManager;
+import net.minecraft.world.item.crafting.ShapedRecipe;
+import net.minecraft.world.item.crafting.ShapelessRecipe;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.BedBlock;
 import net.minecraft.world.level.block.BellBlock;
@@ -66,8 +81,16 @@ import org.slf4j.Logger;
 
 import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Collections;
 import java.util.Deque;
+import java.util.HashSet;
+import java.util.IdentityHashMap;
 import java.util.List;
+import java.util.Locale;
+import java.util.Optional;
+import java.util.Set;
+import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
@@ -93,6 +116,19 @@ public class IntentActuator {
     }
 
     private final ConcurrentHashMap<String, BatchSession> sessions = new ConcurrentHashMap<>();
+    private final RecipeManager fallbackRecipeManager;
+
+    public IntentActuator() {
+        this(null);
+    }
+
+    /**
+     * Constructs an IntentActuator with an optional fallback {@link RecipeManager} for mock-driven unit tests
+     * where {@code agent.getServer()} and {@code agent.level()} are null.
+     */
+    public IntentActuator(RecipeManager fallbackRecipeManager) {
+        this.fallbackRecipeManager = fallbackRecipeManager;
+    }
 
     private static String resolveAgentKey(AgentEntity agent) {
         String id = agent.getAgentId();
@@ -569,23 +605,90 @@ public class IntentActuator {
         }
 
         String msg = intent.getMessage().trim();
-        String name = agent.getGameProfile().getName();
+        String name = agent.getGameProfile() != null ? agent.getGameProfile().getName()
+                : (agent.getAgentId() != null ? agent.getAgentId() : "Agent");
         Component chatComponent = Component.literal("<" + name + "> " + msg);
 
         MinecraftServer server = agent.getServer();
-        if (server != null && server.getPlayerList() != null) {
+        boolean hasServer = server != null && server.getPlayerList() != null;
+        if (hasServer) {
             if (intent.getTargetChannel() == ChatChannel.CHAT_CHANNEL_CLAN_BROADCAST) {
                 Component clanComponent = Component.literal("[" + agent.getClanId() + "] <" + name + "> " + msg);
                 server.getPlayerList().broadcastSystemMessage(clanComponent, false);
             } else {
-                // Local broadcast: deliver to players within hearing range (48 blocks)
-                double rangeSq = 48.0 * 48.0;
+                // Local broadcast: deliver to human players within earshot (16 blocks)
+                double playerRangeSq = 16.0 * 16.0;
                 for (ServerPlayer player : server.getPlayerList().getPlayers()) {
-                    if (player.level() == agent.level() && player.distanceToSqr(agent) <= rangeSq) {
+                    if (player.level() == agent.level() && player.distanceToSqr(agent) <= playerRangeSq) {
                         player.sendSystemMessage(chatComponent);
                     }
                 }
             }
+        }
+
+        // Acoustic horizon: deliver ChatEvent to nearby peer AgentEntity instances within 20m
+        double agentRangeSq = 20.0 * 20.0;
+        UUID speakerUuid = agent.getUUID();
+        if (speakerUuid == null && agent.getGameProfile() != null) {
+            speakerUuid = agent.getGameProfile().getId();
+        }
+        String senderUuidStr = speakerUuid != null ? speakerUuid.toString() : "";
+
+        List<AgentEntity> peerAgents = new ArrayList<>();
+        Set<UUID> seenUuids = new HashSet<>();
+        Set<AgentEntity> seenEntities = Collections.newSetFromMap(new IdentityHashMap<>());
+
+        if (agent.level() != null && agent.getBoundingBox() != null) {
+            List<AgentEntity> nearbyAgents = agent.level().getEntitiesOfClass(
+                    AgentEntity.class,
+                    agent.getBoundingBox().inflate(20.0),
+                    e -> e != agent && e.distanceToSqr(agent) <= agentRangeSq
+            );
+            for (AgentEntity peer : nearbyAgents) {
+                if (peer == null || peer == agent) {
+                    continue;
+                }
+                UUID peerUuid = peer.getUUID();
+                if (speakerUuid != null && speakerUuid.equals(peerUuid)) {
+                    continue;
+                }
+                if (seenEntities.add(peer) && (peerUuid == null || seenUuids.add(peerUuid))) {
+                    peerAgents.add(peer);
+                }
+            }
+        }
+
+        for (BatchSession session : sessions.values()) {
+            AgentEntity peer = session.agent;
+            if (peer == null || peer == agent) {
+                continue;
+            }
+            if (agent.level() != null && peer.level() != null && peer.level() != agent.level()) {
+                continue;
+            }
+            UUID peerUuid = peer.getUUID();
+            if (speakerUuid != null && speakerUuid.equals(peerUuid)) {
+                continue;
+            }
+            if (peer.distanceToSqr(agent) <= agentRangeSq) {
+                if (seenEntities.add(peer) && (peerUuid == null || seenUuids.add(peerUuid))) {
+                    peerAgents.add(peer);
+                }
+            }
+        }
+
+        for (AgentEntity peer : peerAgents) {
+            float distance = (float) Math.sqrt(peer.distanceToSqr(agent));
+            ChatEvent chatEvent = ChatEvent.newBuilder()
+                    .setSenderUuid(senderUuidStr)
+                    .setSenderName(name)
+                    .setMessage(msg)
+                    .setDistance(distance)
+                    .build();
+            peer.queueIncomingChat(chatEvent);
+        }
+
+        if (hasServer || agent.level() != null || !peerAgents.isEmpty()) {
             LOGGER.info("Agent '{}' spoke in chat: {}", name, msg);
             return true;
         }
@@ -1330,182 +1433,345 @@ public class IntentActuator {
                 .build());
     }
 
+    /**
+     * Resolves the authoritative {@link RecipeManager} from the agent's server or level,
+     * falling back to any test-injected manager when server and level are absent.
+     */
+    protected RecipeManager resolveRecipeManager(AgentEntity agent) {
+        if (agent != null) {
+            MinecraftServer server = agent.getServer();
+            if (server != null && server.getRecipeManager() != null) {
+                return server.getRecipeManager();
+            }
+            Level level = agent.level();
+            if (level != null && level.getRecipeManager() != null) {
+                return level.getRecipeManager();
+            }
+        }
+        return fallbackRecipeManager;
+    }
+
+    /**
+     * Resolves registry lookup access for recipe result assembly, falling back to built-in registries
+     * in headless mock tests.
+     */
+    protected HolderLookup.Provider resolveRegistryAccess(AgentEntity agent) {
+        if (agent != null) {
+            MinecraftServer server = agent.getServer();
+            if (server != null && server.registryAccess() != null) {
+                return server.registryAccess();
+            }
+            Level level = agent.level();
+            if (level != null && level.registryAccess() != null) {
+                return level.registryAccess();
+            }
+        }
+        return RegistryAccess.fromRegistryOfRegistries(BuiltInRegistries.REGISTRY);
+    }
+
+    /**
+     * Executes a data-driven crafting intent against Minecraft's {@link RecipeManager} (ADR-029).
+     * Enforces 2x2 pocket vs. 3x3 crafting table dimension rules, atomic ingredient consumption,
+     * remainder container item preservation, and automatic gear equipping.
+     */
     public boolean actuateCraftItem(AgentEntity agent, com.civquest.mod.grpc.v1.CraftItemIntent intent) {
         if (agent == null || intent == null || intent.getRecipeId() == null || intent.getRecipeId().isBlank()) {
             return false;
         }
-        net.minecraft.world.entity.player.Inventory inv = agent.getInventory();
+        Inventory inv = agent.getInventory();
         if (inv == null) {
             return false;
         }
 
-        String recipe = intent.getRecipeId().trim().toLowerCase();
-        if (recipe.contains(":")) {
-            recipe = recipe.substring(recipe.indexOf(':') + 1);
-        }
-
-        switch (recipe) {
-            case "oak_planks", "spruce_planks", "birch_planks", "jungle_planks", "acacia_planks", "dark_oak_planks", "planks" -> {
-                if (consumeInventoryMatch(inv, id -> id.endsWith("_log") || id.endsWith("_wood") || id.endsWith("_stem"), 1)) {
-                    inv.add(new ItemStack(Items.OAK_PLANKS, 4));
-                    return true;
-                }
-                return false;
-            }
-            case "stick", "sticks" -> {
-                if (consumeInventoryMatch(inv, id -> id.endsWith("_planks"), 2)
-                        || consumeInventoryMatch(inv, id -> id.endsWith("_log") || id.endsWith("_wood"), 1)) {
-                    inv.add(new ItemStack(Items.STICK, 4));
-                    return true;
-                }
-                return false;
-            }
-            case "crafting_table" -> {
-                if (consumeInventoryMatch(inv, id -> id.endsWith("_planks"), 4)
-                        || consumeInventoryMatch(inv, id -> id.endsWith("_log") || id.endsWith("_wood") || id.endsWith("_stem"), 1)) {
-                    inv.add(new ItemStack(Items.CRAFTING_TABLE, 1));
-                    return true;
-                }
-                return false;
-            }
-            case "wooden_pickaxe", "wooden_axe", "wooden_sword" -> {
-                if (!isCraftingTableWithinReach(agent, intent)) {
-                    return false;
-                }
-                boolean paid = consumeInventoryMatch(inv, id -> id.endsWith("_log") || id.endsWith("_wood"), 1);
-                if (!paid && countInventoryMatch(inv, id -> id.endsWith("_planks")) >= 3
-                        && countInventoryMatch(inv, id -> id.equals("minecraft:stick") || id.endsWith(":stick")) >= 2) {
-                    consumeInventoryMatch(inv, id -> id.endsWith("_planks"), 3);
-                    consumeInventoryMatch(inv, id -> id.equals("minecraft:stick") || id.endsWith(":stick"), 2);
-                    paid = true;
-                } else if (!paid && countInventoryMatch(inv, id -> id.endsWith("_planks")) >= 4) {
-                    consumeInventoryMatch(inv, id -> id.endsWith("_planks"), 4);
-                    paid = true;
-                }
-                if (!paid) {
-                    return false;
-                }
-                Item resultItem = switch (recipe) {
-                    case "wooden_pickaxe" -> Items.WOODEN_PICKAXE;
-                    case "wooden_axe" -> Items.WOODEN_AXE;
-                    default -> Items.WOODEN_SWORD;
-                };
-                inv.add(new ItemStack(resultItem, 1));
-                agent.autoEquipBestGear();
-                return true;
-            }
-            case "stone_pickaxe", "stone_axe", "stone_sword" -> {
-                if (!isCraftingTableWithinReach(agent, intent)) {
-                    return false;
-                }
-                int cobbleCount = countInventoryMatch(inv, id -> id.contains("cobblestone") || id.contains("cobbled_deepslate") || id.contains("blackstone"));
-                int woodCount = countInventoryMatch(inv, id -> id.endsWith("_log") || id.endsWith("_planks") || id.endsWith("stick"));
-                if (cobbleCount < 3 || woodCount < 1) {
-                    return false;
-                }
-                consumeInventoryMatch(inv, id -> id.contains("cobblestone") || id.contains("cobbled_deepslate") || id.contains("blackstone"), 3);
-                consumeInventoryMatch(inv, id -> id.endsWith("stick") || id.endsWith("_planks") || id.endsWith("_log"), 1);
-                Item resultItem = switch (recipe) {
-                    case "stone_pickaxe" -> Items.STONE_PICKAXE;
-                    case "stone_axe" -> Items.STONE_AXE;
-                    default -> Items.STONE_SWORD;
-                };
-                inv.add(new ItemStack(resultItem, 1));
-                agent.autoEquipBestGear();
-                return true;
-            }
-            case "door", "oak_door", "wooden_door" -> {
-                if (!isCraftingTableWithinReach(agent, intent)) {
-                    return false;
-                }
-                if (consumeInventoryMatch(inv, id -> id.endsWith("_planks"), 6)
-                        || consumeInventoryMatch(inv, id -> id.endsWith("_log") || id.endsWith("_wood") || id.endsWith("_stem"), 2)) {
-                    inv.add(new ItemStack(Items.OAK_DOOR, 3));
-                    return true;
-                }
-                return false;
-            }
-            case "chest" -> {
-                if (!isCraftingTableWithinReach(agent, intent)) {
-                    return false;
-                }
-                if (consumeInventoryMatch(inv, id -> id.endsWith("_planks"), 8)
-                        || consumeInventoryMatch(inv, id -> id.endsWith("_log") || id.endsWith("_wood") || id.endsWith("_stem"), 2)) {
-                    inv.add(new ItemStack(Items.CHEST, 1));
-                    return true;
-                }
-                return false;
-            }
-            case "torch", "torches" -> {
-                if (consumeInventoryMatch(inv, id -> id.contains("coal") || id.endsWith("_log") || id.endsWith("_planks") || id.endsWith("stick"), 1)) {
-                    inv.add(new ItemStack(Items.TORCH, 4));
-                    return true;
-                }
-                return false;
-            }
-            case "campfire" -> {
-                if (consumeInventoryMatch(inv, id -> id.endsWith("_log") || id.endsWith("_planks") || id.contains("coal") || id.endsWith("stick"), 1)) {
-                    inv.add(new ItemStack(Items.CAMPFIRE, 1));
-                    return true;
-                }
-                return false;
-            }
-            default -> {
-                return false;
-            }
-        }
-    }
-
-    static String getItemId(Item item) {
-        if (item == null) {
-            return "";
-        }
-        try {
-            ResourceLocation loc = BuiltInRegistries.ITEM.getKey(item);
-            if (loc != null) {
-                return loc.toString().toLowerCase();
-            }
-        } catch (Throwable ignored) {}
-        try {
-            String desc = item.getDescriptionId();
-            if (desc != null) {
-                return desc.toLowerCase();
-            }
-        } catch (Throwable ignored) {}
-        return "";
-    }
-
-    private static int countInventoryMatch(net.minecraft.world.entity.player.Inventory inv, java.util.function.Predicate<String> matcher) {
-        int total = 0;
-        for (int i = 0; i < inv.getContainerSize(); i++) {
-            ItemStack s = inv.getItem(i);
-            if (s != null && !s.isEmpty()) {
-                String id = getItemId(s.getItem());
-                if (matcher.test(id)) {
-                    total += s.getCount();
-                }
-            }
-        }
-        return total;
-    }
-
-    private static boolean consumeInventoryMatch(net.minecraft.world.entity.player.Inventory inv, java.util.function.Predicate<String> matcher, int required) {
-        if (countInventoryMatch(inv, matcher) < required) {
+        ResourceLocation recipeLoc = ResourceLocation.tryParse(intent.getRecipeId().trim().toLowerCase(Locale.ROOT));
+        if (recipeLoc == null) {
+            LOGGER.debug("Invalid recipe ResourceLocation '{}'", intent.getRecipeId());
             return false;
         }
-        int remaining = required;
-        for (int i = 0; i < inv.getContainerSize() && remaining > 0; i++) {
-            ItemStack s = inv.getItem(i);
-            if (s != null && !s.isEmpty()) {
-                String id = getItemId(s.getItem());
-                if (matcher.test(id)) {
-                    int take = Math.min(remaining, s.getCount());
-                    s.shrink(take);
-                    remaining -= take;
+
+        RecipeManager recipeManager = resolveRecipeManager(agent);
+        if (recipeManager == null) {
+            LOGGER.debug("No RecipeManager available to resolve recipe '{}'", recipeLoc);
+            return false;
+        }
+
+        Optional<RecipeHolder<?>> holderOpt = recipeManager.byKey(recipeLoc);
+        if (holderOpt.isEmpty() || !(holderOpt.get().value() instanceof CraftingRecipe craftingRecipe)) {
+            LOGGER.debug("Recipe '{}' not found in RecipeManager or is not a CraftingRecipe", recipeLoc);
+            return false;
+        }
+
+        NonNullList<Ingredient> ingredients = craftingRecipe.getIngredients();
+        if (ingredients.isEmpty() || ingredients.stream().allMatch(Ingredient::isEmpty)) {
+            LOGGER.debug("Recipe '{}' has no static ingredients and cannot be crafted directly", recipeLoc);
+            return false;
+        }
+
+        if (!craftingRecipe.canCraftInDimensions(2, 2) && !isCraftingTableWithinReach(agent, intent)) {
+            LOGGER.debug("Recipe '{}' requires 3x3 workstation within reach", recipeLoc);
+            return false;
+        }
+
+        HolderLookup.Provider registryAccess = resolveRegistryAccess(agent);
+        Level level = agent.level();
+        int requestedBatches = Math.max(1, intent.getBatchCount());
+        int crafted = 0;
+
+        for (int b = 0; b < requestedBatches; b++) {
+            if (!craftSingleBatch(agent, inv, craftingRecipe, ingredients, level, registryAccess)) {
+                break;
+            }
+            crafted++;
+        }
+
+        if (crafted > 0) {
+            agent.autoEquipBestGear();
+            return true;
+        }
+        return false;
+    }
+
+    private static boolean craftSingleBatch(
+            AgentEntity agent,
+            Inventory inv,
+            CraftingRecipe craftingRecipe,
+            NonNullList<Ingredient> ingredients,
+            Level level,
+            HolderLookup.Provider registryAccess) {
+        int slotLimit = (inv.items != null && !inv.items.isEmpty())
+                ? Math.min(inv.items.size(), inv.getContainerSize())
+                : inv.getContainerSize();
+
+        int[] remainingInSlot = new int[slotLimit];
+        for (int i = 0; i < slotLimit; i++) {
+            ItemStack stack = inv.getItem(i);
+            remainingInSlot[i] = (stack != null && !stack.isEmpty()) ? stack.getCount() : 0;
+        }
+
+        int[] plannedSlots = matchInventorySlots(inv, slotLimit, remainingInSlot, craftingRecipe, ingredients);
+        if (plannedSlots == null) {
+            return false;
+        }
+
+        List<ItemStack> inputStacks = new ArrayList<>(ingredients.size());
+        for (int k = 0; k < ingredients.size(); k++) {
+            int slot = plannedSlots[k];
+            inputStacks.add(slot >= 0 ? inv.getItem(slot).copyWithCount(1) : ItemStack.EMPTY);
+        }
+
+        CraftingInput craftingInput = buildCraftingInput(craftingRecipe, inputStacks);
+        if (craftingInput.isEmpty()) {
+            return false;
+        }
+        if ((level != null || craftingRecipe instanceof ShapedRecipe || craftingRecipe instanceof ShapelessRecipe)
+                && !craftingRecipe.matches(craftingInput, level)) {
+            return false;
+        }
+
+        ItemStack assembled = craftingRecipe.assemble(craftingInput, registryAccess);
+        if (assembled == null || assembled.isEmpty()) {
+            ItemStack fallbackResult = craftingRecipe.getResultItem(registryAccess);
+            if (fallbackResult == null || fallbackResult.isEmpty()) {
+                return false;
+            }
+            assembled = fallbackResult.copy();
+        }
+
+        NonNullList<ItemStack> remainingItems;
+        net.neoforged.neoforge.common.CommonHooks.setCraftingPlayer(agent);
+        try {
+            remainingItems = craftingRecipe.getRemainingItems(craftingInput);
+        } finally {
+            net.neoforged.neoforge.common.CommonHooks.setCraftingPlayer(null);
+        }
+
+        for (int slot : plannedSlots) {
+            if (slot >= 0) {
+                ItemStack slotStack = inv.getItem(slot);
+                slotStack.shrink(1);
+                if (slotStack.isEmpty()) {
+                    inv.setItem(slot, ItemStack.EMPTY);
+                }
+            }
+        }
+        inv.setChanged();
+
+        addOrDropItem(agent, inv, assembled);
+        if (remainingItems != null) {
+            for (ItemStack rem : remainingItems) {
+                if (rem != null && !rem.isEmpty()) {
+                    addOrDropItem(agent, inv, rem);
                 }
             }
         }
         return true;
+    }
+
+    private static int[] matchInventorySlots(
+            Inventory inv,
+            int slotLimit,
+            int[] remainingInSlot,
+            CraftingRecipe craftingRecipe,
+            NonNullList<Ingredient> ingredients) {
+        boolean allSimple = true;
+        for (Ingredient ing : ingredients) {
+            if (!ing.isEmpty() && !ing.isSimple()) {
+                allSimple = false;
+                break;
+            }
+        }
+
+        if (allSimple) {
+            StackedContents stacked = new StackedContents();
+            for (int i = 0; i < slotLimit; i++) {
+                ItemStack s = inv.getItem(i);
+                if (s != null && !s.isEmpty() && remainingInSlot[i] > 0) {
+                    stacked.accountStack(s, Integer.MAX_VALUE);
+                }
+            }
+            IntList pickedStackingIds = new IntArrayList();
+            if (!stacked.canCraft(craftingRecipe, pickedStackingIds) || pickedStackingIds.size() != ingredients.size()) {
+                return null;
+            }
+
+            int[] plannedSlots = new int[ingredients.size()];
+            int[] availableCopy = Arrays.copyOf(remainingInSlot, slotLimit);
+            for (int k = 0; k < ingredients.size(); k++) {
+                Ingredient ing = ingredients.get(k);
+                if (ing.isEmpty()) {
+                    plannedSlots[k] = -1;
+                    continue;
+                }
+                int targetId = pickedStackingIds.getInt(k);
+                int chosenSlot = -1;
+                for (int s = 0; s < slotLimit; s++) {
+                    if (availableCopy[s] <= 0) {
+                        continue;
+                    }
+                    ItemStack stack = inv.getItem(s);
+                    if (stack != null && !stack.isEmpty()
+                            && StackedContents.getStackingIndex(stack) == targetId
+                            && ing.test(stack)) {
+                        chosenSlot = s;
+                        break;
+                    }
+                }
+                if (chosenSlot < 0) {
+                    return null;
+                }
+                availableCopy[chosenSlot]--;
+                plannedSlots[k] = chosenSlot;
+            }
+            return plannedSlots;
+        }
+
+        // Exact backtracking fallback for recipes containing NeoForge custom ingredients
+        for (Ingredient ing : ingredients) {
+            if (ing.isEmpty()) {
+                continue;
+            }
+            boolean anySlotMatches = false;
+            for (int s = 0; s < slotLimit; s++) {
+                if (remainingInSlot[s] > 0 && ing.test(inv.getItem(s))) {
+                    anySlotMatches = true;
+                    break;
+                }
+            }
+            if (!anySlotMatches) {
+                return null;
+            }
+        }
+
+        int[] plannedSlots = new int[ingredients.size()];
+        Arrays.fill(plannedSlots, -1);
+        int[] availableCopy = Arrays.copyOf(remainingInSlot, slotLimit);
+        return matchCustomIngredientsBacktrack(inv, slotLimit, availableCopy, ingredients, 0, plannedSlots)
+                ? plannedSlots
+                : null;
+    }
+
+    private static boolean matchCustomIngredientsBacktrack(
+            Inventory inv,
+            int slotLimit,
+            int[] available,
+            NonNullList<Ingredient> ingredients,
+            int idx,
+            int[] plannedSlots) {
+        if (idx >= ingredients.size()) {
+            return true;
+        }
+        Ingredient ing = ingredients.get(idx);
+        if (ing.isEmpty()) {
+            plannedSlots[idx] = -1;
+            return matchCustomIngredientsBacktrack(inv, slotLimit, available, ingredients, idx + 1, plannedSlots);
+        }
+
+        List<ItemStack> triedVariants = new ArrayList<>();
+        for (int s = 0; s < slotLimit; s++) {
+            if (available[s] <= 0) {
+                continue;
+            }
+            ItemStack stack = inv.getItem(s);
+            if (stack == null || stack.isEmpty() || !ing.test(stack)) {
+                continue;
+            }
+            boolean alreadyTried = false;
+            for (ItemStack prev : triedVariants) {
+                if (ItemStack.isSameItemSameComponents(prev, stack)) {
+                    alreadyTried = true;
+                    break;
+                }
+            }
+            if (alreadyTried) {
+                continue;
+            }
+            triedVariants.add(stack);
+
+            available[s]--;
+            plannedSlots[idx] = s;
+            if (matchCustomIngredientsBacktrack(inv, slotLimit, available, ingredients, idx + 1, plannedSlots)) {
+                return true;
+            }
+            available[s]++;
+            plannedSlots[idx] = -1;
+        }
+        return false;
+    }
+
+    private static CraftingInput buildCraftingInput(CraftingRecipe recipe, List<ItemStack> inputStacks) {
+        if (recipe instanceof ShapedRecipe shaped) {
+            int w = shaped.getWidth();
+            int h = shaped.getHeight();
+            if (w > 0 && h > 0 && inputStacks.size() == w * h) {
+                return CraftingInput.of(w, h, inputStacks);
+            }
+        }
+        int count = inputStacks.size();
+        if (count <= 0) {
+            return CraftingInput.EMPTY;
+        }
+        if (count == 1) {
+            return CraftingInput.of(1, 1, inputStacks);
+        }
+        int width = count <= 4 ? 2 : 3;
+        int height = (count + width - 1) / width;
+        List<ItemStack> padded = new ArrayList<>(width * height);
+        padded.addAll(inputStacks);
+        while (padded.size() < width * height) {
+            padded.add(ItemStack.EMPTY);
+        }
+        return CraftingInput.of(width, height, padded);
+    }
+
+    private static void addOrDropItem(AgentEntity agent, Inventory inv, ItemStack stack) {
+        if (stack == null || stack.isEmpty()) {
+            return;
+        }
+        ItemStack toInsert = stack.copy();
+        inv.add(toInsert);
+        if (!toInsert.isEmpty() && agent.level() != null && !agent.level().isClientSide()) {
+            agent.drop(toInsert, false);
+        }
     }
 
     static final double CRAFTING_TABLE_REACH_SQ = 20.25; // 4.5 blocks squared
@@ -1524,6 +1790,9 @@ public class IntentActuator {
             }
         }
         BlockPos center = agent.blockPosition();
+        if (center == null) {
+            return false;
+        }
         int reach = 5;
         for (int dx = -reach; dx <= reach; dx++) {
             for (int dy = -reach; dy <= reach; dy++) {

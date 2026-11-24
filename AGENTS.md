@@ -92,6 +92,8 @@ Major technical decisions are formally recorded in `doc/adr/`:
 - [ADR-026: Hierarchical Trail-Intersection Pathfinding](file:///home/brian/Workspaces/btposey/civquest/doc/adr/ADR-026-hierarchical-trail-intersection-pathfinding.md)
 - [ADR-027: Clan Settlement Genesis and Pioneer Explorer Nucleation](file:///home/brian/Workspaces/btposey/civquest/doc/adr/ADR-027-clan-settlement-genesis-and-pioneer-explorer-nucleation.md)
 - [ADR-028: Inter-Agent Collision and Stacking Suppression for FakePlayers](file:///home/brian/Workspaces/btposey/civquest/doc/adr/ADR-028-inter-agent-collision-and-stacking-suppression.md)
+- [ADR-029: Data-Driven Runtime Recipe Resolution & Dynamic Orchestrator Crafting Catalog](file:///home/brian/Workspaces/btposey/civquest/doc/adr/ADR-029-data-driven-runtime-recipe-resolution.md)
+- [ADR-030: Local Inter-Agent Acoustic Perception & Community Awareness](file:///home/brian/Workspaces/btposey/civquest/doc/adr/ADR-030-local-inter-agent-discourse.md)
 
 ---
 

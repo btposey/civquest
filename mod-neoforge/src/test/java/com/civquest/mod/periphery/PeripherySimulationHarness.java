@@ -19,7 +19,11 @@ import com.mojang.authlib.GameProfile;
 import io.grpc.stub.StreamObserver;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
+import net.minecraft.core.NonNullList;
+import net.minecraft.core.RegistryAccess;
+import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.network.chat.Component;
+import net.minecraft.resources.ResourceLocation;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
@@ -29,6 +33,14 @@ import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.item.ItemEntity;
 import net.minecraft.world.entity.player.Inventory;
 import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.item.Items;
+import net.minecraft.world.item.crafting.CraftingBookCategory;
+import net.minecraft.world.item.crafting.Ingredient;
+import net.minecraft.world.item.crafting.RecipeHolder;
+import net.minecraft.world.item.crafting.RecipeManager;
+import net.minecraft.world.item.crafting.ShapedRecipe;
+import net.minecraft.world.item.crafting.ShapedRecipePattern;
+import net.minecraft.world.item.crafting.ShapelessRecipe;
 import net.minecraft.world.level.ClipContext;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.Blocks;
@@ -73,6 +85,8 @@ public class PeripherySimulationHarness {
     private final MinecraftServer mockServer;
     private final ServerLevel mockLevel;
     private final PlayerList mockPlayerList;
+    private final RegistryAccess.Frozen registryAccess;
+    private final RecipeManager recipeManager;
     private final StreamRegistry streamRegistry;
     private final com.civquest.mod.sensory.SensoryFrustumCollector sensoryCollector;
     private final IntentActuator intentActuator;
@@ -94,11 +108,15 @@ public class PeripherySimulationHarness {
         mockPlayerList = mock(PlayerList.class, org.mockito.Mockito.withSettings().mockMaker(org.mockito.MockMakers.SUBCLASS));
 
         // Server stubbing
+        registryAccess = RegistryAccess.fromRegistryOfRegistries(BuiltInRegistries.REGISTRY);
+        recipeManager = createAuthenticRecipeManager(registryAccess);
         doReturn(mockPlayerList).when(mockServer).getPlayerList();
         doReturn(players).when(mockPlayerList).getPlayers();
         doReturn(true).when(mockServer).isPvpAllowed();
         doReturn(true).when(mockServer).isRunning();
         doReturn(100).when(mockServer).getTickCount();
+        doReturn(recipeManager).when(mockServer).getRecipeManager();
+        doReturn(registryAccess).when(mockServer).registryAccess();
 
         // Synchronous immediate task execution for mock server
         doAnswer(invoc -> {
@@ -114,6 +132,8 @@ public class PeripherySimulationHarness {
 
         // Level stubbing
         when(mockLevel.getServer()).thenReturn(mockServer);
+        when(mockLevel.getRecipeManager()).thenReturn(recipeManager);
+        when(mockLevel.registryAccess()).thenReturn(registryAccess);
         when(mockLevel.hasChunkAt(any(BlockPos.class))).thenReturn(true);
         when(mockLevel.getMinBuildHeight()).thenReturn(-64);
         when(mockLevel.getMaxBuildHeight()).thenReturn(320);
@@ -198,6 +218,85 @@ public class PeripherySimulationHarness {
 
     public ServerLevel getMockLevel() {
         return mockLevel;
+    }
+
+    public RecipeManager getRecipeManager() {
+        return recipeManager;
+    }
+
+    private static RecipeManager createAuthenticRecipeManager(RegistryAccess.Frozen access) {
+        RecipeManager manager = new RecipeManager(access);
+        Ingredient logs = Ingredient.of(Items.OAK_LOG, Items.SPRUCE_LOG, Items.BIRCH_LOG, Items.JUNGLE_LOG, Items.ACACIA_LOG, Items.DARK_OAK_LOG);
+        Ingredient planks = Ingredient.of(Items.OAK_PLANKS, Items.SPRUCE_PLANKS, Items.BIRCH_PLANKS, Items.JUNGLE_PLANKS, Items.ACACIA_PLANKS, Items.DARK_OAK_PLANKS);
+        Ingredient sticks = Ingredient.of(Items.STICK);
+        Ingredient coals = Ingredient.of(Items.COAL, Items.CHARCOAL);
+        Ingredient cobble = Ingredient.of(Items.COBBLESTONE, Items.COBBLED_DEEPSLATE, Items.BLACKSTONE);
+
+        List<RecipeHolder<?>> recipes = List.of(
+                new RecipeHolder<>(ResourceLocation.withDefaultNamespace("oak_planks"),
+                        new ShapelessRecipe("planks", CraftingBookCategory.BUILDING,
+                                new ItemStack(Items.OAK_PLANKS, 4),
+                                NonNullList.of(Ingredient.EMPTY, Ingredient.of(Items.OAK_LOG)))),
+                new RecipeHolder<>(ResourceLocation.withDefaultNamespace("stick"),
+                        new ShapedRecipe("sticks", CraftingBookCategory.MISC,
+                                ShapedRecipePattern.of(Map.of('#', planks), "#", "#"),
+                                new ItemStack(Items.STICK, 4))),
+                new RecipeHolder<>(ResourceLocation.withDefaultNamespace("crafting_table"),
+                        new ShapedRecipe("", CraftingBookCategory.MISC,
+                                ShapedRecipePattern.of(Map.of('#', planks), "##", "##"),
+                                new ItemStack(Items.CRAFTING_TABLE, 1))),
+                new RecipeHolder<>(ResourceLocation.withDefaultNamespace("torch"),
+                        new ShapedRecipe("", CraftingBookCategory.MISC,
+                                ShapedRecipePattern.of(Map.of('X', coals, '#', sticks), "X", "#"),
+                                new ItemStack(Items.TORCH, 4))),
+                new RecipeHolder<>(ResourceLocation.withDefaultNamespace("campfire"),
+                        new ShapedRecipe("", CraftingBookCategory.MISC,
+                                ShapedRecipePattern.of(Map.of('S', sticks, 'C', coals, 'L', logs), " S ", "SCS", "LLL"),
+                                new ItemStack(Items.CAMPFIRE, 1))),
+                new RecipeHolder<>(ResourceLocation.withDefaultNamespace("wooden_pickaxe"),
+                        new ShapedRecipe("", CraftingBookCategory.EQUIPMENT,
+                                ShapedRecipePattern.of(Map.of('X', planks, '#', sticks), "XXX", " # ", " # "),
+                                new ItemStack(Items.WOODEN_PICKAXE, 1))),
+                new RecipeHolder<>(ResourceLocation.withDefaultNamespace("wooden_sword"),
+                        new ShapedRecipe("", CraftingBookCategory.EQUIPMENT,
+                                ShapedRecipePattern.of(Map.of('X', planks, '#', sticks), "X", "X", "#"),
+                                new ItemStack(Items.WOODEN_SWORD, 1))),
+                new RecipeHolder<>(ResourceLocation.withDefaultNamespace("wooden_axe"),
+                        new ShapedRecipe("", CraftingBookCategory.EQUIPMENT,
+                                ShapedRecipePattern.of(Map.of('X', planks, '#', sticks), "XX", "X#", " #"),
+                                new ItemStack(Items.WOODEN_AXE, 1))),
+                new RecipeHolder<>(ResourceLocation.withDefaultNamespace("stone_pickaxe"),
+                        new ShapedRecipe("", CraftingBookCategory.EQUIPMENT,
+                                ShapedRecipePattern.of(Map.of('X', cobble, '#', sticks), "XXX", " # ", " # "),
+                                new ItemStack(Items.STONE_PICKAXE, 1))),
+                new RecipeHolder<>(ResourceLocation.withDefaultNamespace("stone_sword"),
+                        new ShapedRecipe("", CraftingBookCategory.EQUIPMENT,
+                                ShapedRecipePattern.of(Map.of('X', cobble, '#', sticks), "X", "X", "#"),
+                                new ItemStack(Items.STONE_SWORD, 1))),
+                new RecipeHolder<>(ResourceLocation.withDefaultNamespace("stone_axe"),
+                        new ShapedRecipe("", CraftingBookCategory.EQUIPMENT,
+                                ShapedRecipePattern.of(Map.of('X', cobble, '#', sticks), "XX", "X#", " #"),
+                                new ItemStack(Items.STONE_AXE, 1))),
+                new RecipeHolder<>(ResourceLocation.withDefaultNamespace("oak_door"),
+                        new ShapedRecipe("wooden_door", CraftingBookCategory.REDSTONE,
+                                ShapedRecipePattern.of(Map.of('#', Ingredient.of(Items.OAK_PLANKS)), "##", "##", "##"),
+                                new ItemStack(Items.OAK_DOOR, 3))),
+                new RecipeHolder<>(ResourceLocation.withDefaultNamespace("chest"),
+                        new ShapedRecipe("", CraftingBookCategory.MISC,
+                                ShapedRecipePattern.of(Map.of('#', planks), "###", "# #", "###"),
+                                new ItemStack(Items.CHEST, 1))),
+                new RecipeHolder<>(ResourceLocation.withDefaultNamespace("cake"),
+                        new ShapedRecipe("", CraftingBookCategory.MISC,
+                                ShapedRecipePattern.of(
+                                        Map.of('A', Ingredient.of(Items.MILK_BUCKET),
+                                                'B', Ingredient.of(Items.SUGAR),
+                                                'C', Ingredient.of(Items.WHEAT),
+                                                'E', Ingredient.of(Items.EGG)),
+                                        "AAA", "BEB", "CCC"),
+                                new ItemStack(Items.CAKE, 1)))
+        );
+        manager.replaceRecipes(recipes);
+        return manager;
     }
 
     public StreamRegistry getStreamRegistry() {

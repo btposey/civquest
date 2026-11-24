@@ -106,6 +106,22 @@ func TestBootstrapCraftSkill_Preconditions(t *testing.T) {
 	if !skill.Preconditions(facts) {
 		t.Errorf("expected true when plank_count >= 4")
 	}
+
+	// stick_count >= 1 without coal -> false
+	facts = NewFactGraph()
+	facts.SetInt("bootstrap.stick_count", "bootstrap", 3, "3 sticks")
+	facts.SetInt("bootstrap.coal_count", "bootstrap", 0, "0 coal")
+	if skill.Preconditions(facts) {
+		t.Errorf("expected false when only sticks are held without coal")
+	}
+
+	// stick_count >= 1 && coal_count >= 1 -> true (pocket torch crafting)
+	facts = NewFactGraph()
+	facts.SetInt("bootstrap.stick_count", "bootstrap", 1, "1 stick")
+	facts.SetInt("bootstrap.coal_count", "bootstrap", 1, "1 coal")
+	if !skill.Preconditions(facts) {
+		t.Errorf("expected true when stick_count >= 1 and coal_count >= 1")
+	}
 }
 
 func TestShelterConstructionSkill_Preconditions(t *testing.T) {

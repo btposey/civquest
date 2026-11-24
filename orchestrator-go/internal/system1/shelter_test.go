@@ -491,3 +491,67 @@ func TestEvaluateShelterGoals_HabitationPOIRecall(t *testing.T) {
 		}
 	})
 }
+
+func TestShelterLightCrafting_NoCampfireShortcutWithoutCoal(t *testing.T) {
+	t.Run("No coal skips bogus campfire craft and places shelter block", func(t *testing.T) {
+		state := NewAgentState()
+		state.telemetryFramesSeen = 5
+		state.ShelterPos = &civquestv1.BlockPosProto{X: 0, Y: 64, Z: 0}
+		cfg := xdg.DefaultAgentIdentityConfig("Able")
+		cfg.Profession = "EXPLORER"
+
+		frame := &civquestv1.TelemetryFrame{
+			WorldTick: 500,
+			TimeOfDay: 13000,
+			Status: &civquestv1.AgentStatus{
+				Position:        &civquestv1.Vec3{X: 3.0, Y: 64, Z: 0.5},
+				Health:          20,
+				FoodLevel:       20,
+				NavigationState: civquestv1.NavigationState_NAVIGATION_STATE_IDLE,
+				Inventory: []*civquestv1.ItemStackProto{
+					{Slot: 0, ItemId: "minecraft:oak_planks", Count: 32},
+					{Slot: 1, ItemId: "minecraft:stick", Count: 4},
+				},
+			},
+			InterestingBlocks: []*civquestv1.VisibleBlock{
+				{Pos: &civquestv1.BlockPosProto{X: 4, Y: 64, Z: 0}, BlockId: "minecraft:crafting_table"},
+			},
+		}
+
+		intent := EvaluateShelterGoals("Able", frame, cfg, state)
+		if intent == nil || intent.GetInteractBlock() == nil ||
+			intent.GetInteractBlock().InteractionType != civquestv1.InteractBlockIntent_PLACE_BLOCK {
+			t.Fatalf("expected shelter PLACE_BLOCK instead of bogus campfire craft without coal, got %+v", intent)
+		}
+	})
+
+	t.Run("Stick and coal without nearby light pocket-crafts torch", func(t *testing.T) {
+		state := NewAgentState()
+		state.telemetryFramesSeen = 5
+		state.ShelterPos = &civquestv1.BlockPosProto{X: 0, Y: 64, Z: 0}
+		cfg := xdg.DefaultAgentIdentityConfig("Able")
+		cfg.Profession = "EXPLORER"
+
+		frame := &civquestv1.TelemetryFrame{
+			WorldTick: 500,
+			TimeOfDay: 13000,
+			Status: &civquestv1.AgentStatus{
+				Position:        &civquestv1.Vec3{X: 0.5, Y: 64, Z: 0.5},
+				Health:          20,
+				FoodLevel:       20,
+				NavigationState: civquestv1.NavigationState_NAVIGATION_STATE_IDLE,
+				Inventory: []*civquestv1.ItemStackProto{
+					{Slot: 0, ItemId: "minecraft:oak_planks", Count: 32},
+					{Slot: 1, ItemId: "minecraft:stick", Count: 1},
+					{Slot: 2, ItemId: "minecraft:coal", Count: 1},
+				},
+			},
+		}
+
+		intent := EvaluateShelterGoals("Able", frame, cfg, state)
+		craft := intent.GetCraftItem()
+		if craft == nil || craft.RecipeId != "minecraft:torch" {
+			t.Fatalf("expected CraftItemIntent(minecraft:torch), got %+v", intent)
+		}
+	})
+}

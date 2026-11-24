@@ -174,14 +174,16 @@ public class PeripheryHarnessTest {
                     CraftItemIntent.newBuilder().setRecipeId("minecraft:oak_planks").build()),
                     "2x2 planks craft must succeed anywhere");
             assertTrue(agent.getInventory().hasAnyMatching(s -> s.is(Items.OAK_PLANKS) && s.getCount() >= 4));
+            assertEquals(0, agent.getInventory().countItem(Items.OAK_LOG));
 
-            // 2. Sticks from planks
+            // 2. Stick from planks (uses authoritative recipe id minecraft:stick)
             agent.getInventory().clearContent();
             agent.getInventory().setItem(0, new ItemStack(Items.OAK_PLANKS, 2));
             assertTrue(harness.getIntentActuator().actuateCraftItem(agent,
-                    CraftItemIntent.newBuilder().setRecipeId("minecraft:sticks").build()),
-                    "2x2 sticks craft must succeed anywhere");
+                    CraftItemIntent.newBuilder().setRecipeId("minecraft:stick").build()),
+                    "2x2 stick craft must succeed anywhere");
             assertTrue(agent.getInventory().hasAnyMatching(s -> s.is(Items.STICK) && s.getCount() >= 4));
+            assertEquals(0, agent.getInventory().countItem(Items.OAK_PLANKS));
 
             // 3. Crafting table from planks
             agent.getInventory().clearContent();
@@ -190,8 +192,16 @@ public class PeripheryHarnessTest {
                     CraftItemIntent.newBuilder().setRecipeId("minecraft:crafting_table").build()),
                     "2x2 crafting_table craft must succeed anywhere");
             assertTrue(agent.getInventory().hasAnyMatching(s -> s.is(Items.CRAFTING_TABLE)));
+            assertEquals(0, agent.getInventory().countItem(Items.OAK_PLANKS));
 
-            // 4. Torch from coal and stick
+            // 4. Torch from coal and stick (and shortcut from 1 log must fail)
+            agent.getInventory().clearContent();
+            agent.getInventory().setItem(0, new ItemStack(Items.OAK_LOG, 1));
+            assertFalse(harness.getIntentActuator().actuateCraftItem(agent,
+                    CraftItemIntent.newBuilder().setRecipeId("minecraft:torch").build()),
+                    "Torch craft from single log shortcut must fail");
+            assertEquals(1, agent.getInventory().countItem(Items.OAK_LOG));
+
             agent.getInventory().clearContent();
             agent.getInventory().setItem(0, new ItemStack(Items.COAL, 1));
             agent.getInventory().setItem(1, new ItemStack(Items.STICK, 1));
@@ -199,22 +209,12 @@ public class PeripheryHarnessTest {
                     CraftItemIntent.newBuilder().setRecipeId("minecraft:torch").build()),
                     "2x2 torch craft must succeed anywhere");
             assertTrue(agent.getInventory().hasAnyMatching(s -> s.is(Items.TORCH) && s.getCount() >= 4));
-
-            // 5. Campfire from log, sticks, and coal
-            agent.getInventory().clearContent();
-            agent.getInventory().setItem(0, new ItemStack(Items.OAK_LOG, 3));
-            agent.getInventory().setItem(1, new ItemStack(Items.STICK, 3));
-            agent.getInventory().setItem(2, new ItemStack(Items.COAL, 1));
-            assertTrue(harness.getIntentActuator().actuateCraftItem(agent,
-                    CraftItemIntent.newBuilder().setRecipeId("minecraft:campfire").build()),
-                    "2x2 campfire craft must succeed anywhere");
-            assertTrue(agent.getInventory().hasAnyMatching(s -> s.is(Items.CAMPFIRE)));
         }
 
         @Test
-        @DisplayName("CRAFT_ITEM 3x3 recipes fail when crafting table is >4.5m away (20.25 reach_sq)")
+        @DisplayName("CRAFT_ITEM 3x3 recipes fail when crafting table is >4.5m away or ingredients are missing")
         void testCraft3x3RecipesFailWithoutCraftingTableWithinReach() {
-            // Place crafting table at (5, 64, 0), distance squared = 20.25+ = 25.0 > 20.25
+            // Place crafting table at (5, 64, 0), distance squared = 25.0 > 20.25
             harness.setBlock(new BlockPos(5, 64, 0), Blocks.CRAFTING_TABLE.defaultBlockState());
 
             // Prepare all ingredients for 3x3 recipes
@@ -223,6 +223,11 @@ public class PeripheryHarnessTest {
             agent.getInventory().setItem(1, new ItemStack(Items.OAK_PLANKS, 32));
             agent.getInventory().setItem(2, new ItemStack(Items.STICK, 16));
             agent.getInventory().setItem(3, new ItemStack(Items.COBBLESTONE, 32));
+            agent.getInventory().setItem(4, new ItemStack(Items.COAL, 4));
+
+            // Campfire (3x3) must fail without crafting table within reach
+            assertFalse(harness.getIntentActuator().actuateCraftItem(agent,
+                    CraftItemIntent.newBuilder().setRecipeId("minecraft:campfire").build()));
 
             // Wooden tool recipes
             assertFalse(harness.getIntentActuator().actuateCraftItem(agent,
@@ -242,9 +247,33 @@ public class PeripheryHarnessTest {
 
             // Structure / container recipes
             assertFalse(harness.getIntentActuator().actuateCraftItem(agent,
-                    CraftItemIntent.newBuilder().setRecipeId("minecraft:door").build()));
+                    CraftItemIntent.newBuilder().setRecipeId("minecraft:oak_door").build()));
             assertFalse(harness.getIntentActuator().actuateCraftItem(agent,
                     CraftItemIntent.newBuilder().setRecipeId("minecraft:chest").build()));
+
+            // Verify inventory untouched after rejections
+            assertEquals(10, agent.getInventory().countItem(Items.OAK_LOG));
+            assertEquals(32, agent.getInventory().countItem(Items.OAK_PLANKS));
+            assertEquals(16, agent.getInventory().countItem(Items.STICK));
+            assertEquals(4, agent.getInventory().countItem(Items.COAL));
+
+            // Place crafting table within reach and verify missing-ingredient failures
+            harness.setBlock(new BlockPos(1, 64, 0), Blocks.CRAFTING_TABLE.defaultBlockState());
+            agent.getInventory().clearContent();
+            agent.getInventory().setItem(0, new ItemStack(Items.OAK_LOG, 3));
+            agent.getInventory().setItem(1, new ItemStack(Items.STICK, 3)); // missing coal
+            assertFalse(harness.getIntentActuator().actuateCraftItem(agent,
+                    CraftItemIntent.newBuilder().setRecipeId("minecraft:campfire").build()),
+                    "Campfire must fail when coal/charcoal is missing");
+            assertEquals(3, agent.getInventory().countItem(Items.OAK_LOG));
+            assertEquals(3, agent.getInventory().countItem(Items.STICK));
+
+            agent.getInventory().clearContent();
+            agent.getInventory().setItem(0, new ItemStack(Items.OAK_PLANKS, 4)); // missing sticks
+            assertFalse(harness.getIntentActuator().actuateCraftItem(agent,
+                    CraftItemIntent.newBuilder().setRecipeId("minecraft:wooden_axe").build()),
+                    "Wooden axe must fail when sticks are missing");
+            assertEquals(4, agent.getInventory().countItem(Items.OAK_PLANKS));
         }
 
         @Test
@@ -253,7 +282,19 @@ public class PeripheryHarnessTest {
             // Place crafting table at (1, 64, 0) -> distance squared = 1.0 <= 20.25
             harness.setBlock(new BlockPos(1, 64, 0), Blocks.CRAFTING_TABLE.defaultBlockState());
 
-            // 1. Wooden Pickaxe
+            // 1. Campfire (3 logs + 3 sticks + 1 coal)
+            agent.getInventory().clearContent();
+            agent.getInventory().setItem(0, new ItemStack(Items.OAK_LOG, 3));
+            agent.getInventory().setItem(1, new ItemStack(Items.STICK, 3));
+            agent.getInventory().setItem(2, new ItemStack(Items.COAL, 1));
+            assertTrue(harness.getIntentActuator().actuateCraftItem(agent,
+                    CraftItemIntent.newBuilder().setRecipeId("minecraft:campfire").build()));
+            assertTrue(agent.getInventory().hasAnyMatching(s -> s.is(Items.CAMPFIRE)));
+            assertEquals(0, agent.getInventory().countItem(Items.OAK_LOG));
+            assertEquals(0, agent.getInventory().countItem(Items.STICK));
+            assertEquals(0, agent.getInventory().countItem(Items.COAL));
+
+            // 2. Wooden Pickaxe (3 planks + 2 sticks)
             agent.getInventory().clearContent();
             agent.getInventory().setItem(0, new ItemStack(Items.OAK_PLANKS, 3));
             agent.getInventory().setItem(1, new ItemStack(Items.STICK, 2));
@@ -261,22 +302,23 @@ public class PeripheryHarnessTest {
                     CraftItemIntent.newBuilder().setRecipeId("minecraft:wooden_pickaxe").build()));
             assertTrue(agent.getInventory().hasAnyMatching(s -> s.is(Items.WOODEN_PICKAXE)));
 
-            // 2. Wooden Sword
+            // 3. Wooden Sword (2 planks + 1 stick)
             agent.getInventory().clearContent();
-            agent.getInventory().setItem(0, new ItemStack(Items.OAK_PLANKS, 3));
-            agent.getInventory().setItem(1, new ItemStack(Items.STICK, 2));
+            agent.getInventory().setItem(0, new ItemStack(Items.OAK_PLANKS, 2));
+            agent.getInventory().setItem(1, new ItemStack(Items.STICK, 1));
             assertTrue(harness.getIntentActuator().actuateCraftItem(agent,
                     CraftItemIntent.newBuilder().setRecipeId("minecraft:wooden_sword").build()));
             assertTrue(agent.getInventory().hasAnyMatching(s -> s.is(Items.WOODEN_SWORD)));
 
-            // 3. Wooden Axe
+            // 4. Wooden Axe (3 planks + 2 sticks)
             agent.getInventory().clearContent();
-            agent.getInventory().setItem(0, new ItemStack(Items.OAK_PLANKS, 4));
+            agent.getInventory().setItem(0, new ItemStack(Items.OAK_PLANKS, 3));
+            agent.getInventory().setItem(1, new ItemStack(Items.STICK, 2));
             assertTrue(harness.getIntentActuator().actuateCraftItem(agent,
                     CraftItemIntent.newBuilder().setRecipeId("minecraft:wooden_axe").build()));
             assertTrue(agent.getInventory().hasAnyMatching(s -> s.is(Items.WOODEN_AXE)));
 
-            // 4. Stone Pickaxe
+            // 5. Stone Pickaxe (3 cobble + 2 sticks)
             agent.getInventory().clearContent();
             agent.getInventory().setItem(0, new ItemStack(Items.COBBLESTONE, 3));
             agent.getInventory().setItem(1, new ItemStack(Items.STICK, 2));
@@ -284,19 +326,33 @@ public class PeripheryHarnessTest {
                     CraftItemIntent.newBuilder().setRecipeId("minecraft:stone_pickaxe").build()));
             assertTrue(agent.getInventory().hasAnyMatching(s -> s.is(Items.STONE_PICKAXE)));
 
-            // 5. Door
+            // 6. Oak Door (6 oak planks -> 3 oak doors)
             agent.getInventory().clearContent();
             agent.getInventory().setItem(0, new ItemStack(Items.OAK_PLANKS, 6));
             assertTrue(harness.getIntentActuator().actuateCraftItem(agent,
-                    CraftItemIntent.newBuilder().setRecipeId("minecraft:door").build()));
-            assertTrue(agent.getInventory().hasAnyMatching(s -> s.is(Items.OAK_DOOR)));
+                    CraftItemIntent.newBuilder().setRecipeId("minecraft:oak_door").build()));
+            assertEquals(3, agent.getInventory().countItem(Items.OAK_DOOR));
 
-            // 6. Chest
+            // 7. Chest (8 planks -> 1 chest)
             agent.getInventory().clearContent();
             agent.getInventory().setItem(0, new ItemStack(Items.OAK_PLANKS, 8));
             assertTrue(harness.getIntentActuator().actuateCraftItem(agent,
                     CraftItemIntent.newBuilder().setRecipeId("minecraft:chest").build()));
             assertTrue(agent.getInventory().hasAnyMatching(s -> s.is(Items.CHEST)));
+
+            // 8. Cake (3 milk buckets + 2 sugar + 1 egg + 3 wheat -> 1 cake + 3 empty buckets)
+            agent.getInventory().clearContent();
+            agent.getInventory().setItem(0, new ItemStack(Items.MILK_BUCKET, 1));
+            agent.getInventory().setItem(1, new ItemStack(Items.MILK_BUCKET, 1));
+            agent.getInventory().setItem(2, new ItemStack(Items.MILK_BUCKET, 1));
+            agent.getInventory().setItem(3, new ItemStack(Items.SUGAR, 2));
+            agent.getInventory().setItem(4, new ItemStack(Items.EGG, 1));
+            agent.getInventory().setItem(5, new ItemStack(Items.WHEAT, 3));
+            assertTrue(harness.getIntentActuator().actuateCraftItem(agent,
+                    CraftItemIntent.newBuilder().setRecipeId("minecraft:cake").build()));
+            assertEquals(1, agent.getInventory().countItem(Items.CAKE));
+            assertEquals(3, agent.getInventory().countItem(Items.BUCKET));
+            assertEquals(0, agent.getInventory().countItem(Items.MILK_BUCKET));
         }
 
         @Test
