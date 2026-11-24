@@ -294,7 +294,7 @@ func EvaluateGoals(frame *civquestv1.TelemetryFrame, cfg *xdg.AgentIdentityConfi
 
 	hostilesNearby := false
 	for _, e := range frame.VisibleEntities {
-		if IsHostile(e) {
+		if IsImmediateHostileThreat(frame, e) {
 			hostilesNearby = true
 			break
 		}
@@ -411,8 +411,13 @@ func EvaluateExploration(agentID string, frame *civquestv1.TelemetryFrame, cfg *
 		state.ShelterBuildIndex = 0
 	}
 
-	// 1. Immediate terrain/hill unsticking or tool-aware dig-out when navigation reports NAVIGATION_STATE_STUCK or ENCLOSED
+	// 1. If an active expedition is encountering a terrain barrier, let Horizon Explorer record the hazard & re-survey/flank first.
 	if navState == civquestv1.NavigationState_NAVIGATION_STATE_STUCK || frame.Status.GetNavigationEnclosed() {
+		if state.IsExpeditionActiveLocked() && !state.HasActiveTaskLocked() {
+			if expIntent := EvaluateHorizonExplorerLocked(frame, state, cfg, agentID); expIntent != nil {
+				return expIntent
+			}
+		}
 		if unstuckIntent := EvaluateUnstuck(agentID, frame, pos, state); unstuckIntent != nil {
 			return unstuckIntent
 		}
@@ -466,7 +471,7 @@ func EvaluateExploration(agentID string, frame *civquestv1.TelemetryFrame, cfg *
 			return nil
 		}
 		if state.lastShelterTimeoutTick > 0 && (frame.WorldTick-state.lastShelterTimeoutTick) < 600 {
-			if bootstrapIntent := evaluateBootstrapGoalsLocked(agentID, frame, pos, navState, state); bootstrapIntent != nil {
+			if bootstrapIntent := evaluateBootstrapGoalsLocked(agentID, frame, pos, navState, state, cfg); bootstrapIntent != nil {
 				return bootstrapIntent
 			}
 			return nil
@@ -483,7 +488,7 @@ func EvaluateExploration(agentID string, frame *civquestv1.TelemetryFrame, cfg *
 	}
 
 	// 3. Daytime Bootstrap Survival Goals (Gather Timber & Craft Basic Tools)
-	if bootstrapIntent := evaluateBootstrapGoalsLocked(agentID, frame, pos, navState, state); bootstrapIntent != nil {
+	if bootstrapIntent := evaluateBootstrapGoalsLocked(agentID, frame, pos, navState, state, cfg); bootstrapIntent != nil {
 		return bootstrapIntent
 	}
 	if state.HasActiveTaskLocked() || state.navigatingToPOI {

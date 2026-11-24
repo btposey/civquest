@@ -341,6 +341,12 @@ func evaluateForagingInternal(agentID string, frame *civquestv1.TelemetryFrame, 
 		if tier == 0 {
 			continue
 		}
+		if float64(b.Pos.Y)-pos.Y > 4.0 {
+			continue
+		}
+		if state != nil && state.IsTargetUnreachable(float64(b.Pos.X)+0.5, float64(b.Pos.Y), float64(b.Pos.Z)+0.5, frame.WorldTick) {
+			continue
+		}
 		d := blockDistance(pos, b)
 		if tier == 2 {
 			mature := isCropMatureHint(b)
@@ -494,7 +500,15 @@ func evaluateForagingInternal(agentID string, frame *civquestv1.TelemetryFrame, 
 	// 3. Check SpatialIndex for known CROP or CONTAINER/GRANARY POIs when nothing edible is in frustum.
 	if state != nil {
 		if si := state.SpatialIndex(); si != nil {
-			if cropPOI := si.FindNearestPOI(pos, POICategoryCrop, "", 48.0, ""); cropPOI != nil && !isSaplingItemID(cropPOI.BlockID) {
+			for _, cropPOI := range si.FindPOIsInRadius(pos, POICategoryCrop, 48.0) {
+				if cropPOI == nil || isSaplingItemID(cropPOI.BlockID) {
+					continue
+				}
+				acc := poiAccessTarget(cropPOI)
+				if state.IsTargetUnreachable(cropPOI.X, cropPOI.Y, cropPOI.Z, frame.WorldTick) ||
+					(acc != nil && state.IsTargetUnreachable(acc.X, acc.Y, acc.Z, frame.WorldTick)) {
+					continue
+				}
 				d := math.Hypot(cropPOI.X-pos.X, cropPOI.Z-pos.Z)
 				if d > 4.0 {
 					targetKey := fmt.Sprintf("poi:%s", cropPOI.POIID)
@@ -504,7 +518,7 @@ func evaluateForagingInternal(agentID string, frame *civquestv1.TelemetryFrame, 
 							AgentId: agentID,
 							Action: &civquestv1.AgentIntent_Navigate{
 								Navigate: &civquestv1.NavigateIntent{
-									Target:           poiAccessTarget(cropPOI),
+									Target:           acc,
 									SpeedMultiplier:  speedMult,
 									Sprint:           canSprint,
 									ArrivalTolerance: 2,
@@ -515,7 +529,20 @@ func evaluateForagingInternal(agentID string, frame *civquestv1.TelemetryFrame, 
 					return nil
 				}
 			}
-			if contPOI := si.FindNearestPOI(pos, POICategoryContainer, "", 48.0, ""); contPOI != nil {
+			skipContainers := force && frame.Status.FoodLevel > forageHungerThreshold &&
+				(state.GetLatestSurvey() == nil || state.IsExpeditionActive())
+			for _, contPOI := range si.FindPOIsInRadius(pos, POICategoryContainer, 48.0) {
+				if skipContainers {
+					break
+				}
+				if contPOI == nil {
+					continue
+				}
+				acc := poiAccessTarget(contPOI)
+				if state.IsTargetUnreachable(contPOI.X, contPOI.Y, contPOI.Z, frame.WorldTick) ||
+					(acc != nil && state.IsTargetUnreachable(acc.X, acc.Y, acc.Z, frame.WorldTick)) {
+					continue
+				}
 				lastVisit := mem.visitedContainerPOIs[contPOI.POIID]
 				d := math.Hypot(contPOI.X-pos.X, contPOI.Z-pos.Z)
 				if d <= 4.0 {
@@ -528,7 +555,7 @@ func evaluateForagingInternal(agentID string, frame *civquestv1.TelemetryFrame, 
 							AgentId: agentID,
 							Action: &civquestv1.AgentIntent_Navigate{
 								Navigate: &civquestv1.NavigateIntent{
-									Target:           poiAccessTarget(contPOI),
+									Target:           acc,
 									SpeedMultiplier:  speedMult,
 									Sprint:           canSprint,
 									ArrivalTolerance: 2,
@@ -540,6 +567,12 @@ func evaluateForagingInternal(agentID string, frame *civquestv1.TelemetryFrame, 
 				}
 			}
 		}
+	}
+
+	// Well-fed agents following a System 2 FORAGE_FOOD directive should yield to normal
+	// exploration/survey rather than blind random foraging walks when no reachable food exists.
+	if force && frame.Status.FoodLevel > forageHungerThreshold {
+		return nil
 	}
 
 	// 4. Outward foraging exploration when no food blocks, animals, or reachable food POIs are visible.

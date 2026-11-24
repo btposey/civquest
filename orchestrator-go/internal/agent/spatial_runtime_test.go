@@ -244,15 +244,15 @@ func TestRuntime_HarvestPruning(t *testing.T) {
 
 	// 2. Test receipt-confirmed pruning
 	receiptPOI := db.AgentPOI{
-		POIID:            "poi_resource_15_64_15",
-		Category:         system1.POICategoryResource,
-		BlockID:          "minecraft:birch_log",
-		X:                15.5,
-		Y:                64.0,
-		Z:                15.5,
-		ElevationLayer:   system1.ElevationSurface,
-		Reliability:      1.0,
-		IsActive:         true,
+		POIID:          "poi_resource_15_64_15",
+		Category:       system1.POICategoryResource,
+		BlockID:        "minecraft:birch_log",
+		X:              15.5,
+		Y:              64.0,
+		Z:              15.5,
+		ElevationLayer: system1.ElevationSurface,
+		Reliability:    1.0,
+		IsActive:       true,
 	}
 	if err := agentDB.AddOrUpdatePOI(ctx, receiptPOI); err != nil {
 		t.Fatalf("AddOrUpdatePOI receiptPOI failed: %v", err)

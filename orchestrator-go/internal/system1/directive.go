@@ -150,7 +150,9 @@ func EvaluateStrategicDirectiveWithID(
 
 	// Survival reflexes ALWAYS take priority over strategic directives.
 	if hasSurvivalPreemption(frame) {
-		state.ClearExpeditionSurveyingIfActive()
+		if hasEmergencyPreemption(frame) {
+			state.ClearExpeditionSurveyingIfActive()
+		}
 		return nil
 	}
 
@@ -181,7 +183,17 @@ func EvaluateStrategicDirectiveWithID(
 	pos := frame.Status.Position
 	navState := frame.Status.NavigationState
 
-	// Terrain unsticking takes precedence if stuck/enclosed while executing a directive.
+	// Let active horizon expeditions handle terrain barriers (ravine rim hazard + re-survey + flank)
+	// before generic EvaluateUnstuck swallows NAVIGATION_STATE_STUCK.
+	if (navState == civquestv1.NavigationState_NAVIGATION_STATE_STUCK || frame.Status.GetNavigationEnclosed()) &&
+		state.IsExpeditionActive() && !state.HasActiveTask() {
+		if dir.Action == DirectiveActionScoutFrontier {
+			return evaluateDirectiveScoutFrontier(agentID, frame, pos, navState, state, dir)
+		}
+		return nil
+	}
+
+	// Terrain unsticking takes precedence if stuck/enclosed while executing a non-expedition directive.
 	if navState == civquestv1.NavigationState_NAVIGATION_STATE_STUCK || frame.Status.GetNavigationEnclosed() {
 		if unstuckIntent := EvaluateUnstuck(agentID, frame, pos, state); unstuckIntent != nil {
 			return unstuckIntent
@@ -212,22 +224,41 @@ func EvaluateStrategicDirectiveWithID(
 	}
 }
 
-func hasSurvivalPreemption(frame *civquestv1.TelemetryFrame) bool {
+func hasEmergencyPreemption(frame *civquestv1.TelemetryFrame) bool {
 	if frame == nil || frame.Status == nil {
 		return true
 	}
 	for _, e := range frame.VisibleEntities {
-		if e != nil && IsHostile(e) {
+		if IsImmediateHostileThreat(frame, e) {
 			return true
 		}
 	}
 	if frame.LastDamageTaken != nil && !IsPassiveOrEnvironmentalDamage(frame.LastDamageTaken) {
 		return true
 	}
-	if isDrowningDamage(frame) {
+	if isDrowningDamage(frame) || frame.Status.IsOnFire {
 		return true
 	}
-	if frame.Status.Health <= 6.0 {
+	maxHP := float64(frame.Status.MaxHealth)
+	if maxHP <= 0 {
+		maxHP = 20.0
+	}
+	if float64(frame.Status.Health) <= LowHPThresholdRatio*maxHP {
+		return true
+	}
+	if frame.Status.FoodLevel <= 6 {
+		if _, _, hasFood := FindOptimalFood(frame.Status.Inventory); hasFood {
+			return true
+		}
+	}
+	return false
+}
+
+func hasSurvivalPreemption(frame *civquestv1.TelemetryFrame) bool {
+	if frame == nil || frame.Status == nil {
+		return true
+	}
+	if hasEmergencyPreemption(frame) {
 		return true
 	}
 	if frame.Status.FoodLevel <= 6 {

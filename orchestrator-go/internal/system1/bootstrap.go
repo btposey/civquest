@@ -174,7 +174,16 @@ func EvaluateBootstrapGoals(
 
 	navState := frame.Status.NavigationState
 
-	// 1. Unsticking if STUCK or ENCLOSED
+	// 1. If an active expedition is encountering a terrain barrier (and no harvest/collect task is active),
+	// let Horizon Explorer handle NAVIGATION_STATE_STUCK first (record hazard POI, pause at rim, re-survey/flank).
+	if (navState == civquestv1.NavigationState_NAVIGATION_STATE_STUCK || frame.Status.GetNavigationEnclosed()) &&
+		state.IsExpeditionActiveLocked() && !state.HasActiveTaskLocked() {
+		if expIntent := EvaluateHorizonExplorerLocked(frame, state, cfg, agentID); expIntent != nil {
+			return expIntent
+		}
+	}
+
+	// 1b. Unsticking if STUCK or ENCLOSED
 	if navState == civquestv1.NavigationState_NAVIGATION_STATE_STUCK || frame.Status.GetNavigationEnclosed() {
 		if unstuckIntent := EvaluateUnstuck(agentID, frame, pos, state); unstuckIntent != nil {
 			return unstuckIntent
@@ -182,7 +191,7 @@ func EvaluateBootstrapGoals(
 	}
 
 	// 2. Direct bootstrap timber gathering & tool crafting (with strict TaskSubroutine commitment)
-	if bootstrapIntent := evaluateBootstrapGoalsLocked(agentID, frame, pos, navState, state); bootstrapIntent != nil {
+	if bootstrapIntent := evaluateBootstrapGoalsLocked(agentID, frame, pos, navState, state, cfg); bootstrapIntent != nil {
 		return bootstrapIntent
 	}
 	if state.HasActiveTaskLocked() || state.navigatingToPOI || state.isExpeditionSurveyingLocked(frame.WorldTick) {
@@ -208,7 +217,7 @@ func EvaluateBootstrapGoalsDirect(
 	}
 	state.mu.Lock()
 	defer state.mu.Unlock()
-	return evaluateBootstrapGoalsLocked(agentID, frame, pos, navState, state)
+	return evaluateBootstrapGoalsLocked(agentID, frame, pos, navState, state, nil)
 }
 
 func evaluateBootstrapGoalsLocked(
@@ -217,6 +226,7 @@ func evaluateBootstrapGoalsLocked(
 	pos *civquestv1.Vec3,
 	navState civquestv1.NavigationState,
 	state *AgentState,
+	cfg *xdg.AgentIdentityConfig,
 ) *civquestv1.AgentIntent {
 	if frame == nil || frame.Status == nil || pos == nil || state == nil {
 		return nil
@@ -421,7 +431,8 @@ func evaluateBootstrapGoalsLocked(
 	// 3. Gather timber if the agent lacks basic tools or has < 6 logs.
 	// If a harvest_tree task just completed on this tick, allow the HFSM PDA stack to pop cleanly
 	// before starting another harvest_tree task on the next tick.
-	needsTimber := (!inv.hasAxe || !inv.hasSword || inv.logCount < 6)
+	// When returning to clan rendezvous, complete the return leg instead of stopping to chop trees.
+	needsTimber := (!inv.hasAxe || !inv.hasSword || inv.logCount < 6) && state.ExpeditionPhase != ExpeditionReturning
 	if needsTimber && !justFinishedHarvest {
 		targetLog, recalledTreePOI := findNearestTreeTrunk(agentID, frame, pos, state)
 		if targetLog != nil {
@@ -437,13 +448,15 @@ func evaluateBootstrapGoalsLocked(
 			}
 		} else if state.isExpeditionSurveyingLocked(frame.WorldTick) {
 			return nil
-		} else if recalledTreePOI != nil {
+		} else if recalledTreePOI != nil &&
+			(!isLeavesBlockID(recalledTreePOI.BlockID) || recalledTreePOI.Reliability >= 0.9 || cfg == nil || !isExplorerProfession(cfg.Profession)) &&
+			!state.IsExpeditionActiveLocked() {
 			if navIntent, handled := navigateToRecalledTreePOILocked(agentID, frame, pos, navState, state, recalledTreePOI); handled {
 				return navIntent
 			}
 			return nil
 		} else {
-			// No visible logs within 16m and no known tree POI in SpatialIndex:
+			// No visible logs within 16m and no verified close-range tree POI in SpatialIndex:
 			// run the 360-degree horizon survey explorer loop to locate distant forests (ADR-032).
 			// Require >=2 observed frames and non-pathing/cooldown clearance on initial idle entry
 			// so single-frame unit tests and brief pathing segments are not prematurely interrupted.
@@ -452,7 +465,7 @@ func evaluateBootstrapGoalsLocked(
 					navState != civquestv1.NavigationState_NAVIGATION_STATE_PATHING &&
 					(state.lastExploreTick == 0 || frame.WorldTick < state.lastExploreTick || frame.WorldTick-state.lastExploreTick >= 40))
 			if canInitiateSurvey {
-				if surveyIntent := EvaluateHorizonExplorerLocked(frame, state, nil, agentID); surveyIntent != nil {
+				if surveyIntent := EvaluateHorizonExplorerLocked(frame, state, cfg, agentID); surveyIntent != nil {
 					return surveyIntent
 				}
 			}
@@ -567,7 +580,8 @@ func findNearestCraftingTableLocked(
 		if absDy > 3.0 && hDist < absDy*1.5 {
 			continue
 		}
-		if state != nil && state.IsWorkstationUnreachableLocked(b.Pos.X, b.Pos.Y, b.Pos.Z, frame.WorldTick) {
+		if state != nil && (state.IsWorkstationUnreachableLocked(b.Pos.X, b.Pos.Y, b.Pos.Z, frame.WorldTick) ||
+			state.IsTargetUnreachableLocked(float64(b.Pos.X)+0.5, float64(b.Pos.Y), float64(b.Pos.Z)+0.5, frame.WorldTick)) {
 			continue
 		}
 		dSq := dx*dx + dy*dy + dz*dz
@@ -598,7 +612,8 @@ func findNearestCraftingTableLocked(
 			}
 			if poi != nil && poi.Reliability >= 0.5 {
 				bpos := poiBlockPos(poi)
-				if !state.IsWorkstationUnreachableLocked(bpos.X, bpos.Y, bpos.Z, frame.WorldTick) {
+				if !state.IsWorkstationUnreachableLocked(bpos.X, bpos.Y, bpos.Z, frame.WorldTick) &&
+					!state.isPOIUnreachableLocked(poi, frame.WorldTick) {
 					dx := poi.X - pos.X
 					dy := poi.Y + 0.5 - pos.Y
 					dz := poi.Z - pos.Z
@@ -736,6 +751,28 @@ type trunkCandidate struct {
 	anchor *civquestv1.VisibleBlock
 }
 
+// isElevatedCanopyOnlyLog returns true when a visible log block is > 4 blocks above the agent
+// and no reachable trunk base log (<= 4 blocks above pos.Y) exists in the same or adjacent column.
+func isElevatedCanopyOnlyLog(frame *civquestv1.TelemetryFrame, pos *civquestv1.Vec3, b *civquestv1.VisibleBlock) bool {
+	if frame == nil || pos == nil || b == nil || b.Pos == nil {
+		return false
+	}
+	if float64(b.Pos.Y)-pos.Y <= 4.0 {
+		return false
+	}
+	for _, other := range frame.InterestingBlocks {
+		if other == nil || other.Pos == nil || !isLogBlockID(other.BlockId) {
+			continue
+		}
+		dx := other.Pos.X - b.Pos.X
+		dz := other.Pos.Z - b.Pos.Z
+		if dx >= -1 && dx <= 1 && dz >= -1 && dz <= 1 && float64(other.Pos.Y)-pos.Y <= 4.0 {
+			return false
+		}
+	}
+	return true
+}
+
 // findNearestTreeTrunk selects a tree trunk column from visible logs, sorting unique
 // nearby trunks by distance and hashing agentID so multiple agents distribute across trees.
 // If no logs are visible in the frustum, it queries SpatialIndex for a recalled timber stand.
@@ -753,7 +790,11 @@ func findNearestTreeTrunk(agentID string, frame *civquestv1.TelemetryFrame, pos 
 		if b == nil || b.Pos == nil || !isLogBlockID(b.BlockId) {
 			continue
 		}
-		if state != nil && state.IsTreeOnCooldownLocked(b.Pos.X, b.Pos.Z, frame.WorldTick) {
+		if isElevatedCanopyOnlyLog(frame, pos, b) {
+			continue
+		}
+		if state != nil && (state.IsTreeOnCooldownLocked(b.Pos.X, b.Pos.Z, frame.WorldTick) ||
+			state.IsTargetUnreachableLocked(float64(b.Pos.X)+0.5, float64(b.Pos.Y), float64(b.Pos.Z)+0.5, frame.WorldTick)) {
 			continue
 		}
 		dx := float64(b.Pos.X) + 0.5 - pos.X
@@ -789,24 +830,31 @@ func findNearestTreeTrunk(agentID string, frame *civquestv1.TelemetryFrame, pos 
 				agentLayer := ClassifyElevationLayer(pos.Y, 64.0)
 				isUnderground := agentLayer == ElevationDugout || agentLayer == ElevationUnderground
 
-				if poi := si.FindNearestPOI(pos, POICategoryResource, "log", 64.0, ElevationSurface); poi != nil && poi.Reliability >= 0.5 {
-					bpos := poiBlockPos(poi)
-					if !state.IsTreeOnCooldownLocked(bpos.X, bpos.Z, frame.WorldTick) {
-						if isUnderground {
-							originID := ""
-							if tracker := state.HabitTrailTrackerLocked(); tracker != nil {
-								originID = tracker.CurrentOriginPOIID()
-							}
-							hasCorridor := false
-							if originID != "" {
-								hasCorridor = si.HasCorridorBetween(originID, poi.POIID)
-							}
-							if !hasCorridor {
-								return nil, nil
-							}
-						}
-						return nil, poi
+				for _, poi := range si.FindPOIsInRadius(pos, POICategoryResource, 64.0) {
+					if poi == nil || !poi.IsActive || poi.Reliability < 0.5 {
+						continue
 					}
+					if !strings.EqualFold(poi.ElevationLayer, ElevationSurface) || !matchesPOIBlockID(poi.BlockID, "log") {
+						continue
+					}
+					bpos := poiBlockPos(poi)
+					if state.IsTreeOnCooldownLocked(bpos.X, bpos.Z, frame.WorldTick) || state.isPOIUnreachableLocked(poi, frame.WorldTick) {
+						continue
+					}
+					if isUnderground {
+						originID := ""
+						if tracker := state.HabitTrailTrackerLocked(); tracker != nil {
+							originID = tracker.CurrentOriginPOIID()
+						}
+						hasCorridor := false
+						if originID != "" {
+							hasCorridor = si.HasCorridorBetween(originID, poi.POIID)
+						}
+						if !hasCorridor {
+							return nil, nil
+						}
+					}
+					return nil, poi
 				}
 			}
 		}

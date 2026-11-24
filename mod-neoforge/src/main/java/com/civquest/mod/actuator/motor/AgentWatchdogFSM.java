@@ -261,13 +261,23 @@ public class AgentWatchdogFSM {
 
         // Evaluate connection timeouts
         if (currentState == WatchdogState.CONNECTED_ACTIVE) {
-            if (streamRegistered && (currentTick - lastIntentTick > DEGRADED_THRESHOLD_TICKS)) {
-                transitionTo(WatchdogState.STREAM_DEGRADED, "intent_timeout_degraded");
-            } else if (!streamRegistered) {
+            if (!streamRegistered) {
                 transitionTo(WatchdogState.DISCONNECTED_SAFE_MODE, "stream_unregistered");
+            } else if (isAutonomousPeripheryLivenessActive()) {
+                // Active autonomous periphery execution (SURVEYING / SLEEPING) represents healthy
+                // liveness without requiring redundant no-op intents from Go; refresh lastIntentTick
+                // so the idle timeout window starts cleanly once the agent returns to IDLE.
+                lastIntentTick = currentTick;
+            } else if (currentTick - lastIntentTick > DEGRADED_THRESHOLD_TICKS) {
+                transitionTo(WatchdogState.STREAM_DEGRADED, "intent_timeout_degraded");
             }
         } else if (currentState == WatchdogState.STREAM_DEGRADED) {
-            if (!streamRegistered || (currentTick - lastIntentTick > DISCONNECTED_THRESHOLD_TICKS)) {
+            if (!streamRegistered) {
+                transitionTo(WatchdogState.DISCONNECTED_SAFE_MODE, "stream_unregistered");
+            } else if (isAutonomousPeripheryLivenessActive()) {
+                lastIntentTick = currentTick;
+                transitionTo(WatchdogState.CONNECTED_ACTIVE, "autonomous_periphery_resumed");
+            } else if (currentTick - lastIntentTick > DISCONNECTED_THRESHOLD_TICKS) {
                 transitionTo(WatchdogState.DISCONNECTED_SAFE_MODE, "intent_timeout_disconnected");
             }
         }
@@ -276,6 +286,37 @@ public class AgentWatchdogFSM {
         if (currentState == WatchdogState.DISCONNECTED_SAFE_MODE || currentState == WatchdogState.STREAM_DEGRADED) {
             evaluateAutonomousReflexes();
         }
+    }
+
+    /**
+     * Returns true when the agent is executing (or temporarily preempted by a reflex from) a legitimate
+     * multi-tick autonomous periphery state ({@link MotorState#SURVEYING} or {@link MotorState#SLEEPING}
+     * / {@code agent.isSleeping()}) that should not trigger false intent-starvation timeouts while the
+     * gRPC stream is connected.
+     */
+    private boolean isAutonomousPeripheryLivenessActive() {
+        if (agent == null) {
+            return false;
+        }
+        if (agent.isSleeping()) {
+            return true;
+        }
+        AgentMotorFSM motorFSM = agent.getMotorFSM();
+        if (motorFSM == null) {
+            return false;
+        }
+        MotorState state = motorFSM.getState();
+        if (state == MotorState.SURVEYING || state == MotorState.SLEEPING) {
+            return true;
+        }
+        if (motorFSM.getStackDepth() > 0) {
+            for (MotorStackFrame frame : motorFSM.getStackSnapshot()) {
+                if (frame != null && (frame.getState() == MotorState.SURVEYING || frame.getState() == MotorState.SLEEPING)) {
+                    return true;
+                }
+            }
+        }
+        return false;
     }
 
     /**

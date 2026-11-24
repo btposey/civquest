@@ -115,6 +115,32 @@ func isDrowningDamage(frame *civquestv1.TelemetryFrame) bool {
 	return false
 }
 
+// IsImmediateHostileThreat returns true if visible entity e represents an immediate hostile
+// threat within MaxPerceptionRadius (16m), matching ThreatEvaluator daytime/nighttime criteria.
+func IsImmediateHostileThreat(frame *civquestv1.TelemetryFrame, e *civquestv1.VisibleEntity) bool {
+	if frame == nil || frame.Status == nil || e == nil || !IsHostile(e) {
+		return false
+	}
+	dist := float64(e.Distance)
+	if dist <= 0 && e.Position != nil && frame.Status.Position != nil {
+		dist = math.Hypot(e.Position.X-frame.Status.Position.X, e.Position.Z-frame.Status.Position.Z)
+	}
+	if dist > MaxPerceptionRadius {
+		return false
+	}
+	selfHP := float64(frame.Status.Health)
+	maxHP := float64(frame.Status.MaxHealth)
+	if maxHP <= 0 {
+		maxHP = 20.0
+	}
+	tod := ((frame.TimeOfDay % 24000) + 24000) % 24000
+	isDuskOrNight := tod >= 11000 && tod < 23500
+	eType := strings.ToLower(e.EntityType)
+	isCreeper := strings.Contains(eType, "creeper")
+	isRanged := strings.Contains(eType, "skeleton") || strings.Contains(eType, "stray") || strings.Contains(eType, "pillager")
+	return isCreeper || isRanged || dist <= 8.0 || isDuskOrNight || (selfHP <= LowHPThresholdRatio*maxHP)
+}
+
 func (e *ThreatEvaluator) Evaluate(ctx *EvaluatorContext, graph *FactGraph) error {
 	if graph == nil {
 		return nil
@@ -160,12 +186,6 @@ func (e *ThreatEvaluator) Evaluate(ctx *EvaluatorContext, graph *FactGraph) erro
 		selfPos = frame.Status.Position
 	}
 
-	isDuskOrNight := false
-	if frame != nil {
-		tod := ((frame.TimeOfDay % 24000) + 24000) % 24000
-		isDuskOrNight = tod >= 11000 && tod < 23500
-	}
-
 	if frame != nil {
 		for _, e := range frame.VisibleEntities {
 			if e == nil {
@@ -180,11 +200,7 @@ func (e *ThreatEvaluator) Evaluate(ctx *EvaluatorContext, graph *FactGraph) erro
 			}
 			if IsHostile(e) {
 				threatCount++
-				eType := strings.ToLower(e.EntityType)
-				isCreeper := strings.Contains(eType, "creeper")
-				isRanged := strings.Contains(eType, "skeleton") || strings.Contains(eType, "stray") || strings.Contains(eType, "pillager")
-				isDangerous := isCreeper || isRanged || dist <= 8.0 || isDuskOrNight || (selfHP <= LowHPThresholdRatio*maxHP)
-				if isDangerous {
+				if IsImmediateHostileThreat(frame, e) {
 					hostilesPresent = true
 				}
 				if dist < minDist {

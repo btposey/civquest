@@ -3246,6 +3246,9 @@ func (r *AgentRuntime) handleNavigationStuck() {
 	if r.system1State == nil {
 		return
 	}
+	if dest != nil && !r.system1State.IsExpeditionActive() {
+		r.system1State.RecordTargetNavigationStuck(dest.X, dest.Y, dest.Z, r.WorldTick(), system1.DefaultUnreachableTargetTTL)
+	}
 	si := r.system1State.SpatialIndex()
 	if si == nil {
 		return

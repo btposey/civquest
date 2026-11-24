@@ -450,7 +450,7 @@ func ComputeFleeTarget(selfPos *civquestv1.Vec3, hostiles []*civquestv1.VisibleE
 			distFromSelf := math.Hypot(node.X-fallback.X, node.Z-fallback.Z)
 			if hasCentroid {
 				nodeDistToCentroid := math.Hypot(node.X-centroidX, node.Z-centroidZ)
-				if nodeDistToCentroid > curDistToCentroid && distFromSelf <= 48.0 {
+				if nodeDistToCentroid > curDistToCentroid && nodeDistToCentroid > MaxPerceptionRadius && distFromSelf <= 48.0 {
 					combinedScore := node.SafetyScore*1.5 + (nodeDistToCentroid / (distFromSelf + 1.0))
 					if combinedScore > bestScore {
 						bestScore = combinedScore

@@ -258,11 +258,19 @@ func EvaluateSleep(agentID string, frame *civquestv1.TelemetryFrame, state *Agen
 	// Auto-detect and record bed pos and shelter blocks from interesting_blocks or SpatialIndex (ADR-022)
 	var recalledBedPOI *db.AgentPOI
 	if state != nil {
+		if existingBed := state.GetAssignedBed(); existingBed != nil {
+			if state.IsTargetUnreachable(float64(existingBed.X)+0.5, float64(existingBed.Y), float64(existingBed.Z)+0.5, frame.WorldTick) {
+				state.ClearAssignedBed()
+			}
+		}
 		hasBed := state.GetAssignedBed() != nil
 		hasShelter := state.GetShelterPos() != nil
 		if !hasBed || !hasShelter {
 			for _, b := range frame.InterestingBlocks {
 				if b == nil || b.Pos == nil {
+					continue
+				}
+				if state.IsTargetUnreachable(float64(b.Pos.X)+0.5, float64(b.Pos.Y), float64(b.Pos.Z)+0.5, frame.WorldTick) {
 					continue
 				}
 				id := strings.ToLower(b.BlockId)
@@ -277,28 +285,26 @@ func EvaluateSleep(agentID string, frame *civquestv1.TelemetryFrame, state *Agen
 				}
 			}
 			if (!hasBed || !hasShelter) && frame.Status.Position != nil {
-				if si := state.SpatialIndex(); si != nil {
-					agentLayer := ClassifyElevationLayer(frame.Status.Position.Y, 64.0)
-					if !hasBed {
-						poi := si.FindNearestPOI(frame.Status.Position, POICategoryHabitation, "bed", 64.0, agentLayer)
-						if poi == nil {
-							poi = si.FindNearestPOI(frame.Status.Position, POICategoryHabitation, "bed", 64.0, "")
-						}
-						if poi != nil && poi.Reliability >= 0.5 {
-							state.SetAssignedBed(poiBlockPos(poi))
-							recalledBedPOI = poi
-							hasBed = true
-						}
+				agentLayer := ClassifyElevationLayer(frame.Status.Position.Y, 64.0)
+				if !hasBed {
+					poi := state.FindNearestReachablePOI(frame.Status.Position, POICategoryHabitation, "bed", agentLayer, 64.0, 0.5, frame.WorldTick)
+					if poi == nil {
+						poi = state.FindNearestReachablePOI(frame.Status.Position, POICategoryHabitation, "bed", "", 64.0, 0.5, frame.WorldTick)
 					}
-					if !hasShelter {
-						poi := si.FindNearestPOI(frame.Status.Position, POICategoryHabitation, "campfire", 64.0, agentLayer)
-						if poi == nil {
-							poi = si.FindNearestPOI(frame.Status.Position, POICategoryHabitation, "campfire", 64.0, "")
-						}
-						if poi != nil && poi.Reliability >= 0.5 {
-							state.SetShelterPos(poiBlockPos(poi))
-							hasShelter = true
-						}
+					if poi != nil {
+						state.SetAssignedBed(poiBlockPos(poi))
+						recalledBedPOI = poi
+						hasBed = true
+					}
+				}
+				if !hasShelter {
+					poi := state.FindNearestReachablePOI(frame.Status.Position, POICategoryHabitation, "campfire", agentLayer, 64.0, 0.5, frame.WorldTick)
+					if poi == nil {
+						poi = state.FindNearestReachablePOI(frame.Status.Position, POICategoryHabitation, "campfire", "", 64.0, 0.5, frame.WorldTick)
+					}
+					if poi != nil {
+						state.SetShelterPos(poiBlockPos(poi))
+						hasShelter = true
 					}
 				}
 			}
@@ -399,22 +405,35 @@ func EvaluateSleep(agentID string, frame *civquestv1.TelemetryFrame, state *Agen
 			Z: float64(bedPos.Z) + 0.5,
 		}
 		if recalledBedPOI == nil && state != nil {
-			if si := state.SpatialIndex(); si != nil {
-				agentLayer := ClassifyElevationLayer(agentPos.Y, 64.0)
-				poi := si.FindNearestPOI(agentPos, POICategoryHabitation, "bed", 64.0, agentLayer)
-				if poi == nil {
-					poi = si.FindNearestPOI(agentPos, POICategoryHabitation, "bed", 64.0, "")
-				}
-				if poi != nil && poi.Reliability >= 0.5 {
-					bpos := poiBlockPos(poi)
-					if bpos.X == bedPos.X && bpos.Y == bedPos.Y && bpos.Z == bedPos.Z {
-						recalledBedPOI = poi
-					}
+			agentLayer := ClassifyElevationLayer(agentPos.Y, 64.0)
+			poi := state.FindNearestReachablePOI(agentPos, POICategoryHabitation, "bed", agentLayer, 64.0, 0.5, frame.WorldTick)
+			if poi == nil {
+				poi = state.FindNearestReachablePOI(agentPos, POICategoryHabitation, "bed", "", 64.0, 0.5, frame.WorldTick)
+			}
+			if poi != nil {
+				bpos := poiBlockPos(poi)
+				if bpos.X == bedPos.X && bpos.Y == bedPos.Y && bpos.Z == bedPos.Z {
+					recalledBedPOI = poi
 				}
 			}
 		}
 		if recalledBedPOI != nil {
 			target = poiAccessTarget(recalledBedPOI)
+		}
+		if state != nil {
+			if state.IsTargetUnreachable(target.X, target.Y, target.Z, frame.WorldTick) ||
+				state.IsTargetUnreachable(float64(bedPos.X)+0.5, float64(bedPos.Y), float64(bedPos.Z)+0.5, frame.WorldTick) {
+				state.ClearAssignedBed()
+				return nil
+			}
+			if frame.Status.NavigationState == civquestv1.NavigationState_NAVIGATION_STATE_STUCK {
+				blacklisted, _ := state.RecordTargetNavigationStuck(target.X, target.Y, target.Z, frame.WorldTick, DefaultUnreachableTargetTTL)
+				if blacklisted {
+					state.MarkTargetUnreachable(float64(bedPos.X)+0.5, float64(bedPos.Y), float64(bedPos.Z)+0.5, frame.WorldTick, DefaultUnreachableTargetTTL)
+					state.ClearAssignedBed()
+					return nil
+				}
+			}
 		}
 		return &civquestv1.AgentIntent{
 			AgentId: agentID,

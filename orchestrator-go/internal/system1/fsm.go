@@ -663,6 +663,10 @@ func (h *BootstrapStateHandler) OnTick(ctx *FSMContext) []FSMIntent {
 		SafeNodes:     ctx.SafeNodes,
 		PavingTracker: ctx.PavingTracker,
 	}
+	var hadAssignedBed bool
+	if ctx.State != nil {
+		hadAssignedBed = ctx.State.GetAssignedBed() != nil
+	}
 	var needsIntents []*civquestv1.AgentIntent
 	if skill, ok := DefaultRegistry.GetSkill("biological_needs"); ok && skill != nil {
 		if skill.Preconditions(ctx.Facts) {
@@ -679,6 +683,10 @@ func (h *BootstrapStateHandler) OnTick(ctx *FSMContext) []FSMIntent {
 		} else {
 			needsIntents = EvaluateBiologicalNeeds(ctx.AgentID, ctx.Frame, ctx.State)
 		}
+	}
+	// If EvaluateSleep cleared an unreachable AssignedBed during this tick, refresh shelter.has_bed immediately.
+	if hadAssignedBed && ctx.State != nil && ctx.State.GetAssignedBed() == nil && ctx.Facts != nil && ctx.Facts.GetBool("shelter.has_bed") {
+		ctx.Facts.SetBool("shelter.has_bed", "shelter", false, "Assigned bed cleared as unreachable")
 	}
 	for _, ni := range needsIntents {
 		if ni.GetUseItem() != nil && ni.GetUseItem().IsEatingOrDrinking {
@@ -837,6 +845,10 @@ func (h *SettlementStateHandler) OnTick(ctx *FSMContext) []FSMIntent {
 		SafeNodes:     ctx.SafeNodes,
 		PavingTracker: ctx.PavingTracker,
 	}
+	var hadAssignedBed bool
+	if ctx.State != nil {
+		hadAssignedBed = ctx.State.GetAssignedBed() != nil
+	}
 	var needsIntents []*civquestv1.AgentIntent
 	if skill, ok := DefaultRegistry.GetSkill("biological_needs"); ok && skill != nil {
 		if skill.Preconditions(ctx.Facts) {
@@ -853,6 +865,10 @@ func (h *SettlementStateHandler) OnTick(ctx *FSMContext) []FSMIntent {
 		} else {
 			needsIntents = EvaluateBiologicalNeeds(ctx.AgentID, ctx.Frame, ctx.State)
 		}
+	}
+	// If EvaluateSleep cleared an unreachable AssignedBed during this tick, refresh shelter.has_bed immediately.
+	if hadAssignedBed && ctx.State != nil && ctx.State.GetAssignedBed() == nil && ctx.Facts != nil && ctx.Facts.GetBool("shelter.has_bed") {
+		ctx.Facts.SetBool("shelter.has_bed", "shelter", false, "Assigned bed cleared as unreachable")
 	}
 	for _, ni := range needsIntents {
 		if ni.GetUseItem() != nil && ni.GetUseItem().IsEatingOrDrinking {

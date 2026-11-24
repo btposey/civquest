@@ -807,7 +807,7 @@ func (si *SpatialIndex) VerifyCloseRangePOIs(selfPos *civquestv1.Vec3, interesti
 
 	visitBucket := func(list []*db.AgentPOI) {
 		for _, p := range list {
-			if p == nil || !p.IsActive {
+			if p == nil || !p.IsActive || strings.EqualFold(p.Category, POICategoryHazard) {
 				continue
 			}
 			dx := p.X - selfPos.X

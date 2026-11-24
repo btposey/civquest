@@ -506,3 +506,46 @@ func TestSurvivalReflexesStrictlyPreemptSurveying(t *testing.T) {
 		t.Fatal("expected ForagingSkill preemption to clear ExpeditionSurveying")
 	}
 }
+
+func TestHorizonExplorer_DuplicateSurveyGuardAndArrivalProximity(t *testing.T) {
+	state := NewAgentState()
+	state.SetClanSize(1)
+	cfg := xdg.DefaultAgentIdentityConfig("nomad")
+	cfg.Profession = "EXPLORER"
+
+	// 1. Emit initial survey at tick 100
+	f1 := makeIdleExploreFrame("nomad", 100, 0, 64, 0, civquestv1.NavigationState_NAVIGATION_STATE_IDLE)
+	in1 := EvaluateHorizonExplorer("nomad", f1, cfg, state)
+	if in1 == nil || in1.GetSurveyHorizon() == nil {
+		t.Fatalf("expected initial SurveyHorizonIntent, got %+v", in1)
+	}
+
+	// Even if ExpeditionSurveying is cleared early, <80 ticks at <6m spot must NOT emit a duplicate survey.
+	state.ClearExpeditionSurveyingIfActive()
+	fDup := makeIdleExploreFrame("nomad", 140, 2, 64, 1, civquestv1.NavigationState_NAVIGATION_STATE_IDLE)
+	if inDup := EvaluateHorizonExplorer("nomad", fDup, cfg, state); inDup != nil {
+		t.Fatalf("expected duplicate survey guard to suppress SurveyHorizonIntent within 80 ticks at <6m, got %+v", inDup)
+	}
+
+	// 2. False NAVIGATION_STATE_ARRIVED 25m away from ExpeditionTarget must NOT claim homestead.
+	lush := makeUniformSurveyReport(0, 64, 0, 200, "OPEN_PLAINS", "minecraft:air", 64.0, false, true)
+	for i := 0; i < 6; i++ {
+		lush.Sectors[i].FeatureType = "FOREST_CANOPY"
+		lush.Sectors[i].HitBlockId = "minecraft:oak_leaves"
+		lush.Sectors[i].HitDistance = 48.0
+		lush.Sectors[i].OpenHorizon = false
+	}
+	state.IngestHorizonSurveyReport(lush, 200)
+	state.ExpeditionPhase = ExpeditionTraversing
+	state.ExpeditionTarget = [3]float64{0, 64, 48}
+	state.ExpeditionHops = 2
+
+	fFalseArrive := makeIdleExploreFrame("nomad", 220, 0, 64, 20, civquestv1.NavigationState_NAVIGATION_STATE_ARRIVED)
+	navResume := EvaluateHorizonExplorer("nomad", fFalseArrive, cfg, state)
+	if state.HomesteadClaimed || state.GetExpeditionPhase() == ExpeditionHomesteadClaimed {
+		t.Fatal("must NOT claim homestead on NAVIGATION_STATE_ARRIVED 28m away from ExpeditionTarget")
+	}
+	if navResume == nil || navResume.GetNavigate() == nil {
+		t.Fatalf("expected NavigateIntent to resume toward ExpeditionTarget, got %+v", navResume)
+	}
+}

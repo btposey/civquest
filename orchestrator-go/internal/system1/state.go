@@ -5,9 +5,26 @@ import (
 	"sync"
 
 	"github.com/btposey/civquest/orchestrator-go/internal/crafting"
+	"github.com/btposey/civquest/orchestrator-go/internal/db"
 	civquestv1 "github.com/btposey/civquest/orchestrator-go/internal/proto/v1"
 	"google.golang.org/protobuf/proto"
 )
+
+const (
+	// DefaultUnreachableTargetTTL is the default blacklist duration (2400 ticks = 2 minutes)
+	// for coordinates that repeatedly produce NAVIGATION_STATE_STUCK.
+	DefaultUnreachableTargetTTL int64 = 2400
+	unreachableTargetRadius           = 2.5
+)
+
+type unreachableTargetEntry struct {
+	x              float64
+	y              float64
+	z              float64
+	failures       int
+	lastFailTick   int64
+	blacklistUntil int64
+}
 
 // Stage represents the Tier 1 macro strategic stage of an agent in the Two-Tier HFSM.
 type Stage string
@@ -153,6 +170,7 @@ type AgentState struct {
 	activeTask              *TaskSubroutine
 	failedTrees             map[[2]int32]int64
 	unreachableWorkstations map[[3]int32]int64
+	unreachableTargets      []*unreachableTargetEntry
 
 	// Autonomous exploration, forward outposts & topological mapping state
 	homeOrigin              *civquestv1.Vec3
@@ -212,6 +230,9 @@ type AgentState struct {
 	CollectiveSiteChosen      bool
 	CollectiveSitePos         [3]float64
 	expeditionSurveyStartTick int64
+	lastSurveyEmitTick        int64
+	lastSurveyEmitOrigin      [3]float64
+	lastSurveyEmitOriginSet   bool
 	expeditionLastNavTick     int64
 	expeditionPrimaryTarget   [3]float64
 	expeditionPrimaryBearing  float32
@@ -332,6 +353,11 @@ func (s *AgentState) SetAssignedBed(pos *civquestv1.BlockPosProto) {
 		Y: pos.Y,
 		Z: pos.Z,
 	}
+}
+
+// ClearAssignedBed clears the agent's assigned bed position.
+func (s *AgentState) ClearAssignedBed() {
+	s.SetAssignedBed(nil)
 }
 
 // SetPrimaryDutyBlocked marks whether the primary profession duty is currently blocked.
@@ -1523,6 +1549,214 @@ func (s *AgentState) IsWorkstationUnreachableLocked(x, y, z int32, tick int64) b
 		return false
 	}
 	return true
+}
+
+func unreachableCoordsMatch(ax, ay, az, bx, by, bz float64) bool {
+	dx := ax - bx
+	dy := ay - by
+	dz := az - bz
+	return dx*dx+dy*dy+dz*dz <= unreachableTargetRadius*unreachableTargetRadius
+}
+
+func (s *AgentState) pruneExpiredUnreachableLocked(worldTick int64) {
+	if s == nil || len(s.unreachableTargets) == 0 {
+		return
+	}
+	kept := s.unreachableTargets[:0]
+	for _, entry := range s.unreachableTargets {
+		if entry == nil {
+			continue
+		}
+		if entry.blacklistUntil > 0 && worldTick >= entry.blacklistUntil {
+			continue
+		}
+		if entry.blacklistUntil == 0 && worldTick >= entry.lastFailTick && worldTick-entry.lastFailTick >= DefaultUnreachableTargetTTL {
+			continue
+		}
+		kept = append(kept, entry)
+	}
+	s.unreachableTargets = kept
+}
+
+// MarkTargetUnreachable blacklists coordinates within 2.5m of (x, y, z) for ttlTicks.
+func (s *AgentState) MarkTargetUnreachable(x, y, z float64, worldTick, ttlTicks int64) {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.MarkTargetUnreachableLocked(x, y, z, worldTick, ttlTicks)
+}
+
+// MarkTargetUnreachableLocked blacklists coordinates within 2.5m of (x, y, z) while s.mu is held.
+func (s *AgentState) MarkTargetUnreachableLocked(x, y, z float64, worldTick, ttlTicks int64) {
+	if s == nil {
+		return
+	}
+	if ttlTicks <= 0 {
+		ttlTicks = DefaultUnreachableTargetTTL
+	}
+	s.pruneExpiredUnreachableLocked(worldTick)
+	for _, entry := range s.unreachableTargets {
+		if unreachableCoordsMatch(entry.x, entry.y, entry.z, x, y, z) {
+			if entry.failures < 2 {
+				entry.failures = 2
+			}
+			entry.lastFailTick = worldTick
+			if worldTick+ttlTicks > entry.blacklistUntil {
+				entry.blacklistUntil = worldTick + ttlTicks
+			}
+			return
+		}
+	}
+	s.unreachableTargets = append(s.unreachableTargets, &unreachableTargetEntry{
+		x:              x,
+		y:              y,
+		z:              z,
+		failures:       2,
+		lastFailTick:   worldTick,
+		blacklistUntil: worldTick + ttlTicks,
+	})
+}
+
+// RecordTargetNavigationStuck records a NAVIGATION_STATE_STUCK failure near (x, y, z).
+// After 2 stuck failures within 2.5m, the target coordinate is blacklisted for ttlTicks.
+func (s *AgentState) RecordTargetNavigationStuck(x, y, z float64, worldTick, ttlTicks int64) (bool, int) {
+	if s == nil {
+		return false, 0
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.RecordTargetNavigationStuckLocked(x, y, z, worldTick, ttlTicks)
+}
+
+// RecordTargetNavigationStuckLocked records a NAVIGATION_STATE_STUCK failure while s.mu is held.
+func (s *AgentState) RecordTargetNavigationStuckLocked(x, y, z float64, worldTick, ttlTicks int64) (bool, int) {
+	if s == nil {
+		return false, 0
+	}
+	if ttlTicks <= 0 {
+		ttlTicks = DefaultUnreachableTargetTTL
+	}
+	s.pruneExpiredUnreachableLocked(worldTick)
+	for _, entry := range s.unreachableTargets {
+		if unreachableCoordsMatch(entry.x, entry.y, entry.z, x, y, z) {
+			if entry.lastFailTick == worldTick && worldTick != 0 {
+				return entry.blacklistUntil > 0 && worldTick < entry.blacklistUntil, entry.failures
+			}
+			entry.failures++
+			entry.lastFailTick = worldTick
+			if entry.failures >= 2 {
+				if worldTick+ttlTicks > entry.blacklistUntil {
+					entry.blacklistUntil = worldTick + ttlTicks
+				}
+				return true, entry.failures
+			}
+			return false, entry.failures
+		}
+	}
+	s.unreachableTargets = append(s.unreachableTargets, &unreachableTargetEntry{
+		x:            x,
+		y:            y,
+		z:            z,
+		failures:     1,
+		lastFailTick: worldTick,
+	})
+	return false, 1
+}
+
+// IsTargetUnreachable returns true if (x, y, z) is within 2.5m of an active blacklisted coordinate.
+func (s *AgentState) IsTargetUnreachable(x, y, z float64, worldTick int64) bool {
+	if s == nil {
+		return false
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.IsTargetUnreachableLocked(x, y, z, worldTick)
+}
+
+// IsTargetUnreachableLocked returns true if (x, y, z) is blacklisted while s.mu is held.
+func (s *AgentState) IsTargetUnreachableLocked(x, y, z float64, worldTick int64) bool {
+	if s == nil || len(s.unreachableTargets) == 0 {
+		return false
+	}
+	for _, entry := range s.unreachableTargets {
+		if entry == nil || entry.blacklistUntil <= 0 {
+			continue
+		}
+		if worldTick >= entry.blacklistUntil {
+			continue
+		}
+		if unreachableCoordsMatch(entry.x, entry.y, entry.z, x, y, z) {
+			return true
+		}
+	}
+	return false
+}
+
+// isPOIUnreachableLocked returns true if either a POI's block coordinate or its access target is blacklisted.
+func (s *AgentState) isPOIUnreachableLocked(poi *db.AgentPOI, worldTick int64) bool {
+	if s == nil || poi == nil {
+		return false
+	}
+	if s.IsTargetUnreachableLocked(poi.X, poi.Y, poi.Z, worldTick) {
+		return true
+	}
+	acc := poiAccessTarget(poi)
+	if acc != nil && s.IsTargetUnreachableLocked(acc.X, acc.Y, acc.Z, worldTick) {
+		return true
+	}
+	return false
+}
+
+// findNearestReachablePOILocked returns the nearest active, reliable POI matching the filters
+// that is not currently blacklisted in unreachableTargets. Caller must hold s.mu.
+func (s *AgentState) findNearestReachablePOILocked(
+	pos *civquestv1.Vec3,
+	category, blockID, elevationLayer string,
+	maxDist, minReliability float64,
+	worldTick int64,
+) *db.AgentPOI {
+	if s == nil || pos == nil {
+		return nil
+	}
+	si := s.SpatialIndexLocked()
+	if si == nil {
+		return nil
+	}
+	blk := strings.TrimSpace(blockID)
+	layer := strings.TrimSpace(elevationLayer)
+	for _, p := range si.FindPOIsInRadius(pos, category, maxDist) {
+		if p == nil || !p.IsActive || p.Reliability < minReliability {
+			continue
+		}
+		if layer != "" && !strings.EqualFold(p.ElevationLayer, layer) {
+			continue
+		}
+		if blk != "" && !matchesPOIBlockID(p.BlockID, blk) {
+			continue
+		}
+		if s.isPOIUnreachableLocked(p, worldTick) {
+			continue
+		}
+		return p
+	}
+	return nil
+}
+
+// FindNearestReachablePOI returns the nearest active, reliable, non-blacklisted POI.
+func (s *AgentState) FindNearestReachablePOI(
+	pos *civquestv1.Vec3,
+	category, blockID, elevationLayer string,
+	maxDist, minReliability float64,
+	worldTick int64,
+) *db.AgentPOI {
+	if s == nil {
+		return nil
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.findNearestReachablePOILocked(pos, category, blockID, elevationLayer, maxDist, minReliability, worldTick)
 }
 
 // SetStrategicDirective installs or replaces the active System 2 strategic directive (ADR-031).

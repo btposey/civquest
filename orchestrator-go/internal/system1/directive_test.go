@@ -403,3 +403,37 @@ func TestAgentFSM_ExecutesDirectiveInBootstrapAndSettlement(t *testing.T) {
 		t.Fatalf("expected Settlement FSM tick after survey to emit SCOUT_FRONTIER NavigateIntent, got %+v", resSetNav.Intents)
 	}
 }
+
+func TestEvaluateStrategicDirective_IgnoresDistantHostileAndPreservesSurvey(t *testing.T) {
+	state := NewAgentState()
+	state.SetStrategicDirective(DirectiveActionMineStone, "ridge", "MINE_STONE: Gather stone", 100, 6100)
+	state.ExpeditionPhase = ExpeditionSurveying
+	state.expeditionSurveyStartTick = 180
+	state.lastSurveyEmitTick = 180
+	cfg := xdg.DefaultAgentIdentityConfig("aria")
+
+	// Zombie at 18m (> MaxPerceptionRadius 16m) must NOT preempt or clear ExpeditionSurveying.
+	frameDistant := newDirectiveTestFrame("aria", 200, 19000, 0, 86, 0)
+	frameDistant.VisibleEntities = []*civquestv1.VisibleEntity{
+		{EntityId: 9001, EntityType: "minecraft:zombie", IsHostile: true, Distance: 18.0, Position: &civquestv1.Vec3{X: 18, Y: 86, Z: 0}},
+	}
+	if intent := EvaluateStrategicDirective(frameDistant, state, cfg); intent != nil {
+		t.Fatalf("expected nil during active ExpeditionSurveying, got %+v", intent)
+	}
+	if state.GetExpeditionPhase() != ExpeditionSurveying {
+		t.Fatalf("expected ExpeditionSurveying preserved when distant 18m zombie present, got %s", state.GetExpeditionPhase())
+	}
+
+	// Harmless daytime zombie at 12m (> 8m) must NOT preempt directive.
+	state.ExpeditionPhase = ExpeditionIdle
+	frameDay := newDirectiveTestFrame("aria", 220, 3000, 0.5, 64, 0.5)
+	frameDay.VisibleEntities = []*civquestv1.VisibleEntity{
+		{EntityId: 9002, EntityType: "minecraft:zombie", IsHostile: true, Distance: 12.0, Position: &civquestv1.Vec3{X: 12.5, Y: 64, Z: 0.5}},
+	}
+	frameDay.InterestingBlocks = []*civquestv1.VisibleBlock{
+		{Pos: &civquestv1.BlockPosProto{X: 2, Y: 64, Z: 0}, BlockId: "minecraft:stone"},
+	}
+	if intent := EvaluateStrategicDirective(frameDay, state, cfg); intent == nil || intent.GetInteractBlock() == nil {
+		t.Fatalf("expected daytime directive to ignore 12m non-creeper zombie and harvest stone, got %+v", intent)
+	}
+}

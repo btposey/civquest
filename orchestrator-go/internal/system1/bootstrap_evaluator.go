@@ -188,6 +188,9 @@ func (e *ShelterEvaluator) Evaluate(ctx *EvaluatorContext, graph *FactGraph) err
 				pos := ctx.Frame.Status.Position
 				for _, b := range ctx.Frame.InterestingBlocks {
 					if b != nil && b.Pos != nil && strings.Contains(strings.ToLower(b.BlockId), "bed") {
+						if ctx.State != nil && ctx.State.IsTargetUnreachable(float64(b.Pos.X)+0.5, float64(b.Pos.Y), float64(b.Pos.Z)+0.5, ctx.Frame.WorldTick) {
+							continue
+						}
 						if math.Hypot(pos.X-float64(b.Pos.X), pos.Z-float64(b.Pos.Z)) <= 16.0 {
 							hasBed = true
 							break

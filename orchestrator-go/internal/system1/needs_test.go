@@ -438,3 +438,58 @@ func TestEvaluateSleep_RecallsBedFromSpatialIndex(t *testing.T) {
 		t.Fatalf("expected recalled bed to be assigned in AgentState, got %+v", state.GetAssignedBed())
 	}
 }
+
+func TestEvaluateSleep_BlacklistsUnreachableAssignedBedAfterTwoStucks(t *testing.T) {
+	state := NewAgentState()
+	state.SpatialIndex().UpsertPOI(db.AgentPOI{
+		POIID:          FormatPOIID(POICategoryHabitation, -46, 79, 17),
+		Category:       POICategoryHabitation,
+		BlockID:        "minecraft:red_bed",
+		X:              -45.5,
+		Y:              79.0,
+		Z:              17.5,
+		AccessX:        -45.5,
+		AccessY:        79.0,
+		AccessZ:        16.5,
+		ElevationLayer: ElevationDugout,
+		Reliability:    1.0,
+		IsActive:       true,
+	})
+
+	// First STUCK failure -> still retries once (failures = 1)
+	f1 := &civquestv1.TelemetryFrame{
+		WorldTick: 20,
+		TimeOfDay: 19000,
+		Status: &civquestv1.AgentStatus{
+			Position:        &civquestv1.Vec3{X: -30, Y: 86, Z: 0},
+			NavigationState: civquestv1.NavigationState_NAVIGATION_STATE_STUCK,
+		},
+	}
+	intent1 := EvaluateSleep("agent1", f1, state)
+	if intent1 == nil || intent1.GetNavigate() == nil {
+		t.Fatalf("expected first stuck attempt to still navigate to bed, got %+v", intent1)
+	}
+
+	// Second STUCK failure -> blacklists for 2400 ticks and clears AssignedBed
+	f2 := &civquestv1.TelemetryFrame{
+		WorldTick: 36,
+		TimeOfDay: 19016,
+		Status: &civquestv1.AgentStatus{
+			Position:        &civquestv1.Vec3{X: -30, Y: 86, Z: 0},
+			NavigationState: civquestv1.NavigationState_NAVIGATION_STATE_STUCK,
+		},
+	}
+	intent2 := EvaluateSleep("agent1", f2, state)
+	if intent2 != nil {
+		t.Fatalf("expected nil after 2 stuck failures blacklisted bed, got %+v", intent2)
+	}
+	if state.GetAssignedBed() != nil {
+		t.Fatalf("expected AssignedBed cleared after blacklisting, got %+v", state.GetAssignedBed())
+	}
+	if !state.IsTargetUnreachable(-45.5, 79.0, 16.5, 100) {
+		t.Fatal("expected bed access coordinate to remain blacklisted at tick 100")
+	}
+	if state.IsTargetUnreachable(-45.5, 79.0, 16.5, 36+DefaultUnreachableTargetTTL) {
+		t.Fatal("expected bed blacklist TTL to expire after 2400 ticks")
+	}
+}

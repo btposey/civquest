@@ -49,8 +49,13 @@ func EvaluateScouting(
 
 	navState := frame.Status.NavigationState
 
-	// 1. Immediate terrain unsticking / dig-out or contouring detour when STUCK or ENCLOSED
+	// 1. If an active expedition is encountering a terrain barrier, let Horizon Explorer record the hazard & re-survey/flank first.
 	if navState == civquestv1.NavigationState_NAVIGATION_STATE_STUCK || frame.Status.GetNavigationEnclosed() {
+		if state.IsExpeditionActiveLocked() && !state.HasActiveTaskLocked() {
+			if expIntent := EvaluateHorizonExplorerLocked(frame, state, cfg, agentID); expIntent != nil {
+				return expIntent
+			}
+		}
 		if unstuckIntent := EvaluateUnstuck(agentID, frame, pos, state); unstuckIntent != nil {
 			return unstuckIntent
 		}

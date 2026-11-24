@@ -197,7 +197,7 @@ func (r *AgentRuntime) syncPendingRendezvous(frame *civquestv1.TelemetryFrame) {
 		// Merge recent horizon sectors into clan_horizon_sectors grouped by survey origin.
 		var sectorsToMerge []db.HorizonSector
 		if agentDB != nil {
-			if recent, err := agentDB.GetRecentHorizonSectors(ctx, 72); err == nil && len(recent) > 0 {
+			if recent, err := agentDB.GetRecentHorizonSectors(ctx, 200); err == nil && len(recent) > 0 {
 				sectorsToMerge = recent
 			}
 		}

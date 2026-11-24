@@ -21,7 +21,8 @@ func IsDiggableObstruction(id string) bool {
 	if idx := strings.Index(s, ":"); idx != -1 {
 		s = s[idx+1:]
 	}
-	return strings.Contains(s, "dirt") ||
+	return strings.HasSuffix(s, "_ore") ||
+		strings.Contains(s, "dirt") ||
 		strings.Contains(s, "grass") ||
 		strings.Contains(s, "stone") ||
 		strings.Contains(s, "cobblestone") ||

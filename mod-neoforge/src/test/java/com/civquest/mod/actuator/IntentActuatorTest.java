@@ -1717,4 +1717,70 @@ public class IntentActuatorTest {
         assertEquals(IntentReceipt.ReceiptStatus.RECEIPT_STATUS_COMPLETED, completed.getStatus());
         verify(agent, times(1)).queueHorizonSurveyReport(any());
     }
+
+    @Test
+    @DisplayName("Duplicate SurveyHorizonIntent is deduplicated while SURVEYING, while non-survey and flushPeriphery batches preserve queueing/flushing")
+    void testSurveyHorizonDeduplicationPreservesNonSurveyAndFlush() {
+        AgentEntity agent = mock(AgentEntity.class);
+        AgentNavigator nav = mock(AgentNavigator.class);
+        when(agent.getAgentId()).thenReturn("survey-dedup-agent");
+        when(agent.isAlive()).thenReturn(true);
+        when(agent.getNavigator()).thenReturn(nav);
+        when(agent.getEyePosition()).thenReturn(new net.minecraft.world.phys.Vec3(0.5, 65.62, 0.5));
+
+        com.civquest.mod.actuator.motor.AgentMotorFSM fsm = new com.civquest.mod.actuator.motor.AgentMotorFSM(agent);
+        when(agent.getMotorFSM()).thenReturn(fsm);
+
+        AgentIntent surveyIntent = AgentIntent.newBuilder()
+                .setAgentId("survey-dedup-agent")
+                .setSequenceId(1L)
+                .setSurveyHorizon(com.civquest.mod.grpc.v1.SurveyHorizonIntent.newBuilder()
+                        .setNumSectors(4)
+                        .setMaxRange(48.0f)
+                        .setTicksPerSector(2)
+                        .build())
+                .build();
+        actuator.submitBatch(agent, IntentBatch.newBuilder()
+                .setAgentId("survey-dedup-agent")
+                .setBatchId(1L)
+                .addIntents(surveyIntent)
+                .build());
+        assertEquals(com.civquest.mod.actuator.motor.MotorState.SURVEYING, fsm.getState());
+
+        // Duplicate survey-only batch without flushPeriphery must be deduplicated
+        actuator.submitBatch(agent, IntentBatch.newBuilder()
+                .setAgentId("survey-dedup-agent")
+                .setBatchId(2L)
+                .addIntents(surveyIntent.toBuilder().setSequenceId(2L).build())
+                .build());
+        assertEquals(0, actuator.getQueuedBatchCount(agent));
+        assertEquals(1L, actuator.getCurrentReceipt(agent).getBatchId());
+
+        // Non-survey NavigateIntent batch must still queue behind active survey
+        AgentIntent navIntent = AgentIntent.newBuilder()
+                .setAgentId("survey-dedup-agent")
+                .setSequenceId(3L)
+                .setNavigate(NavigateIntent.newBuilder()
+                        .setTarget(Vec3.newBuilder().setX(10).setY(65).setZ(10).build())
+                        .setArrivalTolerance(1)
+                        .build())
+                .build();
+        actuator.submitBatch(agent, IntentBatch.newBuilder()
+                .setAgentId("survey-dedup-agent")
+                .setBatchId(3L)
+                .addIntents(navIntent)
+                .build());
+        assertEquals(1, actuator.getQueuedBatchCount(agent));
+
+        // Explicit flushPeriphery=true survey batch must replace active/queued batches cleanly
+        actuator.submitBatch(agent, IntentBatch.newBuilder()
+                .setAgentId("survey-dedup-agent")
+                .setBatchId(4L)
+                .setFlushPeriphery(true)
+                .addIntents(surveyIntent.toBuilder().setSequenceId(4L).build())
+                .build());
+        assertEquals(0, actuator.getQueuedBatchCount(agent));
+        assertEquals(4L, actuator.getCurrentReceipt(agent).getBatchId());
+        assertEquals(com.civquest.mod.actuator.motor.MotorState.SURVEYING, fsm.getState());
+    }
 }

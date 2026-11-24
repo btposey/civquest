@@ -546,6 +546,26 @@ public class AgentNavigator {
         return null;
     }
 
+    private static boolean isHazardFootprint(Level level, double x, double y, double z) {
+        if (level == null) {
+            return false;
+        }
+        int by = Mth.floor(y + 0.1);
+        int minBx = Mth.floor(x - 0.25);
+        int maxBx = Mth.floor(x + 0.25);
+        int minBz = Mth.floor(z - 0.25);
+        int maxBz = Mth.floor(z + 0.25);
+        for (int bx = minBx; bx <= maxBx; bx++) {
+            for (int bz = minBz; bz <= maxBz; bz++) {
+                if (isBlockHazard(level, new BlockPos(bx, by, bz))
+                        || isBlockHazard(level, new BlockPos(bx, by - 1, bz))) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
     static boolean isBlockHazard(net.minecraft.world.level.Level level, BlockPos pos) {
         try {
             if (level == null || !level.hasChunkAt(pos)) {
@@ -556,10 +576,13 @@ public class AgentNavigator {
                 return false;
             }
             var fluid = state.getFluidState();
-            if (fluid != null && fluid.is(net.minecraft.tags.FluidTags.LAVA)) {
+            if (fluid != null && (fluid.is(net.minecraft.tags.FluidTags.LAVA)
+                    || fluid.is(net.minecraft.world.level.material.Fluids.LAVA)
+                    || fluid.is(net.minecraft.world.level.material.Fluids.FLOWING_LAVA))) {
                 return true;
             }
-            return state.is(net.minecraft.world.level.block.Blocks.FIRE)
+            return state.is(net.minecraft.world.level.block.Blocks.LAVA)
+                    || state.is(net.minecraft.world.level.block.Blocks.FIRE)
                     || state.is(net.minecraft.world.level.block.Blocks.SOUL_FIRE)
                     || state.is(net.minecraft.world.level.block.Blocks.CACTUS)
                     || state.is(net.minecraft.world.level.block.Blocks.MAGMA_BLOCK)
@@ -720,6 +743,9 @@ public class AgentNavigator {
             int minY = Mth.floor(currentPos.y - 4.0);
             for (int py = startY; py >= minY; py--) {
                 BlockPos probePos = BlockPos.containing(probeX, py, probeZ);
+                if (isBlockHazard(level, probePos)) {
+                    break;
+                }
                 if (isBlockSolid(level, probePos) || isBlockClimbable(level, probePos) || isSafeDropBlock(level, probePos)) {
                     safeSupportFound = true;
                     break;
@@ -805,6 +831,21 @@ public class AgentNavigator {
                 // Subtle horizontal centering bias toward the climbable block so the agent stays on the shaft.
                 velX += Mth.clamp((climbablePos.getX() + 0.5) - currentPos.x, -0.05, 0.05);
                 velZ += Mth.clamp((climbablePos.getZ() + 0.5) - currentPos.z, -0.05, 0.05);
+            }
+        }
+
+        // Prevent turning inertia or momentum from drifting into adjacent hazards (lava, fire, magma, etc.)
+        if (level != null && !isHazardFootprint(level, currentPos.x, currentPos.y, currentPos.z)) {
+            if (velX != 0.0 && isHazardFootprint(level, currentPos.x + velX, currentPos.y, currentPos.z)) {
+                velX = 0.0;
+            }
+            if (velZ != 0.0 && isHazardFootprint(level, currentPos.x, currentPos.y, currentPos.z + velZ)) {
+                velZ = 0.0;
+            }
+            if ((velX != 0.0 || velZ != 0.0)
+                    && isHazardFootprint(level, currentPos.x + velX, currentPos.y, currentPos.z + velZ)) {
+                velX = 0.0;
+                velZ = 0.0;
             }
         }
 

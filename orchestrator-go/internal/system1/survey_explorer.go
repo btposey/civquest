@@ -29,7 +29,7 @@ const (
 	defaultSurveyTicksPerSec   int32   = 2
 	expeditionSurveyTimeout    int64   = 120
 	expeditionNavCooldownTicks int64   = 40
-	expeditionArrivalRadius    float64 = 5.0
+	expeditionArrivalRadius    float64 = 6.0
 	expeditionRimResurveyDist  float64 = 6.0
 	expeditionFlankStepDist    float64 = 22.0
 	expeditionRendezvousRadius float64 = 20.0
@@ -164,6 +164,41 @@ func (s *AgentState) GetExpeditionPhase() ExpeditionPhase {
 		return ExpeditionIdle
 	}
 	return s.ExpeditionPhase
+}
+
+// GetLatestSurvey returns the latest ingested HorizonSurveyReport safely.
+func (s *AgentState) GetLatestSurvey() *civquestv1.HorizonSurveyReport {
+	if s == nil {
+		return nil
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.LatestSurvey
+}
+
+// IsExpeditionActive returns true when the explorer is actively executing a survey,
+// outbound traversal, flanking maneuver, or clan rendezvous return leg.
+func (s *AgentState) IsExpeditionActive() bool {
+	if s == nil {
+		return false
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.IsExpeditionActiveLocked()
+}
+
+// IsExpeditionActiveLocked returns true when the explorer has an active expedition phase.
+// Caller must hold s.mu.
+func (s *AgentState) IsExpeditionActiveLocked() bool {
+	if s == nil {
+		return false
+	}
+	switch s.ExpeditionPhase {
+	case ExpeditionSurveying, ExpeditionTraversing, ExpeditionFlanking, ExpeditionReturning:
+		return true
+	default:
+		return false
+	}
 }
 
 // IsExpeditionSurveying returns true when a 360-degree horizon survey is actively
@@ -703,7 +738,7 @@ func EvaluateHorizonExplorerLocked(
 	if state.ExpeditionPhase == ExpeditionTraversing || state.ExpeditionPhase == ExpeditionFlanking {
 		dxT := pos.X - state.ExpeditionTarget[0]
 		dzT := pos.Z - state.ExpeditionTarget[2]
-		if dxT*dxT+dzT*dzT <= expeditionArrivalRadius*expeditionArrivalRadius || navState == civquestv1.NavigationState_NAVIGATION_STATE_ARRIVED {
+		if dxT*dxT+dzT*dzT <= expeditionArrivalRadius*expeditionArrivalRadius {
 			if state.ExpeditionPhase == ExpeditionFlanking {
 				if state.expeditionReturning {
 					state.ExpeditionPhase = ExpeditionReturning
@@ -726,8 +761,11 @@ func EvaluateHorizonExplorerLocked(
 			state.expeditionBlockedBearings = nil
 
 			if state.ClanSize <= 1 {
-				// Solo explorer: NEVER returns to RendezvousOrigin; claims homestead directly if suitable.
-				if meetsHomesteadSuitability(state.LatestSurvey) {
+				// Solo explorer: NEVER returns to RendezvousOrigin; claims homestead directly if suitable
+				// after chaining at least 2 outbound hops (or surveying locally at the candidate site).
+				distFromSurvey := math.Hypot(pos.X-state.LastSurveyOrigin[0], pos.Z-state.LastSurveyOrigin[2])
+				if (state.ExpeditionHops >= 2 || distFromSurvey <= expeditionResurveyDist) &&
+					meetsHomesteadSuitability(state.LatestSurvey) {
 					state.HomesteadClaimed = true
 					state.HomesteadPos = [3]float64{pos.X, pos.Y, pos.Z}
 					posVec := &civquestv1.Vec3{X: pos.X, Y: pos.Y, Z: pos.Z}
@@ -775,7 +813,7 @@ func EvaluateHorizonExplorerLocked(
 		(frame.WorldTick >= state.LastSurveyTick && frame.WorldTick-state.LastSurveyTick > expeditionResurveyMaxAge)
 
 	if surveyExpired {
-		return startHorizonSurveyLocked(agentID, frame.WorldTick, state,
+		return startHorizonSurveyLocked(agentID, frame.WorldTick, pos, state,
 			"SURVEY_HORIZON: Sweeping 360° horizon to map terrain and resources")
 	}
 
@@ -789,9 +827,34 @@ func EvaluateHorizonExplorerLocked(
 	return emitExpeditionNavigateLocked(agentID, frame, state, target)
 }
 
-func startHorizonSurveyLocked(agentID string, worldTick int64, state *AgentState, goal string) *civquestv1.AgentIntent {
+func startHorizonSurveyLocked(agentID string, worldTick int64, pos *civquestv1.Vec3, state *AgentState, goal string) *civquestv1.AgentIntent {
+	if state == nil {
+		return nil
+	}
+	if state.isExpeditionSurveyingLocked(worldTick) {
+		return nil
+	}
+	// Duplicate survey storm guard: never emit another SurveyHorizonIntent within 80 ticks
+	// of the last emitted survey at the same <6m spot unless the previous survey completed
+	// or genuinely timed out (>= 120 ticks).
+	if state.lastSurveyEmitTick > 0 && worldTick >= state.lastSurveyEmitTick &&
+		worldTick-state.lastSurveyEmitTick < 80 &&
+		state.lastSurveyEmitOriginSet && pos != nil &&
+		math.Hypot(pos.X-state.lastSurveyEmitOrigin[0], pos.Z-state.lastSurveyEmitOrigin[2]) < expeditionRimResurveyDist {
+		prevCompleted := state.LastSurveyTick > 0 && state.LastSurveyTick >= state.lastSurveyEmitTick
+		prevTimedOut := worldTick-state.lastSurveyEmitTick >= expeditionSurveyTimeout
+		if !prevCompleted && !prevTimedOut {
+			return nil
+		}
+	}
+
 	state.ExpeditionPhase = ExpeditionSurveying
 	state.expeditionSurveyStartTick = worldTick
+	state.lastSurveyEmitTick = worldTick
+	if pos != nil {
+		state.lastSurveyEmitOrigin = [3]float64{pos.X, pos.Y, pos.Z}
+		state.lastSurveyEmitOriginSet = true
+	}
 	if goal != "" {
 		state.goals.ImmediateGoal = goal
 	}
@@ -852,21 +915,37 @@ func handleExpeditionBarrierLocked(
 
 	distFromLastSurvey := math.Hypot(pos.X-state.LastSurveyOrigin[0], pos.Z-state.LastSurveyOrigin[2])
 	if state.LastSurveyTick == 0 || distFromLastSurvey >= expeditionRimResurveyDist {
-		return startHorizonSurveyLocked(agentID, frame.WorldTick, state,
+		return startHorizonSurveyLocked(agentID, frame.WorldTick, pos, state,
 			"SURVEY_HORIZON: Pausing at terrain rim to sweep 360° and find clear route")
 	}
 
-	// Already surveyed within <6.0m of this rim spot and hit stuck again: pick best unblocked perpendicular flank.
+	// Already surveyed within <6.0m of this rim spot and hit stuck again: pick best unblocked flank.
 	state.ExpeditionFlankCount++
 	if state.ExpeditionFlankCount >= 3 {
 		state.ExpeditionFlankCount = 0
-		state.expeditionReturning = false
-		state.ExpeditionPhase = ExpeditionIdle
-		return startHorizonSurveyLocked(agentID, frame.WorldTick, state,
-			"SURVEY_HORIZON: Re-surveying after multiple flanked barriers")
+		if distFromLastSurvey >= expeditionRimResurveyDist {
+			state.expeditionReturning = false
+			state.ExpeditionPhase = ExpeditionIdle
+			return startHorizonSurveyLocked(agentID, frame.WorldTick, pos, state,
+				"SURVEY_HORIZON: Re-surveying after multiple flanked barriers")
+		}
+		// Already surveyed at this <6m spot: do NOT emit a duplicate same-spot survey.
+		// Back out away from the blocked rim toward an unblocked/reverse bearing.
+		retreatBearing := pickBestFlankBearingLocked(state.ExpeditionBearing, pos, state, true)
+		rdx, rdz := bearingToUnitVector(retreatBearing)
+		retreatTarget := [3]float64{
+			math.Round((pos.X+rdx*expeditionFlankStepDist)*10) / 10,
+			pos.Y,
+			math.Round((pos.Z+rdz*expeditionFlankStepDist)*10) / 10,
+		}
+		state.ExpeditionPhase = ExpeditionFlanking
+		state.ExpeditionBearing = retreatBearing
+		state.ExpeditionTarget = retreatTarget
+		state.ExpeditionNavAttempts = 0
+		return emitExpeditionNavigateLocked(agentID, frame, state, retreatTarget)
 	}
 
-	flankBearing := pickBestFlankBearingLocked(state.ExpeditionBearing, state)
+	flankBearing := pickBestFlankBearingLocked(state.ExpeditionBearing, pos, state, false)
 	fdx, fdz := bearingToUnitVector(flankBearing)
 	flankTarget := [3]float64{
 		math.Round((pos.X+fdx*expeditionFlankStepDist)*10) / 10,
@@ -880,47 +959,85 @@ func handleExpeditionBarrierLocked(
 	return emitExpeditionNavigateLocked(agentID, frame, state, flankTarget)
 }
 
-func pickBestFlankBearingLocked(currentBearing float32, state *AgentState) float32 {
-	leftBearing := normalizeBearingDeg(currentBearing - 90.0)
-	rightBearing := normalizeBearingDeg(currentBearing + 90.0)
+func pickBestFlankBearingLocked(currentBearing float32, pos *civquestv1.Vec3, state *AgentState, allowReverse bool) float32 {
+	candidates := []float32{
+		normalizeBearingDeg(currentBearing - 90.0),
+		normalizeBearingDeg(currentBearing + 90.0),
+	}
+	if allowReverse {
+		candidates = append(candidates,
+			normalizeBearingDeg(currentBearing-135.0),
+			normalizeBearingDeg(currentBearing+135.0),
+			normalizeBearingDeg(currentBearing+180.0),
+		)
+	}
+
+	var hazards []*db.AgentPOI
+	if pos != nil && state != nil {
+		if si := state.SpatialIndexLocked(); si != nil {
+			hazards = si.FindPOIsInRadius(pos, POICategoryHazard, 32.0)
+		}
+	}
 
 	scoreSide := func(b float32) float64 {
 		s := 0.0
-		for _, blocked := range state.expeditionBlockedBearings {
-			if angularDiffDeg(b, blocked) <= 35.0 {
-				s -= 100.0
+		if state != nil {
+			for _, blocked := range state.expeditionBlockedBearings {
+				if angularDiffDeg(b, blocked) <= 40.0 {
+					s -= 100.0
+				}
 			}
-		}
-		if state.LatestSurvey != nil {
-			var bestSec *civquestv1.HorizonSector
-			bestAngle := 999.0
-			for _, sec := range state.LatestSurvey.Sectors {
-				if sec == nil {
+			for _, haz := range hazards {
+				if haz == nil || pos == nil {
 					continue
 				}
-				ang := angularDiffDeg(b, sec.BearingDeg)
-				if ang < bestAngle {
-					bestAngle = ang
-					bestSec = sec
+				hdx := haz.X - pos.X
+				hdz := haz.Z - pos.Z
+				if math.Hypot(hdx, hdz) <= 0.1 {
+					continue
+				}
+				hBearing := vectorToBearingDeg(hdx, hdz)
+				if angularDiffDeg(b, hBearing) <= 40.0 {
+					s -= 80.0
 				}
 			}
-			if bestSec != nil {
-				s += float64(bestSec.HitDistance)
-				if bestSec.Occluded {
-					s -= 35.0
+			if state.LatestSurvey != nil {
+				var bestSec *civquestv1.HorizonSector
+				bestAngle := 999.0
+				for _, sec := range state.LatestSurvey.Sectors {
+					if sec == nil {
+						continue
+					}
+					ang := angularDiffDeg(b, sec.BearingDeg)
+					if ang < bestAngle {
+						bestAngle = ang
+						bestSec = sec
+					}
 				}
-				if bestSec.OpenHorizon {
-					s += 15.0
+				if bestSec != nil {
+					s += float64(bestSec.HitDistance)
+					if bestSec.Occluded {
+						s -= 35.0
+					}
+					if bestSec.OpenHorizon {
+						s += 15.0
+					}
 				}
 			}
 		}
 		return s
 	}
 
-	if scoreSide(leftBearing) >= scoreSide(rightBearing) {
-		return leftBearing
+	bestBearing := candidates[0]
+	bestScore := scoreSide(bestBearing)
+	for _, cand := range candidates[1:] {
+		sc := scoreSide(cand)
+		if sc > bestScore {
+			bestScore = sc
+			bestBearing = cand
+		}
 	}
-	return rightBearing
+	return bestBearing
 }
 
 func chooseBestSurveyBearingLocked(

@@ -90,7 +90,7 @@ func evaluateDuskNightOutpostShelterLocked(
 
 	// ADR-022: Recall known bed or campfire from SpatialIndex before establishing a duplicate
 	// forward outpost or placing duplicate habitation blocks.
-	recalledHabPOI := findNearestReliableHabitationPOI(pos, state, "")
+	recalledHabPOI := findNearestReliableHabitationPOI(pos, state, "", frame.WorldTick)
 	if recalledHabPOI != nil {
 		dx := recalledHabPOI.X - pos.X
 		dy := recalledHabPOI.Y + 0.5 - pos.Y
@@ -99,6 +99,18 @@ func evaluateDuskNightOutpostShelterLocked(
 		if distSq <= 12.25 && !hasVisibleHabitationAt(frame, poiBlockPos(recalledHabPOI)) {
 			if si := state.SpatialIndexLocked(); si != nil {
 				si.RemovePOI(recalledHabPOI.POIID)
+			}
+			recalledHabPOI = nil
+		} else if navState == civquestv1.NavigationState_NAVIGATION_STATE_STUCK {
+			acc := poiAccessTarget(recalledHabPOI)
+			if acc != nil {
+				blacklisted, _ := state.RecordTargetNavigationStuckLocked(acc.X, acc.Y, acc.Z, frame.WorldTick, DefaultUnreachableTargetTTL)
+				if blacklisted {
+					state.MarkTargetUnreachableLocked(recalledHabPOI.X, recalledHabPOI.Y, recalledHabPOI.Z, frame.WorldTick, DefaultUnreachableTargetTTL)
+				}
+			}
+			if si := state.SpatialIndexLocked(); si != nil {
+				si.DecayPOIReliability(recalledHabPOI.POIID, 0.25)
 			}
 			recalledHabPOI = nil
 		}
@@ -274,6 +286,13 @@ func evaluateDuskNightOutpostShelterLocked(
 			}
 			id := strings.ToLower(b.BlockId)
 			if strings.HasSuffix(id, "_log") || strings.HasSuffix(id, "_wood") || strings.HasSuffix(id, "_stem") {
+				if isElevatedCanopyOnlyLog(frame, pos, b) {
+					continue
+				}
+				if state.IsTreeOnCooldownLocked(b.Pos.X, b.Pos.Z, frame.WorldTick) ||
+					state.IsTargetUnreachableLocked(float64(b.Pos.X)+0.5, float64(b.Pos.Y), float64(b.Pos.Z)+0.5, frame.WorldTick) {
+					continue
+				}
 				dx := float64(b.Pos.X) + 0.5 - pos.X
 				dy := float64(b.Pos.Y) + 0.5 - pos.Y
 				dz := float64(b.Pos.Z) + 0.5 - pos.Z
@@ -370,7 +389,7 @@ func evaluateDuskNightOutpostShelterLocked(
 		// Query SpatialIndex for a known campfire before placing/crafting a duplicate campfire,
 		// only when holding shelter materials or returning to a completed shelter.
 		if hasShelterMaterials || isShelterComplete {
-			if recalledLight := findNearestReliableHabitationPOI(pos, state, "campfire"); recalledLight != nil {
+			if recalledLight := findNearestReliableHabitationPOI(pos, state, "campfire", frame.WorldTick); recalledLight != nil {
 				if math.Hypot(pos.X-recalledLight.X, pos.Z-recalledLight.Z) > 4.0 && !isStuckOrEnclosed {
 					if navState == civquestv1.NavigationState_NAVIGATION_STATE_PATHING {
 						return nil
@@ -472,37 +491,24 @@ func evaluateDuskNightOutpostShelterLocked(
 	return nil
 }
 
-func findNearestReliableHabitationPOI(pos *civquestv1.Vec3, state *AgentState, preferredBlock string) *db.AgentPOI {
+func findNearestReliableHabitationPOI(pos *civquestv1.Vec3, state *AgentState, preferredBlock string, worldTick int64) *db.AgentPOI {
 	if pos == nil || state == nil {
-		return nil
-	}
-	si := state.SpatialIndexLocked()
-	if si == nil {
 		return nil
 	}
 	agentLayer := ClassifyElevationLayer(pos.Y, 64.0)
 	if preferredBlock != "" {
-		if poi := si.FindNearestPOI(pos, POICategoryHabitation, preferredBlock, 64.0, agentLayer); poi != nil && poi.Reliability >= 0.5 {
+		if poi := state.findNearestReachablePOILocked(pos, POICategoryHabitation, preferredBlock, agentLayer, 64.0, 0.5, worldTick); poi != nil {
 			return poi
 		}
-		if poi := si.FindNearestPOI(pos, POICategoryHabitation, preferredBlock, 64.0, ""); poi != nil && poi.Reliability >= 0.5 {
-			return poi
-		}
-		return nil
+		return state.findNearestReachablePOILocked(pos, POICategoryHabitation, preferredBlock, "", 64.0, 0.5, worldTick)
 	}
-	bedPOI := si.FindNearestPOI(pos, POICategoryHabitation, "bed", 64.0, agentLayer)
+	bedPOI := state.findNearestReachablePOILocked(pos, POICategoryHabitation, "bed", agentLayer, 64.0, 0.5, worldTick)
 	if bedPOI == nil {
-		bedPOI = si.FindNearestPOI(pos, POICategoryHabitation, "bed", 64.0, "")
+		bedPOI = state.findNearestReachablePOILocked(pos, POICategoryHabitation, "bed", "", 64.0, 0.5, worldTick)
 	}
-	if bedPOI != nil && bedPOI.Reliability < 0.5 {
-		bedPOI = nil
-	}
-	campPOI := si.FindNearestPOI(pos, POICategoryHabitation, "campfire", 64.0, agentLayer)
+	campPOI := state.findNearestReachablePOILocked(pos, POICategoryHabitation, "campfire", agentLayer, 64.0, 0.5, worldTick)
 	if campPOI == nil {
-		campPOI = si.FindNearestPOI(pos, POICategoryHabitation, "campfire", 64.0, "")
-	}
-	if campPOI != nil && campPOI.Reliability < 0.5 {
-		campPOI = nil
+		campPOI = state.findNearestReachablePOILocked(pos, POICategoryHabitation, "campfire", "", 64.0, 0.5, worldTick)
 	}
 	if bedPOI == nil {
 		return campPOI

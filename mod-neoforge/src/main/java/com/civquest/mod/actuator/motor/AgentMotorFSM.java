@@ -420,7 +420,7 @@ public class AgentMotorFSM {
                 }
             }
             case MOVING -> {
-                if (agent != null && agent.getNavigator() != null) {
+                if (newState != MotorState.STUCK_RECOVERY && agent != null && agent.getNavigator() != null) {
                     agent.getNavigator().stop();
                 }
             }
@@ -442,6 +442,9 @@ public class AgentMotorFSM {
             }
             case STUCK_RECOVERY -> {
                 stuckRecoveryTicks = 0;
+                if (agent != null && agent.getNavigator() != null) {
+                    agent.getNavigator().stop();
+                }
             }
             case SURVEYING -> {
                 clearSurveyState();

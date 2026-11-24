@@ -1,5 +1,6 @@
 package com.civquest.mod.actuator.motor;
 
+import com.civquest.mod.AgentEntity;
 import com.civquest.mod.grpc.v1.AgentIntent;
 import com.civquest.mod.grpc.v1.NavigateIntent;
 import com.civquest.mod.grpc.v1.Vec3;
@@ -8,6 +9,7 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.Mockito.*;
 
 public class AgentWatchdogFSMTest {
 
@@ -198,5 +200,60 @@ public class AgentWatchdogFSMTest {
 
         assertFalse(watchdogFSM.transitionTo(WatchdogState.CONNECTED_ACTIVE, "same"));
         assertFalse(watchdogFSM.transitionTo(null, "null"));
+    }
+
+    @Test
+    @DisplayName("WatchdogFSM stays CONNECTED_ACTIVE during SURVEYING and SLEEPING, detects idle timeout after and explicit disconnect during")
+    void testAutonomousPeripheryLivenessExemptionsAndTrueDisconnects() {
+        AgentEntity agent = mock(AgentEntity.class);
+        AgentMotorFSM motorFSM = mock(AgentMotorFSM.class);
+        when(agent.getAgentId()).thenReturn("watchdog-periphery-agent");
+        when(agent.isAlive()).thenReturn(true);
+        when(agent.isRemoved()).thenReturn(false);
+        when(agent.getMotorFSM()).thenReturn(motorFSM);
+        when(agent.isSleeping()).thenReturn(false);
+        when(motorFSM.getState()).thenReturn(MotorState.SURVEYING);
+
+        AgentWatchdogFSM fsm = new AgentWatchdogFSM(agent);
+        fsm.onConnected();
+        assertEquals(WatchdogState.CONNECTED_ACTIVE, fsm.getState());
+
+        // 80 ticks in SURVEYING without new intents -> remains CONNECTED_ACTIVE
+        for (int t = 1; t <= 80; t++) {
+            agent.tickCount = t;
+            fsm.tick();
+            assertEquals(WatchdogState.CONNECTED_ACTIVE, fsm.getState());
+        }
+
+        // Transition to SLEEPING for 120 ticks -> remains CONNECTED_ACTIVE
+        when(motorFSM.getState()).thenReturn(MotorState.SLEEPING);
+        when(agent.isSleeping()).thenReturn(true);
+        for (int t = 81; t <= 200; t++) {
+            agent.tickCount = t;
+            fsm.tick();
+            assertEquals(WatchdogState.CONNECTED_ACTIVE, fsm.getState());
+        }
+
+        // Return to IDLE -> timeout window starts fresh from tick 200
+        when(agent.isSleeping()).thenReturn(false);
+        when(motorFSM.getState()).thenReturn(MotorState.IDLE);
+        for (int t = 201; t <= 240; t++) {
+            agent.tickCount = t;
+            fsm.tick();
+            assertEquals(WatchdogState.CONNECTED_ACTIVE, fsm.getState());
+        }
+        agent.tickCount = 241;
+        fsm.tick();
+        assertEquals(WatchdogState.STREAM_DEGRADED, fsm.getState());
+
+        // Reconnect during SURVEYING, then verify explicit onDisconnected() still triggers DISCONNECTED_SAFE_MODE
+        when(motorFSM.getState()).thenReturn(MotorState.SURVEYING);
+        fsm.onConnected();
+        assertEquals(WatchdogState.CONNECTED_ACTIVE, fsm.getState());
+        fsm.onDisconnected();
+        assertEquals(WatchdogState.DISCONNECTED_SAFE_MODE, fsm.getState());
+        agent.tickCount = 242;
+        fsm.tick();
+        assertEquals(WatchdogState.DISCONNECTED_SAFE_MODE, fsm.getState());
     }
 }

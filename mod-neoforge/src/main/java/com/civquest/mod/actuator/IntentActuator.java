@@ -199,6 +199,11 @@ public class IntentActuator {
                     return;
                 }
             } else if (isSessionInFlight(session)) {
+                if (isSurveyHorizonOnlyBatch(queueBatch) && isSurveyActiveOrQueued(session, fsm)) {
+                    // Deduplicate redundant survey-only batches while a survey is already active or queued
+                    // so the avatar executes one clean 360-degree sweep and returns to IDLE.
+                    return;
+                }
                 if (fsm == null || fsm.getState() != MotorState.SLEEPING) {
                     if (isPocketCraftOnlyBatch(agent, queueBatch)) {
                         for (AgentIntent craftIntent : queueBatch.getIntentsList()) {
@@ -229,6 +234,45 @@ public class IntentActuator {
             syncReceiptToMotor(agent, session);
             advanceBatch(agent, session);
         }
+    }
+
+    private static boolean isSurveyHorizonOnlyBatch(IntentBatch batch) {
+        if (batch == null || batch.getIntentsCount() == 0) {
+            return false;
+        }
+        for (AgentIntent intent : batch.getIntentsList()) {
+            if (!intent.hasSurveyHorizon()) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private static boolean hasSurveyHorizonIntent(IntentBatch batch) {
+        if (batch == null) {
+            return false;
+        }
+        for (AgentIntent intent : batch.getIntentsList()) {
+            if (intent.hasSurveyHorizon()) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static boolean isSurveyActiveOrQueued(BatchSession session, AgentMotorFSM fsm) {
+        if (fsm != null && fsm.getState() == MotorState.SURVEYING) {
+            return true;
+        }
+        if (hasSurveyHorizonIntent(session.activeBatch)) {
+            return true;
+        }
+        for (IntentBatch pending : session.pendingBatches) {
+            if (hasSurveyHorizonIntent(pending)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private static boolean isWakeUpOrSleepPreempt(AgentEntity agent, AgentMotorFSM fsm, IntentBatch batch) {
