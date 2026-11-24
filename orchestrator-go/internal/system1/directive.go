@@ -673,15 +673,22 @@ func canExecuteImmediateBootstrapCraft(frame *civquestv1.TelemetryFrame, state *
 	if frame == nil || frame.Status == nil || frame.Status.Position == nil || state == nil {
 		return false
 	}
+	state.mu.RLock()
+	defer state.mu.RUnlock()
+	return canExecuteImmediateBootstrapCraftLocked(frame, state)
+}
+
+func canExecuteImmediateBootstrapCraftLocked(frame *civquestv1.TelemetryFrame, state *AgentState) bool {
+	if frame == nil || frame.Status == nil || frame.Status.Position == nil || state == nil {
+		return false
+	}
 	pos := frame.Status.Position
 	inv := inspectBootstrapInventory(frame.Status.Inventory)
 	invMap := crafting.InventoryMapFromProtos(frame.Status.Inventory)
 
-	state.mu.RLock()
 	recipeGraph := state.RecipeGraphLocked()
 	lastCraftTick := state.lastCraftTick
 	lastPlaceTick := state.lastShelterPlaceTick
-	state.mu.RUnlock()
 
 	if recipeGraph.IsEmpty() {
 		return false
@@ -691,9 +698,7 @@ func canExecuteImmediateBootstrapCraft(frame *civquestv1.TelemetryFrame, state *
 		return false
 	}
 
-	state.mu.RLock()
 	nearestTable, _, bestTableDistSq := findNearestCraftingTableLocked(frame, pos, state)
-	state.mu.RUnlock()
 	tableInReach := isCraftingTableWithinReach(nearestTable, bestTableDistSq, pos)
 
 	var toolTargets []string

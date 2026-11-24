@@ -1802,3 +1802,37 @@ func TestBootstrapDynamicRecipeGraph_FailClosedWithoutSyncedCatalog(t *testing.T
 		t.Fatalf("expected fallback to timber harvesting when RecipeGraph is nil, got %+v", intent)
 	}
 }
+
+func TestFindNearestTreeTrunk_DeprioritizesPeerOccupiedTrunks(t *testing.T) {
+	state := NewAgentState()
+	pos := &civquestv1.Vec3{X: 0.5, Y: 64, Z: 0.5}
+
+	// Two visible trunks at (5, 64, 0) and (8, 64, 0). A peer agent "bert" is already at (5.5, 64, 0.5).
+	frame := &civquestv1.TelemetryFrame{
+		WorldTick: 100,
+		Status: &civquestv1.AgentStatus{
+			AgentId:  "able",
+			Position: pos,
+		},
+		VisibleEntities: []*civquestv1.VisibleEntity{
+			{
+				EntityId:    2,
+				EntityType:  "minecraft:player",
+				DisplayName: "bert",
+				Position:    &civquestv1.Vec3{X: 5.5, Y: 64, Z: 0.5},
+			},
+		},
+		InterestingBlocks: []*civquestv1.VisibleBlock{
+			{Pos: &civquestv1.BlockPosProto{X: 5, Y: 64, Z: 0}, BlockId: "minecraft:oak_log"},
+			{Pos: &civquestv1.BlockPosProto{X: 8, Y: 64, Z: 0}, BlockId: "minecraft:oak_log"},
+		},
+	}
+
+	// Ensure even for any agentID, the unoccupied trunk (8, 64, 0) is chosen over peer-occupied (5, 64, 0)
+	for _, id := range []string{"able", "carl", "dave", "earl", "fred"} {
+		chosen, _ := findNearestTreeTrunk(id, frame, pos, state)
+		if chosen == nil || chosen.Pos == nil || chosen.Pos.X != 8 {
+			t.Fatalf("agent %s: expected unoccupied trunk X=8 to be chosen over peer-occupied X=5, got %+v", id, chosen)
+		}
+	}
+}

@@ -1783,4 +1783,103 @@ public class IntentActuatorTest {
         assertEquals(4L, actuator.getCurrentReceipt(agent).getBatchId());
         assertEquals(com.civquest.mod.actuator.motor.MotorState.SURVEYING, fsm.getState());
     }
+
+    @Test
+    @DisplayName("Navigate-only batches coalesce in pendingBatches while preserving non-navigate and compound batches")
+    void testNavigateOnlyBatchCoalescingPreservesNonNavigateBatches() {
+        AgentEntity agent = mock(AgentEntity.class);
+        AgentNavigator nav = mock(AgentNavigator.class);
+        Level level = mock(Level.class);
+        when(agent.getAgentId()).thenReturn("coalesce-unit-agent");
+        when(agent.isAlive()).thenReturn(true);
+        when(agent.getNavigator()).thenReturn(nav);
+        when(agent.level()).thenReturn(level);
+
+        com.civquest.mod.actuator.motor.AgentMotorFSM fsm = new com.civquest.mod.actuator.motor.AgentMotorFSM(agent);
+        when(agent.getMotorFSM()).thenReturn(fsm);
+        when(nav.isPathing()).thenReturn(true);
+        when(nav.isArrived()).thenReturn(false);
+
+        // 1. Start active navigation batch
+        IntentBatch activeNav = IntentBatch.newBuilder()
+                .setAgentId("coalesce-unit-agent")
+                .setBatchId(1001L)
+                .addIntents(AgentIntent.newBuilder()
+                        .setAgentId("coalesce-unit-agent")
+                        .setNavigate(NavigateIntent.newBuilder()
+                                .setTarget(Vec3.newBuilder().setX(40).setY(64).setZ(40).build())
+                                .build())
+                        .build())
+                .build();
+        actuator.submitBatch(agent, activeNav);
+        assertEquals(IntentReceipt.ReceiptStatus.RECEIPT_STATUS_EXECUTING, actuator.getCurrentReceipt(agent).getStatus());
+
+        // 2. Queue non-navigate InteractBlockIntent (RING_BELL) and first navigate-only batch
+        IntentBatch bellBatch = IntentBatch.newBuilder()
+                .setAgentId("coalesce-unit-agent")
+                .setBatchId(1002L)
+                .addIntents(AgentIntent.newBuilder()
+                        .setAgentId("coalesce-unit-agent")
+                        .setInteractBlock(InteractBlockIntent.newBuilder()
+                                .setPos(BlockPosProto.newBuilder().setX(1).setY(64).setZ(1).build())
+                                .setInteractionType(InteractBlockIntent.InteractionType.RING_BELL)
+                                .build())
+                        .build())
+                .build();
+        IntentBatch queuedNav1 = IntentBatch.newBuilder()
+                .setAgentId("coalesce-unit-agent")
+                .setBatchId(1003L)
+                .addIntents(AgentIntent.newBuilder()
+                        .setAgentId("coalesce-unit-agent")
+                        .setNavigate(NavigateIntent.newBuilder()
+                                .setTarget(Vec3.newBuilder().setX(10).setY(64).setZ(10).build())
+                                .build())
+                        .build())
+                .build();
+        IntentBatch queuedNav2 = IntentBatch.newBuilder()
+                .setAgentId("coalesce-unit-agent")
+                .setBatchId(1004L)
+                .addIntents(AgentIntent.newBuilder()
+                        .setAgentId("coalesce-unit-agent")
+                        .setNavigate(NavigateIntent.newBuilder()
+                                .setTarget(Vec3.newBuilder().setX(20).setY(64).setZ(20).build())
+                                .build())
+                        .build())
+                .build();
+        IntentBatch queuedNav3 = IntentBatch.newBuilder()
+                .setAgentId("coalesce-unit-agent")
+                .setBatchId(1005L)
+                .addIntents(AgentIntent.newBuilder()
+                        .setAgentId("coalesce-unit-agent")
+                        .setNavigate(NavigateIntent.newBuilder()
+                                .setTarget(Vec3.newBuilder().setX(30).setY(64).setZ(30).build())
+                                .build())
+                        .build())
+                .build();
+
+        actuator.submitBatch(agent, bellBatch);
+        actuator.submitBatch(agent, queuedNav1);
+        actuator.submitBatch(agent, queuedNav2);
+        actuator.submitBatch(agent, queuedNav3);
+
+        // bellBatch + latest coalesced navigate-only batch (1005L) = 2 batches
+        assertEquals(2, actuator.getQueuedBatchCount(agent),
+                "Multiple queued navigate-only batches must coalesce to 1 while preserving non-navigate batches");
+
+        // 3. Complete active navigation -> bellBatch (1002L) runs first, then 1005L starts
+        when(nav.isPathing()).thenReturn(false);
+        when(nav.isArrived()).thenReturn(true);
+        when(agent.distanceToSqr(anyDouble(), anyDouble(), anyDouble())).thenReturn(1.0);
+        when(level.hasChunkAt(any(BlockPos.class))).thenReturn(true);
+        when(level.getBlockState(any(BlockPos.class))).thenReturn(Blocks.AIR.defaultBlockState());
+
+        fsm.tick();
+        when(nav.isPathing()).thenReturn(true);
+        when(nav.isArrived()).thenReturn(false);
+        actuator.tick(agent);
+
+        assertEquals(1005L, actuator.getCurrentReceipt(agent).getBatchId(),
+                "After bellBatch completes, the coalesced latest NavigateIntent batch (1005L) must execute");
+        assertEquals(0, actuator.getQueuedBatchCount(agent));
+    }
 }

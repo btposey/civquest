@@ -42,6 +42,19 @@ public class AgentEntity extends FakePlayer {
     private static final Logger LOGGER = LogUtils.getLogger();
     private static final float BASAL_METABOLIC_EXHAUSTION = 0.002F;
     private static final float MOVEMENT_EXHAUSTION = 0.01F;
+    private static final double PEER_SEPARATION_RADIUS = 1.15;
+    private static final double PEER_SEPARATION_STEP = 0.10;
+    private static final double PEER_SEPARATION_FOOTPRINT_RADIUS = 0.30;
+    private static final int PEER_SEPARATION_MAX_SAFE_DROP = 3;
+    private static final double[] PEER_SEPARATION_FALLBACK_ANGLES_RAD = {
+            Math.toRadians(45.0),
+            Math.toRadians(-45.0),
+            Math.toRadians(90.0),
+            Math.toRadians(-90.0),
+            Math.toRadians(135.0),
+            Math.toRadians(-135.0),
+            Math.PI
+    };
     private static final java.lang.reflect.Field SPAWN_INVULNERABLE_TIME_FIELD = resolveSpawnInvulnerableField();
 
     private static java.lang.reflect.Field resolveSpawnInvulnerableField() {
@@ -223,6 +236,11 @@ public class AgentEntity extends FakePlayer {
                 if (this.intentActuator != null) {
                     this.intentActuator.tick(this);
                 }
+                if (this.isAlive() && !this.isSleeping()
+                        && (this.motorFSM == null || this.motorFSM.getState() != MotorState.SURVEYING)
+                        && (this.breaker == null || !this.breaker.isBreaking())) {
+                    applyHorizontalPeerSeparation();
+                }
                 if (this.isAlive() && !this.isSleeping() && !this.breaker.isBreaking()
                         && (this.motorFSM == null || this.motorFSM.getState() != MotorState.SURVEYING)
                         && (this.navigator == null || this.navigator.getNavigationState() != com.civquest.mod.grpc.v1.NavigationState.NAVIGATION_STATE_PATHING)) {
@@ -284,6 +302,262 @@ public class AgentEntity extends FakePlayer {
             this.yBodyRot = com.civquest.mod.actuator.LookSmoothing.clampBodyToHead(body, smoothYaw, 50.0F);
             this.setXRot(smoothPitch);
         }
+    }
+
+    /**
+     * Applies strictly horizontal personal-space separation away from nearby alive, non-sleeping
+     * {@link AgentEntity} peers while guarding against solid obstacles, hazards, and >3-block cliffs.
+     */
+    public void applyHorizontalPeerSeparation() {
+        net.minecraft.world.level.Level level = this.level();
+        if (level == null || level.isClientSide || this.isRemoved() || !this.isAlive() || this.isSleeping()) {
+            return;
+        }
+        if (this.motorFSM != null && this.motorFSM.getState() == MotorState.SURVEYING) {
+            return;
+        }
+        if (this.breaker != null && this.breaker.isBreaking()) {
+            return;
+        }
+
+        List<AgentEntity> nearbyPeers = level.getEntitiesOfClass(
+                AgentEntity.class,
+                this.getBoundingBox().inflate(1.2, 1.2, 1.2),
+                p -> p != null && p != this && p.isAlive() && !p.isSleeping()
+        );
+        if (nearbyPeers == null || nearbyPeers.isEmpty()) {
+            return;
+        }
+
+        double curX = this.getX();
+        double curY = this.getY();
+        double curZ = this.getZ();
+
+        double rx = 0.0;
+        double rz = 0.0;
+        int affectingCount = 0;
+        List<AgentEntity> exactOverlapGroup = null;
+
+        for (AgentEntity peer : nearbyPeers) {
+            if (Math.abs(peer.getY() - curY) >= 1.2) {
+                continue;
+            }
+            double dx = curX - peer.getX();
+            double dz = curZ - peer.getZ();
+            double dist = Math.hypot(dx, dz);
+            if (dist >= PEER_SEPARATION_RADIUS) {
+                continue;
+            }
+            affectingCount++;
+            if (dist < 1e-4) {
+                if (exactOverlapGroup == null) {
+                    exactOverlapGroup = new ArrayList<>();
+                    exactOverlapGroup.add(this);
+                }
+                exactOverlapGroup.add(peer);
+            } else {
+                double weight = (PEER_SEPARATION_RADIUS - dist) / PEER_SEPARATION_RADIUS;
+                rx += (dx / dist) * weight;
+                rz += (dz / dist) * weight;
+            }
+        }
+
+        if (affectingCount == 0) {
+            return;
+        }
+
+        if (exactOverlapGroup != null) {
+            exactOverlapGroup.sort(java.util.Comparator.comparing(
+                    Entity::getUUID, java.util.Comparator.nullsLast(UUID::compareTo)));
+            int rank = exactOverlapGroup.indexOf(this);
+            if (rank < 0) {
+                rank = 0;
+            }
+            int groupSize = exactOverlapGroup.size();
+            UUID anchorUuid = exactOverlapGroup.get(0).getUUID();
+            double baseOffset = anchorUuid != null
+                    ? ((anchorUuid.hashCode() & 0xFFFF) * (2.0 * Math.PI / 65536.0))
+                    : 0.0;
+            double angle = baseOffset + (2.0 * Math.PI * rank) / groupSize;
+            rx += Math.cos(angle);
+            rz += Math.sin(angle);
+        }
+
+        double mag = Math.hypot(rx, rz);
+        if (mag < 1e-6) {
+            UUID selfId = this.getUUID();
+            double tieAngle = selfId != null
+                    ? ((selfId.hashCode() & 0xFFFF) * (2.0 * Math.PI / 65536.0))
+                    : 0.0;
+            rx = Math.cos(tieAngle);
+            rz = Math.sin(tieAngle);
+            mag = 1.0;
+        }
+
+        double ux = rx / mag;
+        double uz = rz / mag;
+
+        double chosenX = Double.NaN;
+        double chosenZ = Double.NaN;
+        if (isHorizontalSeparationSafe(level, curX, curY, curZ, curX + ux * PEER_SEPARATION_STEP, curZ + uz * PEER_SEPARATION_STEP)) {
+            chosenX = ux * PEER_SEPARATION_STEP;
+            chosenZ = uz * PEER_SEPARATION_STEP;
+        } else {
+            for (double rot : PEER_SEPARATION_FALLBACK_ANGLES_RAD) {
+                double cos = Math.cos(rot);
+                double sin = Math.sin(rot);
+                double candUx = ux * cos - uz * sin;
+                double candUz = ux * sin + uz * cos;
+                double stepX = candUx * PEER_SEPARATION_STEP;
+                double stepZ = candUz * PEER_SEPARATION_STEP;
+                if (isHorizontalSeparationSafe(level, curX, curY, curZ, curX + stepX, curZ + stepZ)) {
+                    chosenX = stepX;
+                    chosenZ = stepZ;
+                    break;
+                }
+            }
+        }
+
+        if (!Double.isFinite(chosenX) || !Double.isFinite(chosenZ)) {
+            return;
+        }
+
+        boolean wasOnGround = this.onGround();
+        this.move(net.minecraft.world.entity.MoverType.SELF, new net.minecraft.world.phys.Vec3(chosenX, 0.0, chosenZ));
+        if (wasOnGround && hasDirectSupportBelow(level, this.getX(), this.getY(), this.getZ())) {
+            this.setOnGround(true);
+        }
+    }
+
+    private boolean isHorizontalSeparationSafe(
+            net.minecraft.world.level.Level level,
+            double curX, double curY, double curZ,
+            double targetX, double targetZ) {
+        if (level == null || !Double.isFinite(targetX) || !Double.isFinite(targetZ)) {
+            return false;
+        }
+        try {
+            if (level.getWorldBorder() != null && !level.getWorldBorder().isWithinBounds(targetX, targetZ)) {
+                return false;
+            }
+        } catch (Throwable ignored) {
+        }
+        if (isFootprintSafe(level, curX, curY, curZ)) {
+            return isFootprintSafe(level, targetX, curY, targetZ);
+        }
+        int feetY = net.minecraft.util.Mth.floor(curY + 0.05);
+        return isColumnSafe(level, net.minecraft.util.Mth.floor(targetX), feetY, net.minecraft.util.Mth.floor(targetZ), curY);
+    }
+
+    private static boolean isFootprintSafe(net.minecraft.world.level.Level level, double x, double curY, double z) {
+        int minBx = net.minecraft.util.Mth.floor(x - PEER_SEPARATION_FOOTPRINT_RADIUS + 1e-6);
+        int maxBx = net.minecraft.util.Mth.floor(x + PEER_SEPARATION_FOOTPRINT_RADIUS - 1e-6);
+        int minBz = net.minecraft.util.Mth.floor(z - PEER_SEPARATION_FOOTPRINT_RADIUS + 1e-6);
+        int maxBz = net.minecraft.util.Mth.floor(z + PEER_SEPARATION_FOOTPRINT_RADIUS - 1e-6);
+        int feetY = net.minecraft.util.Mth.floor(curY + 0.05);
+        for (int bx = minBx; bx <= maxBx; bx++) {
+            for (int bz = minBz; bz <= maxBz; bz++) {
+                if (!isColumnSafe(level, bx, feetY, bz, curY)) {
+                    return false;
+                }
+            }
+        }
+        return true;
+    }
+
+    private static boolean isColumnSafe(net.minecraft.world.level.Level level, int bx, int feetY, int bz, double curY) {
+        net.minecraft.core.BlockPos feetPos = new net.minecraft.core.BlockPos(bx, feetY, bz);
+        if (!level.hasChunkAt(feetPos)) {
+            return false;
+        }
+        int headY = net.minecraft.util.Mth.floor(curY + 1.75);
+        for (int y = feetY; y <= headY; y++) {
+            net.minecraft.core.BlockPos pos = new net.minecraft.core.BlockPos(bx, y, bz);
+            if (isSeparationHazard(level, pos) || isSolidObstacleForSeparation(level, pos)) {
+                return false;
+            }
+        }
+        for (int drop = 1; drop <= PEER_SEPARATION_MAX_SAFE_DROP + 1; drop++) {
+            net.minecraft.core.BlockPos belowPos = new net.minecraft.core.BlockPos(bx, feetY - drop, bz);
+            if (isSeparationHazard(level, belowPos)) {
+                return false;
+            }
+            if (isSolidObstacleForSeparation(level, belowPos)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static boolean isSolidObstacleForSeparation(net.minecraft.world.level.Level level, net.minecraft.core.BlockPos pos) {
+        if (level == null || pos == null || !level.hasChunkAt(pos)) {
+            return false;
+        }
+        try {
+            net.minecraft.world.level.block.state.BlockState state = level.getBlockState(pos);
+            if (state == null || state.isAir()) {
+                return false;
+            }
+            var shape = state.getCollisionShape(level, pos);
+            return shape != null && !shape.isEmpty();
+        } catch (Throwable ignored) {
+            return false;
+        }
+    }
+
+    private static boolean isSeparationHazard(net.minecraft.world.level.Level level, net.minecraft.core.BlockPos pos) {
+        if (level == null || pos == null || !level.hasChunkAt(pos)) {
+            return false;
+        }
+        try {
+            net.minecraft.world.level.block.state.BlockState state = level.getBlockState(pos);
+            if (state != null) {
+                net.minecraft.world.level.material.FluidState fluid = state.getFluidState();
+                if (fluid != null && (fluid.is(net.minecraft.tags.FluidTags.LAVA)
+                        || fluid.is(net.minecraft.world.level.material.Fluids.LAVA)
+                        || fluid.is(net.minecraft.world.level.material.Fluids.FLOWING_LAVA))) {
+                    return true;
+                }
+                if (state.is(net.minecraft.world.level.block.Blocks.LAVA)
+                        || state.is(net.minecraft.world.level.block.Blocks.FIRE)
+                        || state.is(net.minecraft.world.level.block.Blocks.SOUL_FIRE)
+                        || state.is(net.minecraft.world.level.block.Blocks.CAMPFIRE)
+                        || state.is(net.minecraft.world.level.block.Blocks.SOUL_CAMPFIRE)
+                        || state.is(net.minecraft.world.level.block.Blocks.MAGMA_BLOCK)
+                        || state.is(net.minecraft.world.level.block.Blocks.CACTUS)
+                        || state.is(net.minecraft.world.level.block.Blocks.SWEET_BERRY_BUSH)
+                        || state.is(net.minecraft.world.level.block.Blocks.WITHER_ROSE)) {
+                    return true;
+                }
+            }
+            net.minecraft.world.level.material.FluidState levelFluid = level.getFluidState(pos);
+            if (levelFluid != null && (levelFluid.is(net.minecraft.tags.FluidTags.LAVA)
+                    || levelFluid.is(net.minecraft.world.level.material.Fluids.LAVA)
+                    || levelFluid.is(net.minecraft.world.level.material.Fluids.FLOWING_LAVA))) {
+                return true;
+            }
+        } catch (Throwable ignored) {
+        }
+        return false;
+    }
+
+    private static boolean hasDirectSupportBelow(net.minecraft.world.level.Level level, double x, double curY, double z) {
+        if (level == null) {
+            return false;
+        }
+        int minBx = net.minecraft.util.Mth.floor(x - PEER_SEPARATION_FOOTPRINT_RADIUS + 1e-6);
+        int maxBx = net.minecraft.util.Mth.floor(x + PEER_SEPARATION_FOOTPRINT_RADIUS - 1e-6);
+        int minBz = net.minecraft.util.Mth.floor(z - PEER_SEPARATION_FOOTPRINT_RADIUS + 1e-6);
+        int maxBz = net.minecraft.util.Mth.floor(z + PEER_SEPARATION_FOOTPRINT_RADIUS - 1e-6);
+        int groundY = net.minecraft.util.Mth.floor(curY - 0.05);
+        for (int bx = minBx; bx <= maxBx; bx++) {
+            for (int bz = minBz; bz <= maxBz; bz++) {
+                if (isSolidObstacleForSeparation(level, new net.minecraft.core.BlockPos(bx, groundY, bz))) {
+                    return true;
+                }
+            }
+        }
+        return false;
     }
 
     /**

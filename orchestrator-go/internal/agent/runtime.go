@@ -2513,7 +2513,8 @@ func (r *AgentRuntime) dispatchContemplation(frame *civquestv1.TelemetryFrame) {
 	if cooldown <= 0 {
 		cooldown = 3600
 	}
-	idleDurationOK := r.hasIdleStartTick && frame.WorldTick >= r.idleStartTick &&
+	idleDurationOK := frame.WorldTick > 0 && r.hasIdleStartTick && r.idleStartTick > 0 &&
+		frame.WorldTick >= r.idleStartTick &&
 		(frame.WorldTick-r.idleStartTick) >= threshold
 	idleCooldownOK := r.lastIdleContemplationTick == 0 ||
 		frame.WorldTick < r.lastIdleContemplationTick ||
@@ -2952,13 +2953,12 @@ func (r *AgentRuntime) applyContemplationDirective(resp *system2.StrategicContem
 }
 
 func (r *AgentRuntime) updateIdleTracker(frame *civquestv1.TelemetryFrame, result system1.FSMResult) {
-	if frame == nil || frame.Status == nil {
+	if frame == nil || frame.Status == nil || frame.WorldTick <= 0 {
 		return
 	}
 	isSleeping := frame.Status.IsSleeping ||
 		(r.system1State != nil && r.system1State.GetCurrentRoutine() == system1.RoutineSleep)
 	inEmergency := result.Stage == system1.StageEmergency || result.Stage == system1.StageDead
-	hasActiveTask := r.system1State != nil && r.system1State.HasActiveTask()
 
 	emittedProductive := false
 	for _, fi := range result.Intents {
@@ -2975,7 +2975,6 @@ func (r *AgentRuntime) updateIdleTracker(frame *civquestv1.TelemetryFrame, resul
 	}
 
 	pos := frame.Status.Position
-	navState := frame.Status.NavigationState
 
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -2987,7 +2986,7 @@ func (r *AgentRuntime) updateIdleTracker(frame *civquestv1.TelemetryFrame, resul
 		return
 	}
 
-	if hasActiveTask || emittedProductive {
+	if emittedProductive {
 		r.idleStartTick = frame.WorldTick
 		r.hasIdleStartTick = true
 		if pos != nil {
@@ -2997,7 +2996,7 @@ func (r *AgentRuntime) updateIdleTracker(frame *civquestv1.TelemetryFrame, resul
 		return
 	}
 
-	if !r.hasIdleStartTick || frame.WorldTick < r.idleStartTick {
+	if !r.hasIdleStartTick || r.idleStartTick <= 0 || frame.WorldTick < r.idleStartTick {
 		r.idleStartTick = frame.WorldTick
 		r.hasIdleStartTick = true
 		if pos != nil {
@@ -3007,11 +3006,16 @@ func (r *AgentRuntime) updateIdleTracker(frame *civquestv1.TelemetryFrame, resul
 		return
 	}
 
-	if pos != nil && r.hasLastActivePos {
+	if pos != nil {
+		if !r.hasLastActivePos {
+			r.lastActivePos = [3]float64{pos.X, pos.Y, pos.Z}
+			r.hasLastActivePos = true
+			return
+		}
 		dx := pos.X - r.lastActivePos[0]
 		dy := pos.Y - r.lastActivePos[1]
 		dz := pos.Z - r.lastActivePos[2]
-		if dx*dx+dy*dy+dz*dz >= 1.5*1.5 && navState == civquestv1.NavigationState_NAVIGATION_STATE_PATHING {
+		if dx*dx+dy*dy+dz*dz >= 1.5*1.5 {
 			r.idleStartTick = frame.WorldTick
 			r.lastActivePos = [3]float64{pos.X, pos.Y, pos.Z}
 		}

@@ -111,6 +111,7 @@ type TaskSubroutine struct {
 	ActiveSubTarget     *civquestv1.BlockPosProto
 	ActiveTargetID      string
 	ActiveApproachPos   *civquestv1.Vec3
+	ApproachBestDistSq  float64
 	LastActionSubTarget *civquestv1.BlockPosProto
 	LastActionTargetID  string
 	BaselineCount       int32
@@ -254,12 +255,6 @@ func (t *TaskSubroutine) TickWithReceipt(agentID string, state *AgentState, fram
 				case civquestv1.IntentReceipt_RECEIPT_STATUS_COMPLETED:
 					prevPhase := t.Phase
 					prevLastNavTick := t.LastNavigateTick
-					t.ConsecutiveFailures = 0
-					t.LastProgressTick = frame.WorldTick
-					t.LastActionTick = 0
-					t.LastNavigateTick = 0
-
-					// If navigating in APPROACH and motor reports completion, advance immediately to PREPARE
 					if prevPhase == TaskPhaseApproach {
 						reach := t.Spec.ReachRadius
 						if reach <= 0 {
@@ -271,13 +266,25 @@ func (t *TaskSubroutine) TickWithReceipt(agentID string, state *AgentState, fram
 						}
 						distSq := distanceSqToSubTarget(frame.Status.Position, t.ActiveApproachPos, t.ActiveSubTarget)
 						maxArrival := reach + float64(tol) + 1.0
-						if t.ActiveApproachPos == nil && t.ActiveSubTarget == nil {
-							t.Phase = TaskPhasePrepare
-						} else if prevLastNavTick > 0 &&
-							frame.Status.NavigationState != civquestv1.NavigationState_NAVIGATION_STATE_PATHING &&
-							distSq <= maxArrival*maxArrival {
-							t.Phase = TaskPhasePrepare
+						withinArrival := (t.ActiveApproachPos == nil && t.ActiveSubTarget == nil) || distSq <= maxArrival*maxArrival
+						movedCloser := t.ApproachBestDistSq > 0 && distSq <= t.ApproachBestDistSq-1.0
+						if prevLastNavTick > 0 && (withinArrival || movedCloser) {
+							t.ConsecutiveFailures = 0
+							t.LastProgressTick = frame.WorldTick
+							t.LastActionTick = 0
+							t.LastNavigateTick = 0
+							if distSq < t.ApproachBestDistSq || t.ApproachBestDistSq == 0 {
+								t.ApproachBestDistSq = distSq
+							}
+							if frame.Status.NavigationState != civquestv1.NavigationState_NAVIGATION_STATE_PATHING && withinArrival {
+								t.Phase = TaskPhasePrepare
+							}
 						}
+					} else {
+						t.ConsecutiveFailures = 0
+						t.LastProgressTick = frame.WorldTick
+						t.LastActionTick = 0
+						t.LastNavigateTick = 0
 					}
 
 				case civquestv1.IntentReceipt_RECEIPT_STATUS_FAILED:
@@ -433,6 +440,7 @@ func (t *TaskSubroutine) TickWithReceipt(agentID string, state *AgentState, fram
 			t.ActiveApproachPos = approachPos
 			t.ActiveSubTarget = cloneBlockPos(blockPos)
 			t.ActiveTargetID = targetID
+			t.ApproachBestDistSq = distanceSqToSubTarget(frame.Status.Position, approachPos, blockPos)
 		}
 		t.Phase = TaskPhaseApproach
 	}
@@ -444,17 +452,48 @@ func (t *TaskSubroutine) TickWithReceipt(agentID string, state *AgentState, fram
 	}
 	pos := frame.Status.Position
 	distSq := distanceSqToSubTarget(pos, t.ActiveApproachPos, t.ActiveSubTarget)
+	if t.ApproachBestDistSq <= 0 {
+		t.ApproachBestDistSq = distSq
+	}
 	if t.Phase != TaskPhasePrepare && t.Phase != TaskPhaseAct && distSq > reach*reach {
 		t.Phase = TaskPhaseApproach
 		navState := frame.Status.NavigationState
 		if navState == civquestv1.NavigationState_NAVIGATION_STATE_PATHING {
 			return TaskStepResult{Phase: TaskPhaseApproach, Active: true}
 		}
+		if navState == civquestv1.NavigationState_NAVIGATION_STATE_STUCK &&
+			t.LastNavigateTick > 0 && frame.WorldTick >= t.LastNavigateTick {
+			if frame.WorldTick-t.LastNavigateTick < 80 {
+				return TaskStepResult{Phase: TaskPhaseApproach, Active: true}
+			}
+			t.LastNavigateTick = 0
+			t.ConsecutiveFailures++
+			maxFailures := t.Spec.MaxReceiptFailures
+			if maxFailures <= 0 {
+				maxFailures = 2
+			}
+			if t.ConsecutiveFailures >= maxFailures {
+				t.Phase = TaskPhaseFailed
+				t.FailureReason = fmt.Sprintf("navigation stuck (%d attempts)", t.ConsecutiveFailures)
+				if t.Spec.OnFail != nil {
+					t.Spec.OnFail(state, frame, t, t.FailureReason)
+				}
+				return TaskStepResult{
+					Phase:  TaskPhaseFailed,
+					Active: false,
+					Done:   true,
+					Reason: t.FailureReason,
+				}
+			}
+		}
 		if t.LastNavigateTick > 0 && frame.WorldTick >= t.LastNavigateTick && frame.WorldTick-t.LastNavigateTick < 40 {
 			return TaskStepResult{Phase: TaskPhaseApproach, Active: true}
 		}
 		if t.ActiveApproachPos != nil {
 			t.LastNavigateTick = frame.WorldTick
+			if distSq < t.ApproachBestDistSq {
+				t.ApproachBestDistSq = distSq
+			}
 			tolerance := t.Spec.ArrivalTolerance
 			if tolerance <= 0 {
 				tolerance = 2
@@ -1009,6 +1048,12 @@ func NewHarvestTreeTask(tx, ty, tz int32, stage Stage, startTick int64) *TaskSub
 				},
 			}
 		},
+		IsUnachievable: func(state *AgentState, frame *civquestv1.TelemetryFrame) bool {
+			if state == nil || frame == nil {
+				return false
+			}
+			return state.IsTargetUnreachableLocked(float64(tx)+0.5, float64(ty), float64(tz)+0.5, frame.WorldTick)
+		},
 		OnComplete: func(state *AgentState, frame *civquestv1.TelemetryFrame, current *TaskSubroutine) {
 			if state != nil {
 				state.ClearTargetTreeLocked()
@@ -1019,6 +1064,7 @@ func NewHarvestTreeTask(tx, ty, tz int32, stage Stage, startTick int64) *TaskSub
 				state.ClearTargetTreeLocked()
 				if frame != nil {
 					state.MarkTreeFailedLocked(tx, tz, frame.WorldTick)
+					state.MarkTargetUnreachableLocked(float64(tx)+0.5, float64(ty), float64(tz)+0.5, frame.WorldTick, DefaultUnreachableTargetTTL)
 				}
 			}
 		},

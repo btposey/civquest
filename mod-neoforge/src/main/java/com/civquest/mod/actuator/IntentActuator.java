@@ -204,6 +204,13 @@ public class IntentActuator {
                     // so the avatar executes one clean 360-degree sweep and returns to IDLE.
                     return;
                 }
+                if (isNavigateOnlyBatch(queueBatch)) {
+                    // Coalesce queued navigate-only batches while a batch is in flight (e.g. during
+                    // STUCK_RECOVERY or MOVING) while preserving all non-navigate batches in FIFO order.
+                    session.pendingBatches.removeIf(IntentActuator::isNavigateOnlyBatch);
+                    session.pendingBatches.addLast(queueBatch);
+                    return;
+                }
                 if (fsm == null || fsm.getState() != MotorState.SLEEPING) {
                     if (isPocketCraftOnlyBatch(agent, queueBatch)) {
                         for (AgentIntent craftIntent : queueBatch.getIntentsList()) {
@@ -234,6 +241,18 @@ public class IntentActuator {
             syncReceiptToMotor(agent, session);
             advanceBatch(agent, session);
         }
+    }
+
+    private static boolean isNavigateOnlyBatch(IntentBatch batch) {
+        if (batch == null || batch.getIntentsCount() == 0) {
+            return false;
+        }
+        for (AgentIntent intent : batch.getIntentsList()) {
+            if (!intent.hasNavigate()) {
+                return false;
+            }
+        }
+        return true;
     }
 
     private static boolean isSurveyHorizonOnlyBatch(IntentBatch batch) {

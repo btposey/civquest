@@ -1330,3 +1330,43 @@ func TestFSM_BootstrapNightWithLogsBuildsShelterAndGatesCircadianOnceComplete(t 
 		}
 	})
 }
+
+func TestFSM_BootstrapFreshSystem2DirectivePreemptsHarvestTree(t *testing.T) {
+	fsm := NewAgentFSM(StageBootstrap, nil)
+	state := NewAgentState()
+	cfg := xdg.DefaultAgentIdentityConfig("carl")
+	cfg.Profession = "EXPLORER"
+
+	// Active harvest_tree started at tick 100
+	state.StartTask(NewHarvestTreeTask(-46, 86, -8, StageBootstrap, 100))
+	// Fresh SCOUT_FRONTIER directive issued at tick 200 (after task start)
+	state.SetStrategicDirective(DirectiveActionScoutFrontier, "eastern forest", "SCOUT_FRONTIER: Pivot from obstructed timber", 200, 6200)
+
+	res := fsm.Tick(&FSMContext{
+		AgentID: "carl",
+		State:   state,
+		Config:  cfg,
+		Frame: &civquestv1.TelemetryFrame{
+			WorldTick: 204,
+			TimeOfDay: 4000,
+			Status: &civquestv1.AgentStatus{
+				AgentId:         "carl",
+				Health:          20,
+				MaxHealth:       20,
+				FoodLevel:       20,
+				Position:        &civquestv1.Vec3{X: -40.5, Y: 86, Z: -7.5},
+				NavigationState: civquestv1.NavigationState_NAVIGATION_STATE_IDLE,
+			},
+			InterestingBlocks: []*civquestv1.VisibleBlock{
+				{Pos: &civquestv1.BlockPosProto{X: -46, Y: 86, Z: -8}, BlockId: "minecraft:oak_log"},
+			},
+		},
+	})
+
+	if len(res.Intents) == 0 || res.Intents[0].Intent.GetSurveyHorizon() == nil {
+		t.Fatalf("expected fresh SCOUT_FRONTIER directive to preempt harvest_tree and emit SurveyHorizonIntent, got %+v", res.Intents)
+	}
+	if state.HasActiveTask() {
+		t.Fatalf("expected stale harvest_tree task to be cleared upon System 2 directive preemption")
+	}
+}

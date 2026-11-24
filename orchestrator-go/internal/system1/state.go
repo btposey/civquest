@@ -155,12 +155,17 @@ type AgentState struct {
 	PavingTracker             *RoadPavingTracker
 
 	// Unstuck and excavation navigation state
-	unstuckLocked    bool
-	unstuckDirX      int32
-	unstuckDirZ      int32
-	unstuckStartTick int64
-	unstuckStartX    float64
-	unstuckStartZ    float64
+	unstuckLocked       bool
+	unstuckDirX         int32
+	unstuckDirZ         int32
+	unstuckStartTick    int64
+	unstuckStartX       float64
+	unstuckStartZ       float64
+	lastUnstuckNavTick  int64
+	unstuckAttemptCount int
+	lastUnstuckPosX     float64
+	lastUnstuckPosZ     float64
+	hasLastUnstuckPos   bool
 
 	// Timber tree trunk harvesting focus and generic task subroutine commitment
 	targetTreeLocked        bool
@@ -1267,6 +1272,8 @@ func (s *AgentState) StartTaskLocked(sub *TaskSubroutine) {
 		return
 	}
 	s.activeTask = sub
+	s.unstuckAttemptCount = 0
+	s.hasLastUnstuckPos = false
 	if sub != nil && sub.Spec.Kind == "harvest_tree" && sub.Spec.Target.BlockPos != nil {
 		s.SetTargetTreeLocked(true, sub.Spec.Target.BlockPos.X, sub.Spec.Target.BlockPos.Z, sub.StartedTick)
 	}

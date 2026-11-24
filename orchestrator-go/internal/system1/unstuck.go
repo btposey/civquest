@@ -1,10 +1,16 @@
 package system1
 
 import (
+	"hash/crc32"
 	"math"
 	"strings"
 
 	civquestv1 "github.com/btposey/civquest/orchestrator-go/internal/proto/v1"
+)
+
+const (
+	unstuckNavCooldownTicks = int64(25)
+	unstuckStepDist         = 2.8
 )
 
 // CardinalDirs provides standard cardinal offsets: North (0, -1), South (0, 1), East (1, 0), West (-1, 0).
@@ -82,6 +88,25 @@ func EvaluateUnstuck(
 				state.ClearUnstuckLockLocked()
 			}
 		}
+		if state.unstuckAttemptCount > 0 && navState == civquestv1.NavigationState_NAVIGATION_STATE_PATHING {
+			if !state.hasLastUnstuckPos {
+				state.unstuckAttemptCount = 0
+			} else {
+				dx := pos.X - state.lastUnstuckPosX
+				dz := pos.Z - state.lastUnstuckPosZ
+				if dx*dx+dz*dz >= 1.0 {
+					state.unstuckAttemptCount = 0
+					state.hasLastUnstuckPos = false
+				}
+			}
+		}
+		return nil
+	}
+
+	// When an active task is committed and the agent is NOT physically enclosed,
+	// do not mask approach stuck failures with unstuck NavigateIntents that queue
+	// behind the task's NavigateIntent and emit fake COMPLETED receipts.
+	if isStuck && !isEnclosed && state.HasActiveTaskLocked() {
 		return nil
 	}
 
@@ -240,6 +265,16 @@ func EvaluateUnstuck(
 		}
 
 		// Step 1 is clear to jump onto! Emit navigation intent stepping up onto step 1
+		if state.lastUnstuckNavTick > 0 && frame.WorldTick >= state.lastUnstuckNavTick &&
+			frame.WorldTick-state.lastUnstuckNavTick < unstuckNavCooldownTicks {
+			return nil
+		}
+		state.lastUnstuckNavTick = frame.WorldTick
+		state.lastUnstuckPosX = pos.X
+		state.lastUnstuckPosZ = pos.Z
+		state.hasLastUnstuckPos = true
+		state.unstuckAttemptCount++
+
 		targetX := float64(step1X) + 0.5
 		targetY := float64(by) + 1.0
 		targetZ := float64(step1Z) + 0.5
@@ -277,10 +312,25 @@ func EvaluateUnstuck(
 		return nil
 	}
 
-	// Flat walkway is open! Emit navigate forward
-	targetX := float64(step1X) + 0.5
+	// Flat walkway is open! Enforce cooldown and fan out 2.8 blocks with agent-specific angular rotation
+	// so clustered peers separate horizontally instead of colliding on the same tile.
+	if state.lastUnstuckNavTick > 0 && frame.WorldTick >= state.lastUnstuckNavTick &&
+		frame.WorldTick-state.lastUnstuckNavTick < unstuckNavCooldownTicks {
+		return nil
+	}
+	attempt := state.unstuckAttemptCount
+	state.lastUnstuckNavTick = frame.WorldTick
+	state.lastUnstuckPosX = pos.X
+	state.lastUnstuckPosZ = pos.Z
+	state.hasLastUnstuckPos = true
+	state.unstuckAttemptCount++
+
+	baseAngle := math.Atan2(float64(dirZ), float64(dirX))
+	hash := crc32.ChecksumIEEE([]byte(agentID)) + uint32(attempt)*3
+	angle := baseAngle + float64(hash%8)*(math.Pi/4.0)
+	targetX := math.Round((pos.X+math.Cos(angle)*unstuckStepDist)*10) / 10
 	targetY := float64(by)
-	targetZ := float64(step1Z) + 0.5
+	targetZ := math.Round((pos.Z+math.Sin(angle)*unstuckStepDist)*10) / 10
 	return &civquestv1.AgentIntent{
 		AgentId: agentID,
 		Action: &civquestv1.AgentIntent_Navigate{

@@ -376,3 +376,140 @@ func TestRuntime_PeerChatContention_GlobalCooldownMemoryAndHumanPriority(t *test
 		t.Fatalf("expected both Bran and Cora logged in [PEER_DIALOGUE] episodic memory (sawBran=%v sawCora=%v)", sawBran, sawCora)
 	}
 }
+
+func TestRuntime_WorldTickZeroAndStalledActiveTaskContemplation(t *testing.T) {
+	mockSvc, bridgeClient, cleanup := setupTestBridge(t)
+	defer cleanup()
+
+	var callCount atomic.Int32
+	llmServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		callCount.Add(1)
+		payload, _ := json.Marshal(system2.StrategicContemplationResponse{
+			ImmediateGoal:    "SCOUT_FRONTIER: Abandon stalled task",
+			ShortTermGoal:    "EXPLORE_OUTER_SECTOR",
+			LongTermGoal:     "CHART_ATLAS",
+			ReflectiveMemory: "Stalled at spawn, pivoting to scout.",
+			Directive: &system2.StrategicDirective{
+				Action: system2.DirectiveScoutFrontier,
+				Target: "eastern woods",
+				Reason: "stalled active task",
+			},
+		})
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(system2.ChatCompletionResponse{
+			ID: "stalled-contemplate",
+			Choices: []system2.ChatCompletionChoice{{
+				Message:      system2.ChatMessage{Role: "assistant", Content: string(payload)},
+				FinishReason: "stop",
+			}},
+		})
+	}))
+	defer llmServer.Close()
+
+	llmClient, err := system2.NewClient(
+		&xdg.GlobalConfig{LLMGateway: xdg.LLMGatewayConfig{BaseURL: llmServer.URL + "/v1", Model: "mock-model"}},
+		system2.WithHTTPClient(llmServer.Client()),
+	)
+	if err != nil {
+		t.Fatalf("NewClient: %v", err)
+	}
+	defer llmClient.Close()
+
+	tmpDir := t.TempDir()
+	r := xdg.NewResolver(xdg.WithCustomRoot(tmpDir))
+	agentDB, err := db.OpenAgentDB(r.AgentDataDir("carl_stalled"))
+	if err != nil {
+		t.Fatalf("OpenAgentDB: %v", err)
+	}
+	defer agentDB.Close()
+
+	rt, err := agent.NewRuntime(agent.Config{
+		AgentID:              "carl_stalled",
+		ClanID:               "pioneers",
+		IdentityConfig:       xdg.DefaultAgentIdentityConfig("carl_stalled"),
+		Resolver:             r,
+		AgentDB:              agentDB,
+		BridgeClient:         bridgeClient,
+		SocketPath:           filepath.Join(tmpDir, "carl_stalled.sock"),
+		ContemplationService: system2.NewContemplationService(llmClient),
+	})
+	if err != nil {
+		t.Fatalf("NewRuntime: %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() { _ = rt.Start(ctx) }()
+
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		if rt.Status() == "RUNNING" {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	// 1. Handshake WorldTick=0 frame must NOT poison idleStartTick
+	_ = mockSvc.SendFrame(&civquestv1.TelemetryFrame{
+		WorldTick: 0,
+		TimeOfDay: 0,
+		Status: &civquestv1.AgentStatus{
+			AgentId:   "carl_stalled",
+			Health:    20,
+			MaxHealth: 20,
+			FoodLevel: 20,
+		},
+	})
+
+	// 2. Active task making 0 physical displacement across 299 ticks -> 0 calls before 300 ticks
+	task := system1.NewTaskSubroutine(system1.TaskDescriptor{
+		ID:              "stalled_task",
+		Kind:            "harvest_tree",
+		Stage:           system1.StageBootstrap,
+		Routine:         system1.RoutineHarvestTree,
+		ProgressTimeout: 1000,
+		SelectSubTarget: func(_ *system1.AgentState, _ *civquestv1.TelemetryFrame, _ *system1.TaskSubroutine) (*civquestv1.Vec3, *civquestv1.BlockPosProto, string, bool) {
+			return &civquestv1.Vec3{X: 20.5, Y: 64, Z: 0.5}, &civquestv1.BlockPosProto{X: 20, Y: 64, Z: 0}, "minecraft:oak_log", true
+		},
+	}, 336500)
+	rt.System1State().StartTask(task)
+
+	for _, tick := range []int64{336500, 336650, 336799} {
+		_ = mockSvc.SendFrame(&civquestv1.TelemetryFrame{
+			WorldTick: tick,
+			TimeOfDay: 6000,
+			Status: &civquestv1.AgentStatus{
+				AgentId:         "carl_stalled",
+				Health:          20,
+				FoodLevel:       20,
+				Position:        &civquestv1.Vec3{X: 0, Y: 64, Z: 0},
+				NavigationState: civquestv1.NavigationState_NAVIGATION_STATE_PATHING,
+			},
+		})
+	}
+	time.Sleep(80 * time.Millisecond)
+	if callCount.Load() != 0 {
+		t.Fatalf("expected 0 contemplation calls before 300 ticks (WorldTick=0 must not poison idleStartTick), got %d", callCount.Load())
+	}
+
+	// 3. At tick 336800 (300 ticks of 0 displacement despite active task), daytime_idle fires
+	_ = mockSvc.SendFrame(&civquestv1.TelemetryFrame{
+		WorldTick: 336800,
+		TimeOfDay: 6300,
+		Status: &civquestv1.AgentStatus{
+			AgentId:         "carl_stalled",
+			Health:          20,
+			FoodLevel:       20,
+			Position:        &civquestv1.Vec3{X: 0.2, Y: 64, Z: 0},
+			NavigationState: civquestv1.NavigationState_NAVIGATION_STATE_STUCK,
+		},
+	})
+
+	dl := time.Now().Add(3 * time.Second)
+	for time.Now().Before(dl) && callCount.Load() == 0 {
+		time.Sleep(15 * time.Millisecond)
+	}
+	if callCount.Load() != 1 {
+		t.Fatalf("expected daytime_idle contemplation to trigger at 300 ticks of 0-progress active task, got %d", callCount.Load())
+	}
+}

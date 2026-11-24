@@ -1,6 +1,7 @@
 package system1
 
 import (
+	"math"
 	"testing"
 
 	civquestv1 "github.com/btposey/civquest/orchestrator-go/internal/proto/v1"
@@ -186,5 +187,60 @@ func TestEvaluateBootstrapTimber_TreeTrunkFocus(t *testing.T) {
 	ib2 := intent2.GetInteractBlock()
 	if ib2.Pos.X != 12 || ib2.Pos.Y != 65 || ib2.Pos.Z != 10 {
 		t.Errorf("expected focus on same tree trunk (12, 65, 10), got (%d, %d, %d)", ib2.Pos.X, ib2.Pos.Y, ib2.Pos.Z)
+	}
+}
+
+func TestEvaluateUnstuck_CooldownAngularFanOutAndActiveTaskSuppression(t *testing.T) {
+	// 1. Cooldown >= 25 ticks & 2.5-3.0 block angular fan-out across peer IDs on flat ground
+	stateA := NewAgentState()
+	stateB := NewAgentState()
+	pos := &civquestv1.Vec3{X: 10.0, Y: 64.0, Z: 10.0}
+	frame := &civquestv1.TelemetryFrame{
+		WorldTick: 100,
+		Status: &civquestv1.AgentStatus{
+			NavigationState: civquestv1.NavigationState_NAVIGATION_STATE_STUCK,
+			Position:        pos,
+		},
+	}
+
+	inA1 := EvaluateUnstuck("able", frame, pos, stateA)
+	inB1 := EvaluateUnstuck("carl", frame, pos, stateB)
+	if inA1 == nil || inA1.GetNavigate() == nil || inB1 == nil || inB1.GetNavigate() == nil {
+		t.Fatalf("expected NavigateIntents for able and carl, got A=%+v B=%+v", inA1, inB1)
+	}
+	tA := inA1.GetNavigate().Target
+	tB := inB1.GetNavigate().Target
+	distA := math.Hypot(tA.X-pos.X, tA.Z-pos.Z)
+	distB := math.Hypot(tB.X-pos.X, tB.Z-pos.Z)
+	if distA < 2.0 || distA > 3.5 || distB < 2.0 || distB > 3.5 {
+		t.Fatalf("expected 2.5-3.0 block unstuck step, got distA=%.2f distB=%.2f", distA, distB)
+	}
+	if math.Hypot(tA.X-tB.X, tA.Z-tB.Z) < 0.5 {
+		t.Fatalf("expected distinct angular fan-out targets for able vs carl, got A=(%.1f,%.1f) B=(%.1f,%.1f)",
+			tA.X, tA.Z, tB.X, tB.Z)
+	}
+
+	// Within 25-tick cooldown, EvaluateUnstuck must suppress duplicate NavigateIntents
+	frame.WorldTick = 112
+	if dup := EvaluateUnstuck("able", frame, pos, stateA); dup != nil {
+		t.Fatalf("expected nil within 25-tick unstuck cooldown, got %+v", dup)
+	}
+
+	// After >= 25 ticks, next unstuck rotates angle
+	frame.WorldTick = 125
+	inA2 := EvaluateUnstuck("able", frame, pos, stateA)
+	if inA2 == nil || inA2.GetNavigate() == nil {
+		t.Fatalf("expected NavigateIntent after 25-tick cooldown, got %+v", inA2)
+	}
+	tA2 := inA2.GetNavigate().Target
+	if math.Hypot(tA.X-tA2.X, tA.Z-tA2.Z) < 0.5 {
+		t.Fatalf("expected rotated angular offset on subsequent attempt, got same target (%.1f,%.1f)", tA2.X, tA2.Z)
+	}
+
+	// 2. When active task is running and NOT enclosed, EvaluateUnstuck must NOT mask task stuck receipt
+	stateTask := NewAgentState()
+	stateTask.StartTask(NewHarvestTreeTask(20, 64, 0, StageBootstrap, 100))
+	if masked := EvaluateUnstuck("able", frame, pos, stateTask); masked != nil {
+		t.Fatalf("expected nil unstuck intent when active non-enclosed task is handling stuck, got %+v", masked)
 	}
 }

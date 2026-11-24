@@ -776,6 +776,32 @@ func runBootstrapActivity(ctx *FSMContext, skillCtx *SkillContext, intents []FSM
 				return intents
 			}
 		} else {
+			// Allow fresh or stuck-breaking non-GATHER_TIMBER System 2 directives to preempt harvest_tree.
+			if kind == "harvest_tree" && ctx.Facts != nil && ctx.Facts.GetBool("system2.directive_active") &&
+				(HasSurvivalKit(ctx.Frame.Status.Inventory) || !canExecuteImmediateBootstrapCraft(ctx.Frame, ctx.State)) {
+				dir, dirActive := ctx.State.ActiveStrategicDirective(ctx.Frame.WorldTick)
+				task := ctx.State.GetActiveTask()
+				if dirActive && task != nil && dir.Action != DirectiveActionGatherTimber &&
+					(dir.Action == DirectiveActionScoutFrontier ||
+						dir.Action == DirectiveActionMineStone ||
+						dir.Action == DirectiveActionSocialize ||
+						dir.Action == DirectiveActionBuildShelter ||
+						(dir.Action == DirectiveActionForageFood && NeedsForaging(ctx.Frame))) {
+					isStuckOrStalled := ctx.Frame.Status.NavigationState == civquestv1.NavigationState_NAVIGATION_STATE_STUCK ||
+						task.ConsecutiveFailures > 0 ||
+						(ctx.Frame.WorldTick >= task.LastProgressTick && ctx.Frame.WorldTick-task.LastProgressTick >= 40)
+					if dir.IssuedTick >= task.StartedTick || isStuckOrStalled {
+						if dirIntent := EvaluateStrategicDirectiveWithID(ctx.AgentID, ctx.Frame, ctx.State, ctx.Config); dirIntent != nil {
+							ctx.State.ClearActiveTask()
+							intents = append(intents, FSMIntent{Intent: dirIntent, Priority: false})
+							return intents
+						} else if dir.Action == DirectiveActionScoutFrontier && ctx.State.IsExpeditionActive() {
+							ctx.State.ClearActiveTask()
+							return intents
+						}
+					}
+				}
+			}
 			if bootstrapIntent := EvaluateBootstrapGoals(ctx.AgentID, ctx.Frame, ctx.Config, ctx.State); bootstrapIntent != nil {
 				intents = append(intents, FSMIntent{Intent: bootstrapIntent, Priority: false})
 			}

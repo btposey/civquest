@@ -352,3 +352,58 @@ func TestTaskSubroutine_IgnoresStalePreTaskFailedReceipt(t *testing.T) {
 		t.Fatalf("expected TaskPhaseFailed on second task-owned failure, got %+v", res4)
 	}
 }
+
+func TestHarvestTreeTask_IgnoresZeroDisplacementCompletedAndBlacklistsOnFail(t *testing.T) {
+	state := NewAgentState()
+	task := NewHarvestTreeTask(20, 64, 0, StageBootstrap, 100)
+	state.StartTask(task)
+
+	frame := &civquestv1.TelemetryFrame{
+		WorldTick: 100,
+		Status: &civquestv1.AgentStatus{
+			Position:        &civquestv1.Vec3{X: 0.5, Y: 64, Z: 0.5},
+			NavigationState: civquestv1.NavigationState_NAVIGATION_STATE_IDLE,
+		},
+		InterestingBlocks: []*civquestv1.VisibleBlock{
+			{Pos: &civquestv1.BlockPosProto{X: 20, Y: 64, Z: 0}, BlockId: "minecraft:oak_log"},
+		},
+	}
+
+	// Emit initial APPROACH NavigateIntent
+	res1 := state.StepActiveTask("agent", frame)
+	if res1.Intent == nil || res1.Intent.GetNavigate() == nil {
+		t.Fatalf("expected APPROACH NavigateIntent, got %+v", res1)
+	}
+
+	// Zero-displacement fake COMPLETED receipt at tick 180 must NOT reset LastProgressTick or advance phase
+	frame.WorldTick = 180
+	frame.Receipt = &civquestv1.IntentReceipt{
+		BatchId: 10,
+		Status:  civquestv1.IntentReceipt_RECEIPT_STATUS_COMPLETED,
+	}
+	res2 := state.StepActiveTask("agent", frame)
+	if !res2.Active || res2.Done || task.LastProgressTick != 100 || task.Phase != TaskPhaseApproach {
+		t.Fatalf("expected zero-displacement COMPLETED ignored (LastProgressTick=100, phase=APPROACH), got active=%v done=%v progressTick=%d phase=%s",
+			res2.Active, res2.Done, task.LastProgressTick, task.Phase)
+	}
+
+	// At tick 250 (150-tick ProgressTimeout), task fails and OnFail blacklists target tree
+	frame.WorldTick = 250
+	frame.Receipt = nil
+	res3 := state.StepActiveTask("agent", frame)
+	if !res3.Done || res3.Phase != TaskPhaseFailed {
+		t.Fatalf("expected TaskPhaseFailed at ProgressTimeout=150, got %+v", res3)
+	}
+	if !state.IsTargetUnreachable(20.5, 64.0, 0.5, 250) {
+		t.Fatalf("expected OnFail to blacklist (20.5, 64.0, 0.5) as unreachable")
+	}
+
+	// New task on already-blacklisted tree immediately fails via IsUnachievable
+	task2 := NewHarvestTreeTask(20, 64, 0, StageBootstrap, 255)
+	state.StartTask(task2)
+	frame.WorldTick = 255
+	res4 := state.StepActiveTask("agent", frame)
+	if !res4.Done || res4.Phase != TaskPhaseFailed {
+		t.Fatalf("expected IsUnachievable to abort blacklisted tree immediately, got %+v", res4)
+	}
+}

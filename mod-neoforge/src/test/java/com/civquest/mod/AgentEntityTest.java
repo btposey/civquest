@@ -935,4 +935,46 @@ public class AgentEntityTest {
         assertEquals(originalDelta1, agent1.getDeltaMovement(), "Pushing another AgentEntity must be a no-op");
         assertEquals(originalDelta2, agent2.getDeltaMovement(), "Pushed AgentEntity deltaMovement must remain unchanged");
     }
+
+    @Test
+    @DisplayName("applyHorizontalPeerSeparation skips while sleeping, SURVEYING, or breaking")
+    void testHorizontalPeerSeparationSkipsDuringSleepSurveyAndBreak() {
+        TestWorldContext ctx = new TestWorldContext();
+        AgentEntity agent = ctx.createAgent("sep-guard-1", "GuardOne");
+        AgentEntity peer = ctx.createAgent("sep-guard-2", "GuardTwo");
+
+        when(ctx.level.hasChunkAt(any(BlockPos.class))).thenReturn(true);
+        when(ctx.level.getBlockState(any(BlockPos.class))).thenAnswer(inv -> {
+            BlockPos p = inv.getArgument(0);
+            return p.getY() == 63 ? Blocks.GRASS_BLOCK.defaultBlockState() : Blocks.AIR.defaultBlockState();
+        });
+        when(ctx.level.getEntitiesOfClass(eq(AgentEntity.class), any(net.minecraft.world.phys.AABB.class), any()))
+                .thenReturn(java.util.List.of(peer));
+
+        // 1. Sleeping suppresses separation
+        AgentEntity spySleeping = spy(agent);
+        when(spySleeping.isSleeping()).thenReturn(true);
+        spySleeping.applyHorizontalPeerSeparation();
+        assertEquals(0.5, spySleeping.getX(), 1e-6);
+        assertEquals(64.0, spySleeping.getY(), 1e-6);
+        assertEquals(0.5, spySleeping.getZ(), 1e-6);
+
+        // 2. SURVEYING suppresses separation
+        agent.getMotorFSM().transitionTo(MotorState.SURVEYING, "test_survey");
+        agent.applyHorizontalPeerSeparation();
+        assertEquals(0.5, agent.getX(), 1e-6);
+        assertEquals(64.0, agent.getY(), 1e-6);
+        assertEquals(0.5, agent.getZ(), 1e-6);
+        agent.getMotorFSM().transitionTo(MotorState.IDLE, "test_done");
+
+        // 3. Active block breaking suppresses separation
+        BlockPos breakPos = new BlockPos(1, 64, 0);
+        when(ctx.level.getBlockState(breakPos)).thenReturn(Blocks.DIRT.defaultBlockState());
+        assertTrue(agent.getBreaker().start(breakPos));
+        assertTrue(agent.getBreaker().isBreaking());
+        agent.applyHorizontalPeerSeparation();
+        assertEquals(0.5, agent.getX(), 1e-6);
+        assertEquals(64.0, agent.getY(), 1e-6);
+        assertEquals(0.5, agent.getZ(), 1e-6);
+    }
 }

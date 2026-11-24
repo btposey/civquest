@@ -234,25 +234,39 @@ func evaluateBootstrapGoalsLocked(
 	state.navigatingToPOI = false
 
 	// 0. Execute any committed TaskSubroutine (e.g. harvest_tree, collect_items) before evaluating other goals.
-	// While committed, the agent MUST NOT switch tasks, craft prematurely, re-target another tree, or wander away.
+	// While committed, the agent MUST NOT switch tasks, craft prematurely, re-target another tree, or wander away,
+	// EXCEPT when already carrying enough timber/materials to immediately craft missing survival tools.
 	justFinishedHarvest := false
 	if state.activeTask != nil {
 		taskKind := state.activeTask.Spec.Kind
-		targetPos := cloneBlockPos(state.activeTask.Spec.Target.BlockPos)
-		stepRes := state.StepActiveTaskLocked(agentID, frame)
-		if stepRes.Active {
-			return stepRes.Intent
+		preemptForCraft := false
+		if taskKind == "harvest_tree" {
+			invCheck := inspectBootstrapInventory(frame.Status.Inventory)
+			hasTimberForKit := invCheck.logCount >= 6 ||
+				(!invCheck.hasAxe && (invCheck.planksCount >= 3 || invCheck.stickCount >= 2 || invCheck.hasCraftingTable)) ||
+				(state.activeTask.Phase == TaskPhaseApproach && (invCheck.logCount >= 1 || invCheck.planksCount >= 1 || invCheck.stickCount >= 1) && (!invCheck.hasAxe || !invCheck.hasSword))
+			if hasTimberForKit && canExecuteImmediateBootstrapCraftLocked(frame, state) {
+				preemptForCraft = true
+				state.ClearActiveTaskLocked()
+			}
 		}
-		// Task reached COMPLETE or FAILED: transition cleanly
-		if stepRes.Done && taskKind == "harvest_tree" && stepRes.Phase == TaskPhaseComplete {
-			justFinishedHarvest = true
-			if targetPos != nil {
-				if drop := findNearestDroppedWoodItem(frame, targetPos.X, targetPos.Z); drop != nil {
-					collectTask := NewCollectItemsTask(targetPos.X, targetPos.Y, targetPos.Z, state.stage, frame.WorldTick)
-					state.StartTaskLocked(collectTask)
-					collectRes := state.StepActiveTaskLocked(agentID, frame)
-					if collectRes.Active {
-						return collectRes.Intent
+		if !preemptForCraft {
+			targetPos := cloneBlockPos(state.activeTask.Spec.Target.BlockPos)
+			stepRes := state.StepActiveTaskLocked(agentID, frame)
+			if stepRes.Active {
+				return stepRes.Intent
+			}
+			// Task reached COMPLETE or FAILED: transition cleanly
+			if stepRes.Done && taskKind == "harvest_tree" && stepRes.Phase == TaskPhaseComplete {
+				justFinishedHarvest = true
+				if targetPos != nil {
+					if drop := findNearestDroppedWoodItem(frame, targetPos.X, targetPos.Z); drop != nil {
+						collectTask := NewCollectItemsTask(targetPos.X, targetPos.Y, targetPos.Z, state.stage, frame.WorldTick)
+						state.StartTaskLocked(collectTask)
+						collectRes := state.StepActiveTaskLocked(agentID, frame)
+						if collectRes.Active {
+							return collectRes.Intent
+						}
 					}
 				}
 			}
@@ -884,6 +898,39 @@ func findNearestTreeTrunk(agentID string, frame *civquestv1.TelemetryFrame, pos 
 		}
 		return candidates[i].tz < candidates[j].tz
 	})
+
+	// Deprioritize trunks where a visible peer AgentEntity is already standing within 2.5m horizontally,
+	// spreading clustered agents across distinct trees whenever unoccupied trunks exist.
+	if len(candidates) > 1 && len(frame.VisibleEntities) > 0 {
+		var unoccupied []*trunkCandidate
+		for _, c := range candidates {
+			cx := float64(c.tx) + 0.5
+			cz := float64(c.tz) + 0.5
+			occupied := false
+			for _, e := range frame.VisibleEntities {
+				if e == nil || e.Position == nil || IsHostile(e) || e.IsTamed {
+					continue
+				}
+				if agentID != "" && strings.EqualFold(e.DisplayName, agentID) {
+					continue
+				}
+				et := strings.ToLower(e.EntityType)
+				if !strings.Contains(et, "player") && !strings.Contains(et, "agent") {
+					continue
+				}
+				if math.Hypot(e.Position.X-cx, e.Position.Z-cz) <= 2.5 {
+					occupied = true
+					break
+				}
+			}
+			if !occupied {
+				unoccupied = append(unoccupied, c)
+			}
+		}
+		if len(unoccupied) > 0 {
+			candidates = unoccupied
+		}
+	}
 
 	idx := 0
 	if len(candidates) > 1 && agentID != "" {
