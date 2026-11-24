@@ -64,33 +64,36 @@ type TimeWarpConfig struct {
 // time progression (day/night, hunger, physics, voxel interactions) for CivQuest agent runtimes
 // in milliseconds without needing a running Minecraft Java server.
 type TimeWarpSimulation struct {
-	cfg             TimeWarpConfig
-	runtime         *agent.AgentRuntime
-	tempDir         string
-	currentTick     int64
-	timeOfDay       int64
-	weather         civquestv1.Weather
-	pos             *civquestv1.Vec3
-	yaw             float32
-	pitch           float32
-	health          float32
-	maxHealth       float32
-	foodLevel       int32
-	stamina         float32
-	isSleeping      bool
-	isOnFire        bool
-	navState        civquestv1.NavigationState
-	navTarget       *civquestv1.Vec3
-	navSpeed        float64
-	navArrivalTol   float64
-	inventory       []*civquestv1.ItemStackProto
-	blocks          map[BlockPosKey]string
-	blockStates     map[BlockPosKey]string
-	entities        []*civquestv1.VisibleEntity
-	injectedChats   []*civquestv1.ChatEvent
-	lastHarvestTick int64
-	lastCraftTick   int64
-	hungerAcc       float64
+	cfg                       TimeWarpConfig
+	runtime                   *agent.AgentRuntime
+	tempDir                   string
+	currentTick               int64
+	timeOfDay                 int64
+	weather                   civquestv1.Weather
+	pos                       *civquestv1.Vec3
+	yaw                       float32
+	pitch                     float32
+	health                    float32
+	maxHealth                 float32
+	foodLevel                 int32
+	stamina                   float32
+	isSleeping                bool
+	isOnFire                  bool
+	navState                  civquestv1.NavigationState
+	navTarget                 *civquestv1.Vec3
+	navSpeed                  float64
+	navArrivalTol             float64
+	inventory                 []*civquestv1.ItemStackProto
+	blocks                    map[BlockPosKey]string
+	blockStates               map[BlockPosKey]string
+	entities                  []*civquestv1.VisibleEntity
+	injectedChats             []*civquestv1.ChatEvent
+	lastHarvestTick           int64
+	lastCraftTick             int64
+	hungerAcc                 float64
+	pendingSurvey             *civquestv1.SurveyHorizonIntent
+	pendingSurveyCompleteTick int64
+	pendingSurveyOrigin       *civquestv1.Vec3
 
 	// Detectors
 	OscillationDetector *FSMOscillationDetector
@@ -491,6 +494,13 @@ func (sim *TimeWarpSimulation) BuildTelemetryFrame() *civquestv1.TelemetryFrame 
 		sim.injectedChats = nil
 	}
 
+	var horizonSurvey *civquestv1.HorizonSurveyReport
+	if sim.pendingSurvey != nil && sim.currentTick >= sim.pendingSurveyCompleteTick {
+		horizonSurvey = sim.buildSyntheticHorizonSurvey()
+		sim.pendingSurvey = nil
+		sim.pendingSurveyOrigin = nil
+	}
+
 	frame := &civquestv1.TelemetryFrame{
 		WorldTick: sim.currentTick,
 		TimeOfDay: sim.CurrentTimeOfDay(),
@@ -512,9 +522,104 @@ func (sim *TimeWarpSimulation) BuildTelemetryFrame() *civquestv1.TelemetryFrame 
 		InterestingBlocks: visibleBlocks,
 		VisibleEntities:   visibleEntities,
 		IncomingChats:     chats,
+		HorizonSurvey:     horizonSurvey,
 	}
 
 	return frame
+}
+
+func (sim *TimeWarpSimulation) buildSyntheticHorizonSurvey() *civquestv1.HorizonSurveyReport {
+	numSectors := int32(36)
+	maxRange := float32(64.0)
+	if sim.pendingSurvey != nil {
+		if sim.pendingSurvey.NumSectors > 0 {
+			numSectors = sim.pendingSurvey.NumSectors
+		}
+		if sim.pendingSurvey.MaxRange > 0 {
+			maxRange = sim.pendingSurvey.MaxRange
+		}
+	}
+	ox, oy, oz := sim.pos.X, sim.pos.Y, sim.pos.Z
+	if sim.pendingSurveyOrigin != nil {
+		ox, oy, oz = sim.pendingSurveyOrigin.X, sim.pendingSurveyOrigin.Y, sim.pendingSurveyOrigin.Z
+	}
+	sectors := make([]*civquestv1.HorizonSector, 0, numSectors)
+	stepDeg := 360.0 / float64(numSectors)
+	hasBlocks := len(sim.blocks) > 0
+	for i := int32(0); i < numSectors; i++ {
+		bearing := float32(float64(i) * stepDeg)
+		rad := float64(bearing) * math.Pi / 180.0
+		dx := -math.Sin(rad)
+		dz := math.Cos(rad)
+
+		hitDist := float64(maxRange)
+		feat := "OPEN_PLAINS"
+		hitBlockID := "minecraft:air"
+		hitX := ox + dx*hitDist
+		hitY := oy
+		hitZ := oz + dz*hitDist
+		occluded := false
+		openHorizon := true
+
+		// Scan virtual blocks along this bearing out to maxRange.
+		if hasBlocks {
+			for k, blkID := range sim.blocks {
+				if k.Y < int32(math.Floor(oy))-2 || k.Y > int32(math.Floor(oy))+10 {
+					continue
+				}
+				bx := float64(k.X) + 0.5 - ox
+				bz := float64(k.Z) + 0.5 - oz
+				proj := bx*dx + bz*dz
+				if proj <= 1.0 || proj > hitDist {
+					continue
+				}
+				perp := math.Abs(bx*(-dz) + bz*dx)
+				if perp > 1.5 {
+					continue
+				}
+				lower := strings.ToLower(blkID)
+				switch {
+				case strings.Contains(lower, "_log") || strings.Contains(lower, "_leaves"):
+					feat = "FOREST_CANOPY"
+				case strings.Contains(lower, "water"):
+					feat = "WATER"
+				case strings.Contains(lower, "stone") || strings.Contains(lower, "ore"):
+					feat = "STONE_OUTCROP"
+				default:
+					continue
+				}
+				hitDist = proj
+				hitBlockID = blkID
+				hitX = float64(k.X) + 0.5
+				hitY = float64(k.Y)
+				hitZ = float64(k.Z) + 0.5
+				openHorizon = false
+				occluded = hitDist < 14.0
+			}
+		}
+
+		sectors = append(sectors, &civquestv1.HorizonSector{
+			SectorIndex:    i,
+			BearingDeg:     bearing,
+			HitDistance:    float32(hitDist),
+			FeatureType:    feat,
+			HitBlockId:     hitBlockID,
+			HitX:           hitX,
+			HitY:           hitY,
+			HitZ:           hitZ,
+			ElevationDelta: float32(hitY - oy),
+			Occluded:       occluded,
+			OpenHorizon:    openHorizon,
+		})
+	}
+	return &civquestv1.HorizonSurveyReport{
+		OriginX:       ox,
+		OriginY:       oy,
+		OriginZ:       oz,
+		CompletedTick: sim.currentTick,
+		MaxRange:      maxRange,
+		Sectors:       sectors,
+	}
 }
 
 // Step advances the simulation by deltaTicks, processes telemetry through the agent runtime,
@@ -554,6 +659,10 @@ func (sim *TimeWarpSimulation) Step(deltaTicks int64) error {
 	for _, intent := range sim.IntentsThisStep {
 		sim.AllIntents = append(sim.AllIntents, intent)
 		sim.applyIntentFeedback(intent)
+	}
+
+	if sim.pendingSurvey != nil {
+		sim.ActionOccurredThisStep = true
 	}
 
 	// 6. Run detectors
@@ -641,6 +750,22 @@ func (sim *TimeWarpSimulation) drainIntents() []*civquestv1.AgentIntent {
 func (sim *TimeWarpSimulation) applyIntentFeedback(intent *civquestv1.AgentIntent) {
 	if intent == nil {
 		return
+	}
+
+	// 0. Horizon Survey Intent (ADR-032)
+	if sh := intent.GetSurveyHorizon(); sh != nil {
+		numSectors := sh.NumSectors
+		if numSectors <= 0 {
+			numSectors = 36
+		}
+		ticksPerSec := sh.TicksPerSector
+		if ticksPerSec <= 0 {
+			ticksPerSec = 2
+		}
+		sim.pendingSurvey = sh
+		sim.pendingSurveyCompleteTick = sim.currentTick + int64(numSectors*ticksPerSec)
+		sim.pendingSurveyOrigin = &civquestv1.Vec3{X: sim.pos.X, Y: sim.pos.Y, Z: sim.pos.Z}
+		sim.ActionOccurredThisStep = true
 	}
 
 	// 1. Navigation Intent

@@ -38,6 +38,10 @@ public final class LocalPathPlanner {
         default boolean water(int x, int y, int z) {
             return false;
         }
+
+        default boolean chunkLoaded(int x, int z) {
+            return true;
+        }
     }
 
     /** A standing cell: feet block coordinates. */
@@ -145,6 +149,12 @@ public final class LocalPathPlanner {
         boolean hasTargetY = Double.isFinite(targetY);
         int ty = hasTargetY ? (int) Math.floor(targetY) : start.y;
         boolean targetInWater = w.water(tx, ty, tz) || (hasTargetY && w.water(tx, ty - 1, tz));
+        // Solid-column targets (e.g., tree trunks, walls, obstructed workstations) cannot be entered
+        // directly; reaching a 4-adjacent walkable cell within reach counts as reaching the target.
+        boolean solidTargetColumn = hasTargetY && w.solid(tx, ty, tz)
+                && (w.solid(tx, ty + 1, tz) || w.solid(tx, ty + 2, tz));
+        int solidAdjMaxDy = (solidTargetColumn && w.solid(tx, ty + 1, tz)) ? 4 : 2;
+        double startDistSq = distSq(start.x, start.z, tx, tz);
         Map<Long, Node> best = new HashMap<>();
         PriorityQueue<Node> open = new PriorityQueue<>((a, b) -> Double.compare(a.f, b.f));
         Node s = new Node(start, null, 0.0, heuristic(start.x, start.y, start.z, tx, ty, tz, hasTargetY));
@@ -157,6 +167,8 @@ public final class LocalPathPlanner {
                 : distSq(start.x, start.z, tx, tz);
         Node bestBorderNode = null;
         double bestBorderDist = Double.MAX_VALUE;
+        Node bestForwardBorderNode = null;
+        double bestForwardBorderDist = Double.MAX_VALUE;
         boolean reached = false;
         boolean touchedBorder = false;
         int explored = 0;
@@ -176,9 +188,12 @@ public final class LocalPathPlanner {
                 closest = cur;
                 closestDist = d;
             }
-            boolean reachedHere = cur.cell.x == tx && cur.cell.z == tz
+            boolean exactColumnReached = cur.cell.x == tx && cur.cell.z == tz
                     && (hasTargetY ? Math.abs(cur.cell.y - ty) <= 1 : Math.abs(cur.cell.y - start.y) <= 3 + MAX_DROP);
-            if (reachedHere) {
+            boolean adjacentSolidReached = solidTargetColumn
+                    && (Math.abs(cur.cell.x - tx) + Math.abs(cur.cell.z - tz) == 1)
+                    && cur.cell.y >= ty - solidAdjMaxDy && cur.cell.y <= ty + 1;
+            if (exactColumnReached || adjacentSolidReached) {
                 reached = true;
                 closest = cur;
                 break;
@@ -189,6 +204,10 @@ public final class LocalPathPlanner {
                 if (d < bestBorderDist) {
                     bestBorderDist = d;
                     bestBorderNode = cur;
+                }
+                if (distSq(cur.cell.x, cur.cell.z, tx, tz) < startDistSq - 1e-5 && d < bestForwardBorderDist) {
+                    bestForwardBorderDist = d;
+                    bestForwardBorderNode = cur;
                 }
                 continue;
             }
@@ -248,29 +267,40 @@ public final class LocalPathPlanner {
         // Only return a path when:
         // 1. The target was reached (reached == true), OR
         // 2. The target is beyond local radius horizontally, a border cell was reached (touchedBorder == true),
-        //    the best border cell reduces horizontal distance to the target compared to start,
+        //    a border cell reduces horizontal distance to the target compared to start,
         //    and if hasTargetY and vertical difference is large (> 4):
         //      - either the border cell made vertical progress, OR
         //      - the target is below start (descending from a ridge/plateau toward a hollow), so the agent
-        //        walks to the slope/ridge edge and descends once the drop-off enters the local window.
+        //        walks to the slope/ridge edge and descends once the drop-off enters the local window, OR
+        //      - the target is above start AND has terrain/block/climbable/water support (or is in an unloaded
+        //        chunk), so the agent walks across flat/undulating terrain until the uphill slope enters range,
+        //        while still rejecting unsupported mid-air sky targets.
         boolean allowPartialPath = false;
         Node targetNode = closest;
-        if (!reached && touchedBorder && bestBorderNode != null) {
+        Node candidateBorder = bestForwardBorderNode != null ? bestForwardBorderNode : bestBorderNode;
+        if (!reached && touchedBorder && candidateBorder != null) {
             boolean targetBeyondRadius = Math.abs(tx - start.x) > radius || Math.abs(tz - start.z) > radius;
             if (targetBeyondRadius) {
-                double startDistSq = distSq(start.x, start.z, tx, tz);
-                double borderDistSq = distSq(bestBorderNode.cell.x, bestBorderNode.cell.z, tx, tz);
+                double borderDistSq = distSq(candidateBorder.cell.x, candidateBorder.cell.z, tx, tz);
                 if (borderDistSq < startDistSq - 1e-5) {
                     if (hasTargetY && Math.abs(ty - start.y) > 4) {
-                        boolean verticalProgress = Math.abs(bestBorderNode.cell.y - ty) < Math.abs(start.y - ty);
-                        boolean descendingPlateau = ty < start.y && bestBorderNode.cell.y <= start.y + 1;
-                        if (verticalProgress || descendingPlateau) {
+                        boolean verticalProgress = Math.abs(candidateBorder.cell.y - ty) < Math.abs(start.y - ty);
+                        boolean descendingPlateau = ty < start.y && candidateBorder.cell.y <= start.y + 1;
+                        boolean targetHasSupport = !w.chunkLoaded(tx, tz)
+                                || w.solid(tx, ty, tz)
+                                || w.solid(tx, ty - 1, tz)
+                                || w.solid(tx, ty - 2, tz)
+                                || w.climbable(tx, ty, tz)
+                                || w.water(tx, ty, tz)
+                                || w.water(tx, ty - 1, tz);
+                        boolean ascendingApproach = ty > start.y && targetHasSupport;
+                        if (verticalProgress || descendingPlateau || ascendingApproach) {
                             allowPartialPath = true;
-                            targetNode = bestBorderNode;
+                            targetNode = candidateBorder;
                         }
                     } else {
                         allowPartialPath = true;
-                        targetNode = bestBorderNode;
+                        targetNode = candidateBorder;
                     }
                 }
             }

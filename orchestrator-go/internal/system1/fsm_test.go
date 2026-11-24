@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/btposey/civquest/orchestrator-go/internal/blueprints"
+	"github.com/btposey/civquest/orchestrator-go/internal/db"
 	civquestv1 "github.com/btposey/civquest/orchestrator-go/internal/proto/v1"
 	"github.com/btposey/civquest/orchestrator-go/internal/xdg"
 )
@@ -1021,4 +1022,311 @@ func TestFSM_StarvationLowHPZeroHostilesDoesNotLockInEmergency(t *testing.T) {
 	if res.GoalHierarchy == nil || res.GoalHierarchy.ImmediateGoal != ForagingGoalText {
 		t.Fatalf("expected ImmediateGoal=%q, got %+v", ForagingGoalText, res.GoalHierarchy)
 	}
+}
+
+func TestFSM_BootstrapNightWithoutShelterStaysActiveAndExploresOrQueriesSpatialIndex(t *testing.T) {
+	t.Run("Night tod=16000 with 0 logs and no POIs falls through to exploration instead of sleeping or tethering", func(t *testing.T) {
+		fsm := NewAgentFSM(StageBootstrap, nil)
+		state := NewAgentState()
+		state.SetHomeOrigin(&civquestv1.Vec3{X: 0, Y: 64, Z: 0})
+		cfg := xdg.DefaultAgentIdentityConfig("earl")
+		cfg.Profession = "EXPLORER"
+
+		// Warm up ticks at night with 0 logs, 0 shelter, 0 bed: first triggers SurveyHorizonIntent, then after report explores outward
+		var surveyIntent *civquestv1.AgentIntent
+		var exploreIntent *civquestv1.AgentIntent
+		for i := int64(0); i < 4; i++ {
+			tick := 100 + i*70
+			ctx := &FSMContext{
+				AgentID: "earl",
+				State:   state,
+				Config:  cfg,
+				Frame: &civquestv1.TelemetryFrame{
+					WorldTick: tick,
+					TimeOfDay: 16000, // Deep night
+					Status: &civquestv1.AgentStatus{
+						AgentId:         "earl",
+						Health:          20,
+						MaxHealth:       20,
+						FoodLevel:       20,
+						Position:        &civquestv1.Vec3{X: 25, Y: 64, Z: 0},
+						NavigationState: civquestv1.NavigationState_NAVIGATION_STATE_IDLE,
+					},
+				},
+			}
+			res := fsm.Tick(ctx)
+			if res.Routine == RoutineSleep || res.Routine == RoutineTavernSocial {
+				t.Fatalf("BOOTSTRAP without shelter must NOT enter %s at night, got %s", res.Routine, res.Routine)
+			}
+			if res.Facts != nil && res.Facts.GetString("circadian.routine") == string(RoutineSleep) {
+				t.Fatalf("CircadianEvaluator must NOT report SLEEP in BOOTSTRAP without shelter")
+			}
+			for _, it := range res.Intents {
+				if it.Intent != nil && it.Intent.GetSurveyHorizon() != nil {
+					surveyIntent = it.Intent
+					// Feed completed survey back so next tick picks a bearing and navigates outward
+					sectors := make([]*civquestv1.HorizonSector, 36)
+					for s := 0; s < 36; s++ {
+						sectors[s] = &civquestv1.HorizonSector{
+							SectorIndex: int32(s),
+							BearingDeg:  float32(s * 10),
+							HitDistance: 48.0,
+							FeatureType: "FOREST_CANOPY",
+							HitBlockId:  "minecraft:oak_leaves",
+						}
+					}
+					state.IngestHorizonSurveyReport(&civquestv1.HorizonSurveyReport{
+						OriginX: 25, OriginY: 64, OriginZ: 0, CompletedTick: tick + 10, MaxRange: 64.0, Sectors: sectors,
+					}, tick+10)
+				}
+				if it.Intent != nil && it.Intent.GetNavigate() != nil {
+					exploreIntent = it.Intent
+				}
+			}
+		}
+		if surveyIntent == nil {
+			t.Fatalf("expected BOOTSTRAP agent at night with 0 logs to emit SurveyHorizonIntent")
+		}
+		if exploreIntent == nil || exploreIntent.GetNavigate() == nil || exploreIntent.GetNavigate().Target == nil {
+			t.Fatalf("expected BOOTSTRAP agent at night with 0 logs to emit exploration NavigateIntent after survey, got nil")
+		}
+		target := exploreIntent.GetNavigate().Target
+		if target.X == 0 && target.Z == 0 {
+			t.Fatalf("expected exploration outward rather than tethering back to homeOrigin (0, 64, 0), got %+v", target)
+		}
+	})
+
+	t.Run("Dusk tod=12000 without shelter suppresses RoutineTavernSocial and stays task-driven", func(t *testing.T) {
+		fsm := NewAgentFSM(StageBootstrap, nil)
+		state := NewAgentState()
+		cfg := xdg.DefaultAgentIdentityConfig("earl")
+		cfg.Profession = "EXPLORER"
+
+		ctx := &FSMContext{
+			AgentID: "earl",
+			State:   state,
+			Config:  cfg,
+			Frame: &civquestv1.TelemetryFrame{
+				WorldTick: 200,
+				TimeOfDay: 12000,
+				Status: &civquestv1.AgentStatus{
+					AgentId:         "earl",
+					Health:          20,
+					MaxHealth:       20,
+					FoodLevel:       20,
+					Position:        &civquestv1.Vec3{X: 10, Y: 64, Z: 10},
+					NavigationState: civquestv1.NavigationState_NAVIGATION_STATE_IDLE,
+				},
+			},
+		}
+		res := fsm.Tick(ctx)
+		if res.Routine != RoutinePrimaryDuty {
+			t.Fatalf("expected RoutinePrimaryDuty in BOOTSTRAP dusk without shelter, got %s", res.Routine)
+		}
+		if res.Facts.GetString("circadian.routine") != string(RoutinePrimaryDuty) {
+			t.Fatalf("expected FactGraph circadian.routine=%s, got %s", RoutinePrimaryDuty, res.Facts.GetString("circadian.routine"))
+		}
+	})
+
+	t.Run("Night tod=16000 with 0 logs queries SpatialIndex for remembered tree POI", func(t *testing.T) {
+		fsm := NewAgentFSM(StageBootstrap, nil)
+		state := NewAgentState()
+		state.SetHomeOrigin(&civquestv1.Vec3{X: 0, Y: 64, Z: 0})
+		state.SpatialIndex().UpsertPOI(db.AgentPOI{
+			POIID:          FormatPOIID(POICategoryResource, 45, 64, 15),
+			Category:       POICategoryResource,
+			BlockID:        "minecraft:oak_log",
+			X:              45.5,
+			Y:              64.0,
+			Z:              15.5,
+			AccessX:        44.5,
+			AccessY:        64.0,
+			AccessZ:        15.5,
+			ElevationLayer: ElevationSurface,
+			SafetyScore:    1.0,
+			Reliability:    1.0,
+			IsActive:       true,
+		})
+		cfg := xdg.DefaultAgentIdentityConfig("earl")
+		cfg.Profession = "EXPLORER"
+
+		ctx := &FSMContext{
+			AgentID: "earl",
+			State:   state,
+			Config:  cfg,
+			Frame: &civquestv1.TelemetryFrame{
+				WorldTick: 300,
+				TimeOfDay: 16000,
+				Status: &civquestv1.AgentStatus{
+					AgentId:         "earl",
+					Health:          20,
+					MaxHealth:       20,
+					FoodLevel:       20,
+					Position:        &civquestv1.Vec3{X: 20, Y: 64, Z: 0},
+					NavigationState: civquestv1.NavigationState_NAVIGATION_STATE_IDLE,
+				},
+			},
+		}
+		res := fsm.Tick(ctx)
+		if len(res.Intents) == 0 || res.Intents[0].Intent.GetNavigate() == nil {
+			t.Fatalf("expected NavigateIntent to SpatialIndex log POI at night, got %+v", res.Intents)
+		}
+		target := res.Intents[0].Intent.GetNavigate().Target
+		if target.X != 44.5 || target.Z != 15.5 {
+			t.Fatalf("expected target (44.5, 64, 15.5), got %+v", target)
+		}
+	})
+
+	t.Run("Night tod=16000 without shelter executes active System 2 directive when no shelter action available", func(t *testing.T) {
+		fsm := NewAgentFSM(StageBootstrap, nil)
+		state := NewAgentState()
+		state.SetStrategicDirective(DirectiveActionScoutFrontier, "northern woods", "SCOUT_FRONTIER: Find timber", 100, 6100)
+		cfg := xdg.DefaultAgentIdentityConfig("earl")
+		cfg.Profession = "EXPLORER"
+
+		ctx := &FSMContext{
+			AgentID: "earl",
+			State:   state,
+			Config:  cfg,
+			Frame: &civquestv1.TelemetryFrame{
+				WorldTick: 300,
+				TimeOfDay: 16000,
+				Status: &civquestv1.AgentStatus{
+					AgentId:         "earl",
+					Health:          20,
+					MaxHealth:       20,
+					FoodLevel:       20,
+					Position:        &civquestv1.Vec3{X: 0, Y: 64, Z: 0},
+					NavigationState: civquestv1.NavigationState_NAVIGATION_STATE_IDLE,
+				},
+			},
+		}
+		res := fsm.Tick(ctx)
+		if len(res.Intents) == 0 || (res.Intents[0].Intent.GetSurveyHorizon() == nil && res.Intents[0].Intent.GetNavigate() == nil) {
+			t.Fatalf("expected System 2 SCOUT_FRONTIER SurveyHorizonIntent or NavigateIntent at night in BOOTSTRAP without shelter, got %+v", res.Intents)
+		}
+	})
+}
+
+func TestFSM_BootstrapNightWithLogsBuildsShelterAndGatesCircadianOnceComplete(t *testing.T) {
+	t.Run("Night tod=16000 with logs still crafts planks and builds shelter", func(t *testing.T) {
+		fsm := NewAgentFSM(StageBootstrap, nil)
+		state := NewAgentState()
+		state.SetRecipeGraph(newTestRecipeGraph())
+		cfg := xdg.DefaultAgentIdentityConfig("earl")
+		cfg.Profession = "EXPLORER"
+
+		ctx := &FSMContext{
+			AgentID: "earl",
+			State:   state,
+			Config:  cfg,
+			Frame: &civquestv1.TelemetryFrame{
+				WorldTick: 200,
+				TimeOfDay: 16000,
+				Status: &civquestv1.AgentStatus{
+					AgentId:         "earl",
+					Health:          20,
+					MaxHealth:       20,
+					FoodLevel:       20,
+					Position:        &civquestv1.Vec3{X: 0.5, Y: 64, Z: 0.5},
+					NavigationState: civquestv1.NavigationState_NAVIGATION_STATE_IDLE,
+					Inventory: []*civquestv1.ItemStackProto{
+						{Slot: 0, ItemId: "minecraft:oak_log", Count: 4},
+					},
+				},
+			},
+		}
+
+		res := fsm.Tick(ctx)
+		if len(res.Intents) == 0 || res.Intents[0].Intent.GetCraftItem() == nil ||
+			res.Intents[0].Intent.GetCraftItem().RecipeId != "minecraft:oak_planks" {
+			t.Fatalf("expected CraftItemIntent(minecraft:oak_planks) at night with logs, got %+v", res.Intents)
+		}
+	})
+
+	t.Run("IsShelterComplete unlocks normal circadian TavernSocial and Sleep routines in BOOTSTRAP", func(t *testing.T) {
+		fsm := NewAgentFSM(StageBootstrap, nil)
+		state := NewAgentState()
+		state.SetShelterBlocksPlaced(blueprints.CabinTotalBlocks)
+		state.ShelterBuildIndex = blueprints.CabinTotalBlocks
+		cfg := xdg.DefaultAgentIdentityConfig("earl")
+		cfg.Profession = "EXPLORER"
+
+		// Dusk -> RoutineTavernSocial
+		resDusk := fsm.Tick(&FSMContext{
+			AgentID: "earl",
+			State:   state,
+			Config:  cfg,
+			Frame: &civquestv1.TelemetryFrame{
+				WorldTick: 200,
+				TimeOfDay: 12000,
+				Status: &civquestv1.AgentStatus{
+					AgentId:   "earl",
+					Health:    20,
+					MaxHealth: 20,
+					FoodLevel: 20,
+					Position:  &civquestv1.Vec3{X: 0.5, Y: 64, Z: 0.5},
+				},
+			},
+		})
+		if resDusk.Routine != RoutineTavernSocial {
+			t.Fatalf("expected RoutineTavernSocial at dusk once shelter complete, got %s", resDusk.Routine)
+		}
+
+		// Night -> RoutineSleep (and does not wander out to explore)
+		resNight := fsm.Tick(&FSMContext{
+			AgentID: "earl",
+			State:   state,
+			Config:  cfg,
+			Frame: &civquestv1.TelemetryFrame{
+				WorldTick: 300,
+				TimeOfDay: 16000,
+				Status: &civquestv1.AgentStatus{
+					AgentId:   "earl",
+					Health:    20,
+					MaxHealth: 20,
+					FoodLevel: 20,
+					Position:  &civquestv1.Vec3{X: 0.5, Y: 64, Z: 0.5},
+				},
+			},
+		})
+		if resNight.Routine != RoutineSleep {
+			t.Fatalf("expected RoutineSleep at night once shelter complete, got %s", resNight.Routine)
+		}
+		if len(resNight.Intents) != 0 {
+			t.Fatalf("expected resting inside completed shelter at night (no exploration/gather intents), got %+v", resNight.Intents)
+		}
+	})
+
+	t.Run("HasAssignedBed unlocks normal circadian Sleep and emits SLEEP_IN_BED in BOOTSTRAP", func(t *testing.T) {
+		fsm := NewAgentFSM(StageBootstrap, nil)
+		state := NewAgentState()
+		state.SetAssignedBed(&civquestv1.BlockPosProto{X: 1, Y: 64, Z: 0})
+		cfg := xdg.DefaultAgentIdentityConfig("earl")
+
+		resNight := fsm.Tick(&FSMContext{
+			AgentID: "earl",
+			State:   state,
+			Config:  cfg,
+			Frame: &civquestv1.TelemetryFrame{
+				WorldTick: 300,
+				TimeOfDay: 16000,
+				Status: &civquestv1.AgentStatus{
+					AgentId:         "earl",
+					Health:          20,
+					MaxHealth:       20,
+					FoodLevel:       20,
+					Position:        &civquestv1.Vec3{X: 0.5, Y: 64, Z: 0.5},
+					NavigationState: civquestv1.NavigationState_NAVIGATION_STATE_IDLE,
+				},
+			},
+		})
+		if resNight.Routine != RoutineSleep {
+			t.Fatalf("expected RoutineSleep at night with assigned bed, got %s", resNight.Routine)
+		}
+		if len(resNight.Intents) == 0 || resNight.Intents[0].Intent.GetInteractBlock() == nil ||
+			resNight.Intents[0].Intent.GetInteractBlock().InteractionType != civquestv1.InteractBlockIntent_SLEEP_IN_BED {
+			t.Fatalf("expected SLEEP_IN_BED intent at night with assigned bed, got %+v", resNight.Intents)
+		}
+	})
 }

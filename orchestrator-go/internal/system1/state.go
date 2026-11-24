@@ -192,6 +192,36 @@ type AgentState struct {
 	directiveScoutTarget    *civquestv1.Vec3
 	lastDirectiveActionTick int64
 	lastDirectiveNavKey     string
+
+	// Peripheral 360-degree horizon survey & chained expedition state (ADR-032)
+	LatestSurvey              *civquestv1.HorizonSurveyReport
+	LastSurveyTick            int64
+	LastSurveyOrigin          [3]float64
+	ExpeditionPhase           ExpeditionPhase
+	ExpeditionHops            int
+	ExpeditionTarget          [3]float64
+	ExpeditionBearing         float32
+	ExpeditionFlankCount      int
+	ExpeditionNavAttempts     int
+	ClanSize                  int
+	RendezvousOrigin          [3]float64
+	HomesteadClaimed          bool
+	HomesteadPos              [3]float64
+	PendingRendezvousSync     bool
+	PendingRendezvousSummary  string
+	CollectiveSiteChosen      bool
+	CollectiveSitePos         [3]float64
+	expeditionSurveyStartTick int64
+	expeditionLastNavTick     int64
+	expeditionPrimaryTarget   [3]float64
+	expeditionPrimaryBearing  float32
+	expeditionReturning       bool
+	expeditionPrevOrigin      [3]float64
+	expeditionPrevOriginSet   bool
+	expeditionBlockedBearings []float32
+	rendezvousOriginSet       bool
+	clanSizeExplicit          bool
+	latestSurveySummary       string
 }
 
 // NewAgentState creates an initialized AgentState.
@@ -205,6 +235,8 @@ func NewAgentState() *AgentState {
 		PavingTracker:           NewRoadPavingTracker(DefaultPavingCapacity, DefaultPavingThreshold),
 		spatialIndex:            NewSpatialIndex(),
 		habitTrailTracker:       NewHabitTrailTracker(DefaultBreadcrumbDisplacement, DefaultArrivalThreshold, DefaultFinalTransitionDist),
+		ExpeditionPhase:         ExpeditionIdle,
+		ClanSize:                1,
 		goals: GoalHierarchy{
 			ImmediateGoal: "GATHER_TIMBER: Gather 4 logs and craft basic wooden tools",
 			ShortTermGoal: "ESTABLISH_OUTPOST_CHAIN: Advance frontier and establish safe day-night outposts with tools & light",

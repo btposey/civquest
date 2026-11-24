@@ -352,4 +352,120 @@ public class LocalPathPlannerTest {
         assertFalse(localAbove.reachedTarget());
         assertFalse(localAbove.hasPath(), "Unreachable overhead target within local radius must return empty path");
     }
+
+    @Test
+    @DisplayName("Uphill approach across flat ground to elevated solid tree trunk reaches 4-adjacent cell")
+    void uphillApproachToElevatedSolidTreeTrunkReachesAdjacentCell() {
+        // Reproduces morning playtest topology: flat at y=87 (floor y<=86) for z<=8, rising 1 block/Z from z=9..14 to floor y=92,
+        // with a solid oak trunk column at (-35, 93..96, 14).
+        LocalPathPlanner.World forestHill = new LocalPathPlanner.World() {
+            private int floorY(int z) {
+                if (z <= 8) {
+                    return 86;
+                }
+                if (z >= 14) {
+                    return 92;
+                }
+                return 86 + (z - 8);
+            }
+
+            @Override
+            public boolean solid(int x, int y, int z) {
+                if (x == -35 && z == 14 && y >= 93 && y <= 96) {
+                    return true;
+                }
+                return y <= floorY(z);
+            }
+
+            @Override
+            public boolean hazard(int x, int y, int z) {
+                return false;
+            }
+        };
+
+        LocalPathPlanner.Cell cur = new LocalPathPlanner.Cell(-32, 87, 1);
+        double targetX = -34.5; // floor(-34.5) == -35
+        double targetY = 94.0;
+        double targetZ = 14.5;
+
+        // First plan from spawn (dy=+7 > 4, flat within DEFAULT_RADIUS=7) must emit non-empty partial path
+        LocalPathPlanner.Result first = LocalPathPlanner.plan(forestHill, cur, targetX, targetY, targetZ,
+                LocalPathPlanner.DEFAULT_RADIUS, null);
+        assertTrue(first.hasPath(), "Uphill approach with supported target must emit non-empty partial path");
+
+        // Follow local plans iteratively until arrival
+        boolean reached = false;
+        for (int step = 0; step < 40; step++) {
+            LocalPathPlanner.Result r = LocalPathPlanner.plan(forestHill, cur, targetX, targetY, targetZ,
+                    LocalPathPlanner.DEFAULT_RADIUS, null);
+            if (r.reachedTarget() && !r.hasPath()) {
+                reached = true;
+                break;
+            }
+            assertTrue(r.hasPath(), "Step " + step + " from " + cur + " must not stall with empty path");
+            cur = r.path().get(r.path().size() - 1);
+            if (r.reachedTarget()) {
+                reached = true;
+                break;
+            }
+        }
+        assertTrue(reached, "Agent must climb slope and reach adjacent to solid tree trunk; ended at " + cur);
+        assertEquals(1, Math.abs(cur.x() - (-35)) + Math.abs(cur.z() - 14),
+                "Final cell must be 4-adjacent to solid trunk at (-35, 14): " + cur);
+    }
+
+    @Test
+    @DisplayName("Local solid column target inside radius plans to 4-adjacent walkable cell")
+    void localSolidColumnTargetReachesAdjacentCell() {
+        Set<String> solids = new HashSet<>();
+        wall(solids, 4, 0, 64, 67); // 4-tall solid trunk at (4, 64..67, 0)
+        LocalPathPlanner.Result r = LocalPathPlanner.plan(world(solids, Set.of()),
+                new LocalPathPlanner.Cell(0, 64, 0), 4.5, 65.0, 0.5, LocalPathPlanner.DEFAULT_RADIUS, null);
+        assertTrue(r.reachedTarget(), "Solid column within radius must be reachable via 4-adjacent cell");
+        assertTrue(r.hasPath());
+        LocalPathPlanner.Cell end = r.path().get(r.path().size() - 1);
+        assertEquals(1, Math.abs(end.x() - 4) + Math.abs(end.z()), "End cell must be 4-adjacent to trunk: " + end);
+    }
+
+    @Test
+    @DisplayName("Long-distance 80-block traversal across plains, uphill ridge, and valley reaches target")
+    void longDistanceUnevenTerrainTraversal() {
+        LocalPathPlanner.World rollingWorld = new LocalPathPlanner.World() {
+            private int floorY(int x) {
+                if (x <= 25) return 63;
+                if (x <= 35) return 63 + (x - 25); // climbs to 73
+                if (x <= 50) return 73;
+                if (x <= 56) return 73 - (x - 50); // drops to 67
+                return 67;
+            }
+
+            @Override
+            public boolean solid(int x, int y, int z) {
+                return y <= floorY(x);
+            }
+
+            @Override
+            public boolean hazard(int x, int y, int z) {
+                return false;
+            }
+        };
+
+        LocalPathPlanner.Cell cur = new LocalPathPlanner.Cell(0, 64, 0);
+        boolean reached = false;
+        for (int iter = 0; iter < 30; iter++) {
+            LocalPathPlanner.Result r = LocalPathPlanner.plan(rollingWorld, cur, 80.5, 68.0, 0.5,
+                    LocalPathPlanner.DEFAULT_RADIUS, null);
+            assertTrue(r.hasPath() || r.reachedTarget(), "Iteration " + iter + " from " + cur + " returned empty path");
+            if (r.hasPath()) {
+                cur = r.path().get(r.path().size() - 1);
+            }
+            if (r.reachedTarget()) {
+                reached = true;
+                break;
+            }
+        }
+        assertTrue(reached, "Agent must traverse 80 blocks of uneven terrain to (80, 68, 0); ended at " + cur);
+        assertEquals(80, cur.x());
+        assertEquals(68, cur.y());
+    }
 }

@@ -7,22 +7,28 @@ import com.civquest.mod.actuator.IntentActuator;
 import com.civquest.mod.grpc.v1.AgentIntent;
 import com.civquest.mod.grpc.v1.AttackIntent;
 import com.civquest.mod.grpc.v1.BuildBlockIntent;
+import com.civquest.mod.grpc.v1.HorizonSector;
+import com.civquest.mod.grpc.v1.HorizonSurveyReport;
 import com.civquest.mod.grpc.v1.IntentReceipt;
 import com.civquest.mod.grpc.v1.InteractBlockIntent;
 import com.civquest.mod.grpc.v1.NavigateIntent;
 import com.civquest.mod.grpc.v1.PlaceSignpostIntent;
 import com.civquest.mod.grpc.v1.ReflexNotice;
+import com.civquest.mod.grpc.v1.SurveyHorizonIntent;
 import com.civquest.mod.grpc.v1.UseItemIntent;
 import com.civquest.mod.grpc.v1.Vec3;
+import com.civquest.mod.sensory.HorizonSurveyScanner;
 import com.mojang.logging.LogUtils;
 import net.minecraft.core.BlockPos;
 import net.minecraft.world.InteractionHand;
 import net.minecraft.world.entity.projectile.Projectile;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
+import net.minecraft.world.level.Level;
 import org.slf4j.Logger;
 
 import java.util.ArrayDeque;
+import java.util.ArrayList;
 import java.util.Deque;
 import java.util.HashMap;
 import java.util.List;
@@ -60,6 +66,17 @@ public class AgentMotorFSM {
     private volatile long lastProcessedSequenceId = 0L;
     private volatile boolean lastAsyncActionSucceeded = true;
     private volatile String lastAsyncFailureReason = "";
+
+    // Peripheral 360-degree horizon survey state (ADR-032)
+    private int surveyNumSectors = 0;
+    private float surveyMaxRange = HorizonSurveyScanner.DEFAULT_MAX_RANGE;
+    private int surveyTicksPerSector = 2;
+    private int surveyCurrentSector = 0;
+    private int surveyTickCounter = 0;
+    private final List<HorizonSector> surveySectors = new ArrayList<>();
+    private double surveyOriginX = 0.0;
+    private double surveyOriginY = 0.0;
+    private double surveyOriginZ = 0.0;
 
     public AgentMotorFSM(AgentEntity agent) {
         this.agent = agent;
@@ -210,6 +227,18 @@ public class AgentMotorFSM {
                 context.put("navArrivalTolerance", nav.getArrivalTolerance());
                 lastProgressValue = nav.getPosition().distanceTo(targetVec);
             }
+        } else if (this.currentState == MotorState.SURVEYING) {
+            progressTicks = this.surveyTickCounter;
+            lastProgressValue = this.surveyCurrentSector;
+            context.put("surveyNumSectors", this.surveyNumSectors);
+            context.put("surveyMaxRange", this.surveyMaxRange);
+            context.put("surveyTicksPerSector", this.surveyTicksPerSector);
+            context.put("surveyCurrentSector", this.surveyCurrentSector);
+            context.put("surveyTickCounter", this.surveyTickCounter);
+            context.put("surveySectors", new ArrayList<>(this.surveySectors));
+            context.put("surveyOriginX", this.surveyOriginX);
+            context.put("surveyOriginY", this.surveyOriginY);
+            context.put("surveyOriginZ", this.surveyOriginZ);
         }
 
         if (reason != null) {
@@ -306,6 +335,23 @@ public class AgentMotorFSM {
                     agent.getNavigator().navigate(frame.getIntent().getNavigate());
                 }
             }
+        } else if (targetState == MotorState.SURVEYING) {
+            this.surveyNumSectors = frame.getContextValue("surveyNumSectors") instanceof Integer i ? i : 36;
+            this.surveyMaxRange = frame.getContextValue("surveyMaxRange") instanceof Float f ? f : HorizonSurveyScanner.DEFAULT_MAX_RANGE;
+            this.surveyTicksPerSector = frame.getContextValue("surveyTicksPerSector") instanceof Integer i ? i : 2;
+            this.surveyCurrentSector = frame.getContextValue("surveyCurrentSector") instanceof Integer i ? i : 0;
+            this.surveyTickCounter = frame.getContextValue("surveyTickCounter") instanceof Integer i ? i : 0;
+            this.surveyOriginX = frame.getContextValue("surveyOriginX") instanceof Double d ? d : 0.0;
+            this.surveyOriginY = frame.getContextValue("surveyOriginY") instanceof Double d ? d : 0.0;
+            this.surveyOriginZ = frame.getContextValue("surveyOriginZ") instanceof Double d ? d : 0.0;
+            this.surveySectors.clear();
+            if (frame.getContextValue("surveySectors") instanceof List<?> savedList) {
+                for (Object item : savedList) {
+                    if (item instanceof HorizonSector hs) {
+                        this.surveySectors.add(hs);
+                    }
+                }
+            }
         }
 
         return true;
@@ -340,6 +386,19 @@ public class AgentMotorFSM {
         this.currentIntent = null;
         this.lastAsyncActionSucceeded = true;
         this.lastAsyncFailureReason = "";
+        clearSurveyState();
+    }
+
+    private void clearSurveyState() {
+        this.surveyNumSectors = 0;
+        this.surveyMaxRange = HorizonSurveyScanner.DEFAULT_MAX_RANGE;
+        this.surveyTicksPerSector = 2;
+        this.surveyCurrentSector = 0;
+        this.surveyTickCounter = 0;
+        this.surveySectors.clear();
+        this.surveyOriginX = 0.0;
+        this.surveyOriginY = 0.0;
+        this.surveyOriginZ = 0.0;
     }
 
     /**
@@ -383,6 +442,9 @@ public class AgentMotorFSM {
             }
             case STUCK_RECOVERY -> {
                 stuckRecoveryTicks = 0;
+            }
+            case SURVEYING -> {
+                clearSurveyState();
             }
             default -> {
             }
@@ -455,6 +517,10 @@ public class AgentMotorFSM {
                 // Any valid intent can redirect or preempt movement
                 return true;
             }
+            case SURVEYING -> {
+                // Emergency combat/eating or explicit new intents can cleanly preempt an ongoing horizon survey
+                return true;
+            }
             default -> {
                 return true;
             }
@@ -496,11 +562,11 @@ public class AgentMotorFSM {
     }
 
     /**
-     * Preempts {@link MotorState#MINING} or {@link MotorState#MOVING} with {@link MotorState#COMBAT_ENGAGED}
-     * via the PDA stack when an immediate physical hazard is detected.
+     * Preempts {@link MotorState#MINING}, {@link MotorState#MOVING}, or {@link MotorState#SURVEYING}
+     * with {@link MotorState#COMBAT_ENGAGED} via the PDA stack when an immediate physical hazard is detected.
      */
     public synchronized boolean preemptWithCombatReflex(String reason) {
-        if (currentState != MotorState.MINING && currentState != MotorState.MOVING) {
+        if (currentState != MotorState.MINING && currentState != MotorState.MOVING && currentState != MotorState.SURVEYING) {
             if (currentState == MotorState.COMBAT_ENGAGED) {
                 combatTicks = 0;
             }
@@ -628,7 +694,7 @@ public class AgentMotorFSM {
             }
             case ATTACK -> {
                 AttackIntent atk = intent.getAttack();
-                if (currentState == MotorState.MINING || currentState == MotorState.MOVING) {
+                if (currentState == MotorState.MINING || currentState == MotorState.MOVING || currentState == MotorState.SURVEYING) {
                     pushState(MotorState.COMBAT_ENGAGED, "attack_intent_reflex");
                 } else {
                     transitionTo(MotorState.COMBAT_ENGAGED, "attack_intent");
@@ -689,7 +755,7 @@ public class AgentMotorFSM {
             }
             case USE_ITEM -> {
                 UseItemIntent use = intent.getUseItem();
-                boolean preempted = (currentState == MotorState.MINING || currentState == MotorState.MOVING)
+                boolean preempted = (currentState == MotorState.MINING || currentState == MotorState.MOVING || currentState == MotorState.SURVEYING)
                         && isPriorityOrEmergencyIntent(intent);
                 if (preempted) {
                     pushState(MotorState.USING_ITEM, "use_item_reflex_preempt");
@@ -719,6 +785,39 @@ public class AgentMotorFSM {
             case TRADE_RESPONSE -> {
                 return agent != null ? actuator.actuateRespondTrade(agent, intent.getTradeResponse()) : true;
             }
+            case SURVEY_HORIZON -> {
+                SurveyHorizonIntent survey = intent.getSurveyHorizon();
+                if (agent != null && agent.getNavigator() != null) {
+                    agent.getNavigator().stop();
+                }
+                int rawSectors = survey.getNumSectors();
+                int numSectors = rawSectors <= 0 ? 36 : Math.max(1, Math.min(360, rawSectors));
+                float maxRange = HorizonSurveyScanner.clampMaxRange(survey.getMaxRange());
+                int rawTicks = survey.getTicksPerSector();
+                int ticksPerSector = rawTicks <= 0 ? 2 : Math.max(1, Math.min(10, rawTicks));
+
+                transitionTo(MotorState.SURVEYING, "survey_horizon_intent");
+                clearSurveyState();
+                this.surveyNumSectors = numSectors;
+                this.surveyMaxRange = maxRange;
+                this.surveyTicksPerSector = ticksPerSector;
+                this.surveyCurrentSector = 0;
+                this.surveyTickCounter = 0;
+                if (agent != null) {
+                    net.minecraft.world.phys.Vec3 eyePos = agent.getEyePosition();
+                    if (eyePos != null) {
+                        this.surveyOriginX = eyePos.x;
+                        this.surveyOriginY = eyePos.y;
+                        this.surveyOriginZ = eyePos.z;
+                    } else {
+                        this.surveyOriginX = agent.getX();
+                        this.surveyOriginY = agent.getY() + 1.62;
+                        this.surveyOriginZ = agent.getZ();
+                    }
+                }
+                this.currentIntent = intent;
+                return true;
+            }
             default -> {
                 LOGGER.debug("Unhandled intent action in MotorFSM: {}", intent.getActionCase());
                 return false;
@@ -732,7 +831,7 @@ public class AgentMotorFSM {
     public synchronized void tick() {
         ticksInState++;
 
-        if (currentState == MotorState.MINING || currentState == MotorState.MOVING) {
+        if (currentState == MotorState.MINING || currentState == MotorState.MOVING || currentState == MotorState.SURVEYING) {
             checkIncomingProjectileHazard();
         }
 
@@ -825,6 +924,58 @@ public class AgentMotorFSM {
             }
             case BUILDING -> {
                 transitionTo(MotorState.IDLE, "building_cycle_finished");
+            }
+            case SURVEYING -> {
+                if (surveyNumSectors <= 0) {
+                    transitionTo(MotorState.IDLE, "survey_invalid_sectors");
+                    break;
+                }
+                if (surveyTickCounter % Math.max(1, surveyTicksPerSector) == 0) {
+                    float bearingDeg = (surveyCurrentSector * 360.0f) / surveyNumSectors;
+                    if (agent != null) {
+                        agent.faceBearingAndSync(bearingDeg);
+                        Level level = agent.level();
+                        net.minecraft.world.phys.Vec3 eyePos = agent.getEyePosition();
+                        if (eyePos == null) {
+                            eyePos = new net.minecraft.world.phys.Vec3(surveyOriginX, surveyOriginY, surveyOriginZ);
+                        }
+                        HorizonSector sector = HorizonSurveyScanner.scanSector(
+                                level, agent, eyePos, surveyCurrentSector, bearingDeg, surveyMaxRange);
+                        surveySectors.add(sector);
+                    } else {
+                        surveySectors.add(HorizonSector.newBuilder()
+                                .setSectorIndex(surveyCurrentSector)
+                                .setBearingDeg(bearingDeg)
+                                .setHitDistance(surveyMaxRange)
+                                .setFeatureType(HorizonSurveyScanner.FEATURE_OPEN_PLAINS)
+                                .setHitBlockId("minecraft:air")
+                                .setOpenHorizon(true)
+                                .setOccluded(false)
+                                .build());
+                    }
+                    surveyCurrentSector++;
+                    if (surveyCurrentSector >= surveyNumSectors) {
+                        long completedTick = (agent != null && agent.level() != null)
+                                ? agent.level().getGameTime()
+                                : (agent != null ? agent.tickCount : 0L);
+                        HorizonSurveyReport report = HorizonSurveyReport.newBuilder()
+                                .setOriginX(surveyOriginX)
+                                .setOriginY(surveyOriginY)
+                                .setOriginZ(surveyOriginZ)
+                                .setCompletedTick(completedTick)
+                                .setMaxRange(surveyMaxRange)
+                                .addAllSectors(surveySectors)
+                                .build();
+                        if (agent != null) {
+                            agent.queueHorizonSurveyReport(report);
+                        }
+                        lastAsyncActionSucceeded = true;
+                        lastAsyncFailureReason = "";
+                        transitionTo(MotorState.IDLE, "horizon_survey_complete");
+                        break;
+                    }
+                }
+                surveyTickCounter++;
             }
             case IDLE -> {
                 // Receptive idle

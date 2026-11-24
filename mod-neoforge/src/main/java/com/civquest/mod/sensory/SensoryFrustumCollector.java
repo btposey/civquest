@@ -234,6 +234,10 @@ public class SensoryFrustumCollector {
         if (reflexNotices != null && !reflexNotices.isEmpty()) {
             frameBuilder.addAllReflexNotices(reflexNotices);
         }
+        com.civquest.mod.grpc.v1.HorizonSurveyReport horizonSurvey = agent.pollHorizonSurveyReport();
+        if (horizonSurvey != null) {
+            frameBuilder.setHorizonSurvey(horizonSurvey);
+        }
 
         // 9. MotorPDA IntentReceipt & sequence acknowledgment (Phase 2 3-Tier PDA Continuum)
         IntentReceipt receipt = null;
@@ -397,6 +401,7 @@ public class SensoryFrustumCollector {
         boolean lastChunkLoaded = false;
 
         List<BlockPos> logCandidates = new ArrayList<>();
+        List<VisibleBlock> nonLogCandidates = new ArrayList<>();
 
         for (int dy = -radius; dy <= radius; dy++) {
             int y = center.getY() + dy;
@@ -433,10 +438,10 @@ public class SensoryFrustumCollector {
                             if (!addedPositions.contains(mpos)) {
                                 logCandidates.add(mpos.immutable());
                             }
-                        } else if (frameBuilder.getInterestingBlocksCount() < MAX_INTERESTING_BLOCKS && !addedPositions.contains(mpos)) {
+                        } else if (nonLogCandidates.size() < MAX_INTERESTING_BLOCKS && !addedPositions.contains(mpos)) {
                             String blockId = BuiltInRegistries.BLOCK.getKey(state.getBlock()).toString();
                             String stateString = formatBlockProperties(state);
-                            frameBuilder.addInterestingBlocks(VisibleBlock.newBuilder()
+                            nonLogCandidates.add(VisibleBlock.newBuilder()
                                     .setPos(toBlockPosProto(mpos))
                                     .setBlockId(blockId)
                                     .setBlockStateString(stateString)
@@ -472,6 +477,7 @@ public class SensoryFrustumCollector {
             }
         }
 
+        // Reserve up to MAX_LOG_BLOCKS slots for the closest logs before filling remaining capacity with non-log blocks.
         if (!logCandidates.isEmpty() && frameBuilder.getInterestingBlocksCount() < MAX_INTERESTING_BLOCKS) {
             logCandidates.sort((a, b) -> Double.compare(a.distSqr(center), b.distSqr(center)));
             int logsAdded = 0;
@@ -495,6 +501,13 @@ public class SensoryFrustumCollector {
                     logsAdded++;
                 }
             }
+        }
+
+        for (VisibleBlock nonLog : nonLogCandidates) {
+            if (frameBuilder.getInterestingBlocksCount() >= MAX_INTERESTING_BLOCKS) {
+                break;
+            }
+            frameBuilder.addInterestingBlocks(nonLog);
         }
 
         if ((totalFarmlandBlocks > 0 || matureCropCount > 0) && farmMinX <= farmMaxX) {

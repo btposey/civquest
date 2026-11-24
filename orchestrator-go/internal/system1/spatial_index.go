@@ -547,7 +547,7 @@ func matchesPOIBlockID(stored, query string) bool {
 				return true
 			}
 		}
-		if strings.EqualFold(query, "log") && isLogBlockID(stored) {
+		if strings.EqualFold(query, "log") && (isLogBlockID(stored) || isLeavesBlockID(stored)) {
 			return true
 		}
 	}
@@ -558,6 +558,11 @@ func matchesPOIBlockID(stored, query string) bool {
 		}
 	}
 	return false
+}
+
+func isLeavesBlockID(blockID string) bool {
+	lower := strings.ToLower(strings.TrimSpace(blockID))
+	return strings.HasSuffix(lower, "_leaves") || lower == "minecraft:leaves" || lower == "leaves"
 }
 
 // ClassifyElevationLayer classifies a POI's vertical layer relative to selfY.

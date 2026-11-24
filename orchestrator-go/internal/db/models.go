@@ -357,3 +357,54 @@ type TrailCorridor struct {
 	IsPaved       bool    `json:"is_paved"`
 	TraverseCount int64   `json:"traverse_count"`
 }
+
+// HorizonSector represents a persisted azimuth slice from an agent's 360-degree peripheral horizon survey (ADR-032).
+// Stored in map_graph.db (horizon_sectors) and civic_registry.db (clan_horizon_sectors).
+type HorizonSector struct {
+	ID             int64   `json:"id,omitempty"`
+	ExplorerID     string  `json:"explorer_id,omitempty"`
+	OriginX        float64 `json:"origin_x"`
+	OriginY        float64 `json:"origin_y"`
+	OriginZ        float64 `json:"origin_z"`
+	SectorIndex    int     `json:"sector_index"`
+	BearingDeg     float64 `json:"bearing_deg"`
+	HitDistance    float64 `json:"hit_distance"`
+	FeatureType    string  `json:"feature_type"`
+	HitBlockID     string  `json:"hit_block_id"`
+	HitX           float64 `json:"hit_x"`
+	HitY           float64 `json:"hit_y"`
+	HitZ           float64 `json:"hit_z"`
+	ElevationDelta float64 `json:"elevation_delta"`
+	Occluded       bool    `json:"occluded"`
+	OpenHorizon    bool    `json:"open_horizon"`
+	SurveyedTick   int64   `json:"surveyed_tick"`
+}
+
+// SettlementCandidate represents a scored settlement region synthesized from merged clan horizon surveys (ADR-032).
+type SettlementCandidate struct {
+	X             float64 `json:"x"`
+	Y             float64 `json:"y"`
+	Z             float64 `json:"z"`
+	Score         float64 `json:"score"`
+	ExplorerCount int     `json:"explorer_count"`
+	Summary       string  `json:"summary"`
+}
+
+// SettlementPOI represents a communal Point of Interest stored in civic_registry.db per ADR-024.
+type SettlementPOI struct {
+	SettlementPOIID  string  `json:"settlement_poi_id"`
+	SettlementID     string  `json:"settlement_id"`
+	Category         string  `json:"category"`
+	BlockID          string  `json:"block_id"`
+	X                float64 `json:"x"`
+	Y                float64 `json:"y"`
+	Z                float64 `json:"z"`
+	AccessX          float64 `json:"access_x"`
+	AccessY          float64 `json:"access_y"`
+	AccessZ          float64 `json:"access_z"`
+	ElevationLayer   string  `json:"elevation_layer"`
+	CreatorAgentID   string  `json:"creator_agent_id"`
+	RegisteredTick   int64   `json:"registered_tick"`
+	LastVerifiedTick int64   `json:"last_verified_tick"`
+	IsActive         bool    `json:"is_active"`
+}

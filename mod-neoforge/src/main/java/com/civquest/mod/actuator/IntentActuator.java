@@ -199,6 +199,14 @@ public class IntentActuator {
                     return;
                 }
             } else if (isSessionInFlight(session)) {
+                if (fsm == null || fsm.getState() != MotorState.SLEEPING) {
+                    if (isPocketCraftOnlyBatch(agent, queueBatch)) {
+                        for (AgentIntent craftIntent : queueBatch.getIntentsList()) {
+                            actuateCraftItem(agent, craftIntent.getCraftItem());
+                        }
+                        return;
+                    }
+                }
                 session.pendingBatches.addLast(queueBatch);
                 return;
             } else if (queueBatch.getIntentsCount() == 0) {
@@ -398,10 +406,9 @@ public class IntentActuator {
                 session.dispatched = true;
 
                 if (!ok) {
-                    session.status = IntentReceipt.ReceiptStatus.RECEIPT_STATUS_FAILED;
-                    session.failureReason = resolveFailureReason(fsm, session.activeIndex, currentIntent);
-                    session.pendingBatches.clear();
-                    syncReceiptToMotor(agent, session);
+                    if (handleBatchPrimitiveFailure(agent, session, fsm, currentIntent)) {
+                        continue;
+                    }
                     break;
                 }
 
@@ -413,10 +420,9 @@ public class IntentActuator {
                     }
                     if (fsm.getState() == MotorState.IDLE) {
                         if (!fsm.didLastAsyncActionSucceed()) {
-                            session.status = IntentReceipt.ReceiptStatus.RECEIPT_STATUS_FAILED;
-                            session.failureReason = resolveFailureReason(fsm, session.activeIndex, currentIntent);
-                            session.pendingBatches.clear();
-                            syncReceiptToMotor(agent, session);
+                            if (handleBatchPrimitiveFailure(agent, session, fsm, currentIntent)) {
+                                continue;
+                            }
                             break;
                         }
                         session.activeIndex++;
@@ -438,10 +444,9 @@ public class IntentActuator {
                 }
                 if (fsm == null || fsm.getState() == MotorState.IDLE) {
                     if (fsm != null && !fsm.didLastAsyncActionSucceed()) {
-                        session.status = IntentReceipt.ReceiptStatus.RECEIPT_STATUS_FAILED;
-                        session.failureReason = resolveFailureReason(fsm, session.activeIndex, currentIntent);
-                        session.pendingBatches.clear();
-                        syncReceiptToMotor(agent, session);
+                        if (handleBatchPrimitiveFailure(agent, session, fsm, currentIntent)) {
+                            continue;
+                        }
                         break;
                     }
                     session.activeIndex++;
@@ -453,6 +458,60 @@ public class IntentActuator {
                 }
             }
         }
+    }
+
+    /**
+     * Records failure for the current batch and advances to the next queued batch if any
+     * remain, so queued instant/inventory batches are not silently lost on navigation timeout.
+     */
+    private boolean handleBatchPrimitiveFailure(
+            AgentEntity agent, BatchSession session, AgentMotorFSM fsm, AgentIntent currentIntent) {
+        session.status = IntentReceipt.ReceiptStatus.RECEIPT_STATUS_FAILED;
+        session.failureReason = resolveFailureReason(fsm, session.activeIndex, currentIntent);
+        syncReceiptToMotor(agent, session);
+        if (!session.pendingBatches.isEmpty()) {
+            IntentBatch next = session.pendingBatches.pollFirst();
+            session.activeBatch = next;
+            session.activeIndex = 0;
+            session.status = IntentReceipt.ReceiptStatus.RECEIPT_STATUS_QUEUED;
+            session.failureReason = "";
+            session.elapsedTicks = 0L;
+            session.dispatched = false;
+            syncReceiptToMotor(agent, session);
+            return true;
+        }
+        return false;
+    }
+
+    private boolean isPocketCraftOnlyBatch(AgentEntity agent, IntentBatch batch) {
+        if (batch == null || batch.getIntentsCount() == 0) {
+            return false;
+        }
+        RecipeManager recipeManager = resolveRecipeManager(agent);
+        if (recipeManager == null) {
+            return false;
+        }
+        for (AgentIntent intent : batch.getIntentsList()) {
+            if (!intent.hasCraftItem()) {
+                return false;
+            }
+            String recipeId = intent.getCraftItem().getRecipeId();
+            if (recipeId == null || recipeId.isBlank()) {
+                return false;
+            }
+            ResourceLocation recipeLoc = ResourceLocation.tryParse(recipeId.trim().toLowerCase(Locale.ROOT));
+            if (recipeLoc == null) {
+                return false;
+            }
+            Optional<RecipeHolder<?>> holderOpt = recipeManager.byKey(recipeLoc);
+            if (holderOpt.isEmpty() || !(holderOpt.get().value() instanceof CraftingRecipe craftingRecipe)) {
+                return false;
+            }
+            if (!craftingRecipe.canCraftInDimensions(2, 2)) {
+                return false;
+            }
+        }
+        return true;
     }
 
     private static boolean isAlreadyBrokenHarvestIntent(AgentEntity agent, AgentIntent intent) {
@@ -536,6 +595,21 @@ public class IntentActuator {
         actuateWithResult(agent, intent);
     }
 
+    public static boolean isAsyncMotorIntent(AgentIntent intent) {
+        if (intent == null) {
+            return false;
+        }
+        return switch (intent.getActionCase()) {
+            case NAVIGATE, SURVEY_HORIZON, ATTACK, USE_ITEM -> true;
+            case INTERACT_BLOCK -> {
+                InteractBlockIntent.InteractionType type = intent.getInteractBlock().getInteractionType();
+                yield type == InteractBlockIntent.InteractionType.HARVEST_BREAK
+                        || type == InteractBlockIntent.InteractionType.SLEEP_IN_BED;
+            }
+            default -> false;
+        };
+    }
+
     public boolean actuateWithResult(AgentEntity agent, AgentIntent intent) {
         if (agent == null || intent == null) {
             return false;
@@ -556,6 +630,7 @@ public class IntentActuator {
             case PLACE_SIGNPOST -> actuatePlaceSignpost(agent, intent.getPlaceSignpost());
             case CHAT -> actuateSendChat(agent, intent.getChat());
             case TRADE_RESPONSE -> actuateRespondTrade(agent, intent.getTradeResponse());
+            case SURVEY_HORIZON -> true;
             default -> {
                 LOGGER.debug("Unhandled or unsupported intent action: {}", intent.getActionCase());
                 yield false;

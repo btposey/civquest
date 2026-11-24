@@ -146,6 +146,11 @@ func evaluateScoutingLocked(
 		return nil
 	}
 
+	// Hold steady while a 360-degree horizon survey is executing on the motor stack (ADR-032).
+	if state.isExpeditionSurveyingLocked(frame.WorldTick) {
+		return nil
+	}
+
 	navState := frame.Status.NavigationState
 
 	// 1. Initialize sector azimuth if not yet set

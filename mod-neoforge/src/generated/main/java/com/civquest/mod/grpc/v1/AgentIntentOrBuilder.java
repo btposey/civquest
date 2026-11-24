@@ -207,5 +207,20 @@ public interface AgentIntentOrBuilder extends
    */
   com.civquest.mod.grpc.v1.TransferContainerIntentOrBuilder getTransferContainerOrBuilder();
 
+  /**
+   * <code>.civquest.v1.SurveyHorizonIntent survey_horizon = 15;</code>
+   * @return Whether the surveyHorizon field is set.
+   */
+  boolean hasSurveyHorizon();
+  /**
+   * <code>.civquest.v1.SurveyHorizonIntent survey_horizon = 15;</code>
+   * @return The surveyHorizon.
+   */
+  com.civquest.mod.grpc.v1.SurveyHorizonIntent getSurveyHorizon();
+  /**
+   * <code>.civquest.v1.SurveyHorizonIntent survey_horizon = 15;</code>
+   */
+  com.civquest.mod.grpc.v1.SurveyHorizonIntentOrBuilder getSurveyHorizonOrBuilder();
+
   com.civquest.mod.grpc.v1.AgentIntent.ActionCase getActionCase();
 }

@@ -185,9 +185,9 @@ func EvaluateBootstrapGoals(
 	if bootstrapIntent := evaluateBootstrapGoalsLocked(agentID, frame, pos, navState, state); bootstrapIntent != nil {
 		return bootstrapIntent
 	}
-	if state.HasActiveTaskLocked() || state.navigatingToPOI {
-		// Committed task subroutine or POI recall navigation is active (e.g. pathing or waiting on break cooldown);
-		// suppress exploration/wandering until task completes, fails, or is preempted.
+	if state.HasActiveTaskLocked() || state.navigatingToPOI || state.isExpeditionSurveyingLocked(frame.WorldTick) {
+		// Committed task subroutine, POI recall navigation, or active 360-degree horizon survey:
+		// suppress exploration/wandering until complete, failed, or preempted.
 		return nil
 	}
 
@@ -425,75 +425,114 @@ func evaluateBootstrapGoalsLocked(
 	if needsTimber && !justFinishedHarvest {
 		targetLog, recalledTreePOI := findNearestTreeTrunk(agentID, frame, pos, state)
 		if targetLog != nil {
+			if state.ExpeditionPhase == ExpeditionSurveying {
+				state.ExpeditionPhase = ExpeditionIdle
+				state.expeditionSurveyStartTick = 0
+			}
 			treeTask := NewHarvestTreeTask(targetLog.Pos.X, targetLog.Pos.Y, targetLog.Pos.Z, state.stage, frame.WorldTick)
 			state.StartTaskLocked(treeTask)
 			stepRes := state.StepActiveTaskLocked(agentID, frame)
 			if stepRes.Active {
 				return stepRes.Intent
 			}
+		} else if state.isExpeditionSurveyingLocked(frame.WorldTick) {
+			return nil
 		} else if recalledTreePOI != nil {
-			bpos := poiBlockPos(recalledTreePOI)
-			dx := recalledTreePOI.X - pos.X
-			dy := recalledTreePOI.Y + 0.5 - pos.Y
-			dz := recalledTreePOI.Z - pos.Z
-			if dx*dx+dy*dy+dz*dz <= 12.25 {
-				// Arrived within line-of-sight of remembered tree stand with no visible logs: prune stale POI.
-				if si := state.SpatialIndexLocked(); si != nil {
-					si.RemovePOI(recalledTreePOI.POIID)
-				}
-				return nil
-			}
-			if navState == civquestv1.NavigationState_NAVIGATION_STATE_STUCK {
-				state.MarkTreeFailedLocked(bpos.X, bpos.Z, frame.WorldTick)
-				if si := state.SpatialIndexLocked(); si != nil {
-					si.DecayPOIReliability(recalledTreePOI.POIID, 0.3)
-				}
-				return nil
-			}
-			state.navigatingToPOI = true
-			if navState != civquestv1.NavigationState_NAVIGATION_STATE_PATHING {
-				// ADR-026: Hierarchical Trail-Intersection Pathfinding:
-				// If a corridor exists connecting the origin/trail to the destination POI,
-				// traverse sequential corridor waypoints instead of direct Euclidean line-of-sight.
-				if tracker := state.HabitTrailTrackerLocked(); tracker != nil {
-					originID := tracker.CurrentOriginPOIID()
-					si := state.SpatialIndexLocked()
-					if originID != "" && si != nil {
-						if corridor, ok := si.GetCorridor(originID, recalledTreePOI.POIID); ok && corridor != nil {
-							if !tracker.IsNavigatingCorridor() {
-								intent, err := tracker.StartCorridorNavigation(agentID, corridor, poiAccessTarget(recalledTreePOI))
-								if err == nil && intent != nil {
-									return intent
-								}
-							}
-						}
-					}
-					if tracker.IsNavigatingCorridor() {
-						if intent, stepped := tracker.UpdateNavigation(pos, navState); stepped && intent != nil {
-							return intent
-						}
-					}
-				}
-
-				if state.lastBootstrapNavTick == 0 || frame.WorldTick < state.lastBootstrapNavTick || frame.WorldTick-state.lastBootstrapNavTick >= 40 {
-					state.lastBootstrapNavTick = frame.WorldTick
-					return &civquestv1.AgentIntent{
-						AgentId: agentID,
-						Action: &civquestv1.AgentIntent_Navigate{
-							Navigate: &civquestv1.NavigateIntent{
-								Target:           poiAccessTarget(recalledTreePOI),
-								SpeedMultiplier:  1.0,
-								ArrivalTolerance: 2,
-							},
-						},
-					}
-				}
+			if navIntent, handled := navigateToRecalledTreePOILocked(agentID, frame, pos, navState, state, recalledTreePOI); handled {
+				return navIntent
 			}
 			return nil
+		} else {
+			// No visible logs within 16m and no known tree POI in SpatialIndex:
+			// run the 360-degree horizon survey explorer loop to locate distant forests (ADR-032).
+			// Require >=2 observed frames and non-pathing/cooldown clearance on initial idle entry
+			// so single-frame unit tests and brief pathing segments are not prematurely interrupted.
+			canInitiateSurvey := state.ExpeditionPhase != ExpeditionIdle ||
+				(state.telemetryFramesSeen >= 2 &&
+					navState != civquestv1.NavigationState_NAVIGATION_STATE_PATHING &&
+					(state.lastExploreTick == 0 || frame.WorldTick < state.lastExploreTick || frame.WorldTick-state.lastExploreTick >= 40))
+			if canInitiateSurvey {
+				if surveyIntent := EvaluateHorizonExplorerLocked(frame, state, nil, agentID); surveyIntent != nil {
+					return surveyIntent
+				}
+			}
 		}
 	}
 
 	return nil
+}
+
+// navigateToRecalledTreePOILocked handles navigation, stale-POI pruning, stuck decay, and ADR-026
+// corridor traversal for a recalled tree resource POI. Caller must hold state.mu.
+func navigateToRecalledTreePOILocked(
+	agentID string,
+	frame *civquestv1.TelemetryFrame,
+	pos *civquestv1.Vec3,
+	navState civquestv1.NavigationState,
+	state *AgentState,
+	recalledTreePOI *db.AgentPOI,
+) (*civquestv1.AgentIntent, bool) {
+	if frame == nil || pos == nil || state == nil || recalledTreePOI == nil {
+		return nil, false
+	}
+	bpos := poiBlockPos(recalledTreePOI)
+	dx := recalledTreePOI.X - pos.X
+	dy := recalledTreePOI.Y + 0.5 - pos.Y
+	dz := recalledTreePOI.Z - pos.Z
+	if dx*dx+dy*dy+dz*dz <= 12.25 || (dx*dx+dz*dz <= 12.25 && math.Abs(recalledTreePOI.AccessY-pos.Y) <= 4.0) {
+		// Arrived within line-of-sight of remembered tree stand with no visible logs: prune stale POI.
+		if si := state.SpatialIndexLocked(); si != nil {
+			si.RemovePOI(recalledTreePOI.POIID)
+		}
+		return nil, false
+	}
+	if navState == civquestv1.NavigationState_NAVIGATION_STATE_STUCK {
+		state.MarkTreeFailedLocked(bpos.X, bpos.Z, frame.WorldTick)
+		if si := state.SpatialIndexLocked(); si != nil {
+			si.DecayPOIReliability(recalledTreePOI.POIID, 0.3)
+		}
+		return nil, false
+	}
+	state.navigatingToPOI = true
+	if navState != civquestv1.NavigationState_NAVIGATION_STATE_PATHING {
+		// ADR-026: Hierarchical Trail-Intersection Pathfinding:
+		// If a corridor exists connecting the origin/trail to the destination POI,
+		// traverse sequential corridor waypoints instead of direct Euclidean line-of-sight.
+		if tracker := state.HabitTrailTrackerLocked(); tracker != nil {
+			originID := tracker.CurrentOriginPOIID()
+			si := state.SpatialIndexLocked()
+			if originID != "" && si != nil {
+				if corridor, ok := si.GetCorridor(originID, recalledTreePOI.POIID); ok && corridor != nil {
+					if !tracker.IsNavigatingCorridor() {
+						intent, err := tracker.StartCorridorNavigation(agentID, corridor, poiAccessTarget(recalledTreePOI))
+						if err == nil && intent != nil {
+							return intent, true
+						}
+					}
+				}
+			}
+			if tracker.IsNavigatingCorridor() {
+				if intent, stepped := tracker.UpdateNavigation(pos, navState); stepped && intent != nil {
+					return intent, true
+				}
+			}
+		}
+
+		if state.lastBootstrapNavTick == 0 || frame.WorldTick < state.lastBootstrapNavTick || frame.WorldTick-state.lastBootstrapNavTick >= 40 {
+			state.lastBootstrapNavTick = frame.WorldTick
+			return &civquestv1.AgentIntent{
+				AgentId: agentID,
+				Action: &civquestv1.AgentIntent_Navigate{
+					Navigate: &civquestv1.NavigateIntent{
+						Target:           poiAccessTarget(recalledTreePOI),
+						SpeedMultiplier:  1.0,
+						ArrivalTolerance: 2,
+					},
+				},
+			}, true
+		}
+	}
+	return nil, true
 }
 
 // findNearestCraftingTableLocked locates the nearest reachable crafting table from visible blocks

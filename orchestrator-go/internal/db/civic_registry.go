@@ -8,6 +8,7 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -280,6 +281,47 @@ func (c *CivicRegistryDB) initSchema(ctx context.Context) error {
 		registered_tick INTEGER NOT NULL DEFAULT 0
 	);
 	CREATE INDEX IF NOT EXISTS idx_settlement_settlers_clan ON settlement_settlers(clan_id);
+
+	CREATE TABLE IF NOT EXISTS settlement_pois (
+		settlement_poi_id TEXT PRIMARY KEY,
+		settlement_id TEXT NOT NULL,
+		category TEXT NOT NULL,
+		block_id TEXT NOT NULL,
+		x REAL NOT NULL,
+		y REAL NOT NULL,
+		z REAL NOT NULL,
+		access_x REAL NOT NULL,
+		access_y REAL NOT NULL,
+		access_z REAL NOT NULL,
+		elevation_layer TEXT NOT NULL,
+		creator_agent_id TEXT NOT NULL,
+		registered_tick INTEGER NOT NULL DEFAULT 0,
+		last_verified_tick INTEGER NOT NULL DEFAULT 0,
+		is_active INTEGER NOT NULL DEFAULT 1
+	);
+	CREATE INDEX IF NOT EXISTS idx_settlement_pois_settlement ON settlement_pois(settlement_id, category);
+
+	CREATE TABLE IF NOT EXISTS clan_horizon_sectors (
+		explorer_id TEXT NOT NULL,
+		origin_x REAL NOT NULL,
+		origin_y REAL NOT NULL,
+		origin_z REAL NOT NULL,
+		sector_index INTEGER NOT NULL,
+		bearing_deg REAL NOT NULL,
+		hit_distance REAL NOT NULL,
+		feature_type TEXT NOT NULL,
+		hit_block_id TEXT NOT NULL DEFAULT '',
+		hit_x REAL NOT NULL,
+		hit_y REAL NOT NULL,
+		hit_z REAL NOT NULL,
+		elevation_delta REAL NOT NULL,
+		occluded INTEGER NOT NULL DEFAULT 0,
+		open_horizon INTEGER NOT NULL DEFAULT 0,
+		surveyed_tick INTEGER NOT NULL DEFAULT 0,
+		PRIMARY KEY (explorer_id, origin_x, origin_y, origin_z, sector_index)
+	);
+	CREATE INDEX IF NOT EXISTS idx_clan_horizon_sectors_explorer ON clan_horizon_sectors(explorer_id);
+	CREATE INDEX IF NOT EXISTS idx_clan_horizon_sectors_tick ON clan_horizon_sectors(surveyed_tick);
 	`
 	_, err := c.db.ExecContext(ctx, schema)
 	return err
@@ -1293,4 +1335,439 @@ func (c *CivicRegistryDB) GetSettlementPopulationContext(ctx context.Context) (i
 		return 0, fmt.Errorf("querying settlement population: %w", err)
 	}
 	return count, nil
+}
+
+// -----------------------------------------------------------------------------
+// Collective Clan Spatial Ledger & Horizon Cartography (ADR-024, ADR-032)
+// -----------------------------------------------------------------------------
+
+// UpsertSettlementPOIsBatch merges an agent's discovered POIs into the clan's
+// settlement_pois ledger (ADR-024).
+func (c *CivicRegistryDB) UpsertSettlementPOIsBatch(ctx context.Context, settlementID, creatorAgentID string, pois []AgentPOI) error {
+	if len(pois) == 0 {
+		return nil
+	}
+	if strings.TrimSpace(settlementID) == "" {
+		settlementID = c.clanID
+	}
+
+	c.writeMu.Lock()
+	defer c.writeMu.Unlock()
+
+	c.mu.RLock()
+	if c.isClosed {
+		c.mu.RUnlock()
+		return ErrClosed
+	}
+	c.mu.RUnlock()
+
+	tx, err := c.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("beginning settlement_pois batch tx: %w", err)
+	}
+	defer func() {
+		_ = tx.Rollback()
+	}()
+
+	stmt, err := tx.PrepareContext(ctx, `
+		INSERT INTO settlement_pois (
+			settlement_poi_id, settlement_id, category, block_id,
+			x, y, z, access_x, access_y, access_z,
+			elevation_layer, creator_agent_id, registered_tick, last_verified_tick, is_active
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT(settlement_poi_id) DO UPDATE SET
+			category = excluded.category,
+			block_id = excluded.block_id,
+			x = excluded.x,
+			y = excluded.y,
+			z = excluded.z,
+			access_x = excluded.access_x,
+			access_y = excluded.access_y,
+			access_z = excluded.access_z,
+			elevation_layer = excluded.elevation_layer,
+			last_verified_tick = MAX(settlement_pois.last_verified_tick, excluded.last_verified_tick),
+			is_active = excluded.is_active;
+	`)
+	if err != nil {
+		return fmt.Errorf("preparing settlement_pois upsert: %w", err)
+	}
+	defer stmt.Close()
+
+	for _, poi := range pois {
+		if poi.POIID == "" {
+			continue
+		}
+		isActive := 0
+		if poi.IsActive {
+			isActive = 1
+		}
+		if _, err := stmt.ExecContext(ctx,
+			poi.POIID, settlementID, poi.Category, poi.BlockID,
+			poi.X, poi.Y, poi.Z, poi.AccessX, poi.AccessY, poi.AccessZ,
+			poi.ElevationLayer, creatorAgentID, poi.DiscoveredTick, poi.LastVerifiedTick, isActive,
+		); err != nil {
+			return fmt.Errorf("upserting settlement POI %s: %w", poi.POIID, err)
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("committing settlement_pois batch tx: %w", err)
+	}
+	return nil
+}
+
+// ListSettlementPOIs retrieves active communal POIs from settlement_pois for a settlement.
+func (c *CivicRegistryDB) ListSettlementPOIs(ctx context.Context, settlementID string) ([]SettlementPOI, error) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	if c.isClosed {
+		return nil, ErrClosed
+	}
+
+	var rows *sql.Rows
+	var err error
+	if strings.TrimSpace(settlementID) != "" {
+		rows, err = c.db.QueryContext(ctx, `
+			SELECT settlement_poi_id, settlement_id, category, block_id,
+			       x, y, z, access_x, access_y, access_z,
+			       elevation_layer, creator_agent_id, registered_tick, last_verified_tick, is_active
+			FROM settlement_pois
+			WHERE settlement_id = ? AND is_active = 1
+			ORDER BY registered_tick ASC, settlement_poi_id ASC;
+		`, settlementID)
+	} else {
+		rows, err = c.db.QueryContext(ctx, `
+			SELECT settlement_poi_id, settlement_id, category, block_id,
+			       x, y, z, access_x, access_y, access_z,
+			       elevation_layer, creator_agent_id, registered_tick, last_verified_tick, is_active
+			FROM settlement_pois
+			WHERE is_active = 1
+			ORDER BY registered_tick ASC, settlement_poi_id ASC;
+		`)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("listing settlement POIs: %w", err)
+	}
+	defer rows.Close()
+
+	var pois []SettlementPOI
+	for rows.Next() {
+		var p SettlementPOI
+		var isActive int
+		if err := rows.Scan(
+			&p.SettlementPOIID, &p.SettlementID, &p.Category, &p.BlockID,
+			&p.X, &p.Y, &p.Z, &p.AccessX, &p.AccessY, &p.AccessZ,
+			&p.ElevationLayer, &p.CreatorAgentID, &p.RegisteredTick, &p.LastVerifiedTick, &isActive,
+		); err != nil {
+			return nil, fmt.Errorf("scanning settlement POI: %w", err)
+		}
+		p.IsActive = isActive != 0
+		pois = append(pois, p)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterating settlement POIs: %w", err)
+	}
+	if pois == nil {
+		return []SettlementPOI{}, nil
+	}
+	return pois, nil
+}
+
+// MergeExplorerHorizonSurvey merges an explorer agent's surveyed horizon sectors
+// into the clan's collective clan_horizon_sectors table (ADR-032).
+func (c *CivicRegistryDB) MergeExplorerHorizonSurvey(
+	ctx context.Context,
+	explorerID string,
+	originX, originY, originZ float64,
+	surveyedTick int64,
+	sectors []HorizonSector,
+) error {
+	if strings.TrimSpace(explorerID) == "" {
+		return errors.New("explorer_id cannot be empty")
+	}
+	if len(sectors) == 0 {
+		return nil
+	}
+
+	c.writeMu.Lock()
+	defer c.writeMu.Unlock()
+
+	c.mu.RLock()
+	if c.isClosed {
+		c.mu.RUnlock()
+		return ErrClosed
+	}
+	c.mu.RUnlock()
+
+	tx, err := c.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("beginning clan_horizon_sectors merge tx: %w", err)
+	}
+	defer func() {
+		_ = tx.Rollback()
+	}()
+
+	stmt, err := tx.PrepareContext(ctx, `
+		INSERT INTO clan_horizon_sectors (
+			explorer_id, origin_x, origin_y, origin_z, sector_index, bearing_deg,
+			hit_distance, feature_type, hit_block_id, hit_x, hit_y, hit_z,
+			elevation_delta, occluded, open_horizon, surveyed_tick
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT(explorer_id, origin_x, origin_y, origin_z, sector_index) DO UPDATE SET
+			bearing_deg = excluded.bearing_deg,
+			hit_distance = excluded.hit_distance,
+			feature_type = excluded.feature_type,
+			hit_block_id = excluded.hit_block_id,
+			hit_x = excluded.hit_x,
+			hit_y = excluded.hit_y,
+			hit_z = excluded.hit_z,
+			elevation_delta = excluded.elevation_delta,
+			occluded = excluded.occluded,
+			open_horizon = excluded.open_horizon,
+			surveyed_tick = MAX(clan_horizon_sectors.surveyed_tick, excluded.surveyed_tick);
+	`)
+	if err != nil {
+		return fmt.Errorf("preparing clan_horizon_sectors merge: %w", err)
+	}
+	defer stmt.Close()
+
+	for _, sec := range sectors {
+		occluded := 0
+		if sec.Occluded {
+			occluded = 1
+		}
+		openHorizon := 0
+		if sec.OpenHorizon {
+			openHorizon = 1
+		}
+		tick := sec.SurveyedTick
+		if tick == 0 {
+			tick = surveyedTick
+		}
+		if _, err := stmt.ExecContext(ctx,
+			explorerID, originX, originY, originZ, sec.SectorIndex, sec.BearingDeg,
+			sec.HitDistance, sec.FeatureType, sec.HitBlockID, sec.HitX, sec.HitY, sec.HitZ,
+			sec.ElevationDelta, occluded, openHorizon, tick,
+		); err != nil {
+			return fmt.Errorf("merging clan horizon sector %d: %w", sec.SectorIndex, err)
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("committing clan_horizon_sectors merge tx: %w", err)
+	}
+	return nil
+}
+
+// ScoreCollectiveSettlementCandidates groups surveyed origins/regions across all merged
+// clan explorers, scores each region for FOREST_CANOPY, WATER, OPEN_PLAINS, STONE_OUTCROP
+// (penalizing RIDGE_OBSTRUCTION and heavy occlusion), and returns the top settlement candidate.
+// Returns nil, nil if no horizon surveys have been merged into the clan DB yet.
+func (c *CivicRegistryDB) ScoreCollectiveSettlementCandidates(ctx context.Context) (*SettlementCandidate, error) {
+	ranked, err := c.RankCollectiveSettlementCandidates(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if len(ranked) == 0 {
+		return nil, nil
+	}
+	top := ranked[0]
+	return &top, nil
+}
+
+// RankCollectiveSettlementCandidates scores and ranks all surveyed clan regions descending by suitability.
+func (c *CivicRegistryDB) RankCollectiveSettlementCandidates(ctx context.Context) ([]SettlementCandidate, error) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	if c.isClosed {
+		return nil, ErrClosed
+	}
+
+	rows, err := c.db.QueryContext(ctx, `
+		SELECT explorer_id, origin_x, origin_y, origin_z, sector_index,
+		       feature_type, occluded, open_horizon, surveyed_tick
+		FROM clan_horizon_sectors
+		ORDER BY surveyed_tick ASC, explorer_id ASC, origin_x ASC, origin_z ASC, sector_index ASC;
+	`)
+	if err != nil {
+		return nil, fmt.Errorf("querying clan_horizon_sectors: %w", err)
+	}
+	defer rows.Close()
+
+	type sweepKey struct {
+		explorerID string
+		ox, oy, oz float64
+	}
+	type sweepData struct {
+		key       sweepKey
+		forest    int
+		water     int
+		plains    int
+		stone     int
+		structure int
+		ridge     int
+		occluded  int
+		total     int
+	}
+
+	sweepMap := make(map[sweepKey]*sweepData)
+	var sweepOrder []sweepKey
+
+	for rows.Next() {
+		var explorerID, featureType string
+		var ox, oy, oz float64
+		var sectorIdx, occluded, openHorizon int
+		var tick int64
+		if err := rows.Scan(&explorerID, &ox, &oy, &oz, &sectorIdx, &featureType, &occluded, &openHorizon, &tick); err != nil {
+			return nil, fmt.Errorf("scanning clan_horizon_sectors row: %w", err)
+		}
+		k := sweepKey{explorerID: explorerID, ox: ox, oy: oy, oz: oz}
+		sw, exists := sweepMap[k]
+		if !exists {
+			sw = &sweepData{key: k}
+			sweepMap[k] = sw
+			sweepOrder = append(sweepOrder, k)
+		}
+		sw.total++
+		if occluded != 0 {
+			sw.occluded++
+		}
+		switch strings.ToUpper(strings.TrimSpace(featureType)) {
+		case "FOREST_CANOPY":
+			sw.forest++
+		case "WATER":
+			sw.water++
+		case "OPEN_PLAINS":
+			sw.plains++
+		case "STONE_OUTCROP":
+			sw.stone++
+		case "STRUCTURE":
+			sw.structure++
+		case "RIDGE_OBSTRUCTION":
+			sw.ridge++
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterating clan_horizon_sectors: %w", err)
+	}
+	if len(sweepOrder) == 0 {
+		return []SettlementCandidate{}, nil
+	}
+
+	type regionCluster struct {
+		sumX, sumY, sumZ float64
+		centroidX        float64
+		centroidY        float64
+		centroidZ        float64
+		sweeps           []*sweepData
+		explorers        map[string]struct{}
+	}
+
+	const clusterRadius = 32.0
+	var clusters []*regionCluster
+	for _, k := range sweepOrder {
+		sw := sweepMap[k]
+		var target *regionCluster
+		bestDist := math.MaxFloat64
+		for _, cl := range clusters {
+			d := math.Hypot(k.ox-cl.centroidX, k.oz-cl.centroidZ)
+			if d <= clusterRadius && d < bestDist {
+				bestDist = d
+				target = cl
+			}
+		}
+		if target == nil {
+			target = &regionCluster{
+				explorers: make(map[string]struct{}),
+			}
+			clusters = append(clusters, target)
+		}
+		target.sweeps = append(target.sweeps, sw)
+		target.explorers[k.explorerID] = struct{}{}
+		target.sumX += k.ox
+		target.sumY += k.oy
+		target.sumZ += k.oz
+		n := float64(len(target.sweeps))
+		target.centroidX = target.sumX / n
+		target.centroidY = target.sumY / n
+		target.centroidZ = target.sumZ / n
+	}
+
+	candidates := make([]SettlementCandidate, 0, len(clusters))
+	for _, cl := range clusters {
+		nSweeps := float64(len(cl.sweeps))
+		var sumForest, sumWater, sumPlains, sumStone, sumStruct, sumRidge, sumOcc int
+		for _, sw := range cl.sweeps {
+			sumForest += sw.forest
+			sumWater += sw.water
+			sumPlains += sw.plains
+			sumStone += sw.stone
+			sumStruct += sw.structure
+			sumRidge += sw.ridge
+			sumOcc += sw.occluded
+		}
+		avgForest := float64(sumForest) / nSweeps
+		avgWater := float64(sumWater) / nSweeps
+		avgPlains := float64(sumPlains) / nSweeps
+		avgStone := float64(sumStone) / nSweeps
+		avgStruct := float64(sumStruct) / nSweeps
+		avgRidge := float64(sumRidge) / nSweeps
+		avgOcc := float64(sumOcc) / nSweeps
+
+		score := math.Min(avgForest, 10.0)*3.0 +
+			math.Min(avgWater, 6.0)*3.5 +
+			math.Min(avgPlains, 12.0)*2.5 +
+			math.Min(avgStone, 6.0)*2.0 +
+			math.Min(avgStruct, 4.0)*1.5 -
+			avgRidge*2.5 -
+			avgOcc*2.0
+
+		if avgForest >= 1.5 && avgPlains >= 2.0 {
+			score += 12.0
+		}
+		if avgWater >= 1.0 {
+			score += 8.0
+		}
+		if avgStone >= 1.0 {
+			score += 5.0
+		}
+		explorerCount := len(cl.explorers)
+		if explorerCount > 1 {
+			score += float64(explorerCount-1) * 5.0
+		}
+
+		cx := math.Round(cl.centroidX*10) / 10
+		cy := math.Round(cl.centroidY*10) / 10
+		cz := math.Round(cl.centroidZ*10) / 10
+		roundedScore := math.Round(score*10) / 10
+
+		summary := fmt.Sprintf(
+			"%d explorer(s), forest=%.1f, water=%.1f, plains=%.1f, stone=%.1f, ridges=%.1f, occluded=%.1f (score %.1f)",
+			explorerCount, avgForest, avgWater, avgPlains, avgStone, avgRidge, avgOcc, roundedScore,
+		)
+
+		candidates = append(candidates, SettlementCandidate{
+			X:             cx,
+			Y:             cy,
+			Z:             cz,
+			Score:         roundedScore,
+			ExplorerCount: explorerCount,
+			Summary:       summary,
+		})
+	}
+
+	sort.Slice(candidates, func(i, j int) bool {
+		if candidates[i].Score != candidates[j].Score {
+			return candidates[i].Score > candidates[j].Score
+		}
+		if candidates[i].ExplorerCount != candidates[j].ExplorerCount {
+			return candidates[i].ExplorerCount > candidates[j].ExplorerCount
+		}
+		if candidates[i].X != candidates[j].X {
+			return candidates[i].X < candidates[j].X
+		}
+		return candidates[i].Z < candidates[j].Z
+	})
+
+	return candidates, nil
 }

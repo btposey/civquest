@@ -177,4 +177,58 @@ public class ProtoContractTest {
         assertNotNull(CivQuestBridgeServiceGrpc.getDespawnAgentEntityMethod());
         assertNotNull(CivQuestBridgeServiceGrpc.getExportRecipeGraphMethod());
     }
+
+    @Test
+    @DisplayName("SurveyHorizonIntent and HorizonSurveyReport roundtrip")
+    void testHorizonSurveyProtoRoundtrip() throws InvalidProtocolBufferException {
+        AgentIntent intent = AgentIntent.newBuilder()
+                .setAgentId("agent-scout-1")
+                .setSequenceId(404L)
+                .setSurveyHorizon(SurveyHorizonIntent.newBuilder()
+                        .setNumSectors(36)
+                        .setMaxRange(64.0f)
+                        .setTicksPerSector(2)
+                        .build())
+                .build();
+
+        AgentIntent parsedIntent = AgentIntent.parseFrom(intent.toByteArray());
+        assertEquals(AgentIntent.ActionCase.SURVEY_HORIZON, parsedIntent.getActionCase());
+        assertEquals(36, parsedIntent.getSurveyHorizon().getNumSectors());
+        assertEquals(64.0f, parsedIntent.getSurveyHorizon().getMaxRange(), 1e-4);
+        assertEquals(2, parsedIntent.getSurveyHorizon().getTicksPerSector());
+
+        TelemetryFrame frame = TelemetryFrame.newBuilder()
+                .setWorldTick(500L)
+                .setHorizonSurvey(HorizonSurveyReport.newBuilder()
+                        .setOriginX(10.5)
+                        .setOriginY(65.62)
+                        .setOriginZ(-20.5)
+                        .setCompletedTick(500L)
+                        .setMaxRange(64.0f)
+                        .addSectors(HorizonSector.newBuilder()
+                                .setSectorIndex(9)
+                                .setBearingDeg(90.0f)
+                                .setHitDistance(42.5f)
+                                .setFeatureType("FOREST_CANOPY")
+                                .setHitBlockId("minecraft:oak_leaves")
+                                .setHitX(-32.0)
+                                .setHitY(73.0)
+                                .setHitZ(-20.5)
+                                .setElevationDelta(7.38f)
+                                .setOccluded(false)
+                                .setOpenHorizon(false)
+                                .build())
+                        .build())
+                .build();
+
+        TelemetryFrame parsedFrame = TelemetryFrame.parseFrom(frame.toByteArray());
+        assertTrue(parsedFrame.hasHorizonSurvey());
+        assertEquals(1, parsedFrame.getHorizonSurvey().getSectorsCount());
+        HorizonSector s = parsedFrame.getHorizonSurvey().getSectors(0);
+        assertEquals(9, s.getSectorIndex());
+        assertEquals(90.0f, s.getBearingDeg(), 1e-4);
+        assertEquals("FOREST_CANOPY", s.getFeatureType());
+        assertEquals("minecraft:oak_leaves", s.getHitBlockId());
+        assertFalse(s.getOccluded());
+    }
 }

@@ -479,4 +479,124 @@ public class AgentMotorFSMTest {
         verify(mockBreaker, atLeastOnce()).cancel();
         verify(mockNavigator, atLeastOnce()).stop();
     }
+
+    @Test
+    @DisplayName("SurveyHorizonIntent enters SURVEYING, sweeps 36 bearings over 72 ticks rotating yaw, queues report, and returns to IDLE")
+    void testSurveyHorizonFullSweepAndCompletion() {
+        AgentEntity mockAgent = mock(AgentEntity.class);
+        ServerLevel mockLevel = mock(ServerLevel.class);
+        AgentNavigator mockNavigator = mock(AgentNavigator.class);
+        net.minecraft.world.phys.Vec3 eyePos = new net.minecraft.world.phys.Vec3(10.5, 65.62, -4.5);
+
+        when(mockAgent.getAgentId()).thenReturn("survey-agent");
+        when(mockAgent.isAlive()).thenReturn(true);
+        when(mockAgent.level()).thenReturn(mockLevel);
+        when(mockAgent.getEyePosition()).thenReturn(eyePos);
+        when(mockAgent.getNavigator()).thenReturn(mockNavigator);
+        when(mockAgent.getMainHandItem()).thenReturn(net.minecraft.world.item.ItemStack.EMPTY);
+        when(mockAgent.getBoundingBox()).thenReturn(new AABB(10.2, 64.0, -4.8, 10.8, 65.8, -4.2));
+        when(mockLevel.getGameTime()).thenReturn(1200L);
+        when(mockLevel.getEntitiesOfClass(eq(net.minecraft.world.entity.projectile.Projectile.class), any(AABB.class), any()))
+                .thenReturn(List.of());
+        when(mockLevel.clip(any(net.minecraft.world.level.ClipContext.class))).thenAnswer(inv -> {
+            net.minecraft.world.level.ClipContext ctx = inv.getArgument(0);
+            return net.minecraft.world.phys.BlockHitResult.miss(
+                    ctx.getTo(),
+                    net.minecraft.core.Direction.NORTH,
+                    BlockPos.containing(ctx.getTo()));
+        });
+
+        AgentMotorFSM fsm = new AgentMotorFSM(mockAgent);
+        AgentIntent surveyIntent = AgentIntent.newBuilder()
+                .setAgentId("survey-agent")
+                .setSequenceId(321L)
+                .setSurveyHorizon(com.civquest.mod.grpc.v1.SurveyHorizonIntent.newBuilder()
+                        .setNumSectors(36)
+                        .setMaxRange(64.0f)
+                        .setTicksPerSector(2)
+                        .build())
+                .build();
+
+        assertTrue(fsm.handleIntent(surveyIntent, actuator));
+        assertEquals(MotorState.SURVEYING, fsm.getState());
+        verify(mockNavigator, atLeastOnce()).stop();
+
+        for (int t = 0; t < 72; t++) {
+            fsm.tick();
+        }
+
+        assertEquals(MotorState.IDLE, fsm.getState());
+
+        org.mockito.ArgumentCaptor<Float> yawCaptor = org.mockito.ArgumentCaptor.forClass(Float.class);
+        verify(mockAgent, times(36)).faceBearingAndSync(yawCaptor.capture());
+        List<Float> rotatedYaws = yawCaptor.getAllValues();
+        assertEquals(36, rotatedYaws.size());
+        assertEquals(0.0f, rotatedYaws.get(0), 1e-4);
+        assertEquals(10.0f, rotatedYaws.get(1), 1e-4);
+        assertEquals(180.0f, rotatedYaws.get(18), 1e-4);
+        assertEquals(350.0f, rotatedYaws.get(35), 1e-4);
+
+        org.mockito.ArgumentCaptor<com.civquest.mod.grpc.v1.HorizonSurveyReport> reportCaptor =
+                org.mockito.ArgumentCaptor.forClass(com.civquest.mod.grpc.v1.HorizonSurveyReport.class);
+        verify(mockAgent, times(1)).queueHorizonSurveyReport(reportCaptor.capture());
+        com.civquest.mod.grpc.v1.HorizonSurveyReport report = reportCaptor.getValue();
+        assertEquals(36, report.getSectorsCount());
+        assertEquals(10.5, report.getOriginX(), 1e-4);
+        assertEquals(65.62, report.getOriginY(), 1e-4);
+        assertEquals(-4.5, report.getOriginZ(), 1e-4);
+        assertEquals(1200L, report.getCompletedTick());
+        assertEquals(64.0f, report.getMaxRange(), 1e-4);
+    }
+
+    @Test
+    @DisplayName("Incoming combat threat mid-survey immediately preempts SURVEYING with COMBAT_ENGAGED")
+    void testCombatThreatPreemptsSurveying() {
+        AgentEntity mockAgent = mock(AgentEntity.class);
+        ServerLevel mockLevel = mock(ServerLevel.class);
+        when(mockAgent.getAgentId()).thenReturn("survey-preempt-agent");
+        when(mockAgent.isAlive()).thenReturn(true);
+        when(mockAgent.level()).thenReturn(mockLevel);
+        when(mockAgent.getEyePosition()).thenReturn(new net.minecraft.world.phys.Vec3(0.5, 65.62, 0.5));
+        when(mockAgent.getMainHandItem()).thenReturn(net.minecraft.world.item.ItemStack.EMPTY);
+        when(mockAgent.getBoundingBox()).thenReturn(new AABB(-0.3, 64.0, -0.3, 0.3, 65.8, 0.3));
+        when(mockLevel.clip(any(net.minecraft.world.level.ClipContext.class))).thenAnswer(inv -> {
+            net.minecraft.world.level.ClipContext ctx = inv.getArgument(0);
+            return net.minecraft.world.phys.BlockHitResult.miss(
+                    ctx.getTo(),
+                    net.minecraft.core.Direction.NORTH,
+                    BlockPos.containing(ctx.getTo()));
+        });
+
+        AgentMotorFSM fsm = new AgentMotorFSM(mockAgent);
+        AgentIntent surveyIntent = AgentIntent.newBuilder()
+                .setAgentId("survey-preempt-agent")
+                .setSurveyHorizon(com.civquest.mod.grpc.v1.SurveyHorizonIntent.newBuilder()
+                        .setNumSectors(36)
+                        .setMaxRange(64.0f)
+                        .setTicksPerSector(2)
+                        .build())
+                .build();
+
+        assertTrue(fsm.handleIntent(surveyIntent, actuator));
+        assertEquals(MotorState.SURVEYING, fsm.getState());
+        fsm.tick(); // Sector 0 scanned
+
+        // Direct combat reflex preemption (e.g., hurt by mob) immediately pushes COMBAT_ENGAGED
+        assertTrue(fsm.preemptWithCombatReflex("damage_reflex_mob"));
+        assertEquals(MotorState.COMBAT_ENGAGED, fsm.getState());
+        assertEquals(1, fsm.getStackDepth());
+        verify(mockAgent, never()).queueHorizonSurveyReport(any());
+
+        // Also verify AttackIntent mid-survey preempts cleanly
+        fsm.flush();
+        assertTrue(fsm.handleIntent(surveyIntent, actuator));
+        assertEquals(MotorState.SURVEYING, fsm.getState());
+        AgentIntent atk = AgentIntent.newBuilder()
+                .setAgentId("survey-preempt-agent")
+                .setAttack(AttackIntent.newBuilder().setTargetEntityId(77).build())
+                .build();
+        assertTrue(fsm.handleIntent(atk, actuator));
+        assertEquals(MotorState.COMBAT_ENGAGED, fsm.getState());
+        assertEquals(1, fsm.getStackDepth());
+    }
 }

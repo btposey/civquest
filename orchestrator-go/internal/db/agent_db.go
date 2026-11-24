@@ -287,6 +287,26 @@ func (a *AgentDB) migrateMapDB(ctx context.Context) error {
 		`CREATE INDEX IF NOT EXISTS idx_trail_corridors_from ON trail_corridors(from_poi_id);`,
 		`CREATE INDEX IF NOT EXISTS idx_trail_corridors_to ON trail_corridors(to_poi_id);`,
 		`CREATE INDEX IF NOT EXISTS idx_trail_corridors_endpoints ON trail_corridors(from_poi_id, to_poi_id);`,
+		`CREATE TABLE IF NOT EXISTS horizon_sectors (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			origin_x REAL,
+			origin_y REAL,
+			origin_z REAL,
+			sector_index INTEGER,
+			bearing_deg REAL,
+			hit_distance REAL,
+			feature_type TEXT,
+			hit_block_id TEXT,
+			hit_x REAL,
+			hit_y REAL,
+			hit_z REAL,
+			elevation_delta REAL,
+			occluded INTEGER,
+			open_horizon INTEGER,
+			surveyed_tick INTEGER
+		);`,
+		`CREATE INDEX IF NOT EXISTS idx_horizon_sectors_tick ON horizon_sectors(surveyed_tick);`,
+		`CREATE INDEX IF NOT EXISTS idx_horizon_sectors_feature ON horizon_sectors(feature_type);`,
 	}
 
 	for _, q := range queries {
@@ -1535,6 +1555,130 @@ func (a *AgentDB) ListTrailCorridors(ctx context.Context, fromPOIID, toPOIID str
 		return []TrailCorridor{}, nil
 	}
 	return corridors, nil
+}
+
+// ==================== HORIZON SECTORS (ADR-032) ====================
+
+// InsertHorizonSurveyBatch inserts all azimuth sectors from a completed 360-degree
+// peripheral horizon survey into map_graph.db in a single write transaction.
+func (a *AgentDB) InsertHorizonSurveyBatch(
+	ctx context.Context,
+	originX, originY, originZ float64,
+	surveyedTick int64,
+	sectors []HorizonSector,
+) error {
+	if len(sectors) == 0 {
+		return nil
+	}
+
+	a.mapWriteMu.Lock()
+	defer a.mapWriteMu.Unlock()
+
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+	if a.isClosed {
+		return ErrClosed
+	}
+
+	tx, err := a.mapDB.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("beginning horizon_sectors insert tx: %w", err)
+	}
+	defer func() {
+		_ = tx.Rollback()
+	}()
+
+	const colsPerRow = 15
+	var sb strings.Builder
+	sb.WriteString(`INSERT INTO horizon_sectors (
+		origin_x, origin_y, origin_z, sector_index, bearing_deg,
+		hit_distance, feature_type, hit_block_id, hit_x, hit_y, hit_z,
+		elevation_delta, occluded, open_horizon, surveyed_tick
+	) VALUES `)
+	args := make([]any, 0, len(sectors)*colsPerRow)
+	for i, sec := range sectors {
+		if i > 0 {
+			sb.WriteByte(',')
+		}
+		sb.WriteString("(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)")
+		occluded := 0
+		if sec.Occluded {
+			occluded = 1
+		}
+		openHorizon := 0
+		if sec.OpenHorizon {
+			openHorizon = 1
+		}
+		tick := sec.SurveyedTick
+		if tick == 0 {
+			tick = surveyedTick
+		}
+		args = append(args,
+			originX, originY, originZ, sec.SectorIndex, sec.BearingDeg,
+			sec.HitDistance, sec.FeatureType, sec.HitBlockID, sec.HitX, sec.HitY, sec.HitZ,
+			sec.ElevationDelta, occluded, openHorizon, tick,
+		)
+	}
+	sb.WriteByte(';')
+
+	if _, err := tx.ExecContext(ctx, sb.String(), args...); err != nil {
+		return fmt.Errorf("inserting horizon sectors batch: %w", err)
+	}
+
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("committing horizon_sectors insert tx: %w", err)
+	}
+	return nil
+}
+
+// GetRecentHorizonSectors retrieves up to limit most recently surveyed horizon sectors
+// from map_graph.db, ordered newest survey first and sector_index ascending within a sweep.
+func (a *AgentDB) GetRecentHorizonSectors(ctx context.Context, limit int) ([]HorizonSector, error) {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+	if a.isClosed {
+		return nil, ErrClosed
+	}
+
+	if limit <= 0 {
+		limit = 36
+	}
+
+	rows, err := a.mapDB.QueryContext(ctx, `
+		SELECT id, origin_x, origin_y, origin_z, sector_index, bearing_deg,
+		       hit_distance, feature_type, hit_block_id, hit_x, hit_y, hit_z,
+		       elevation_delta, occluded, open_horizon, surveyed_tick
+		FROM horizon_sectors
+		ORDER BY surveyed_tick DESC, sector_index ASC, id DESC
+		LIMIT ?;
+	`, limit)
+	if err != nil {
+		return nil, fmt.Errorf("querying recent horizon sectors: %w", err)
+	}
+	defer rows.Close()
+
+	var sectors []HorizonSector
+	for rows.Next() {
+		var s HorizonSector
+		var occluded, openHorizon int
+		if err := rows.Scan(
+			&s.ID, &s.OriginX, &s.OriginY, &s.OriginZ, &s.SectorIndex, &s.BearingDeg,
+			&s.HitDistance, &s.FeatureType, &s.HitBlockID, &s.HitX, &s.HitY, &s.HitZ,
+			&s.ElevationDelta, &occluded, &openHorizon, &s.SurveyedTick,
+		); err != nil {
+			return nil, fmt.Errorf("scanning horizon sector row: %w", err)
+		}
+		s.Occluded = occluded != 0
+		s.OpenHorizon = openHorizon != 0
+		sectors = append(sectors, s)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterating horizon sector rows: %w", err)
+	}
+	if sectors == nil {
+		return []HorizonSector{}, nil
+	}
+	return sectors, nil
 }
 
 // Close cleanly terminates both memory.db and map_graph.db connections,

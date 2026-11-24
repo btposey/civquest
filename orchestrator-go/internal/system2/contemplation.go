@@ -10,6 +10,7 @@ import (
 
 	"github.com/btposey/civquest/orchestrator-go/internal/db"
 	"github.com/btposey/civquest/orchestrator-go/internal/memory"
+	civquestv1 "github.com/btposey/civquest/orchestrator-go/internal/proto/v1"
 	"github.com/btposey/civquest/orchestrator-go/internal/system1"
 )
 
@@ -99,18 +100,27 @@ type PersonalProfile struct {
 // StrategicLedger aggregates cartography, granary stock, tavern rumors, diplomacy,
 // and personal status for nighttime contemplation.
 type StrategicLedger struct {
-	AgentID             string              `json:"agent_id"`
-	ClanID              string              `json:"clan_id"`
-	WorldTick           int64               `json:"world_tick"`
-	CartographySummary  CartographySummary  `json:"cartography_summary"`
-	GranarySummary      GranarySummary      `json:"granary_summary"`
-	TavernRumorsSummary TavernRumorsSummary `json:"tavern_rumors_summary"`
-	DiplomaticSummary   DiplomaticSummary   `json:"diplomatic_summary"`
-	PersonalProfile     PersonalProfile     `json:"personal_profile"`
-	VerifiedFacts       string              `json:"verified_facts,omitempty"`
+	AgentID              string              `json:"agent_id"`
+	ClanID               string              `json:"clan_id"`
+	WorldTick            int64               `json:"world_tick"`
+	CartographySummary   CartographySummary  `json:"cartography_summary"`
+	GranarySummary       GranarySummary      `json:"granary_summary"`
+	TavernRumorsSummary  TavernRumorsSummary `json:"tavern_rumors_summary"`
+	DiplomaticSummary    DiplomaticSummary   `json:"diplomatic_summary"`
+	PersonalProfile      PersonalProfile     `json:"personal_profile"`
+	VerifiedFacts        string              `json:"verified_facts,omitempty"`
+	HorizonSurveySummary string              `json:"horizon_survey_summary,omitempty"`
 	// CommunityDialogue is the pre-formatted [COMMUNITY DIALOGUE & RECENT PEER STATEMENTS]
 	// prompt section (ADR-030); appended to the prompt rather than serialized in the ledger JSON.
 	CommunityDialogue string `json:"-"`
+}
+
+// WithHorizonSurveySummary attaches a formatted 360-degree horizon survey summary to the StrategicLedger.
+func (l *StrategicLedger) WithHorizonSurveySummary(summary string) *StrategicLedger {
+	if l != nil && strings.TrimSpace(summary) != "" {
+		l.HorizonSurveySummary = strings.TrimSpace(summary)
+	}
+	return l
 }
 
 // WithVerifiedFacts attaches formatted environmental facts context to the StrategicLedger.
@@ -347,16 +357,47 @@ func AssembleStrategicLedger(
 		}
 	}
 
+	horizonSummary := ""
+	if agentDB != nil {
+		if sectors, sErr := agentDB.GetRecentHorizonSectors(ctx, 36); sErr == nil && len(sectors) > 0 {
+			pbSectors := make([]*civquestv1.HorizonSector, 0, len(sectors))
+			for _, sec := range sectors {
+				pbSectors = append(pbSectors, &civquestv1.HorizonSector{
+					SectorIndex:    int32(sec.SectorIndex),
+					BearingDeg:     float32(sec.BearingDeg),
+					HitDistance:    float32(sec.HitDistance),
+					FeatureType:    sec.FeatureType,
+					HitBlockId:     sec.HitBlockID,
+					HitX:           sec.HitX,
+					HitY:           sec.HitY,
+					HitZ:           sec.HitZ,
+					ElevationDelta: float32(sec.ElevationDelta),
+					Occluded:       sec.Occluded,
+					OpenHorizon:    sec.OpenHorizon,
+				})
+			}
+			horizonSummary = system1.FormatHorizonSurveySummary(&civquestv1.HorizonSurveyReport{
+				OriginX:       sectors[0].OriginX,
+				OriginY:       sectors[0].OriginY,
+				OriginZ:       sectors[0].OriginZ,
+				CompletedTick: sectors[0].SurveyedTick,
+				MaxRange:      64.0,
+				Sectors:       pbSectors,
+			})
+		}
+	}
+
 	return &StrategicLedger{
-		AgentID:             profile.AgentID,
-		ClanID:              profile.ClanID,
-		WorldTick:           worldTick,
-		CartographySummary:  carto,
-		GranarySummary:      granary,
-		TavernRumorsSummary: rumorsSummary,
-		DiplomaticSummary:   diplo,
-		PersonalProfile:     profile,
-		CommunityDialogue:   memory.RecentCommunityDialogueFromDB(ctx, agentDB, worldTick),
+		AgentID:              profile.AgentID,
+		ClanID:               profile.ClanID,
+		WorldTick:            worldTick,
+		CartographySummary:   carto,
+		GranarySummary:       granary,
+		TavernRumorsSummary:  rumorsSummary,
+		DiplomaticSummary:    diplo,
+		PersonalProfile:      profile,
+		HorizonSurveySummary: horizonSummary,
+		CommunityDialogue:    memory.RecentCommunityDialogueFromDB(ctx, agentDB, worldTick),
 	}, nil
 }
 
@@ -480,6 +521,10 @@ func (s *ContemplationService) Contemplate(ctx context.Context, ledger *Strategi
 	} else {
 		sysPrompt = fmt.Sprintf("%s\n\n<strategic_ledger>\n%s\n</strategic_ledger>\n\n%s",
 			DefaultContemplationPrompt(agentName, prof, clanID), string(ledgerJSON), contemplationOutputSchemaInstruction)
+	}
+
+	if hs := strings.TrimSpace(ledger.HorizonSurveySummary); hs != "" {
+		sysPrompt += "\n\n[LATEST HORIZON SURVEY]\n" + hs
 	}
 
 	if cd := strings.TrimSpace(ledger.CommunityDialogue); cd != "" {

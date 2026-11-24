@@ -286,4 +286,31 @@ public interface TelemetryFrameOrBuilder extends
    * <code>.civquest.v1.IntentReceipt receipt = 16;</code>
    */
   com.civquest.mod.grpc.v1.IntentReceiptOrBuilder getReceiptOrBuilder();
+
+  /**
+   * <pre>
+   * ADR-032 360-degree peripheral horizon survey report
+   * </pre>
+   *
+   * <code>.civquest.v1.HorizonSurveyReport horizon_survey = 17;</code>
+   * @return Whether the horizonSurvey field is set.
+   */
+  boolean hasHorizonSurvey();
+  /**
+   * <pre>
+   * ADR-032 360-degree peripheral horizon survey report
+   * </pre>
+   *
+   * <code>.civquest.v1.HorizonSurveyReport horizon_survey = 17;</code>
+   * @return The horizonSurvey.
+   */
+  com.civquest.mod.grpc.v1.HorizonSurveyReport getHorizonSurvey();
+  /**
+   * <pre>
+   * ADR-032 360-degree peripheral horizon survey report
+   * </pre>
+   *
+   * <code>.civquest.v1.HorizonSurveyReport horizon_survey = 17;</code>
+   */
+  com.civquest.mod.grpc.v1.HorizonSurveyReportOrBuilder getHorizonSurveyOrBuilder();
 }

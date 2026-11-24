@@ -146,6 +146,16 @@ public final class Civquest {
     com.google.protobuf.GeneratedMessage.FieldAccessorTable
       internal_static_civquest_v1_IntentReceipt_fieldAccessorTable;
   static final com.google.protobuf.Descriptors.Descriptor
+    internal_static_civquest_v1_HorizonSector_descriptor;
+  static final 
+    com.google.protobuf.GeneratedMessage.FieldAccessorTable
+      internal_static_civquest_v1_HorizonSector_fieldAccessorTable;
+  static final com.google.protobuf.Descriptors.Descriptor
+    internal_static_civquest_v1_HorizonSurveyReport_descriptor;
+  static final 
+    com.google.protobuf.GeneratedMessage.FieldAccessorTable
+      internal_static_civquest_v1_HorizonSurveyReport_fieldAccessorTable;
+  static final com.google.protobuf.Descriptors.Descriptor
     internal_static_civquest_v1_IntentBatch_descriptor;
   static final 
     com.google.protobuf.GeneratedMessage.FieldAccessorTable
@@ -215,6 +225,11 @@ public final class Civquest {
   static final 
     com.google.protobuf.GeneratedMessage.FieldAccessorTable
       internal_static_civquest_v1_TransferContainerIntent_fieldAccessorTable;
+  static final com.google.protobuf.Descriptors.Descriptor
+    internal_static_civquest_v1_SurveyHorizonIntent_descriptor;
+  static final 
+    com.google.protobuf.GeneratedMessage.FieldAccessorTable
+      internal_static_civquest_v1_SurveyHorizonIntent_fieldAccessorTable;
 
   public static com.google.protobuf.Descriptors.FileDescriptor
       getDescriptor() {
@@ -254,7 +269,7 @@ public final class Civquest {
       "2!.civquest.v1.RecipeIngredientSlot\022\024\n\014r" +
       "equires_3x3\030\007 \001(\010\"@\n\024ExportRecipeRespons" +
       "e\022(\n\007recipes\030\001 \003(\0132\027.civquest.v1.RecipeN" +
-      "ode\"\305\005\n\016TelemetryFrame\022\022\n\nworld_tick\030\001 \001" +
+      "ode\"\377\005\n\016TelemetryFrame\022\022\n\nworld_tick\030\001 \001" +
       "(\003\022\023\n\013time_of_day\030\002 \001(\003\022%\n\007weather\030\003 \001(\016" +
       "2\024.civquest.v1.Weather\022\020\n\010biome_id\030\004 \001(\t" +
       "\022(\n\006status\030\005 \001(\0132\030.civquest.v1.AgentStat" +
@@ -271,169 +286,185 @@ public final class Civquest {
       ".civquest.v1.DeathEvent\022\"\n\032last_processe" +
       "d_sequence_id\030\016 \001(\003\0221\n\016reflex_notices\030\017 " +
       "\003(\0132\031.civquest.v1.ReflexNotice\022+\n\007receip" +
-      "t\030\020 \001(\0132\032.civquest.v1.IntentReceipt\"\257\003\n\013" +
-      "AgentStatus\022\020\n\010agent_id\030\001 \001(\t\022\021\n\tentity_" +
-      "id\030\002 \001(\005\022#\n\010position\030\003 \001(\0132\021.civquest.v1" +
-      ".Vec3\022\013\n\003yaw\030\004 \001(\002\022\r\n\005pitch\030\005 \001(\002\022\016\n\006hea" +
-      "lth\030\006 \001(\002\022\022\n\nmax_health\030\007 \001(\002\022\022\n\nfood_le" +
-      "vel\030\010 \001(\005\022\022\n\nsaturation\030\t \001(\002\022\023\n\013is_slee" +
-      "ping\030\n \001(\010\022\023\n\013is_in_water\030\013 \001(\010\022\022\n\nis_on" +
-      "_fire\030\014 \001(\010\0226\n\020navigation_state\030\r \001(\0162\034." +
-      "civquest.v1.NavigationState\022.\n\tinventory" +
-      "\030\016 \003(\0132\033.civquest.v1.ItemStackProto\022\032\n\022l" +
-      "eashed_entity_ids\030\017 \003(\005\022\017\n\007stamina\030\020 \001(\002" +
-      "\022\033\n\023navigation_enclosed\030\021 \001(\010\"\362\001\n\rVisibl" +
-      "eEntity\022\021\n\tentity_id\030\001 \001(\005\022\014\n\004uuid\030\002 \001(\t" +
-      "\022\023\n\013entity_type\030\003 \001(\t\022\024\n\014display_name\030\004 " +
-      "\001(\t\022#\n\010position\030\005 \001(\0132\021.civquest.v1.Vec3" +
-      "\022\020\n\010distance\030\006 \001(\002\022\016\n\006health\030\007 \001(\002\022\022\n\nis" +
-      "_hostile\030\010 \001(\010\022\020\n\010is_tamed\030\t \001(\010\022\024\n\014held" +
-      "_item_id\030\n \001(\t\022\022\n\nfuse_ticks\030\013 \001(\005\"e\n\014Vi" +
-      "sibleBlock\022\'\n\003pos\030\001 \001(\0132\032.civquest.v1.Bl" +
-      "ockPosProto\022\020\n\010block_id\030\002 \001(\t\022\032\n\022block_s" +
-      "tate_string\030\003 \001(\t\"X\n\tChatEvent\022\023\n\013sender" +
-      "_uuid\030\001 \001(\t\022\023\n\013sender_name\030\002 \001(\t\022\017\n\007mess" +
-      "age\030\003 \001(\t\022\020\n\010distance\030\004 \001(\002\"\242\001\n\013DamageEv" +
-      "ent\0222\n\013source_type\030\001 \001(\0162\035.civquest.v1.D" +
-      "amageSourceType\022\032\n\022attacker_entity_id\030\002 " +
-      "\001(\005\022\025\n\rattacker_uuid\030\003 \001(\t\022\025\n\rattacker_n" +
-      "ame\030\004 \001(\t\022\025\n\rdamage_amount\030\005 \001(\002\"\246\001\n\014Tra" +
-      "deRequest\022\030\n\020player_entity_id\030\001 \001(\005\022\023\n\013p" +
-      "layer_uuid\030\002 \001(\t\022\023\n\013player_name\030\003 \001(\t\0229\n" +
-      "\024player_offered_items\030\004 \003(\0132\033.civquest.v" +
-      "1.ItemStackProto\022\027\n\017spoken_proposal\030\005 \001(" +
-      "\t\"\264\001\n\023FarmlandSurveyEvent\022-\n\006bounds\030\001 \001(" +
-      "\0132\035.civquest.v1.BoundingBoxProto\022\027\n\017prim" +
-      "ary_crop_id\030\002 \001(\t\022\031\n\021mature_crop_count\030\003" +
-      " \001(\005\022\035\n\025total_farmland_blocks\030\004 \001(\005\022\033\n\023i" +
-      "nferred_owner_uuid\030\005 \001(\t\"N\n\017LandmarkCont" +
-      "ext\022\023\n\013landmark_id\030\001 \001(\t\022\024\n\014display_name" +
-      "\030\002 \001(\t\022\020\n\010category\030\003 \001(\t\"\363\001\n\nDeathEvent\022" +
-      "\020\n\010agent_id\030\001 \001(\t\022\022\n\nworld_tick\030\002 \001(\003\022)\n" +
-      "\016death_location\030\003 \001(\0132\021.civquest.v1.Vec3" +
-      "\022\025\n\rdamage_source\030\004 \001(\t\022\030\n\020killer_entity" +
-      "_id\030\005 \001(\005\022\023\n\013killer_uuid\030\006 \001(\t\022\033\n\023killer" +
-      "_display_name\030\007 \001(\t\0221\n\014dropped_loot\030\010 \003(" +
-      "\0132\033.civquest.v1.ItemStackProto\"\353\001\n\014Refle" +
-      "xNotice\0229\n\013reflex_type\030\001 \001(\0162$.civquest." +
-      "v1.ReflexNotice.ReflexType\022\014\n\004tick\030\002 \001(\003" +
-      "\022\017\n\007details\030\003 \001(\t\"\200\001\n\nReflexType\022\033\n\027REFL" +
-      "EX_TYPE_UNSPECIFIED\020\000\022\036\n\032REFLEX_TYPE_SHI" +
-      "ELD_DEFENSE\020\001\022\030\n\024REFLEX_TYPE_AUTO_EAT\020\002\022" +
-      "\033\n\027REFLEX_TYPE_ITEM_VACUUM\020\003\"\214\003\n\rIntentR" +
-      "eceipt\022\020\n\010batch_id\030\001 \001(\003\022\024\n\014active_index" +
-      "\030\002 \001(\005\0228\n\006status\030\003 \001(\0162(.civquest.v1.Int" +
-      "entReceipt.ReceiptStatus\022\026\n\016failure_reas" +
-      "on\030\004 \001(\t\022\031\n\021motor_stack_depth\030\005 \001(\005\"\345\001\n\r" +
-      "ReceiptStatus\022\036\n\032RECEIPT_STATUS_UNSPECIF" +
-      "IED\020\000\022\031\n\025RECEIPT_STATUS_QUEUED\020\001\022\034\n\030RECE" +
-      "IPT_STATUS_EXECUTING\020\002\022\034\n\030RECEIPT_STATUS" +
-      "_COMPLETED\020\003\022&\n\"RECEIPT_STATUS_PREEMPTED" +
-      "_BY_REFLEX\020\004\022\031\n\025RECEIPT_STATUS_FAILED\020\005\022" +
-      "\032\n\026RECEIPT_STATUS_ABORTED\020\006\"\214\001\n\013IntentBa" +
-      "tch\022\020\n\010agent_id\030\001 \001(\t\022\020\n\010batch_id\030\002 \001(\003\022" +
-      "\027\n\017flush_periphery\030\003 \001(\010\022)\n\007intents\030\004 \003(" +
-      "\0132\030.civquest.v1.AgentIntent\022\025\n\rtimeout_t" +
-      "icks\030\005 \001(\003\"\306\005\n\013AgentIntent\022\020\n\010agent_id\030\001" +
-      " \001(\t\022\023\n\013sequence_id\030\002 \001(\003\022/\n\010navigate\030\003 " +
-      "\001(\0132\033.civquest.v1.NavigateIntentH\000\022+\n\006at" +
-      "tack\030\004 \001(\0132\031.civquest.v1.AttackIntentH\000\022" +
-      ":\n\016interact_block\030\005 \001(\0132 .civquest.v1.In" +
-      "teractBlockIntentH\000\022.\n\010use_item\030\006 \001(\0132\032." +
-      "civquest.v1.UseItemIntentH\000\0222\n\ncraft_ite" +
-      "m\030\007 \001(\0132\034.civquest.v1.CraftItemIntentH\000\022" +
-      "+\n\004chat\030\010 \001(\0132\033.civquest.v1.SendChatInte" +
-      "ntH\000\0229\n\016trade_response\030\t \001(\0132\037.civquest." +
-      "v1.RespondTradeIntentH\000\022-\n\007caravan\030\n \001(\013" +
-      "2\032.civquest.v1.CaravanIntentH\000\0224\n\013build_" +
-      "block\030\013 \001(\0132\035.civquest.v1.BuildBlockInte" +
-      "ntH\000\022;\n\013create_book\030\014 \001(\0132$.civquest.v1." +
-      "CreateWrittenBookIntentH\000\022:\n\016place_signp" +
-      "ost\030\r \001(\0132 .civquest.v1.PlaceSignpostInt" +
-      "entH\000\022B\n\022transfer_container\030\016 \001(\0132$.civq" +
-      "uest.v1.TransferContainerIntentH\000B\010\n\006act" +
-      "ion\"\265\001\n\016NavigateIntent\022!\n\006target\030\001 \001(\0132\021" +
-      ".civquest.v1.Vec3\022\030\n\020speed_multiplier\030\002 " +
-      "\001(\002\022\016\n\006sprint\030\003 \001(\010\022\032\n\022allow_break_block" +
-      "s\030\004 \001(\010\022\037\n\027allow_place_scaffolding\030\005 \001(\010" +
-      "\022\031\n\021arrival_tolerance\030\006 \001(\005\"t\n\014AttackInt" +
-      "ent\022\030\n\020target_entity_id\030\001 \001(\005\022\024\n\014raise_s" +
-      "hield\030\002 \001(\010\022\032\n\022keep_distance_kite\030\003 \001(\010\022" +
-      "\030\n\020flee_immediately\030\004 \001(\010\"\362\002\n\023InteractBl" +
-      "ockIntent\022\'\n\003pos\030\001 \001(\0132\032.civquest.v1.Blo" +
-      "ckPosProto\022J\n\020interaction_type\030\002 \001(\01620.c" +
-      "ivquest.v1.InteractBlockIntent.Interacti" +
-      "onType\022\030\n\020block_or_item_id\030\003 \001(\t\"\313\001\n\017Int" +
-      "eractionType\022 \n\034INTERACTION_TYPE_UNSPECI" +
-      "FIED\020\000\022\021\n\rHARVEST_BREAK\020\001\022\017\n\013PLACE_BLOCK" +
-      "\020\002\022\020\n\014SLEEP_IN_BED\020\003\022\013\n\007WAKE_UP\020\004\022\023\n\017USE" +
-      "_WORKSTATION\020\005\022\r\n\tRING_BELL\020\006\022\033\n\027SHEAR_O" +
-      "R_BOTTLE_BEEHIVE\020\007\022\022\n\016PAVE_ROAD_PATH\020\010\"f" +
-      "\n\rUseItemIntent\022\026\n\016inventory_slot\030\001 \001(\005\022" +
-      "\035\n\025is_eating_or_drinking\030\002 \001(\010\022\036\n\026equip_" +
-      "armor_or_offhand\030\003 \001(\010\"n\n\017CraftItemInten" +
-      "t\022\021\n\trecipe_id\030\001 \001(\t\0223\n\017workstation_pos\030" +
-      "\002 \001(\0132\032.civquest.v1.BlockPosProto\022\023\n\013bat" +
-      "ch_count\030\003 \001(\005\"S\n\016SendChatIntent\022\017\n\007mess" +
-      "age\030\001 \001(\t\0220\n\016target_channel\030\002 \001(\0162\030.civq" +
-      "uest.v1.ChatChannel\"\321\001\n\022RespondTradeInte" +
-      "nt\022\030\n\020player_entity_id\030\001 \001(\005\022\023\n\013accept_d" +
-      "eal\030\002 \001(\010\0228\n\023agent_counter_offer\030\003 \003(\0132\033" +
-      ".civquest.v1.ItemStackProto\0229\n\024demanded_" +
-      "from_player\030\004 \003(\0132\033.civquest.v1.ItemStac" +
-      "kProto\022\027\n\017spoken_response\030\005 \001(\t\"\333\002\n\rCara" +
-      "vanIntent\0228\n\006action\030\001 \001(\0162(.civquest.v1." +
-      "CaravanIntent.CaravanAction\022\027\n\017beast_ent" +
-      "ity_id\030\002 \001(\005\022-\n\tfence_pos\030\003 \001(\0132\032.civque" +
-      "st.v1.BlockPosProto\0220\n\013cargo_items\030\004 \003(\013" +
-      "2\033.civquest.v1.ItemStackProto\"\225\001\n\rCarava" +
-      "nAction\022\036\n\032CARAVAN_ACTION_UNSPECIFIED\020\000\022" +
-      "\017\n\013LEASH_BEAST\020\001\022\021\n\rUNLEASH_BEAST\020\002\022\022\n\016H" +
-      "ITCH_TO_FENCE\020\003\022\024\n\020LOAD_BEAST_CHEST\020\004\022\026\n" +
-      "\022UNLOAD_BEAST_CHEST\020\005\"\177\n\020BuildBlockInten" +
-      "t\0220\n\014target_voxel\030\001 \001(\0132\032.civquest.v1.Bl" +
-      "ockPosProto\022\032\n\022block_state_string\030\002 \001(\t\022" +
-      "\035\n\025is_temporary_scaffold\030\003 \001(\010\"\234\001\n\027Creat" +
-      "eWrittenBookIntent\022\r\n\005title\030\001 \001(\t\022\016\n\006aut" +
-      "hor\030\002 \001(\t\022\r\n\005pages\030\003 \003(\t\022;\n\027target_lecte" +
-      "rn_or_shelf\030\004 \001(\0132\032.civquest.v1.BlockPos" +
-      "Proto\022\026\n\016bookshelf_slot\030\005 \001(\005\"\223\001\n\023PlaceS" +
-      "ignpostIntent\022\'\n\003pos\030\001 \001(\0132\032.civquest.v1" +
-      ".BlockPosProto\022\027\n\017is_hanging_sign\030\002 \001(\010\022" +
-      "\r\n\005line1\030\003 \001(\t\022\r\n\005line2\030\004 \001(\t\022\r\n\005line3\030\005" +
-      " \001(\t\022\r\n\005line4\030\006 \001(\t\"\230\001\n\027TransferContaine" +
-      "rIntent\0221\n\rcontainer_pos\030\001 \001(\0132\032.civques" +
-      "t.v1.BlockPosProto\022\036\n\026deposit_into_conta" +
-      "iner\030\002 \001(\010\022*\n\005items\030\003 \003(\0132\033.civquest.v1." +
-      "ItemStackProto*\\\n\007Weather\022\027\n\023WEATHER_UNS" +
-      "PECIFIED\020\000\022\021\n\rWEATHER_CLEAR\020\001\022\020\n\014WEATHER" +
-      "_RAIN\020\002\022\023\n\017WEATHER_THUNDER\020\003*\305\001\n\017Navigat" +
-      "ionState\022 \n\034NAVIGATION_STATE_UNSPECIFIED" +
-      "\020\000\022\031\n\025NAVIGATION_STATE_IDLE\020\001\022\034\n\030NAVIGAT" +
-      "ION_STATE_PATHING\020\002\022\032\n\026NAVIGATION_STATE_" +
-      "STUCK\020\003\022\034\n\030NAVIGATION_STATE_ARRIVED\020\004\022\035\n" +
-      "\031NAVIGATION_STATE_BUILDING\020\005*\211\002\n\020DamageS" +
-      "ourceType\022\"\n\036DAMAGE_SOURCE_TYPE_UNSPECIF" +
-      "IED\020\000\022\032\n\026DAMAGE_SOURCE_TYPE_MOB\020\001\022\035\n\031DAM" +
-      "AGE_SOURCE_TYPE_PLAYER\020\002\022\034\n\030DAMAGE_SOURC" +
-      "E_TYPE_ARROW\020\003\022\033\n\027DAMAGE_SOURCE_TYPE_FAL" +
-      "L\020\004\022 \n\034DAMAGE_SOURCE_TYPE_EXPLOSION\020\005\022\033\n" +
-      "\027DAMAGE_SOURCE_TYPE_LAVA\020\006\022\034\n\030DAMAGE_SOU" +
-      "RCE_TYPE_DROWN\020\007*d\n\013ChatChannel\022\034\n\030CHAT_" +
-      "CHANNEL_UNSPECIFIED\020\000\022\026\n\022CHAT_CHANNEL_LO" +
-      "CAL\020\001\022\037\n\033CHAT_CHANNEL_CLAN_BROADCAST\020\0022\354" +
-      "\002\n\025CivQuestBridgeService\022I\n\014ConnectAgent" +
-      "\022\030.civquest.v1.IntentBatch\032\033.civquest.v1" +
-      ".TelemetryFrame(\0010\001\022S\n\020SpawnAgentEntity\022" +
-      "\036.civquest.v1.SpawnAgentRequest\032\037.civque" +
-      "st.v1.SpawnAgentResponse\022Y\n\022DespawnAgent" +
-      "Entity\022 .civquest.v1.DespawnAgentRequest" +
-      "\032!.civquest.v1.DespawnAgentResponse\022X\n\021E" +
-      "xportRecipeGraph\022 .civquest.v1.ExportRec" +
-      "ipeRequest\032!.civquest.v1.ExportRecipeRes" +
-      "ponseBf\n\030com.civquest.mod.grpc.v1P\001ZHgit" +
-      "hub.com/btposey/civquest/orchestrator-go" +
-      "/internal/proto/v1;civquestv1b\006proto3"
+      "t\030\020 \001(\0132\032.civquest.v1.IntentReceipt\0228\n\016h" +
+      "orizon_survey\030\021 \001(\0132 .civquest.v1.Horizo" +
+      "nSurveyReport\"\257\003\n\013AgentStatus\022\020\n\010agent_i" +
+      "d\030\001 \001(\t\022\021\n\tentity_id\030\002 \001(\005\022#\n\010position\030\003" +
+      " \001(\0132\021.civquest.v1.Vec3\022\013\n\003yaw\030\004 \001(\002\022\r\n\005" +
+      "pitch\030\005 \001(\002\022\016\n\006health\030\006 \001(\002\022\022\n\nmax_healt" +
+      "h\030\007 \001(\002\022\022\n\nfood_level\030\010 \001(\005\022\022\n\nsaturatio" +
+      "n\030\t \001(\002\022\023\n\013is_sleeping\030\n \001(\010\022\023\n\013is_in_wa" +
+      "ter\030\013 \001(\010\022\022\n\nis_on_fire\030\014 \001(\010\0226\n\020navigat" +
+      "ion_state\030\r \001(\0162\034.civquest.v1.Navigation" +
+      "State\022.\n\tinventory\030\016 \003(\0132\033.civquest.v1.I" +
+      "temStackProto\022\032\n\022leashed_entity_ids\030\017 \003(" +
+      "\005\022\017\n\007stamina\030\020 \001(\002\022\033\n\023navigation_enclose" +
+      "d\030\021 \001(\010\"\362\001\n\rVisibleEntity\022\021\n\tentity_id\030\001" +
+      " \001(\005\022\014\n\004uuid\030\002 \001(\t\022\023\n\013entity_type\030\003 \001(\t\022" +
+      "\024\n\014display_name\030\004 \001(\t\022#\n\010position\030\005 \001(\0132" +
+      "\021.civquest.v1.Vec3\022\020\n\010distance\030\006 \001(\002\022\016\n\006" +
+      "health\030\007 \001(\002\022\022\n\nis_hostile\030\010 \001(\010\022\020\n\010is_t" +
+      "amed\030\t \001(\010\022\024\n\014held_item_id\030\n \001(\t\022\022\n\nfuse" +
+      "_ticks\030\013 \001(\005\"e\n\014VisibleBlock\022\'\n\003pos\030\001 \001(" +
+      "\0132\032.civquest.v1.BlockPosProto\022\020\n\010block_i" +
+      "d\030\002 \001(\t\022\032\n\022block_state_string\030\003 \001(\t\"X\n\tC" +
+      "hatEvent\022\023\n\013sender_uuid\030\001 \001(\t\022\023\n\013sender_" +
+      "name\030\002 \001(\t\022\017\n\007message\030\003 \001(\t\022\020\n\010distance\030" +
+      "\004 \001(\002\"\242\001\n\013DamageEvent\0222\n\013source_type\030\001 \001" +
+      "(\0162\035.civquest.v1.DamageSourceType\022\032\n\022att" +
+      "acker_entity_id\030\002 \001(\005\022\025\n\rattacker_uuid\030\003" +
+      " \001(\t\022\025\n\rattacker_name\030\004 \001(\t\022\025\n\rdamage_am" +
+      "ount\030\005 \001(\002\"\246\001\n\014TradeRequest\022\030\n\020player_en" +
+      "tity_id\030\001 \001(\005\022\023\n\013player_uuid\030\002 \001(\t\022\023\n\013pl" +
+      "ayer_name\030\003 \001(\t\0229\n\024player_offered_items\030" +
+      "\004 \003(\0132\033.civquest.v1.ItemStackProto\022\027\n\017sp" +
+      "oken_proposal\030\005 \001(\t\"\264\001\n\023FarmlandSurveyEv" +
+      "ent\022-\n\006bounds\030\001 \001(\0132\035.civquest.v1.Boundi" +
+      "ngBoxProto\022\027\n\017primary_crop_id\030\002 \001(\t\022\031\n\021m" +
+      "ature_crop_count\030\003 \001(\005\022\035\n\025total_farmland" +
+      "_blocks\030\004 \001(\005\022\033\n\023inferred_owner_uuid\030\005 \001" +
+      "(\t\"N\n\017LandmarkContext\022\023\n\013landmark_id\030\001 \001" +
+      "(\t\022\024\n\014display_name\030\002 \001(\t\022\020\n\010category\030\003 \001" +
+      "(\t\"\363\001\n\nDeathEvent\022\020\n\010agent_id\030\001 \001(\t\022\022\n\nw" +
+      "orld_tick\030\002 \001(\003\022)\n\016death_location\030\003 \001(\0132" +
+      "\021.civquest.v1.Vec3\022\025\n\rdamage_source\030\004 \001(" +
+      "\t\022\030\n\020killer_entity_id\030\005 \001(\005\022\023\n\013killer_uu" +
+      "id\030\006 \001(\t\022\033\n\023killer_display_name\030\007 \001(\t\0221\n" +
+      "\014dropped_loot\030\010 \003(\0132\033.civquest.v1.ItemSt" +
+      "ackProto\"\353\001\n\014ReflexNotice\0229\n\013reflex_type" +
+      "\030\001 \001(\0162$.civquest.v1.ReflexNotice.Reflex" +
+      "Type\022\014\n\004tick\030\002 \001(\003\022\017\n\007details\030\003 \001(\t\"\200\001\n\n" +
+      "ReflexType\022\033\n\027REFLEX_TYPE_UNSPECIFIED\020\000\022" +
+      "\036\n\032REFLEX_TYPE_SHIELD_DEFENSE\020\001\022\030\n\024REFLE" +
+      "X_TYPE_AUTO_EAT\020\002\022\033\n\027REFLEX_TYPE_ITEM_VA" +
+      "CUUM\020\003\"\214\003\n\rIntentReceipt\022\020\n\010batch_id\030\001 \001" +
+      "(\003\022\024\n\014active_index\030\002 \001(\005\0228\n\006status\030\003 \001(\016" +
+      "2(.civquest.v1.IntentReceipt.ReceiptStat" +
+      "us\022\026\n\016failure_reason\030\004 \001(\t\022\031\n\021motor_stac" +
+      "k_depth\030\005 \001(\005\"\345\001\n\rReceiptStatus\022\036\n\032RECEI" +
+      "PT_STATUS_UNSPECIFIED\020\000\022\031\n\025RECEIPT_STATU" +
+      "S_QUEUED\020\001\022\034\n\030RECEIPT_STATUS_EXECUTING\020\002" +
+      "\022\034\n\030RECEIPT_STATUS_COMPLETED\020\003\022&\n\"RECEIP" +
+      "T_STATUS_PREEMPTED_BY_REFLEX\020\004\022\031\n\025RECEIP" +
+      "T_STATUS_FAILED\020\005\022\032\n\026RECEIPT_STATUS_ABOR" +
+      "TED\020\006\"\352\001\n\rHorizonSector\022\024\n\014sector_index\030" +
+      "\001 \001(\005\022\023\n\013bearing_deg\030\002 \001(\002\022\024\n\014hit_distan" +
+      "ce\030\003 \001(\002\022\024\n\014feature_type\030\004 \001(\t\022\024\n\014hit_bl" +
+      "ock_id\030\005 \001(\t\022\r\n\005hit_x\030\006 \001(\001\022\r\n\005hit_y\030\007 \001" +
+      "(\001\022\r\n\005hit_z\030\010 \001(\001\022\027\n\017elevation_delta\030\t \001" +
+      "(\002\022\020\n\010occluded\030\n \001(\010\022\024\n\014open_horizon\030\013 \001" +
+      "(\010\"\243\001\n\023HorizonSurveyReport\022\020\n\010origin_x\030\001" +
+      " \001(\001\022\020\n\010origin_y\030\002 \001(\001\022\020\n\010origin_z\030\003 \001(\001" +
+      "\022\026\n\016completed_tick\030\004 \001(\003\022\021\n\tmax_range\030\005 " +
+      "\001(\002\022+\n\007sectors\030\006 \003(\0132\032.civquest.v1.Horiz" +
+      "onSector\"\214\001\n\013IntentBatch\022\020\n\010agent_id\030\001 \001" +
+      "(\t\022\020\n\010batch_id\030\002 \001(\003\022\027\n\017flush_periphery\030" +
+      "\003 \001(\010\022)\n\007intents\030\004 \003(\0132\030.civquest.v1.Age" +
+      "ntIntent\022\025\n\rtimeout_ticks\030\005 \001(\003\"\202\006\n\013Agen" +
+      "tIntent\022\020\n\010agent_id\030\001 \001(\t\022\023\n\013sequence_id" +
+      "\030\002 \001(\003\022/\n\010navigate\030\003 \001(\0132\033.civquest.v1.N" +
+      "avigateIntentH\000\022+\n\006attack\030\004 \001(\0132\031.civque" +
+      "st.v1.AttackIntentH\000\022:\n\016interact_block\030\005" +
+      " \001(\0132 .civquest.v1.InteractBlockIntentH\000" +
+      "\022.\n\010use_item\030\006 \001(\0132\032.civquest.v1.UseItem" +
+      "IntentH\000\0222\n\ncraft_item\030\007 \001(\0132\034.civquest." +
+      "v1.CraftItemIntentH\000\022+\n\004chat\030\010 \001(\0132\033.civ" +
+      "quest.v1.SendChatIntentH\000\0229\n\016trade_respo" +
+      "nse\030\t \001(\0132\037.civquest.v1.RespondTradeInte" +
+      "ntH\000\022-\n\007caravan\030\n \001(\0132\032.civquest.v1.Cara" +
+      "vanIntentH\000\0224\n\013build_block\030\013 \001(\0132\035.civqu" +
+      "est.v1.BuildBlockIntentH\000\022;\n\013create_book" +
+      "\030\014 \001(\0132$.civquest.v1.CreateWrittenBookIn" +
+      "tentH\000\022:\n\016place_signpost\030\r \001(\0132 .civques" +
+      "t.v1.PlaceSignpostIntentH\000\022B\n\022transfer_c" +
+      "ontainer\030\016 \001(\0132$.civquest.v1.TransferCon" +
+      "tainerIntentH\000\022:\n\016survey_horizon\030\017 \001(\0132 " +
+      ".civquest.v1.SurveyHorizonIntentH\000B\010\n\006ac" +
+      "tion\"\265\001\n\016NavigateIntent\022!\n\006target\030\001 \001(\0132" +
+      "\021.civquest.v1.Vec3\022\030\n\020speed_multiplier\030\002" +
+      " \001(\002\022\016\n\006sprint\030\003 \001(\010\022\032\n\022allow_break_bloc" +
+      "ks\030\004 \001(\010\022\037\n\027allow_place_scaffolding\030\005 \001(" +
+      "\010\022\031\n\021arrival_tolerance\030\006 \001(\005\"t\n\014AttackIn" +
+      "tent\022\030\n\020target_entity_id\030\001 \001(\005\022\024\n\014raise_" +
+      "shield\030\002 \001(\010\022\032\n\022keep_distance_kite\030\003 \001(\010" +
+      "\022\030\n\020flee_immediately\030\004 \001(\010\"\362\002\n\023InteractB" +
+      "lockIntent\022\'\n\003pos\030\001 \001(\0132\032.civquest.v1.Bl" +
+      "ockPosProto\022J\n\020interaction_type\030\002 \001(\01620." +
+      "civquest.v1.InteractBlockIntent.Interact" +
+      "ionType\022\030\n\020block_or_item_id\030\003 \001(\t\"\313\001\n\017In" +
+      "teractionType\022 \n\034INTERACTION_TYPE_UNSPEC" +
+      "IFIED\020\000\022\021\n\rHARVEST_BREAK\020\001\022\017\n\013PLACE_BLOC" +
+      "K\020\002\022\020\n\014SLEEP_IN_BED\020\003\022\013\n\007WAKE_UP\020\004\022\023\n\017US" +
+      "E_WORKSTATION\020\005\022\r\n\tRING_BELL\020\006\022\033\n\027SHEAR_" +
+      "OR_BOTTLE_BEEHIVE\020\007\022\022\n\016PAVE_ROAD_PATH\020\010\"" +
+      "f\n\rUseItemIntent\022\026\n\016inventory_slot\030\001 \001(\005" +
+      "\022\035\n\025is_eating_or_drinking\030\002 \001(\010\022\036\n\026equip" +
+      "_armor_or_offhand\030\003 \001(\010\"n\n\017CraftItemInte" +
+      "nt\022\021\n\trecipe_id\030\001 \001(\t\0223\n\017workstation_pos" +
+      "\030\002 \001(\0132\032.civquest.v1.BlockPosProto\022\023\n\013ba" +
+      "tch_count\030\003 \001(\005\"S\n\016SendChatIntent\022\017\n\007mes" +
+      "sage\030\001 \001(\t\0220\n\016target_channel\030\002 \001(\0162\030.civ" +
+      "quest.v1.ChatChannel\"\321\001\n\022RespondTradeInt" +
+      "ent\022\030\n\020player_entity_id\030\001 \001(\005\022\023\n\013accept_" +
+      "deal\030\002 \001(\010\0228\n\023agent_counter_offer\030\003 \003(\0132" +
+      "\033.civquest.v1.ItemStackProto\0229\n\024demanded" +
+      "_from_player\030\004 \003(\0132\033.civquest.v1.ItemSta" +
+      "ckProto\022\027\n\017spoken_response\030\005 \001(\t\"\333\002\n\rCar" +
+      "avanIntent\0228\n\006action\030\001 \001(\0162(.civquest.v1" +
+      ".CaravanIntent.CaravanAction\022\027\n\017beast_en" +
+      "tity_id\030\002 \001(\005\022-\n\tfence_pos\030\003 \001(\0132\032.civqu" +
+      "est.v1.BlockPosProto\0220\n\013cargo_items\030\004 \003(" +
+      "\0132\033.civquest.v1.ItemStackProto\"\225\001\n\rCarav" +
+      "anAction\022\036\n\032CARAVAN_ACTION_UNSPECIFIED\020\000" +
+      "\022\017\n\013LEASH_BEAST\020\001\022\021\n\rUNLEASH_BEAST\020\002\022\022\n\016" +
+      "HITCH_TO_FENCE\020\003\022\024\n\020LOAD_BEAST_CHEST\020\004\022\026" +
+      "\n\022UNLOAD_BEAST_CHEST\020\005\"\177\n\020BuildBlockInte" +
+      "nt\0220\n\014target_voxel\030\001 \001(\0132\032.civquest.v1.B" +
+      "lockPosProto\022\032\n\022block_state_string\030\002 \001(\t" +
+      "\022\035\n\025is_temporary_scaffold\030\003 \001(\010\"\234\001\n\027Crea" +
+      "teWrittenBookIntent\022\r\n\005title\030\001 \001(\t\022\016\n\006au" +
+      "thor\030\002 \001(\t\022\r\n\005pages\030\003 \003(\t\022;\n\027target_lect" +
+      "ern_or_shelf\030\004 \001(\0132\032.civquest.v1.BlockPo" +
+      "sProto\022\026\n\016bookshelf_slot\030\005 \001(\005\"\223\001\n\023Place" +
+      "SignpostIntent\022\'\n\003pos\030\001 \001(\0132\032.civquest.v" +
+      "1.BlockPosProto\022\027\n\017is_hanging_sign\030\002 \001(\010" +
+      "\022\r\n\005line1\030\003 \001(\t\022\r\n\005line2\030\004 \001(\t\022\r\n\005line3\030" +
+      "\005 \001(\t\022\r\n\005line4\030\006 \001(\t\"\230\001\n\027TransferContain" +
+      "erIntent\0221\n\rcontainer_pos\030\001 \001(\0132\032.civque" +
+      "st.v1.BlockPosProto\022\036\n\026deposit_into_cont" +
+      "ainer\030\002 \001(\010\022*\n\005items\030\003 \003(\0132\033.civquest.v1" +
+      ".ItemStackProto\"W\n\023SurveyHorizonIntent\022\023" +
+      "\n\013num_sectors\030\001 \001(\005\022\021\n\tmax_range\030\002 \001(\002\022\030" +
+      "\n\020ticks_per_sector\030\003 \001(\005*\\\n\007Weather\022\027\n\023W" +
+      "EATHER_UNSPECIFIED\020\000\022\021\n\rWEATHER_CLEAR\020\001\022" +
+      "\020\n\014WEATHER_RAIN\020\002\022\023\n\017WEATHER_THUNDER\020\003*\305" +
+      "\001\n\017NavigationState\022 \n\034NAVIGATION_STATE_U" +
+      "NSPECIFIED\020\000\022\031\n\025NAVIGATION_STATE_IDLE\020\001\022" +
+      "\034\n\030NAVIGATION_STATE_PATHING\020\002\022\032\n\026NAVIGAT" +
+      "ION_STATE_STUCK\020\003\022\034\n\030NAVIGATION_STATE_AR" +
+      "RIVED\020\004\022\035\n\031NAVIGATION_STATE_BUILDING\020\005*\211" +
+      "\002\n\020DamageSourceType\022\"\n\036DAMAGE_SOURCE_TYP" +
+      "E_UNSPECIFIED\020\000\022\032\n\026DAMAGE_SOURCE_TYPE_MO" +
+      "B\020\001\022\035\n\031DAMAGE_SOURCE_TYPE_PLAYER\020\002\022\034\n\030DA" +
+      "MAGE_SOURCE_TYPE_ARROW\020\003\022\033\n\027DAMAGE_SOURC" +
+      "E_TYPE_FALL\020\004\022 \n\034DAMAGE_SOURCE_TYPE_EXPL" +
+      "OSION\020\005\022\033\n\027DAMAGE_SOURCE_TYPE_LAVA\020\006\022\034\n\030" +
+      "DAMAGE_SOURCE_TYPE_DROWN\020\007*d\n\013ChatChanne" +
+      "l\022\034\n\030CHAT_CHANNEL_UNSPECIFIED\020\000\022\026\n\022CHAT_" +
+      "CHANNEL_LOCAL\020\001\022\037\n\033CHAT_CHANNEL_CLAN_BRO" +
+      "ADCAST\020\0022\354\002\n\025CivQuestBridgeService\022I\n\014Co" +
+      "nnectAgent\022\030.civquest.v1.IntentBatch\032\033.c" +
+      "ivquest.v1.TelemetryFrame(\0010\001\022S\n\020SpawnAg" +
+      "entEntity\022\036.civquest.v1.SpawnAgentReques" +
+      "t\032\037.civquest.v1.SpawnAgentResponse\022Y\n\022De" +
+      "spawnAgentEntity\022 .civquest.v1.DespawnAg" +
+      "entRequest\032!.civquest.v1.DespawnAgentRes" +
+      "ponse\022X\n\021ExportRecipeGraph\022 .civquest.v1" +
+      ".ExportRecipeRequest\032!.civquest.v1.Expor" +
+      "tRecipeResponseBf\n\030com.civquest.mod.grpc" +
+      ".v1P\001ZHgithub.com/btposey/civquest/orche" +
+      "strator-go/internal/proto/v1;civquestv1b" +
+      "\006proto3"
     };
     descriptor = com.google.protobuf.Descriptors.FileDescriptor
       .internalBuildGeneratedFileFrom(descriptorData,
@@ -516,7 +547,7 @@ public final class Civquest {
     internal_static_civquest_v1_TelemetryFrame_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_civquest_v1_TelemetryFrame_descriptor,
-        new java.lang.String[] { "WorldTick", "TimeOfDay", "Weather", "BiomeId", "Status", "VisibleEntities", "InterestingBlocks", "IncomingChats", "LastDamageTaken", "PendingTrade", "FarmlandSurvey", "CurrentLandmark", "DeathEvent", "LastProcessedSequenceId", "ReflexNotices", "Receipt", });
+        new java.lang.String[] { "WorldTick", "TimeOfDay", "Weather", "BiomeId", "Status", "VisibleEntities", "InterestingBlocks", "IncomingChats", "LastDamageTaken", "PendingTrade", "FarmlandSurvey", "CurrentLandmark", "DeathEvent", "LastProcessedSequenceId", "ReflexNotices", "Receipt", "HorizonSurvey", });
     internal_static_civquest_v1_AgentStatus_descriptor =
       getDescriptor().getMessageTypes().get(13);
     internal_static_civquest_v1_AgentStatus_fieldAccessorTable = new
@@ -583,90 +614,108 @@ public final class Civquest {
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_civquest_v1_IntentReceipt_descriptor,
         new java.lang.String[] { "BatchId", "ActiveIndex", "Status", "FailureReason", "MotorStackDepth", });
-    internal_static_civquest_v1_IntentBatch_descriptor =
+    internal_static_civquest_v1_HorizonSector_descriptor =
       getDescriptor().getMessageTypes().get(24);
+    internal_static_civquest_v1_HorizonSector_fieldAccessorTable = new
+      com.google.protobuf.GeneratedMessage.FieldAccessorTable(
+        internal_static_civquest_v1_HorizonSector_descriptor,
+        new java.lang.String[] { "SectorIndex", "BearingDeg", "HitDistance", "FeatureType", "HitBlockId", "HitX", "HitY", "HitZ", "ElevationDelta", "Occluded", "OpenHorizon", });
+    internal_static_civquest_v1_HorizonSurveyReport_descriptor =
+      getDescriptor().getMessageTypes().get(25);
+    internal_static_civquest_v1_HorizonSurveyReport_fieldAccessorTable = new
+      com.google.protobuf.GeneratedMessage.FieldAccessorTable(
+        internal_static_civquest_v1_HorizonSurveyReport_descriptor,
+        new java.lang.String[] { "OriginX", "OriginY", "OriginZ", "CompletedTick", "MaxRange", "Sectors", });
+    internal_static_civquest_v1_IntentBatch_descriptor =
+      getDescriptor().getMessageTypes().get(26);
     internal_static_civquest_v1_IntentBatch_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_civquest_v1_IntentBatch_descriptor,
         new java.lang.String[] { "AgentId", "BatchId", "FlushPeriphery", "Intents", "TimeoutTicks", });
     internal_static_civquest_v1_AgentIntent_descriptor =
-      getDescriptor().getMessageTypes().get(25);
+      getDescriptor().getMessageTypes().get(27);
     internal_static_civquest_v1_AgentIntent_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_civquest_v1_AgentIntent_descriptor,
-        new java.lang.String[] { "AgentId", "SequenceId", "Navigate", "Attack", "InteractBlock", "UseItem", "CraftItem", "Chat", "TradeResponse", "Caravan", "BuildBlock", "CreateBook", "PlaceSignpost", "TransferContainer", "Action", });
+        new java.lang.String[] { "AgentId", "SequenceId", "Navigate", "Attack", "InteractBlock", "UseItem", "CraftItem", "Chat", "TradeResponse", "Caravan", "BuildBlock", "CreateBook", "PlaceSignpost", "TransferContainer", "SurveyHorizon", "Action", });
     internal_static_civquest_v1_NavigateIntent_descriptor =
-      getDescriptor().getMessageTypes().get(26);
+      getDescriptor().getMessageTypes().get(28);
     internal_static_civquest_v1_NavigateIntent_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_civquest_v1_NavigateIntent_descriptor,
         new java.lang.String[] { "Target", "SpeedMultiplier", "Sprint", "AllowBreakBlocks", "AllowPlaceScaffolding", "ArrivalTolerance", });
     internal_static_civquest_v1_AttackIntent_descriptor =
-      getDescriptor().getMessageTypes().get(27);
+      getDescriptor().getMessageTypes().get(29);
     internal_static_civquest_v1_AttackIntent_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_civquest_v1_AttackIntent_descriptor,
         new java.lang.String[] { "TargetEntityId", "RaiseShield", "KeepDistanceKite", "FleeImmediately", });
     internal_static_civquest_v1_InteractBlockIntent_descriptor =
-      getDescriptor().getMessageTypes().get(28);
+      getDescriptor().getMessageTypes().get(30);
     internal_static_civquest_v1_InteractBlockIntent_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_civquest_v1_InteractBlockIntent_descriptor,
         new java.lang.String[] { "Pos", "InteractionType", "BlockOrItemId", });
     internal_static_civquest_v1_UseItemIntent_descriptor =
-      getDescriptor().getMessageTypes().get(29);
+      getDescriptor().getMessageTypes().get(31);
     internal_static_civquest_v1_UseItemIntent_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_civquest_v1_UseItemIntent_descriptor,
         new java.lang.String[] { "InventorySlot", "IsEatingOrDrinking", "EquipArmorOrOffhand", });
     internal_static_civquest_v1_CraftItemIntent_descriptor =
-      getDescriptor().getMessageTypes().get(30);
+      getDescriptor().getMessageTypes().get(32);
     internal_static_civquest_v1_CraftItemIntent_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_civquest_v1_CraftItemIntent_descriptor,
         new java.lang.String[] { "RecipeId", "WorkstationPos", "BatchCount", });
     internal_static_civquest_v1_SendChatIntent_descriptor =
-      getDescriptor().getMessageTypes().get(31);
+      getDescriptor().getMessageTypes().get(33);
     internal_static_civquest_v1_SendChatIntent_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_civquest_v1_SendChatIntent_descriptor,
         new java.lang.String[] { "Message", "TargetChannel", });
     internal_static_civquest_v1_RespondTradeIntent_descriptor =
-      getDescriptor().getMessageTypes().get(32);
+      getDescriptor().getMessageTypes().get(34);
     internal_static_civquest_v1_RespondTradeIntent_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_civquest_v1_RespondTradeIntent_descriptor,
         new java.lang.String[] { "PlayerEntityId", "AcceptDeal", "AgentCounterOffer", "DemandedFromPlayer", "SpokenResponse", });
     internal_static_civquest_v1_CaravanIntent_descriptor =
-      getDescriptor().getMessageTypes().get(33);
+      getDescriptor().getMessageTypes().get(35);
     internal_static_civquest_v1_CaravanIntent_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_civquest_v1_CaravanIntent_descriptor,
         new java.lang.String[] { "Action", "BeastEntityId", "FencePos", "CargoItems", });
     internal_static_civquest_v1_BuildBlockIntent_descriptor =
-      getDescriptor().getMessageTypes().get(34);
+      getDescriptor().getMessageTypes().get(36);
     internal_static_civquest_v1_BuildBlockIntent_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_civquest_v1_BuildBlockIntent_descriptor,
         new java.lang.String[] { "TargetVoxel", "BlockStateString", "IsTemporaryScaffold", });
     internal_static_civquest_v1_CreateWrittenBookIntent_descriptor =
-      getDescriptor().getMessageTypes().get(35);
+      getDescriptor().getMessageTypes().get(37);
     internal_static_civquest_v1_CreateWrittenBookIntent_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_civquest_v1_CreateWrittenBookIntent_descriptor,
         new java.lang.String[] { "Title", "Author", "Pages", "TargetLecternOrShelf", "BookshelfSlot", });
     internal_static_civquest_v1_PlaceSignpostIntent_descriptor =
-      getDescriptor().getMessageTypes().get(36);
+      getDescriptor().getMessageTypes().get(38);
     internal_static_civquest_v1_PlaceSignpostIntent_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_civquest_v1_PlaceSignpostIntent_descriptor,
         new java.lang.String[] { "Pos", "IsHangingSign", "Line1", "Line2", "Line3", "Line4", });
     internal_static_civquest_v1_TransferContainerIntent_descriptor =
-      getDescriptor().getMessageTypes().get(37);
+      getDescriptor().getMessageTypes().get(39);
     internal_static_civquest_v1_TransferContainerIntent_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_civquest_v1_TransferContainerIntent_descriptor,
         new java.lang.String[] { "ContainerPos", "DepositIntoContainer", "Items", });
+    internal_static_civquest_v1_SurveyHorizonIntent_descriptor =
+      getDescriptor().getMessageTypes().get(40);
+    internal_static_civquest_v1_SurveyHorizonIntent_fieldAccessorTable = new
+      com.google.protobuf.GeneratedMessage.FieldAccessorTable(
+        internal_static_civquest_v1_SurveyHorizonIntent_descriptor,
+        new java.lang.String[] { "NumSectors", "MaxRange", "TicksPerSector", });
     descriptor.resolveAllFeaturesImmutable();
   }
 

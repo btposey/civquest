@@ -121,7 +121,33 @@ func TestEvaluateExplorationBackwardCompatibility(t *testing.T) {
 		},
 	}
 	intent := EvaluateExploration("Able", frameExplore, cfg, state)
-	if intent == nil || intent.GetNavigate() == nil {
-		t.Fatalf("expected NavigateIntent from EvaluateExploration backward compatibility wrapper, got %+v", intent)
+	if intent == nil || intent.GetSurveyHorizon() == nil {
+		t.Fatalf("expected initial SurveyHorizonIntent from EvaluateExploration (ADR-032), got %+v", intent)
+	}
+
+	// Simulate completed 360° HorizonSurveyReport -> next EvaluateExploration picks best bearing and emits NavigateIntent
+	sectors := make([]*civquestv1.HorizonSector, 36)
+	for i := 0; i < 36; i++ {
+		sectors[i] = &civquestv1.HorizonSector{
+			SectorIndex: int32(i),
+			BearingDeg:  float32(i * 10),
+			HitDistance: 64.0,
+			FeatureType: "OPEN_PLAINS",
+			OpenHorizon: true,
+		}
+	}
+	state.IngestHorizonSurveyReport(&civquestv1.HorizonSurveyReport{
+		OriginX:       0,
+		OriginY:       64,
+		OriginZ:       0,
+		CompletedTick: 220,
+		MaxRange:      64.0,
+		Sectors:       sectors,
+	}, 220)
+
+	frameExplore.WorldTick = 225
+	navIntent := EvaluateExploration("Able", frameExplore, cfg, state)
+	if navIntent == nil || navIntent.GetNavigate() == nil {
+		t.Fatalf("expected NavigateIntent from EvaluateExploration after survey report, got %+v", navIntent)
 	}
 }

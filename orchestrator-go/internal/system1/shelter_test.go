@@ -596,3 +596,167 @@ func TestShelterLightCrafting_NoCampfireShortcutWithoutCoal(t *testing.T) {
 		}
 	})
 }
+
+func TestEvaluateShelterGoals_AntiTetherAndSpatialIndexLogFallback(t *testing.T) {
+	t.Run("Empty-handed agent far from homeOrigin does not tether back and returns nil when no logs known", func(t *testing.T) {
+		state := NewAgentState()
+		state.SetHomeOrigin(&civquestv1.Vec3{X: 0, Y: 64, Z: 0})
+		state.ShelterPos = &civquestv1.BlockPosProto{X: 0, Y: 64, Z: 0}
+		cfg := xdg.DefaultAgentIdentityConfig("earl")
+		cfg.Profession = "EXPLORER"
+
+		frame := &civquestv1.TelemetryFrame{
+			WorldTick: 1000,
+			TimeOfDay: 16000,
+			Status: &civquestv1.AgentStatus{
+				Position:        &civquestv1.Vec3{X: 25, Y: 64, Z: 0},
+				Health:          20,
+				FoodLevel:       20,
+				NavigationState: civquestv1.NavigationState_NAVIGATION_STATE_IDLE,
+			},
+		}
+
+		intent := EvaluateShelterGoals("earl", frame, cfg, state)
+		if intent != nil {
+			t.Fatalf("expected nil intent (fall through to exploration) when 0 materials and 0 known logs, got %+v", intent)
+		}
+		if state.GetHomeOrigin().X != 0 || state.GetHomeOrigin().Z != 0 {
+			t.Fatalf("expected homeOrigin preserved at (0, 64, 0), got %+v", state.GetHomeOrigin())
+		}
+	})
+
+	t.Run("Empty-handed agent queries SpatialIndex for remembered log POI instead of tethering to homeOrigin", func(t *testing.T) {
+		state := NewAgentState()
+		state.SetHomeOrigin(&civquestv1.Vec3{X: 0, Y: 64, Z: 0})
+		state.ShelterPos = &civquestv1.BlockPosProto{X: 0, Y: 64, Z: 0}
+		state.SpatialIndex().UpsertPOI(db.AgentPOI{
+			POIID:          FormatPOIID(POICategoryResource, 55, 64, 10),
+			Category:       POICategoryResource,
+			BlockID:        "minecraft:oak_log",
+			X:              55.5,
+			Y:              64.0,
+			Z:              10.5,
+			AccessX:        54.5,
+			AccessY:        64.0,
+			AccessZ:        10.5,
+			ElevationLayer: ElevationSurface,
+			SafetyScore:    1.0,
+			Reliability:    1.0,
+			IsActive:       true,
+		})
+		cfg := xdg.DefaultAgentIdentityConfig("earl")
+		cfg.Profession = "EXPLORER"
+
+		frame := &civquestv1.TelemetryFrame{
+			WorldTick: 1000,
+			TimeOfDay: 16000,
+			Status: &civquestv1.AgentStatus{
+				Position:        &civquestv1.Vec3{X: 25, Y: 64, Z: 0},
+				Health:          20,
+				FoodLevel:       20,
+				NavigationState: civquestv1.NavigationState_NAVIGATION_STATE_IDLE,
+			},
+		}
+
+		intent := EvaluateShelterGoals("earl", frame, cfg, state)
+		if intent == nil || intent.GetNavigate() == nil || intent.GetNavigate().Target == nil {
+			t.Fatalf("expected NavigateIntent to remembered log POI, got %+v", intent)
+		}
+		target := intent.GetNavigate().Target
+		if target.X != 54.5 || target.Z != 10.5 {
+			t.Fatalf("expected NavigateIntent to log POI (54.5, 64, 10.5), not homeOrigin, got %+v", target)
+		}
+	})
+
+	t.Run("Empty-handed agent harvests nearby visible log instead of tethering to homeOrigin", func(t *testing.T) {
+		state := NewAgentState()
+		state.SetHomeOrigin(&civquestv1.Vec3{X: 0, Y: 64, Z: 0})
+		state.ShelterPos = &civquestv1.BlockPosProto{X: 0, Y: 64, Z: 0}
+		cfg := xdg.DefaultAgentIdentityConfig("earl")
+
+		frame := &civquestv1.TelemetryFrame{
+			WorldTick: 1000,
+			TimeOfDay: 16000,
+			Status: &civquestv1.AgentStatus{
+				Position:        &civquestv1.Vec3{X: 25, Y: 64, Z: 0},
+				Health:          20,
+				FoodLevel:       20,
+				NavigationState: civquestv1.NavigationState_NAVIGATION_STATE_IDLE,
+			},
+			InterestingBlocks: []*civquestv1.VisibleBlock{
+				{Pos: &civquestv1.BlockPosProto{X: 27, Y: 64, Z: 0}, BlockId: "minecraft:oak_log"},
+			},
+		}
+
+		intent := EvaluateShelterGoals("earl", frame, cfg, state)
+		if intent == nil || intent.GetInteractBlock() == nil ||
+			intent.GetInteractBlock().InteractionType != civquestv1.InteractBlockIntent_HARVEST_BREAK {
+			t.Fatalf("expected HARVEST_BREAK on nearby oak_log, got %+v", intent)
+		}
+	})
+
+	t.Run("Planks placement proceeds cleanly once 16+ planks held even with remaining logs", func(t *testing.T) {
+		state := NewAgentState()
+		state.SetRecipeGraph(newTestRecipeGraph())
+		state.ShelterPos = &civquestv1.BlockPosProto{X: 0, Y: 64, Z: 0}
+		cfg := xdg.DefaultAgentIdentityConfig("earl")
+
+		frame := &civquestv1.TelemetryFrame{
+			WorldTick: 1000,
+			TimeOfDay: 16000,
+			Status: &civquestv1.AgentStatus{
+				Position:        &civquestv1.Vec3{X: 0.5, Y: 64, Z: 0.5},
+				Health:          20,
+				FoodLevel:       20,
+				NavigationState: civquestv1.NavigationState_NAVIGATION_STATE_IDLE,
+				Inventory: []*civquestv1.ItemStackProto{
+					{Slot: 0, ItemId: "minecraft:oak_log", Count: 2},
+					{Slot: 1, ItemId: "minecraft:oak_planks", Count: 16},
+				},
+			},
+			InterestingBlocks: []*civquestv1.VisibleBlock{
+				{Pos: &civquestv1.BlockPosProto{X: 1, Y: 64, Z: 1}, BlockId: "minecraft:campfire"},
+			},
+		}
+
+		intent := EvaluateShelterGoals("earl", frame, cfg, state)
+		if nav := intent.GetNavigate(); nav != nil && nav.Target != nil {
+			frame.Status.Position = nav.Target
+			intent = EvaluateShelterGoals("earl", frame, cfg, state)
+		}
+		if intent == nil || intent.GetInteractBlock() == nil ||
+			intent.GetInteractBlock().InteractionType != civquestv1.InteractBlockIntent_PLACE_BLOCK {
+			t.Fatalf("expected PLACE_BLOCK rather than infinite plank craft spam when 16 planks already held, got %+v", intent)
+		}
+	})
+
+	t.Run("Completed shelter pulls agent back toward ShelterPos for night refuge", func(t *testing.T) {
+		state := NewAgentState()
+		state.SetHomeOrigin(&civquestv1.Vec3{X: 0, Y: 64, Z: 0})
+		state.ShelterPos = &civquestv1.BlockPosProto{X: 0, Y: 64, Z: 0}
+		state.ShelterBuildIndex = blueprints.CabinTotalBlocks
+		state.SetShelterBlocksPlaced(blueprints.CabinTotalBlocks)
+		state.lastExploreTick = 900
+		cfg := xdg.DefaultAgentIdentityConfig("earl")
+
+		frame := &civquestv1.TelemetryFrame{
+			WorldTick: 1000,
+			TimeOfDay: 16000,
+			Status: &civquestv1.AgentStatus{
+				Position:        &civquestv1.Vec3{X: 20, Y: 64, Z: 0},
+				Health:          20,
+				FoodLevel:       20,
+				NavigationState: civquestv1.NavigationState_NAVIGATION_STATE_IDLE,
+			},
+		}
+
+		intent := EvaluateShelterGoals("earl", frame, cfg, state)
+		if intent == nil || intent.GetNavigate() == nil || intent.GetNavigate().Target == nil {
+			t.Fatalf("expected NavigateIntent back to completed shelter, got %+v", intent)
+		}
+		target := intent.GetNavigate().Target
+		if target.X != 0.5 || target.Z != 0.5 {
+			t.Fatalf("expected NavigateIntent to ShelterPos (0.5, 64, 0.5), got %+v", target)
+		}
+	})
+}

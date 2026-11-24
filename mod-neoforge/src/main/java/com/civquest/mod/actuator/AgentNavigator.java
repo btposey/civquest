@@ -171,6 +171,7 @@ public class AgentNavigator {
         this.lastPosition = getPosition();
         this.path = new java.util.ArrayList<>();
         this.enclosed = false;
+        this.reachedTargetCell = false;
         this.cliffDetected = false;
         this.lastPlanTick = Long.MIN_VALUE;
         this.pillarBaseY = Integer.MIN_VALUE;
@@ -312,6 +313,7 @@ public class AgentNavigator {
     private long lastPlanTick = Long.MIN_VALUE;
     private java.util.List<LocalPathPlanner.Cell> path = new java.util.ArrayList<>();
     private boolean enclosed = false;
+    private boolean reachedTargetCell = false;
     private boolean cliffDetected = false;
     private final java.util.Map<Long, Long> failedCells = new java.util.HashMap<>();
     private final java.util.Map<BlockPos, Long> openedDoors = new java.util.HashMap<>();
@@ -407,6 +409,11 @@ public class AgentNavigator {
             public boolean water(int x, int y, int z) {
                 return waterCache.computeIfAbsent(LocalPathPlanner.cellKey(x, y, z),
                         k -> isBlockWater(level, new BlockPos(x, y, z)));
+            }
+
+            @Override
+            public boolean chunkLoaded(int x, int z) {
+                return level != null && level.hasChunkAt(new BlockPos(x, 0, z));
             }
         };
     }
@@ -574,6 +581,7 @@ public class AgentNavigator {
                 LocalPathPlanner.DEFAULT_RADIUS, k -> failedCells.containsKey(k));
         this.path = new java.util.ArrayList<>(r.path());
         this.enclosed = r.enclosed();
+        this.reachedTargetCell = r.reachedTarget();
         this.lastPlanTick = navTick;
     }
 
@@ -592,9 +600,10 @@ public class AgentNavigator {
         }
 
         // Check arrival within arrival_tolerance
-        double arrivalYAllowance = onClimbable
+        double baseYAllowance = onClimbable
                 ? ((dy < 0) ? Math.max(1.35, (double) this.arrivalTolerance) : Math.max(1.0, (double) this.arrivalTolerance))
                 : Math.max(3.5, (double) this.arrivalTolerance + 1.5);
+        double arrivalYAllowance = resolveArrivalYAllowance(level, onClimbable, dy, baseYAllowance);
         if (horizontalDist <= (double) this.arrivalTolerance && Math.abs(dy) <= arrivalYAllowance) {
             finishArrival();
             return;
@@ -752,12 +761,14 @@ public class AgentNavigator {
         double mult = Math.max(0.5, Math.min(1.5, this.speedMultiplier));
         double moveSpeed = baseSpeed * mult;
         double arrivalRange = Math.max(1.5, (double) this.arrivalTolerance);
+        boolean canCloseFinalStep = horizontalDist <= arrivalRange
+                || (reachedTargetCell && horizontalDist <= Math.max(arrivalRange, 2.2));
 
         if (cliffAhead) {
             moveSpeed = 0.0;
         } else if (path.isEmpty()) {
-            if (horizontalDist <= arrivalRange) {
-                moveSpeed *= Math.max(0.25, horizontalDist / arrivalRange);
+            if (canCloseFinalStep) {
+                moveSpeed *= Math.max(0.25, Math.min(1.0, horizontalDist / arrivalRange));
             } else if (level != null) {
                 // ADR-026: In-world navigation with no local path to distant/unreachable target - stop driving into walls/ceilings
                 moveSpeed = 0.0;
@@ -930,7 +941,7 @@ public class AgentNavigator {
                 }
                 boolean activelyMovingForward = moveSpeed > 0.05
                         && align > 0.15
-                        && !(path.isEmpty() && horizontalDist > arrivalRange);
+                        && !(path.isEmpty() && !canCloseFinalStep);
                 if (!cliffAhead && !jumpSuppressed && jumpNeeded && activelyMovingForward) {
                     vy = 0.42; // Jump impulse
                 } else {
@@ -966,9 +977,10 @@ public class AgentNavigator {
         double postDy = this.targetCoords.y - postPos.y;
         double postDz = this.targetCoords.z - postPos.z;
         double postH = Math.sqrt(postDx * postDx + postDz * postDz);
-        double postYAllowance = onClimbable
+        double basePostYAllowance = onClimbable
                 ? Math.max(1.0, (double) this.arrivalTolerance)
                 : Math.max(2.0, (double) this.arrivalTolerance);
+        double postYAllowance = resolveArrivalYAllowance(level, onClimbable, postDy, basePostYAllowance);
         if (postH <= (double) this.arrivalTolerance && Math.abs(postDy) <= postYAllowance) {
             finishArrival();
             return;
@@ -1011,6 +1023,16 @@ public class AgentNavigator {
             }
         }
         this.lastPosition = postPos;
+    }
+
+    private double resolveArrivalYAllowance(Level level, boolean onClimbable, double dy, double baseAllowance) {
+        if (!onClimbable && level != null && dy > 0.0 && this.targetCoords != null) {
+            BlockPos targetBlock = BlockPos.containing(this.targetCoords.x, this.targetCoords.y, this.targetCoords.z);
+            if (isBlockSolid(level, targetBlock) && isBlockSolid(level, targetBlock.below())) {
+                return Math.max(4.5, baseAllowance);
+            }
+        }
+        return baseAllowance;
     }
 
     private void finishArrival() {
@@ -1277,6 +1299,7 @@ public class AgentNavigator {
         this.stuckTicks = 0;
         this.baritoneInactivityTicks = 0;
         this.enclosed = false;
+        this.reachedTargetCell = false;
         this.openedDoors.clear();
         if (this.cliffDetected && this.agent != null) {
             this.agent.setShiftKeyDown(false);

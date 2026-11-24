@@ -4,6 +4,7 @@ import (
 	"math"
 	"strings"
 
+	"github.com/btposey/civquest/orchestrator-go/internal/blueprints"
 	civquestv1 "github.com/btposey/civquest/orchestrator-go/internal/proto/v1"
 	"github.com/btposey/civquest/orchestrator-go/internal/xdg"
 )
@@ -264,6 +265,33 @@ func ComputeCircadianRoutine(
 		return RoutineCamp
 	}
 	return RoutineSleep
+}
+
+// isStateShelterOrBedSatisfied returns true if state records a completed cabin shelter or assigned bed.
+func isStateShelterOrBedSatisfied(state *AgentState) bool {
+	if state == nil {
+		return false
+	}
+	if state.GetAssignedBed() != nil {
+		return true
+	}
+	return state.GetShelterBuildIndex() >= blueprints.CabinTotalBlocks ||
+		state.GetShelterBlocksPlaced() >= blueprints.CabinTotalBlocks
+}
+
+// gateBootstrapCircadianRoutine suppresses passive evening social and sleep idling while in BOOTSTRAP
+// until basic shelter or an assigned bed has been secured (ADR-032 §4).
+func gateBootstrapCircadianRoutine(stage Stage, routine Routine, state *AgentState, shelterOrBedSatisfied bool) Routine {
+	if stage != StageBootstrap || shelterOrBedSatisfied {
+		return routine
+	}
+	if state != nil && state.IsCompanionActive() {
+		return routine
+	}
+	if routine == RoutineTavernSocial || routine == RoutineSleep {
+		return RoutinePrimaryDuty
+	}
+	return routine
 }
 
 // EvaluateCircadianRoutine evaluates time of day, weather, and vocational traits to produce

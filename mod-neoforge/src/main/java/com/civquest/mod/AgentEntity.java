@@ -83,6 +83,8 @@ public class AgentEntity extends FakePlayer {
     private final ConcurrentLinkedQueue<com.civquest.mod.grpc.v1.ChatEvent> pendingChats = new ConcurrentLinkedQueue<>();
     private final ConcurrentLinkedQueue<com.civquest.mod.grpc.v1.TradeRequest> pendingTrades = new ConcurrentLinkedQueue<>();
     private final ConcurrentLinkedQueue<com.civquest.mod.grpc.v1.ReflexNotice> pendingReflexNotices = new ConcurrentLinkedQueue<>();
+    private final java.util.concurrent.atomic.AtomicReference<com.civquest.mod.grpc.v1.HorizonSurveyReport> pendingHorizonSurvey =
+            new java.util.concurrent.atomic.AtomicReference<>();
     private long lastInventoryFullNoticeTick = -1000L;
 
     public void queueIncomingChat(com.civquest.mod.grpc.v1.ChatEvent chatEvent) {
@@ -123,6 +125,44 @@ public class AgentEntity extends FakePlayer {
             result.add(notice);
         }
         return result;
+    }
+
+    public void queueHorizonSurveyReport(com.civquest.mod.grpc.v1.HorizonSurveyReport report) {
+        if (report != null) {
+            pendingHorizonSurvey.set(report);
+        }
+    }
+
+    public com.civquest.mod.grpc.v1.HorizonSurveyReport pollHorizonSurveyReport() {
+        return pendingHorizonSurvey.getAndSet(null);
+    }
+
+    /**
+     * Rotates the agent's head and body yaw to {@code yawDeg} (level pitch 0) and broadcasts
+     * rotation packets to connected players on the level so observers see the avatar turn smoothly.
+     */
+    public void faceBearingAndSync(float yawDeg) {
+        this.setYRot(yawDeg);
+        this.setYHeadRot(yawDeg);
+        this.yBodyRot = yawDeg;
+        this.setXRot(0.0F);
+        if (this.level() instanceof ServerLevel serverLevel) {
+            List<net.minecraft.server.level.ServerPlayer> players = serverLevel.players();
+            if (players != null && !players.isEmpty()) {
+                byte encodedYaw = (byte) net.minecraft.util.Mth.floor(yawDeg * 256.0F / 360.0F);
+                net.minecraft.network.protocol.game.ClientboundRotateHeadPacket headPacket =
+                        new net.minecraft.network.protocol.game.ClientboundRotateHeadPacket(this, encodedYaw);
+                net.minecraft.network.protocol.game.ClientboundMoveEntityPacket.Rot rotPacket =
+                        new net.minecraft.network.protocol.game.ClientboundMoveEntityPacket.Rot(
+                                this.getId(), encodedYaw, (byte) 0, this.onGround());
+                for (net.minecraft.server.level.ServerPlayer player : players) {
+                    if (player != null && player != this && !(player instanceof AgentEntity) && player.connection != null) {
+                        player.connection.send(headPacket);
+                        player.connection.send(rotPacket);
+                    }
+                }
+            }
+        }
     }
 
     public AgentEntity(ServerLevel level, GameProfile profile, String agentId, String clanId) {
@@ -184,6 +224,7 @@ public class AgentEntity extends FakePlayer {
                     this.intentActuator.tick(this);
                 }
                 if (this.isAlive() && !this.isSleeping() && !this.breaker.isBreaking()
+                        && (this.motorFSM == null || this.motorFSM.getState() != MotorState.SURVEYING)
                         && (this.navigator == null || this.navigator.getNavigationState() != com.civquest.mod.grpc.v1.NavigationState.NAVIGATION_STATE_PATHING)) {
                     updateIdleSocialGaze();
                 }

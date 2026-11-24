@@ -396,6 +396,11 @@ func EvaluateExploration(agentID string, frame *civquestv1.TelemetryFrame, cfg *
 		return nil
 	}
 
+	// Hold steady while a 360-degree horizon survey is executing on the motor stack (ADR-032).
+	if state.isExpeditionSurveyingLocked(frame.WorldTick) {
+		return nil
+	}
+
 	navState := frame.Status.NavigationState
 	tod := ((frame.TimeOfDay % 24000) + 24000) % 24000
 	isDuskOrNight := tod >= 11500 && tod < 23500
@@ -533,7 +538,15 @@ func evaluateGeneralExplorationLocked(
 	}
 	isExplorer := prof == "EXPLORER" || prof == "TRAILBLAZER" || prof == "SCOUT"
 	if isExplorer {
-		return evaluateScoutingLocked(agentID, frame, pos, state, cfg)
+		if state.telemetryFramesSeen < 2 {
+			return nil
+		}
+		if state.ExpeditionPhase == ExpeditionIdle &&
+			(frame.Status.NavigationState == civquestv1.NavigationState_NAVIGATION_STATE_PATHING ||
+				(state.lastExploreTick > 0 && frame.WorldTick >= state.lastExploreTick && frame.WorldTick-state.lastExploreTick < 40)) {
+			return nil
+		}
+		return EvaluateHorizonExplorerLocked(frame, state, cfg, agentID)
 	}
 	return evaluatePatrolLocked(agentID, frame, pos, state, cfg)
 }

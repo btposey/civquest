@@ -150,17 +150,23 @@ func EvaluateStrategicDirectiveWithID(
 
 	// Survival reflexes ALWAYS take priority over strategic directives.
 	if hasSurvivalPreemption(frame) {
+		state.ClearExpeditionSurveyingIfActive()
 		return nil
 	}
 
 	tod := ((frame.TimeOfDay % 24000) + 24000) % 24000
 	isDuskOrNight := tod >= 11500 && tod < 23500
-	if isDuskOrNight || frame.Weather == civquestv1.Weather_WEATHER_THUNDER || state.Routine() == RoutineSleep {
+	shelterGated := state.Stage() == StageBootstrap && !state.IsCompanionActive() && !isStateShelterOrBedSatisfied(state)
+	if !shelterGated && (isDuskOrNight || frame.Weather == civquestv1.Weather_WEATHER_THUNDER || state.Routine() == RoutineSleep) {
 		return nil
 	}
 
 	dir, active := state.ActiveStrategicDirective(frame.WorldTick)
 	if !active {
+		return nil
+	}
+
+	if dir.Action != DirectiveActionSocialize && state.IsExpeditionSurveying(frame.WorldTick) {
 		return nil
 	}
 
@@ -393,46 +399,18 @@ func evaluateDirectiveScoutFrontier(
 	dir StrategicDirectiveState,
 ) *civquestv1.AgentIntent {
 	state.mu.Lock()
-	if state.directiveScoutTarget == nil {
-		state.directiveScoutTarget = computeDirectiveFrontierWaypoint(agentID, dir.IssuedTick, pos)
-	}
-	target := &civquestv1.Vec3{
-		X: state.directiveScoutTarget.X,
-		Y: state.directiveScoutTarget.Y,
-		Z: state.directiveScoutTarget.Z,
-	}
-	dist := math.Hypot(pos.X-target.X, pos.Z-target.Z)
-	if dist <= 4.0 || (navState == civquestv1.NavigationState_NAVIGATION_STATE_ARRIVED && dist <= 6.0) {
+	defer state.mu.Unlock()
+
+	hopsBefore := state.ExpeditionHops
+	intent := EvaluateHorizonExplorerLocked(frame, state, nil, agentID)
+	if state.ExpeditionHops > hopsBefore {
 		state.strategicDirective = nil
 		state.directiveScoutTarget = nil
 		state.lastDirectiveActionTick = 0
 		state.lastDirectiveNavKey = ""
-		state.mu.Unlock()
 		return nil
 	}
-
-	if navState == civquestv1.NavigationState_NAVIGATION_STATE_PATHING && state.lastDirectiveNavKey == "scout_frontier" {
-		state.mu.Unlock()
-		return nil
-	}
-	if !canDispatchDirectiveNavLocked(state, frame.WorldTick, "scout_frontier") {
-		state.mu.Unlock()
-		return nil
-	}
-	state.lastDirectiveActionTick = frame.WorldTick
-	state.lastDirectiveNavKey = "scout_frontier"
-	state.mu.Unlock()
-
-	return &civquestv1.AgentIntent{
-		AgentId: agentID,
-		Action: &civquestv1.AgentIntent_Navigate{
-			Navigate: &civquestv1.NavigateIntent{
-				Target:           target,
-				SpeedMultiplier:  1.0,
-				ArrivalTolerance: 2,
-			},
-		},
-	}
+	return intent
 }
 
 func evaluateDirectiveSocialize(

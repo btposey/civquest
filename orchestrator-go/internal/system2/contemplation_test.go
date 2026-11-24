@@ -891,3 +891,96 @@ func TestNormalizeDirective_FallbackInference(t *testing.T) {
 		})
 	}
 }
+
+func TestAssembleStrategicLedgerAndContemplate_HorizonSurveySummary(t *testing.T) {
+	ctx := context.Background()
+	tmpDir := t.TempDir()
+	agentDB, err := db.OpenAgentDB(filepath.Join(tmpDir, "agents", "aria"))
+	if err != nil {
+		t.Fatalf("OpenAgentDB: %v", err)
+	}
+	defer agentDB.Close()
+
+	// Persist a 36-sector sweep with oak forest to the North (180°) and water to the West (90°)
+	sectors := make([]db.HorizonSector, 36)
+	for i := 0; i < 36; i++ {
+		sectors[i] = db.HorizonSector{
+			SectorIndex:  i,
+			BearingDeg:   float64(i * 10),
+			HitDistance:  64.0,
+			FeatureType:  "OPEN_PLAINS",
+			HitBlockID:   "minecraft:air",
+			OpenHorizon:  true,
+			SurveyedTick: 500,
+		}
+	}
+	sectors[18].FeatureType = "FOREST_CANOPY"
+	sectors[18].HitBlockID = "minecraft:oak_leaves"
+	sectors[18].HitDistance = 42.0
+	sectors[18].OpenHorizon = false
+	sectors[9].FeatureType = "WATER"
+	sectors[9].HitBlockID = "minecraft:water"
+	sectors[9].HitDistance = 38.0
+	sectors[9].OpenHorizon = false
+
+	if err := agentDB.InsertHorizonSurveyBatch(ctx, 0, 64, 0, 500, sectors); err != nil {
+		t.Fatalf("InsertHorizonSurveyBatch: %v", err)
+	}
+
+	ledger, err := system2.AssembleStrategicLedger(ctx, agentDB, nil, nil, nil, nil, system2.PersonalProfile{
+		AgentID:    "aria",
+		ClanID:     "pioneers",
+		Profession: "EXPLORER",
+	}, 14000)
+	if err != nil {
+		t.Fatalf("AssembleStrategicLedger: %v", err)
+	}
+	if !strings.Contains(ledger.HorizonSurveySummary, "N: oak forest canopy at 42m") {
+		t.Fatalf("expected HorizonSurveySummary to contain oak forest canopy, got %q", ledger.HorizonSurveySummary)
+	}
+	if !strings.Contains(ledger.HorizonSurveySummary, "W: water at 38m") {
+		t.Fatalf("expected HorizonSurveySummary to contain water, got %q", ledger.HorizonSurveySummary)
+	}
+
+	var capturedPrompt string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var req system2.ChatCompletionRequest
+		_ = json.NewDecoder(r.Body).Decode(&req)
+		for _, m := range req.Messages {
+			if m.Role == "system" {
+				capturedPrompt = m.Content
+			}
+		}
+		payload, _ := json.Marshal(map[string]any{
+			"immediate_goal": "GATHER_TIMBER", "short_term_goal": "a", "long_term_goal": "b",
+			"reflective_memory": "c", "rationale": "d",
+		})
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(system2.ChatCompletionResponse{
+			ID: "hs-1",
+			Choices: []system2.ChatCompletionChoice{{
+				Message:      system2.ChatMessage{Role: "assistant", Content: string(payload)},
+				FinishReason: "stop",
+			}},
+		})
+	}))
+	defer server.Close()
+
+	client, err := system2.NewClient(
+		&xdg.GlobalConfig{LLMGateway: xdg.LLMGatewayConfig{BaseURL: server.URL + "/v1", Model: "mock-model"}},
+		system2.WithHTTPClient(server.Client()),
+	)
+	if err != nil {
+		t.Fatalf("NewClient: %v", err)
+	}
+	defer client.Close()
+
+	svc := system2.NewContemplationService(client)
+	if _, err := svc.Contemplate(ctx, ledger); err != nil {
+		t.Fatalf("Contemplate: %v", err)
+	}
+	if !strings.Contains(capturedPrompt, "[LATEST HORIZON SURVEY]") ||
+		!strings.Contains(capturedPrompt, "N: oak forest canopy at 42m") {
+		t.Fatalf("expected [LATEST HORIZON SURVEY] rendered in prompt, got:\n%s", capturedPrompt)
+	}
+}

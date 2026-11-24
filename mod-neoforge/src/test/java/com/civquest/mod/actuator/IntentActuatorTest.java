@@ -1538,4 +1538,183 @@ public class IntentActuatorTest {
         assertEquals(IntentReceipt.ReceiptStatus.RECEIPT_STATUS_COMPLETED, wakeReceipt.getStatus());
         verify(agent, atLeastOnce()).stopSleeping();
     }
+
+    @Test
+    @DisplayName("2x2 pocket CraftItemIntent executes out-of-band during in-flight NavigateIntent without dropping")
+    void testPocketCraftExecutesOutOfBandDuringInFlightNavigate() {
+        AgentEntity agent = mock(AgentEntity.class);
+        MinecraftServer server = mockServerWithRecipes();
+        when(agent.getServer()).thenReturn(server);
+        AgentNavigator nav = mock(AgentNavigator.class);
+        when(agent.getAgentId()).thenReturn("craft-oob-agent");
+        when(agent.isAlive()).thenReturn(true);
+        when(agent.getNavigator()).thenReturn(nav);
+
+        Inventory inv = new Inventory(agent);
+        inv.setItem(0, new ItemStack(Items.OAK_LOG, 4));
+        when(agent.getInventory()).thenReturn(inv);
+
+        com.civquest.mod.actuator.motor.AgentMotorFSM fsm = new com.civquest.mod.actuator.motor.AgentMotorFSM(agent);
+        when(agent.getMotorFSM()).thenReturn(fsm);
+        when(nav.isPathing()).thenReturn(true);
+        when(nav.isArrived()).thenReturn(false);
+
+        IntentBatch navBatch = IntentBatch.newBuilder()
+                .setAgentId("craft-oob-agent")
+                .setBatchId(901L)
+                .addIntents(AgentIntent.newBuilder()
+                        .setAgentId("craft-oob-agent")
+                        .setNavigate(NavigateIntent.newBuilder()
+                                .setTarget(Vec3.newBuilder().setX(-34.5).setY(94.0).setZ(14.5).build())
+                                .build())
+                        .build())
+                .build();
+        actuator.submitBatch(agent, navBatch);
+        assertEquals(IntentReceipt.ReceiptStatus.RECEIPT_STATUS_EXECUTING, actuator.getCurrentReceipt(agent).getStatus());
+
+        // Submit 2x2 pocket CraftItemIntent(minecraft:oak_planks) with flush_periphery=false while navigating
+        IntentBatch craftBatch = IntentBatch.newBuilder()
+                .setAgentId("craft-oob-agent")
+                .setBatchId(902L)
+                .setFlushPeriphery(false)
+                .addIntents(AgentIntent.newBuilder()
+                        .setAgentId("craft-oob-agent")
+                        .setCraftItem(CraftItemIntent.newBuilder()
+                                .setRecipeId("minecraft:oak_planks")
+                                .setBatchCount(1)
+                                .build())
+                        .build())
+                .build();
+        actuator.submitBatch(agent, craftBatch);
+
+        assertEquals(4, inv.countItem(Items.OAK_PLANKS), "2x2 pocket craft must execute immediately without waiting behind NavigateIntent");
+        assertEquals(3, inv.countItem(Items.OAK_LOG));
+        assertEquals(0, actuator.getQueuedBatchCount(agent));
+        assertEquals(901L, actuator.getCurrentReceipt(agent).getBatchId(), "Active NavigateIntent receipt must stay intact");
+        assertEquals(IntentReceipt.ReceiptStatus.RECEIPT_STATUS_EXECUTING, actuator.getCurrentReceipt(agent).getStatus());
+    }
+
+    @Test
+    @DisplayName("Queued batch behind NavigateIntent is not discarded when NavigateIntent fails in STUCK_RECOVERY")
+    void testQueuedBatchNotDroppedWhenNavigateStuckTimeoutFails() {
+        AgentEntity agent = mock(AgentEntity.class);
+        MinecraftServer server = mockServerWithRecipes();
+        when(agent.getServer()).thenReturn(server);
+        AgentNavigator nav = mock(AgentNavigator.class);
+        when(agent.getAgentId()).thenReturn("stuck-queue-agent");
+        when(agent.isAlive()).thenReturn(true);
+        when(agent.getNavigator()).thenReturn(nav);
+
+        Inventory inv = new Inventory(agent);
+        inv.setItem(0, new ItemStack(Items.BREAD, 2));
+        when(agent.getInventory()).thenReturn(inv);
+        net.minecraft.world.food.FoodData foodData = new net.minecraft.world.food.FoodData();
+        foodData.setFoodLevel(10);
+        when(agent.getFoodData()).thenReturn(foodData);
+
+        com.civquest.mod.actuator.motor.AgentMotorFSM fsm = new com.civquest.mod.actuator.motor.AgentMotorFSM(agent);
+        when(agent.getMotorFSM()).thenReturn(fsm);
+        when(nav.isPathing()).thenReturn(true);
+        when(nav.isArrived()).thenReturn(false);
+        when(nav.isStuck()).thenReturn(false);
+
+        IntentBatch navBatch = IntentBatch.newBuilder()
+                .setAgentId("stuck-queue-agent")
+                .setBatchId(911L)
+                .addIntents(AgentIntent.newBuilder()
+                        .setAgentId("stuck-queue-agent")
+                        .setNavigate(NavigateIntent.newBuilder()
+                                .setTarget(Vec3.newBuilder().setX(50).setY(64).setZ(50).build())
+                                .build())
+                        .build())
+                .build();
+        IntentBatch eatBatch = IntentBatch.newBuilder()
+                .setAgentId("stuck-queue-agent")
+                .setBatchId(912L)
+                .setFlushPeriphery(false)
+                .addIntents(AgentIntent.newBuilder()
+                        .setAgentId("stuck-queue-agent")
+                        .setUseItem(UseItemIntent.newBuilder()
+                                .setInventorySlot(0)
+                                .setIsEatingOrDrinking(true)
+                                .build())
+                        .build())
+                .build();
+
+        actuator.submitBatch(agent, navBatch);
+        actuator.submitBatch(agent, eatBatch);
+        assertEquals(1, actuator.getQueuedBatchCount(agent));
+
+        // Transition navigator to STUCK -> MotorFSM enters STUCK_RECOVERY -> timeout fails navBatch
+        when(nav.isStuck()).thenReturn(true);
+        fsm.tick(); // MOVING -> STUCK_RECOVERY
+        actuator.tick(agent);
+        assertEquals(com.civquest.mod.actuator.motor.MotorState.STUCK_RECOVERY, fsm.getState());
+
+        for (int i = 0; i <= com.civquest.mod.actuator.motor.AgentMotorFSM.STUCK_RECOVERY_MAX_TICKS; i++) {
+            fsm.tick();
+            actuator.tick(agent);
+        }
+
+        IntentReceipt receipt = actuator.getCurrentReceipt(agent);
+        assertEquals(912L, receipt.getBatchId(), "Queued batch must advance and execute after prior NavigateIntent fails");
+        assertEquals(IntentReceipt.ReceiptStatus.RECEIPT_STATUS_COMPLETED, receipt.getStatus());
+        assertEquals(1, inv.countItem(Items.BREAD), "Queued UseItemIntent must have consumed 1 bread instead of being dropped");
+        assertTrue(foodData.getFoodLevel() > 10);
+        assertEquals(0, actuator.getQueuedBatchCount(agent));
+    }
+
+    @Test
+    @DisplayName("SurveyHorizonIntent executes asynchronously as RECEIPT_STATUS_EXECUTING while SURVEYING and completes upon IDLE")
+    void testSurveyHorizonBatchAsyncLifecycle() {
+        AgentEntity agent = mock(AgentEntity.class);
+        AgentNavigator nav = mock(AgentNavigator.class);
+        when(agent.getAgentId()).thenReturn("survey-batch-agent");
+        when(agent.isAlive()).thenReturn(true);
+        when(agent.getNavigator()).thenReturn(nav);
+        when(agent.getEyePosition()).thenReturn(new net.minecraft.world.phys.Vec3(0.5, 65.62, 0.5));
+
+        com.civquest.mod.actuator.motor.AgentMotorFSM fsm = new com.civquest.mod.actuator.motor.AgentMotorFSM(agent);
+        when(agent.getMotorFSM()).thenReturn(fsm);
+
+        AgentIntent surveyIntent = AgentIntent.newBuilder()
+                .setAgentId("survey-batch-agent")
+                .setSequenceId(501L)
+                .setSurveyHorizon(com.civquest.mod.grpc.v1.SurveyHorizonIntent.newBuilder()
+                        .setNumSectors(4)
+                        .setMaxRange(48.0f)
+                        .setTicksPerSector(2)
+                        .build())
+                .build();
+        assertTrue(IntentActuator.isAsyncMotorIntent(surveyIntent));
+
+        IntentBatch batch = IntentBatch.newBuilder()
+                .setAgentId("survey-batch-agent")
+                .setBatchId(950L)
+                .addIntents(surveyIntent)
+                .build();
+
+        actuator.submitBatch(agent, batch);
+        assertEquals(com.civquest.mod.actuator.motor.MotorState.SURVEYING, fsm.getState());
+        assertEquals(IntentReceipt.ReceiptStatus.RECEIPT_STATUS_EXECUTING,
+                actuator.getCurrentReceipt(agent).getStatus());
+
+        // Advance ticks until survey finishes (4 sectors * 2 ticks/sector = 7 ticks to scan sector 3)
+        for (int t = 0; t < 6; t++) {
+            fsm.tick();
+            actuator.tick(agent);
+            assertEquals(com.civquest.mod.actuator.motor.MotorState.SURVEYING, fsm.getState());
+            assertEquals(IntentReceipt.ReceiptStatus.RECEIPT_STATUS_EXECUTING,
+                    actuator.getCurrentReceipt(agent).getStatus());
+        }
+
+        // 7th tick completes sector 3 -> IDLE -> batch receipt becomes COMPLETED
+        fsm.tick();
+        actuator.tick(agent);
+        assertEquals(com.civquest.mod.actuator.motor.MotorState.IDLE, fsm.getState());
+        IntentReceipt completed = actuator.getCurrentReceipt(agent);
+        assertEquals(950L, completed.getBatchId());
+        assertEquals(IntentReceipt.ReceiptStatus.RECEIPT_STATUS_COMPLETED, completed.getStatus());
+        verify(agent, times(1)).queueHorizonSurveyReport(any());
+    }
 }

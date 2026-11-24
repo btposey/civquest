@@ -28,5 +28,8 @@ public enum MotorState {
     SLEEPING,
 
     /** Agent is executing unstuck routines after pathfinding obstruction. */
-    STUCK_RECOVERY
+    STUCK_RECOVERY,
+
+    /** Agent is executing a peripheral 360-degree horizon survey sweep. */
+    SURVEYING
 }

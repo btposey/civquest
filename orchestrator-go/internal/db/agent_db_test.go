@@ -75,7 +75,7 @@ func TestAutoMigrationAndSchema(t *testing.T) {
 	}
 
 	// Verify tables in map_graph.db
-	expectedMapTables := []string{"map_nodes", "map_edges", "agent_pois", "trail_corridors"}
+	expectedMapTables := []string{"map_nodes", "map_edges", "agent_pois", "trail_corridors", "horizon_sectors"}
 	for _, tbl := range expectedMapTables {
 		var name string
 		err := agentDB.MapDB().QueryRowContext(ctx, "SELECT name FROM sqlite_schema WHERE name = ?", tbl).Scan(&name)

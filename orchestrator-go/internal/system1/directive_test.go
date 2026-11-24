@@ -166,38 +166,66 @@ func TestEvaluateStrategicDirective_ForageFood(t *testing.T) {
 
 func TestEvaluateStrategicDirective_ScoutFrontierFanOutAndCompletion(t *testing.T) {
 	stateA := NewAgentState()
+	stateA.SetClanSize(2)
 	stateA.SetStrategicDirective(DirectiveActionScoutFrontier, "outer sector", "SCOUT_FRONTIER: Chart sector", 500, 6500)
 	stateB := NewAgentState()
+	stateB.SetClanSize(2)
 	stateB.SetStrategicDirective(DirectiveActionScoutFrontier, "outer sector", "SCOUT_FRONTIER: Chart sector", 500, 6500)
 
 	frameA := newDirectiveTestFrame("aria", 510, 4000, 0, 64, 0)
 	frameB := newDirectiveTestFrame("bran", 510, 4000, 0, 64, 0)
 
+	// First tick emits 360° SurveyHorizonIntent (ADR-032)
+	surveyA := EvaluateStrategicDirective(frameA, stateA, xdg.DefaultAgentIdentityConfig("aria"))
+	surveyB := EvaluateStrategicDirective(frameB, stateB, xdg.DefaultAgentIdentityConfig("bran"))
+	if surveyA == nil || surveyA.GetSurveyHorizon() == nil || surveyB == nil || surveyB.GetSurveyHorizon() == nil {
+		t.Fatalf("expected initial SurveyHorizonIntents for SCOUT_FRONTIER, got A=%+v B=%+v", surveyA, surveyB)
+	}
+
+	// Simulate completed uniform open plains surveys -> agents fan out by complementary clan wedge bearings
+	openSectors := make([]*civquestv1.HorizonSector, 36)
+	for i := 0; i < 36; i++ {
+		openSectors[i] = &civquestv1.HorizonSector{
+			SectorIndex: int32(i),
+			BearingDeg:  float32(i * 10),
+			HitDistance: 64.0,
+			FeatureType: "OPEN_PLAINS",
+			OpenHorizon: true,
+		}
+	}
+	report := &civquestv1.HorizonSurveyReport{
+		OriginX: 0, OriginY: 64, OriginZ: 0, CompletedTick: 540, MaxRange: 64.0, Sectors: openSectors,
+	}
+	stateA.IngestHorizonSurveyReport(report, 540)
+	stateB.IngestHorizonSurveyReport(report, 540)
+	frameA.WorldTick = 545
+	frameB.WorldTick = 545
+
 	intentA := EvaluateStrategicDirective(frameA, stateA, xdg.DefaultAgentIdentityConfig("aria"))
 	intentB := EvaluateStrategicDirective(frameB, stateB, xdg.DefaultAgentIdentityConfig("bran"))
 	if intentA == nil || intentA.GetNavigate() == nil || intentB == nil || intentB.GetNavigate() == nil {
-		t.Fatalf("expected NavigateIntents for SCOUT_FRONTIER, got A=%+v B=%+v", intentA, intentB)
+		t.Fatalf("expected NavigateIntents for SCOUT_FRONTIER after survey, got A=%+v B=%+v", intentA, intentB)
 	}
 
 	tA := intentA.GetNavigate().Target
 	tB := intentB.GetNavigate().Target
 	distA := math.Hypot(tA.X, tA.Z)
 	distB := math.Hypot(tB.X, tB.Z)
-	if distA < 23.5 || distA > 36.5 || distB < 23.5 || distB > 36.5 {
-		t.Fatalf("expected frontier target 24-36m away, got distA=%.2f distB=%.2f", distA, distB)
+	if distA < 31.5 || distA > 48.5 || distB < 31.5 || distB > 48.5 {
+		t.Fatalf("expected frontier target 32-48m away, got distA=%.2f distB=%.2f", distA, distB)
 	}
 	if math.Hypot(tA.X-tB.X, tA.Z-tB.Z) < 1.0 {
 		t.Fatalf("expected different agents to fan out in different directions, got tA=%+v tB=%+v", tA, tB)
 	}
 
-	// Arriving within 4m clears the directive
+	// Arriving within 5m clears the directive
 	arrivedFrame := newDirectiveTestFrame("aria", 600, 4000, tA.X-2.0, tA.Y, tA.Z)
 	afterIntent := EvaluateStrategicDirective(arrivedFrame, stateA, xdg.DefaultAgentIdentityConfig("aria"))
 	if afterIntent != nil {
 		t.Fatalf("expected nil intent upon reaching frontier waypoint, got %+v", afterIntent)
 	}
 	if _, active := stateA.ActiveStrategicDirective(600); active {
-		t.Fatal("expected SCOUT_FRONTIER directive to be cleared after arriving within 4m")
+		t.Fatal("expected SCOUT_FRONTIER directive to be cleared after arriving within 5m")
 	}
 }
 
@@ -347,10 +375,31 @@ func TestAgentFSM_ExecutesDirectiveInBootstrapAndSettlement(t *testing.T) {
 		Config:  cfg,
 		State:   stateSet,
 	})
-	if len(resSet.Intents) == 0 || resSet.Intents[0].Intent.GetNavigate() == nil {
-		t.Fatalf("expected Settlement FSM tick to emit SCOUT_FRONTIER NavigateIntent, got %+v", resSet.Intents)
+	if len(resSet.Intents) == 0 || resSet.Intents[0].Intent.GetSurveyHorizon() == nil {
+		t.Fatalf("expected Settlement FSM tick to emit SCOUT_FRONTIER SurveyHorizonIntent, got %+v", resSet.Intents)
 	}
 	if resSet.GoalHierarchy == nil || resSet.GoalHierarchy.ImmediateGoal != "SCOUT_FRONTIER: East frontier" {
 		t.Fatalf("expected Settlement GoalHierarchy preserved, got %+v", resSet.GoalHierarchy)
+	}
+
+	// After HorizonSurveyReport arrives, next tick emits NavigateIntent along chosen bearing
+	sectors := make([]*civquestv1.HorizonSector, 36)
+	for i := 0; i < 36; i++ {
+		sectors[i] = &civquestv1.HorizonSector{
+			SectorIndex: int32(i), BearingDeg: float32(i * 10), HitDistance: 64.0, FeatureType: "OPEN_PLAINS", OpenHorizon: true,
+		}
+	}
+	stateSet.IngestHorizonSurveyReport(&civquestv1.HorizonSurveyReport{
+		OriginX: 0, OriginY: 64, OriginZ: 0, CompletedTick: 260, MaxRange: 64.0, Sectors: sectors,
+	}, 260)
+	frameSet.WorldTick = 265
+	resSetNav := fsmSet.Tick(&FSMContext{
+		AgentID: "aria",
+		Frame:   frameSet,
+		Config:  cfg,
+		State:   stateSet,
+	})
+	if len(resSetNav.Intents) == 0 || resSetNav.Intents[0].Intent.GetNavigate() == nil {
+		t.Fatalf("expected Settlement FSM tick after survey to emit SCOUT_FRONTIER NavigateIntent, got %+v", resSetNav.Intents)
 	}
 }

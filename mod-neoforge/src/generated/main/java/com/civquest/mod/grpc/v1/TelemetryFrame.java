@@ -521,6 +521,44 @@ private static final long serialVersionUID = 0L;
     return receipt_ == null ? com.civquest.mod.grpc.v1.IntentReceipt.getDefaultInstance() : receipt_;
   }
 
+  public static final int HORIZON_SURVEY_FIELD_NUMBER = 17;
+  private com.civquest.mod.grpc.v1.HorizonSurveyReport horizonSurvey_;
+  /**
+   * <pre>
+   * ADR-032 360-degree peripheral horizon survey report
+   * </pre>
+   *
+   * <code>.civquest.v1.HorizonSurveyReport horizon_survey = 17;</code>
+   * @return Whether the horizonSurvey field is set.
+   */
+  @java.lang.Override
+  public boolean hasHorizonSurvey() {
+    return ((bitField0_ & 0x00000080) != 0);
+  }
+  /**
+   * <pre>
+   * ADR-032 360-degree peripheral horizon survey report
+   * </pre>
+   *
+   * <code>.civquest.v1.HorizonSurveyReport horizon_survey = 17;</code>
+   * @return The horizonSurvey.
+   */
+  @java.lang.Override
+  public com.civquest.mod.grpc.v1.HorizonSurveyReport getHorizonSurvey() {
+    return horizonSurvey_ == null ? com.civquest.mod.grpc.v1.HorizonSurveyReport.getDefaultInstance() : horizonSurvey_;
+  }
+  /**
+   * <pre>
+   * ADR-032 360-degree peripheral horizon survey report
+   * </pre>
+   *
+   * <code>.civquest.v1.HorizonSurveyReport horizon_survey = 17;</code>
+   */
+  @java.lang.Override
+  public com.civquest.mod.grpc.v1.HorizonSurveyReportOrBuilder getHorizonSurveyOrBuilder() {
+    return horizonSurvey_ == null ? com.civquest.mod.grpc.v1.HorizonSurveyReport.getDefaultInstance() : horizonSurvey_;
+  }
+
   private byte memoizedIsInitialized = -1;
   @java.lang.Override
   public final boolean isInitialized() {
@@ -582,6 +620,9 @@ private static final long serialVersionUID = 0L;
     }
     if (((bitField0_ & 0x00000040) != 0)) {
       output.writeMessage(16, getReceipt());
+    }
+    if (((bitField0_ & 0x00000080) != 0)) {
+      output.writeMessage(17, getHorizonSurvey());
     }
     getUnknownFields().writeTo(output);
   }
@@ -655,6 +696,10 @@ private static final long serialVersionUID = 0L;
       size += com.google.protobuf.CodedOutputStream
         .computeMessageSize(16, getReceipt());
     }
+    if (((bitField0_ & 0x00000080) != 0)) {
+      size += com.google.protobuf.CodedOutputStream
+        .computeMessageSize(17, getHorizonSurvey());
+    }
     size += getUnknownFields().getSerializedSize();
     memoizedSize = size;
     return size;
@@ -721,6 +766,11 @@ private static final long serialVersionUID = 0L;
     if (hasReceipt()) {
       if (!getReceipt()
           .equals(other.getReceipt())) return false;
+    }
+    if (hasHorizonSurvey() != other.hasHorizonSurvey()) return false;
+    if (hasHorizonSurvey()) {
+      if (!getHorizonSurvey()
+          .equals(other.getHorizonSurvey())) return false;
     }
     if (!getUnknownFields().equals(other.getUnknownFields())) return false;
     return true;
@@ -789,6 +839,10 @@ private static final long serialVersionUID = 0L;
     if (hasReceipt()) {
       hash = (37 * hash) + RECEIPT_FIELD_NUMBER;
       hash = (53 * hash) + getReceipt().hashCode();
+    }
+    if (hasHorizonSurvey()) {
+      hash = (37 * hash) + HORIZON_SURVEY_FIELD_NUMBER;
+      hash = (53 * hash) + getHorizonSurvey().hashCode();
     }
     hash = (29 * hash) + getUnknownFields().hashCode();
     memoizedHashCode = hash;
@@ -931,6 +985,7 @@ private static final long serialVersionUID = 0L;
         getDeathEventFieldBuilder();
         getReflexNoticesFieldBuilder();
         getReceiptFieldBuilder();
+        getHorizonSurveyFieldBuilder();
       }
     }
     @java.lang.Override
@@ -1004,6 +1059,11 @@ private static final long serialVersionUID = 0L;
       if (receiptBuilder_ != null) {
         receiptBuilder_.dispose();
         receiptBuilder_ = null;
+      }
+      horizonSurvey_ = null;
+      if (horizonSurveyBuilder_ != null) {
+        horizonSurveyBuilder_.dispose();
+        horizonSurveyBuilder_ = null;
       }
       return this;
     }
@@ -1135,6 +1195,12 @@ private static final long serialVersionUID = 0L;
             ? receipt_
             : receiptBuilder_.build();
         to_bitField0_ |= 0x00000040;
+      }
+      if (((from_bitField0_ & 0x00010000) != 0)) {
+        result.horizonSurvey_ = horizonSurveyBuilder_ == null
+            ? horizonSurvey_
+            : horizonSurveyBuilder_.build();
+        to_bitField0_ |= 0x00000080;
       }
       result.bitField0_ |= to_bitField0_;
     }
@@ -1293,6 +1359,9 @@ private static final long serialVersionUID = 0L;
       if (other.hasReceipt()) {
         mergeReceipt(other.getReceipt());
       }
+      if (other.hasHorizonSurvey()) {
+        mergeHorizonSurvey(other.getHorizonSurvey());
+      }
       this.mergeUnknownFields(other.getUnknownFields());
       onChanged();
       return this;
@@ -1445,6 +1514,13 @@ private static final long serialVersionUID = 0L;
               bitField0_ |= 0x00008000;
               break;
             } // case 130
+            case 138: {
+              input.readMessage(
+                  getHorizonSurveyFieldBuilder().getBuilder(),
+                  extensionRegistry);
+              bitField0_ |= 0x00010000;
+              break;
+            } // case 138
             default: {
               if (!super.parseUnknownField(input, extensionRegistry, tag)) {
                 done = true; // was an endgroup tag
@@ -3608,6 +3684,163 @@ private static final long serialVersionUID = 0L;
         receipt_ = null;
       }
       return receiptBuilder_;
+    }
+
+    private com.civquest.mod.grpc.v1.HorizonSurveyReport horizonSurvey_;
+    private com.google.protobuf.SingleFieldBuilder<
+        com.civquest.mod.grpc.v1.HorizonSurveyReport, com.civquest.mod.grpc.v1.HorizonSurveyReport.Builder, com.civquest.mod.grpc.v1.HorizonSurveyReportOrBuilder> horizonSurveyBuilder_;
+    /**
+     * <pre>
+     * ADR-032 360-degree peripheral horizon survey report
+     * </pre>
+     *
+     * <code>.civquest.v1.HorizonSurveyReport horizon_survey = 17;</code>
+     * @return Whether the horizonSurvey field is set.
+     */
+    public boolean hasHorizonSurvey() {
+      return ((bitField0_ & 0x00010000) != 0);
+    }
+    /**
+     * <pre>
+     * ADR-032 360-degree peripheral horizon survey report
+     * </pre>
+     *
+     * <code>.civquest.v1.HorizonSurveyReport horizon_survey = 17;</code>
+     * @return The horizonSurvey.
+     */
+    public com.civquest.mod.grpc.v1.HorizonSurveyReport getHorizonSurvey() {
+      if (horizonSurveyBuilder_ == null) {
+        return horizonSurvey_ == null ? com.civquest.mod.grpc.v1.HorizonSurveyReport.getDefaultInstance() : horizonSurvey_;
+      } else {
+        return horizonSurveyBuilder_.getMessage();
+      }
+    }
+    /**
+     * <pre>
+     * ADR-032 360-degree peripheral horizon survey report
+     * </pre>
+     *
+     * <code>.civquest.v1.HorizonSurveyReport horizon_survey = 17;</code>
+     */
+    public Builder setHorizonSurvey(com.civquest.mod.grpc.v1.HorizonSurveyReport value) {
+      if (horizonSurveyBuilder_ == null) {
+        if (value == null) {
+          throw new NullPointerException();
+        }
+        horizonSurvey_ = value;
+      } else {
+        horizonSurveyBuilder_.setMessage(value);
+      }
+      bitField0_ |= 0x00010000;
+      onChanged();
+      return this;
+    }
+    /**
+     * <pre>
+     * ADR-032 360-degree peripheral horizon survey report
+     * </pre>
+     *
+     * <code>.civquest.v1.HorizonSurveyReport horizon_survey = 17;</code>
+     */
+    public Builder setHorizonSurvey(
+        com.civquest.mod.grpc.v1.HorizonSurveyReport.Builder builderForValue) {
+      if (horizonSurveyBuilder_ == null) {
+        horizonSurvey_ = builderForValue.build();
+      } else {
+        horizonSurveyBuilder_.setMessage(builderForValue.build());
+      }
+      bitField0_ |= 0x00010000;
+      onChanged();
+      return this;
+    }
+    /**
+     * <pre>
+     * ADR-032 360-degree peripheral horizon survey report
+     * </pre>
+     *
+     * <code>.civquest.v1.HorizonSurveyReport horizon_survey = 17;</code>
+     */
+    public Builder mergeHorizonSurvey(com.civquest.mod.grpc.v1.HorizonSurveyReport value) {
+      if (horizonSurveyBuilder_ == null) {
+        if (((bitField0_ & 0x00010000) != 0) &&
+          horizonSurvey_ != null &&
+          horizonSurvey_ != com.civquest.mod.grpc.v1.HorizonSurveyReport.getDefaultInstance()) {
+          getHorizonSurveyBuilder().mergeFrom(value);
+        } else {
+          horizonSurvey_ = value;
+        }
+      } else {
+        horizonSurveyBuilder_.mergeFrom(value);
+      }
+      if (horizonSurvey_ != null) {
+        bitField0_ |= 0x00010000;
+        onChanged();
+      }
+      return this;
+    }
+    /**
+     * <pre>
+     * ADR-032 360-degree peripheral horizon survey report
+     * </pre>
+     *
+     * <code>.civquest.v1.HorizonSurveyReport horizon_survey = 17;</code>
+     */
+    public Builder clearHorizonSurvey() {
+      bitField0_ = (bitField0_ & ~0x00010000);
+      horizonSurvey_ = null;
+      if (horizonSurveyBuilder_ != null) {
+        horizonSurveyBuilder_.dispose();
+        horizonSurveyBuilder_ = null;
+      }
+      onChanged();
+      return this;
+    }
+    /**
+     * <pre>
+     * ADR-032 360-degree peripheral horizon survey report
+     * </pre>
+     *
+     * <code>.civquest.v1.HorizonSurveyReport horizon_survey = 17;</code>
+     */
+    public com.civquest.mod.grpc.v1.HorizonSurveyReport.Builder getHorizonSurveyBuilder() {
+      bitField0_ |= 0x00010000;
+      onChanged();
+      return getHorizonSurveyFieldBuilder().getBuilder();
+    }
+    /**
+     * <pre>
+     * ADR-032 360-degree peripheral horizon survey report
+     * </pre>
+     *
+     * <code>.civquest.v1.HorizonSurveyReport horizon_survey = 17;</code>
+     */
+    public com.civquest.mod.grpc.v1.HorizonSurveyReportOrBuilder getHorizonSurveyOrBuilder() {
+      if (horizonSurveyBuilder_ != null) {
+        return horizonSurveyBuilder_.getMessageOrBuilder();
+      } else {
+        return horizonSurvey_ == null ?
+            com.civquest.mod.grpc.v1.HorizonSurveyReport.getDefaultInstance() : horizonSurvey_;
+      }
+    }
+    /**
+     * <pre>
+     * ADR-032 360-degree peripheral horizon survey report
+     * </pre>
+     *
+     * <code>.civquest.v1.HorizonSurveyReport horizon_survey = 17;</code>
+     */
+    private com.google.protobuf.SingleFieldBuilder<
+        com.civquest.mod.grpc.v1.HorizonSurveyReport, com.civquest.mod.grpc.v1.HorizonSurveyReport.Builder, com.civquest.mod.grpc.v1.HorizonSurveyReportOrBuilder> 
+        getHorizonSurveyFieldBuilder() {
+      if (horizonSurveyBuilder_ == null) {
+        horizonSurveyBuilder_ = new com.google.protobuf.SingleFieldBuilder<
+            com.civquest.mod.grpc.v1.HorizonSurveyReport, com.civquest.mod.grpc.v1.HorizonSurveyReport.Builder, com.civquest.mod.grpc.v1.HorizonSurveyReportOrBuilder>(
+                getHorizonSurvey(),
+                getParentForChildren(),
+                isClean());
+        horizonSurvey_ = null;
+      }
+      return horizonSurveyBuilder_;
     }
 
     // @@protoc_insertion_point(builder_scope:civquest.v1.TelemetryFrame)

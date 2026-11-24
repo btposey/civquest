@@ -51,6 +51,9 @@ func (e *CircadianEvaluator) Evaluate(ctx *EvaluatorContext, graph *FactGraph) e
 	if ctx != nil && ctx.Config != nil {
 		routine = ComputeCircadianRoutine(tod, weather, ctx.Config, state)
 	}
+	if state != nil {
+		routine = gateBootstrapCircadianRoutine(state.Stage(), routine, state, isStateShelterOrBedSatisfied(state))
+	}
 
 	isTavern := normTod >= 11000 && normTod < 13000
 	isDuskOrNight := (weather == civquestv1.Weather_WEATHER_THUNDER) || (normTod >= 11000 && normTod < 23500)

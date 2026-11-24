@@ -243,6 +243,8 @@ type AgentRuntime struct {
 	latestThought              string
 	latestDialogue             string
 	latestChronicle            string
+	clanSizeResolved           bool
+	lastClanSizeTick           int64
 
 	// Callbacks
 	onDeath func(*civquestv1.DeathEvent)
@@ -1665,8 +1667,14 @@ func (r *AgentRuntime) HandleTelemetryFrame(frame *civquestv1.TelemetryFrame) {
 	// Update habit trails, record breadcrumbs, advance active corridors, and consolidate arrived trails (ADR-023)
 	r.updateHabitTrails(frame)
 
+	// Ingest completed 360-degree HorizonSurveyReports and process clan rendezvous sync (ADR-032)
+	r.processHorizonSurveyAndRendezvous(frame)
+
 	// Evaluate deterministic System 1 survival reflexes, daily routine, biological needs, and paving (<5 ms)
 	r.evaluateSystem1Reflexes(frame)
+
+	// Immediately sync and broadcast clan rendezvous report if arrival occurred on this tick (ADR-032)
+	r.syncPendingRendezvous(frame)
 
 	// Dispatch System 2 dialogue and barter haggling asynchronously (non-blocking)
 	if len(frame.IncomingChats) > 0 || frame.PendingTrade != nil {
@@ -2650,9 +2658,13 @@ func (r *AgentRuntime) dispatchContemplation(frame *civquestv1.TelemetryFrame) {
 
 		r.mu.RLock()
 		fsm := r.agentFSM
+		sys1State := r.system1State
 		r.mu.RUnlock()
 		if fsm != nil && fsm.LastFacts() != nil {
 			ledger.WithFactGraph(fsm.LastFacts())
+		}
+		if sys1State != nil {
+			ledger.WithHorizonSurveySummary(sys1State.LatestSurveySummary())
 		}
 
 		resp, err := contemplator.Contemplate(reqCtx, ledger)
@@ -2840,9 +2852,13 @@ func (r *AgentRuntime) TriggerContemplation(ctx context.Context, frame *civquest
 
 	r.mu.RLock()
 	fsm := r.agentFSM
+	sys1State := r.system1State
 	r.mu.RUnlock()
 	if fsm != nil && fsm.LastFacts() != nil {
 		ledger.WithFactGraph(fsm.LastFacts())
+	}
+	if sys1State != nil {
+		ledger.WithHorizonSurveySummary(sys1State.LatestSurveySummary())
 	}
 
 	resp, err := contemplator.Contemplate(ctx, ledger)

@@ -22,6 +22,7 @@ import com.civquest.mod.grpc.v1.VisibleBlock;
 import com.civquest.mod.grpc.v1.VisibleEntity;
 import com.civquest.mod.grpc.v1.Weather;
 import net.minecraft.core.BlockPos;
+import net.minecraft.server.level.ServerLevel;
 import net.minecraft.tags.DamageTypeTags;
 import net.minecraft.world.damagesource.DamageSource;
 import net.minecraft.world.level.Level;
@@ -299,5 +300,94 @@ public class SensoryFrustumCollectorTest {
         assertEquals(IntentReceipt.ReceiptStatus.RECEIPT_STATUS_PREEMPTED_BY_REFLEX, frame.getReceipt().getStatus());
         assertEquals(1, frame.getReceipt().getMotorStackDepth());
         assertEquals(88L, frame.getLastProcessedSequenceId());
+    }
+
+    @Test
+    @DisplayName("collectInterestingBlocks reserves up to MAX_LOG_BLOCKS slots so non-log clutter cannot starve nearby trees")
+    void testCollectInterestingBlocksReservesLogCapacityUnderHeavyNonLogClutter() {
+        AgentEntity agent = mock(AgentEntity.class);
+        Level level = mock(ServerLevel.class);
+        BlockPos center = new BlockPos(0, 64, 0);
+        when(agent.blockPosition()).thenReturn(center);
+        when(level.hasChunkAt(any(BlockPos.class))).thenReturn(true);
+        when(level.getMinBuildHeight()).thenReturn(-64);
+        when(level.getMaxBuildHeight()).thenReturn(320);
+
+        var airState = net.minecraft.world.level.block.Blocks.AIR.defaultBlockState();
+        var farmlandState = net.minecraft.world.level.block.Blocks.FARMLAND.defaultBlockState();
+        var oakLogState = net.minecraft.world.level.block.Blocks.OAK_LOG.defaultBlockState();
+
+        // Populate >150 farmland blocks across y=62..63 (scanned before y=64..70 logs) plus 30 oak logs at y=64..69
+        java.util.Set<BlockPos> logPositions = new java.util.HashSet<>();
+        for (int tree = 0; tree < 6; tree++) {
+            int tx = 3 + tree * 2; // x = 3, 5, 7, 9, 11, 13 (varying distances from center)
+            for (int y = 64; y <= 68; y++) {
+                logPositions.add(new BlockPos(tx, y, 0));
+            }
+        }
+
+        when(level.getBlockState(any(BlockPos.class))).thenAnswer(inv -> {
+            BlockPos p = inv.getArgument(0);
+            if (logPositions.contains(p)) {
+                return oakLogState;
+            }
+            if ((p.getY() == 62 || p.getY() == 63) && Math.abs(p.getX()) <= 6 && Math.abs(p.getZ()) <= 6) {
+                return farmlandState;
+            }
+            return airState;
+        });
+
+        TelemetryFrame.Builder frameBuilder = TelemetryFrame.newBuilder();
+        collector.collectInterestingBlocks(agent, level, frameBuilder);
+
+        assertEquals(SensoryFrustumCollector.MAX_INTERESTING_BLOCKS, frameBuilder.getInterestingBlocksCount(),
+                "Frame must fill up to MAX_INTERESTING_BLOCKS when >128 interesting blocks exist");
+
+        java.util.List<VisibleBlock> reportedLogs = frameBuilder.getInterestingBlocksList().stream()
+                .filter(b -> b.getBlockId().equals("minecraft:oak_log"))
+                .toList();
+        assertEquals(SensoryFrustumCollector.MAX_LOG_BLOCKS, reportedLogs.size(),
+                "Closest MAX_LOG_BLOCKS oak logs must never be starved out by farmland/underfoot clutter");
+
+        // Closest log at (3, 64, 0) must be included, while farthest log at (13, 68, 0) is excluded by MAX_LOG_BLOCKS=24
+        assertTrue(reportedLogs.stream().anyMatch(b -> b.getPos().getX() == 3 && b.getPos().getY() == 64 && b.getPos().getZ() == 0),
+                "Closest oak log at (3,64,0) must be reported");
+        assertFalse(reportedLogs.stream().anyMatch(b -> b.getPos().getX() == 13 && b.getPos().getY() == 68 && b.getPos().getZ() == 0),
+                "Farthest oak log at (13,68,0) should be trimmed in favor of closer logs");
+    }
+
+    @Test
+    @DisplayName("collectFrame attaches pending HorizonSurveyReport polled from AgentEntity onto TelemetryFrame")
+    void testCollectFrameAttachesHorizonSurveyReport() {
+        AgentEntity agent = mock(AgentEntity.class);
+        when(agent.getAgentId()).thenReturn("horizon-telemetry-agent");
+        when(agent.getId()).thenReturn(19);
+        when(agent.pollIncomingChats()).thenReturn(java.util.Collections.emptyList());
+        when(agent.pollReflexNotices()).thenReturn(java.util.Collections.emptyList());
+
+        com.civquest.mod.grpc.v1.HorizonSurveyReport report = com.civquest.mod.grpc.v1.HorizonSurveyReport.newBuilder()
+                .setOriginX(12.5)
+                .setOriginY(65.62)
+                .setOriginZ(-8.5)
+                .setCompletedTick(2400L)
+                .setMaxRange(64.0f)
+                .addSectors(com.civquest.mod.grpc.v1.HorizonSector.newBuilder()
+                        .setSectorIndex(0)
+                        .setBearingDeg(0.0f)
+                        .setHitDistance(40.0f)
+                        .setFeatureType(HorizonSurveyScanner.FEATURE_WATER)
+                        .setHitBlockId("minecraft:water")
+                        .build())
+                .build();
+        when(agent.pollHorizonSurveyReport()).thenReturn(report).thenReturn(null);
+
+        TelemetryFrame firstFrame = collector.collectFrame(agent);
+        assertTrue(firstFrame.hasHorizonSurvey());
+        assertEquals(2400L, firstFrame.getHorizonSurvey().getCompletedTick());
+        assertEquals(1, firstFrame.getHorizonSurvey().getSectorsCount());
+        assertEquals(HorizonSurveyScanner.FEATURE_WATER, firstFrame.getHorizonSurvey().getSectors(0).getFeatureType());
+
+        TelemetryFrame secondFrame = collector.collectFrame(agent);
+        assertFalse(secondFrame.hasHorizonSurvey());
     }
 }

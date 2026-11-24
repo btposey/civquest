@@ -927,4 +927,87 @@ public class AgentNavigatorTest {
         assertNotEquals(0.42, appliedDelta.get().y, 1e-4,
                 "Entity collision on flat ground without solid step-up ahead must not trigger jumping");
     }
+
+    @Test
+    @DisplayName("AgentNavigator traverses flat approach, climbs hill, and arrives at solid tree trunk target")
+    void testUphillApproachToSolidTreeTrunkReachesArrival() {
+        AgentEntity agent = mock(AgentEntity.class);
+        Level level = mock(Level.class);
+        when(agent.level()).thenReturn(level);
+        when(level.hasChunkAt(any(BlockPos.class))).thenReturn(true);
+
+        BlockState solidBlock = mock(BlockState.class);
+        when(solidBlock.isAir()).thenReturn(false);
+        when(solidBlock.getCollisionShape(any(), any())).thenReturn(Shapes.block());
+
+        BlockState airBlock = mock(BlockState.class);
+        when(airBlock.isAir()).thenReturn(true);
+        when(airBlock.getCollisionShape(any(), any())).thenReturn(Shapes.empty());
+
+        // Flat approach z<=8 (floor y<=86), rising slope z=9..14 (floor up to y=92), solid oak trunk at (-35, 93..96, 14)
+        java.util.function.IntUnaryOperator floorAtZ = z -> {
+            if (z <= 8) return 86;
+            if (z >= 14) return 92;
+            return 86 + (z - 8);
+        };
+        when(level.getBlockState(any(BlockPos.class))).thenAnswer(inv -> {
+            BlockPos p = inv.getArgument(0);
+            if (p.getX() == -35 && p.getZ() == 14 && p.getY() >= 93 && p.getY() <= 96) {
+                return solidBlock;
+            }
+            return p.getY() <= floorAtZ.applyAsInt(p.getZ()) ? solidBlock : airBlock;
+        });
+
+        AtomicReference<Vec3> posRef = new AtomicReference<>(new Vec3(-31.5, 87.0, 1.5));
+        AtomicReference<Vec3> deltaRef = new AtomicReference<>(Vec3.ZERO);
+        AtomicReference<Boolean> onGroundRef = new AtomicReference<>(true);
+        AtomicReference<Float> yawRef = new AtomicReference<>(0.0f);
+
+        when(agent.position()).thenAnswer(inv -> posRef.get());
+        when(agent.getDeltaMovement()).thenAnswer(inv -> deltaRef.get());
+        when(agent.onGround()).thenAnswer(inv -> onGroundRef.get());
+        when(agent.getYRot()).thenAnswer(inv -> yawRef.get());
+        doAnswer(inv -> {
+            yawRef.set(inv.getArgument(0));
+            return null;
+        }).when(agent).setYRot(anyFloat());
+        doAnswer(inv -> {
+            deltaRef.set(inv.getArgument(0));
+            return null;
+        }).when(agent).setDeltaMovement(any(Vec3.class));
+        doAnswer(inv -> {
+            Vec3 move = inv.getArgument(1);
+            Vec3 cur = posRef.get();
+            double nx = cur.x + move.x;
+            double nz = cur.z + move.z;
+            int bx = (int) Math.floor(nx);
+            int bz = (int) Math.floor(nz);
+            // Prevent stepping inside solid trunk (-35, 14)
+            if (bx == -35 && bz == 14) {
+                nx = cur.x;
+                nz = cur.z;
+            }
+            double groundY = floorAtZ.applyAsInt((int) Math.floor(nz)) + 1.0;
+            double ny = cur.y + move.y;
+            if (ny <= groundY) {
+                ny = groundY;
+                onGroundRef.set(true);
+            } else {
+                onGroundRef.set(false);
+            }
+            posRef.set(new Vec3(nx, ny, nz));
+            return null;
+        }).when(agent).move(any(), any(Vec3.class));
+
+        AgentNavigator navigator = new AgentNavigator(agent);
+        navigator.navigate(-34.5, 95.0, 14.5, 1.0f, false, false, false, 2);
+
+        for (int i = 0; i < 200 && navigator.isPathing(); i++) {
+            navigator.tick();
+            assertFalse(navigator.isStuck(), "Navigator must not get stuck on uphill forest approach (tick " + i + ")");
+        }
+
+        assertTrue(navigator.isArrived(), "Navigator must arrive adjacent to elevated oak trunk; state="
+                + navigator.getNavigationState() + " pos=" + posRef.get());
+    }
 }

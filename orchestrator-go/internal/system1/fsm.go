@@ -606,8 +606,11 @@ func tryForagingPreemption(ctx *FSMContext, skillCtx *SkillContext) ([]FSMIntent
 	if !fSkill.Preconditions(ctx.Facts) {
 		return nil, false
 	}
-	if ctx.State != nil && ctx.State.HasActiveTask() {
-		ctx.State.PauseActiveTask(ctx.Frame.WorldTick)
+	if ctx.State != nil {
+		ctx.State.ClearExpeditionSurveyingIfActive()
+		if ctx.State.HasActiveTask() {
+			ctx.State.PauseActiveTask(ctx.Frame.WorldTick)
+		}
 	}
 	si, err := fSkill.Execute(skillCtx, ctx.Facts)
 	if err != nil {
@@ -685,8 +688,9 @@ func (h *BootstrapStateHandler) OnTick(ctx *FSMContext) []FSMIntent {
 		}
 	}
 
-	// Road paving
+	// Road paving (suppressed while 360-degree horizon survey is active)
 	if !ctx.Frame.Status.IsSleeping && ctx.PavingTracker != nil &&
+		(ctx.State == nil || !ctx.State.IsExpeditionSurveying(ctx.Frame.WorldTick)) &&
 		ctx.Frame.Status.NavigationState != civquestv1.NavigationState_NAVIGATION_STATE_STUCK &&
 		!ctx.Frame.Status.NavigationEnclosed {
 		if ctx.State != nil && ctx.PavingTracker.GetHomeOrigin() == nil {
@@ -705,58 +709,89 @@ func (h *BootstrapStateHandler) OnTick(ctx *FSMContext) []FSMIntent {
 		return intents
 	}
 
-	// In dusk/night with no bed: prioritize shelter construction, otherwise bootstrap
+	// In dusk/night without shelter or bed (ADR-032 §4): try shelter construction first if buildable,
+	// otherwise fall through seamlessly to bootstrap gathering, crafting, directives, and exploration.
+	// Once shelter is complete or an assigned bed exists, normal circadian evening/sleep routines apply.
 	if len(ctx.Frame.IncomingChats) == 0 && ctx.Frame.PendingTrade == nil {
-		if (ctx.IsDuskOrNight() || (ctx.State != nil && ctx.State.Routine() == RoutineSleep)) && !ctx.HasAssignedBed() && !ctx.IsShelterComplete() {
-			if skillIntents, _, ok := DefaultRegistry.SelectAndExecuteSkill(skillCtx, ctx.Facts, "shelter"); ok && len(skillIntents) > 0 {
-				for _, si := range skillIntents {
-					if si != nil {
-						intents = append(intents, FSMIntent{Intent: si, Priority: false})
-					}
-				}
-			} else if shelterIntent := EvaluateShelterGoals(ctx.AgentID, ctx.Frame, ctx.Config, ctx.State); shelterIntent != nil {
-				intents = append(intents, FSMIntent{Intent: shelterIntent, Priority: false})
-			}
-		} else if !ctx.IsDuskOrNight() && (ctx.State == nil || ctx.State.Routine() != RoutineSleep) {
+		shelterSatisfied := ctx.HasAssignedBed() || ctx.IsShelterComplete()
+		isSleepRoutine := ctx.State != nil && ctx.State.Routine() == RoutineSleep
+		isTavernRoutine := ctx.State != nil && ctx.State.Routine() == RoutineTavernSocial
+
+		if !shelterSatisfied && ctx.IsDuskOrNight() && !ctx.IsShelterOnCooldown() {
+			deferShelterForActiveHarvest := false
 			if ctx.State != nil && ctx.State.HasActiveTask() {
-				ctx.State.ResumeActiveTask(ctx.Frame.WorldTick)
 				_, kind, _, _ := ctx.State.ActiveTaskInfo()
-				if kind != "harvest_tree" && kind != "collect_items" {
-					stepRes := ctx.State.StepActiveTask(ctx.AgentID, ctx.Frame)
-					if stepRes.Intent != nil {
-						intents = append(intents, FSMIntent{Intent: stepRes.Intent, Priority: false})
+				if kind == "harvest_tree" || kind == "collect_items" {
+					inv := inspectBootstrapInventory(ctx.Frame.Status.Inventory)
+					if inv.buildingBlockCount == 0 && !inv.hasLight {
+						deferShelterForActiveHarvest = true
 					}
-					if stepRes.Active {
-						return intents
-					}
-				} else {
-					if bootstrapIntent := EvaluateBootstrapGoals(ctx.AgentID, ctx.Frame, ctx.Config, ctx.State); bootstrapIntent != nil {
-						intents = append(intents, FSMIntent{Intent: bootstrapIntent, Priority: false})
-					}
-					return intents
 				}
 			}
-			if ctx.Facts != nil && ctx.Facts.GetBool("system2.directive_active") &&
-				(HasSurvivalKit(ctx.Frame.Status.Inventory) || !canExecuteImmediateBootstrapCraft(ctx.Frame, ctx.State)) {
-				if dirIntent := EvaluateStrategicDirectiveWithID(ctx.AgentID, ctx.Frame, ctx.State, ctx.Config); dirIntent != nil {
-					intents = append(intents, FSMIntent{Intent: dirIntent, Priority: false})
-					return intents
-				}
-			}
-			if skillIntents, _, ok := DefaultRegistry.SelectAndExecuteSkill(skillCtx, ctx.Facts, "bootstrap"); ok && len(skillIntents) > 0 {
-				for _, si := range skillIntents {
-					if si != nil {
-						intents = append(intents, FSMIntent{Intent: si, Priority: false})
+
+			if !deferShelterForActiveHarvest {
+				var shelterIntents []FSMIntent
+				if skillIntents, _, ok := DefaultRegistry.SelectAndExecuteSkill(skillCtx, ctx.Facts, "shelter"); ok && len(skillIntents) > 0 {
+					for _, si := range skillIntents {
+						if si != nil {
+							shelterIntents = append(shelterIntents, FSMIntent{Intent: si, Priority: false})
+						}
 					}
+				} else if shelterIntent := EvaluateShelterGoals(ctx.AgentID, ctx.Frame, ctx.Config, ctx.State); shelterIntent != nil {
+					shelterIntents = append(shelterIntents, FSMIntent{Intent: shelterIntent, Priority: false})
 				}
-			} else if ctx.State == nil || !ctx.State.HasActiveTask() {
-				if bootstrapIntent := EvaluateBootstrapGoals(ctx.AgentID, ctx.Frame, ctx.Config, ctx.State); bootstrapIntent != nil {
-					intents = append(intents, FSMIntent{Intent: bootstrapIntent, Priority: false})
+				if len(shelterIntents) > 0 {
+					intents = append(intents, shelterIntents...)
+					return intents
 				}
 			}
 		}
+
+		if !shelterSatisfied || (!ctx.IsDuskOrNight() && !isSleepRoutine && !isTavernRoutine) {
+			return runBootstrapActivity(ctx, skillCtx, intents)
+		}
 	}
 
+	return intents
+}
+
+func runBootstrapActivity(ctx *FSMContext, skillCtx *SkillContext, intents []FSMIntent) []FSMIntent {
+	if ctx.State != nil && ctx.State.HasActiveTask() {
+		ctx.State.ResumeActiveTask(ctx.Frame.WorldTick)
+		_, kind, _, _ := ctx.State.ActiveTaskInfo()
+		if kind != "harvest_tree" && kind != "collect_items" {
+			stepRes := ctx.State.StepActiveTask(ctx.AgentID, ctx.Frame)
+			if stepRes.Intent != nil {
+				intents = append(intents, FSMIntent{Intent: stepRes.Intent, Priority: false})
+			}
+			if stepRes.Active {
+				return intents
+			}
+		} else {
+			if bootstrapIntent := EvaluateBootstrapGoals(ctx.AgentID, ctx.Frame, ctx.Config, ctx.State); bootstrapIntent != nil {
+				intents = append(intents, FSMIntent{Intent: bootstrapIntent, Priority: false})
+			}
+			return intents
+		}
+	}
+	if ctx.Facts != nil && ctx.Facts.GetBool("system2.directive_active") &&
+		(HasSurvivalKit(ctx.Frame.Status.Inventory) || !canExecuteImmediateBootstrapCraft(ctx.Frame, ctx.State)) {
+		if dirIntent := EvaluateStrategicDirectiveWithID(ctx.AgentID, ctx.Frame, ctx.State, ctx.Config); dirIntent != nil {
+			intents = append(intents, FSMIntent{Intent: dirIntent, Priority: false})
+			return intents
+		}
+	}
+	if skillIntents, _, ok := DefaultRegistry.SelectAndExecuteSkill(skillCtx, ctx.Facts, "bootstrap"); ok && len(skillIntents) > 0 {
+		for _, si := range skillIntents {
+			if si != nil {
+				intents = append(intents, FSMIntent{Intent: si, Priority: false})
+			}
+		}
+	} else if ctx.State == nil || !ctx.State.HasActiveTask() {
+		if bootstrapIntent := EvaluateBootstrapGoals(ctx.AgentID, ctx.Frame, ctx.Config, ctx.State); bootstrapIntent != nil {
+			intents = append(intents, FSMIntent{Intent: bootstrapIntent, Priority: false})
+		}
+	}
 	return intents
 }
 
@@ -827,23 +862,25 @@ func (h *SettlementStateHandler) OnTick(ctx *FSMContext) []FSMIntent {
 		}
 	}
 
-	// Road paving
-	if skillIntents, _, ok := DefaultRegistry.SelectAndExecuteSkill(skillCtx, ctx.Facts, "infrastructure"); ok && len(skillIntents) > 0 {
-		for _, si := range skillIntents {
-			if si != nil {
-				intents = append(intents, FSMIntent{Intent: si, Priority: false})
+	// Road paving (suppressed while 360-degree horizon survey is active)
+	if ctx.State == nil || !ctx.State.IsExpeditionSurveying(ctx.Frame.WorldTick) {
+		if skillIntents, _, ok := DefaultRegistry.SelectAndExecuteSkill(skillCtx, ctx.Facts, "infrastructure"); ok && len(skillIntents) > 0 {
+			for _, si := range skillIntents {
+				if si != nil {
+					intents = append(intents, FSMIntent{Intent: si, Priority: false})
+				}
 			}
-		}
-	} else if !ctx.Frame.Status.IsSleeping && ctx.PavingTracker != nil &&
-		ctx.Frame.Status.NavigationState != civquestv1.NavigationState_NAVIGATION_STATE_STUCK &&
-		!ctx.Frame.Status.NavigationEnclosed {
-		if ctx.State != nil && ctx.PavingTracker.GetHomeOrigin() == nil {
-			if home := ctx.State.GetHomeOrigin(); home != nil {
-				ctx.PavingTracker.SetHomeOrigin(home)
+		} else if !ctx.Frame.Status.IsSleeping && ctx.PavingTracker != nil &&
+			ctx.Frame.Status.NavigationState != civquestv1.NavigationState_NAVIGATION_STATE_STUCK &&
+			!ctx.Frame.Status.NavigationEnclosed {
+			if ctx.State != nil && ctx.PavingTracker.GetHomeOrigin() == nil {
+				if home := ctx.State.GetHomeOrigin(); home != nil {
+					ctx.PavingTracker.SetHomeOrigin(home)
+				}
 			}
-		}
-		if paveIntent := ctx.PavingTracker.EvaluatePaving(ctx.AgentID, ctx.Frame); paveIntent != nil {
-			intents = append(intents, FSMIntent{Intent: paveIntent, Priority: false})
+			if paveIntent := ctx.PavingTracker.EvaluatePaving(ctx.AgentID, ctx.Frame); paveIntent != nil {
+				intents = append(intents, FSMIntent{Intent: paveIntent, Priority: false})
+			}
 		}
 	}
 
@@ -893,11 +930,23 @@ func (h *SettlementStateHandler) OnTick(ctx *FSMContext) []FSMIntent {
 		}
 	}
 
+	// Hold steady while a 360-degree horizon survey is executing on the motor stack (ADR-032).
+	if routine != RoutineSleep && routine != RoutineArmoryMaintenance &&
+		ctx.State != nil && ctx.State.IsExpeditionSurveying(ctx.Frame.WorldTick) {
+		return intents
+	}
+
 	switch routine {
 	case RoutineSleep:
 		// Sleeping in bed or resting inside shelter handled by biological needs
 	case RoutinePrimaryDuty:
 		if len(ctx.Frame.IncomingChats) == 0 && ctx.Frame.PendingTrade == nil {
+			if ctx.State != nil && ctx.State.GetExpeditionPhase() != ExpeditionIdle {
+				if surveyIntent := EvaluateHorizonExplorer(ctx.AgentID, ctx.Frame, ctx.Config, ctx.State); surveyIntent != nil {
+					intents = append(intents, FSMIntent{Intent: surveyIntent, Priority: false})
+					return intents
+				}
+			}
 			if skillIntents, _, ok := DefaultRegistry.SelectAndExecuteSkill(skillCtx, ctx.Facts, "security", "exploration"); ok && len(skillIntents) > 0 {
 				for _, si := range skillIntents {
 					if si != nil {
@@ -1045,23 +1094,25 @@ func (h *ColonizeStateHandler) OnTick(ctx *FSMContext) []FSMIntent {
 		}
 	}
 
-	// Road paving
-	if skillIntents, _, ok := DefaultRegistry.SelectAndExecuteSkill(skillCtx, ctx.Facts, "infrastructure"); ok && len(skillIntents) > 0 {
-		for _, si := range skillIntents {
-			if si != nil {
-				intents = append(intents, FSMIntent{Intent: si, Priority: false})
+	// Road paving (suppressed while 360-degree horizon survey is active)
+	if ctx.State == nil || !ctx.State.IsExpeditionSurveying(ctx.Frame.WorldTick) {
+		if skillIntents, _, ok := DefaultRegistry.SelectAndExecuteSkill(skillCtx, ctx.Facts, "infrastructure"); ok && len(skillIntents) > 0 {
+			for _, si := range skillIntents {
+				if si != nil {
+					intents = append(intents, FSMIntent{Intent: si, Priority: false})
+				}
 			}
-		}
-	} else if !ctx.Frame.Status.IsSleeping && ctx.PavingTracker != nil &&
-		ctx.Frame.Status.NavigationState != civquestv1.NavigationState_NAVIGATION_STATE_STUCK &&
-		!ctx.Frame.Status.NavigationEnclosed {
-		if ctx.State != nil && ctx.PavingTracker.GetHomeOrigin() == nil {
-			if home := ctx.State.GetHomeOrigin(); home != nil {
-				ctx.PavingTracker.SetHomeOrigin(home)
+		} else if !ctx.Frame.Status.IsSleeping && ctx.PavingTracker != nil &&
+			ctx.Frame.Status.NavigationState != civquestv1.NavigationState_NAVIGATION_STATE_STUCK &&
+			!ctx.Frame.Status.NavigationEnclosed {
+			if ctx.State != nil && ctx.PavingTracker.GetHomeOrigin() == nil {
+				if home := ctx.State.GetHomeOrigin(); home != nil {
+					ctx.PavingTracker.SetHomeOrigin(home)
+				}
 			}
-		}
-		if paveIntent := ctx.PavingTracker.EvaluatePaving(ctx.AgentID, ctx.Frame); paveIntent != nil {
-			intents = append(intents, FSMIntent{Intent: paveIntent, Priority: false})
+			if paveIntent := ctx.PavingTracker.EvaluatePaving(ctx.AgentID, ctx.Frame); paveIntent != nil {
+				intents = append(intents, FSMIntent{Intent: paveIntent, Priority: false})
+			}
 		}
 	}
 
@@ -1093,11 +1144,16 @@ func (h *ColonizeStateHandler) OnTick(ctx *FSMContext) []FSMIntent {
 			}
 		}
 		// Colonization duties: harvest timber, establish core starter shelter, scout perimeter
+		if ctx.State != nil && ctx.State.IsExpeditionSurveying(ctx.Frame.WorldTick) {
+			return intents
+		}
 		if bootstrapIntent := EvaluateBootstrapGoals(ctx.AgentID, ctx.Frame, ctx.Config, ctx.State); bootstrapIntent != nil {
 			intents = append(intents, FSMIntent{Intent: bootstrapIntent, Priority: false})
 		} else if ctx.State != nil && ctx.State.HasActiveTask() {
 			// Committed TaskSubroutine active (pathing/cooldown); suppress exploration
 			return intents
+		} else if surveyIntent := EvaluateHorizonExplorer(ctx.AgentID, ctx.Frame, ctx.Config, ctx.State); surveyIntent != nil {
+			intents = append(intents, FSMIntent{Intent: surveyIntent, Priority: false})
 		} else if skillIntents, _, ok := DefaultRegistry.SelectAndExecuteSkill(skillCtx, ctx.Facts, "exploration"); ok && len(skillIntents) > 0 {
 			for _, si := range skillIntents {
 				if si != nil {
@@ -1196,8 +1252,12 @@ func (h *EmergencyStateHandler) Name() State { return StageEmergency }
 func (h *EmergencyStateHandler) Guard(ctx *FSMContext) bool {
 	return true
 }
-func (h *EmergencyStateHandler) OnEntry(ctx *FSMContext, from State) {}
-func (h *EmergencyStateHandler) OnExit(ctx *FSMContext, to State)    {}
+func (h *EmergencyStateHandler) OnEntry(ctx *FSMContext, from State) {
+	if ctx != nil && ctx.State != nil {
+		ctx.State.ClearExpeditionSurveyingIfActive()
+	}
+}
+func (h *EmergencyStateHandler) OnExit(ctx *FSMContext, to State) {}
 func (h *EmergencyStateHandler) OnTick(ctx *FSMContext) []FSMIntent {
 	var intents []FSMIntent
 	if ctx == nil || ctx.Frame == nil || ctx.Frame.Status == nil {
@@ -1686,7 +1746,7 @@ func (fsm *AgentFSM) TransitionTo(target State, reason string, ctx *FSMContext) 
 		fsm.previousRoutine = fsm.currentRoutine
 		fsm.currentRoutine = RoutineDead
 	} else if ctx != nil && ctx.Frame != nil {
-		newR := ComputeCircadianRoutine(ctx.Frame.TimeOfDay, ctx.Frame.Weather, ctx.Config, ctx.State)
+		newR := computeStageCircadianRoutine(target, ctx.Frame.TimeOfDay, ctx.Frame.Weather, ctx.Config, ctx.State, ctx)
 		if newR != "" {
 			fsm.previousRoutine = fsm.currentRoutine
 			fsm.currentRoutine = newR
@@ -2031,10 +2091,14 @@ func (fsm *AgentFSM) Tick(ctx *FSMContext) FSMResult {
 				taskActiveBeforeStep3 = true
 				newRoutine = taskRoutine
 			} else {
-				newRoutine = ComputeCircadianRoutine(tod, weather, ctx.Config, ctx.State)
+				newRoutine = computeStageCircadianRoutine(fsm.currentStage, tod, weather, ctx.Config, ctx.State, ctx)
 			}
 		} else {
-			newRoutine = ComputeCircadianRoutine(tod, weather, ctx.Config, nil)
+			var cfg *xdg.AgentIdentityConfig
+			if ctx != nil {
+				cfg = ctx.Config
+			}
+			newRoutine = computeStageCircadianRoutine(fsm.currentStage, tod, weather, cfg, nil, ctx)
 		}
 
 		if newRoutine != fsm.currentRoutine {
@@ -2076,7 +2140,7 @@ func (fsm *AgentFSM) Tick(ctx *FSMContext) FSMResult {
 				}
 				if parentR == "" || parentR == RoutineHarvestTree || parentR == RoutineCollectItems ||
 					parentR == RoutineEmergency || parentR == RoutineDead {
-					parentR = ComputeCircadianRoutine(tod, weather, ctx.Config, ctx.State)
+					parentR = computeStageCircadianRoutine(fsm.currentStage, tod, weather, ctx.Config, ctx.State, ctx)
 				}
 				meta := ctx.State.GetActiveTaskMetadata()
 				fsm.pushLocked(fsm.currentStage, parentR, "task subroutine committed: "+taskKind, worldTick, meta)
@@ -2098,7 +2162,7 @@ func (fsm *AgentFSM) Tick(ctx *FSMContext) FSMResult {
 				restoredR := popped.Routine
 				if restoredR == "" || restoredR == RoutineHarvestTree || restoredR == RoutineCollectItems ||
 					restoredR == RoutineEmergency || restoredR == RoutineDead {
-					restoredR = ComputeCircadianRoutine(tod, weather, ctx.Config, ctx.State)
+					restoredR = computeStageCircadianRoutine(fsm.currentStage, tod, weather, ctx.Config, ctx.State, ctx)
 				}
 				if restoredR != fsm.currentRoutine {
 					prevR := fsm.currentRoutine
@@ -2142,4 +2206,20 @@ func (fsm *AgentFSM) Tick(ctx *FSMContext) FSMResult {
 		GoalHierarchy:       &goals,
 		Facts:               fsm.lastFacts,
 	}
+}
+
+func computeStageCircadianRoutine(
+	stage Stage,
+	tod int64,
+	weather civquestv1.Weather,
+	cfg *xdg.AgentIdentityConfig,
+	state *AgentState,
+	ctx *FSMContext,
+) Routine {
+	routine := ComputeCircadianRoutine(tod, weather, cfg, state)
+	shelterSatisfied := isStateShelterOrBedSatisfied(state)
+	if !shelterSatisfied && ctx != nil {
+		shelterSatisfied = ctx.HasAssignedBed() || ctx.IsShelterComplete()
+	}
+	return gateBootstrapCircadianRoutine(stage, routine, state, shelterSatisfied)
 }

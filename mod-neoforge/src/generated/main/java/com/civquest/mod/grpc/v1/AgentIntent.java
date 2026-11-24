@@ -61,6 +61,7 @@ private static final long serialVersionUID = 0L;
     CREATE_BOOK(12),
     PLACE_SIGNPOST(13),
     TRANSFER_CONTAINER(14),
+    SURVEY_HORIZON(15),
     ACTION_NOT_SET(0);
     private final int value;
     private ActionCase(int value) {
@@ -90,6 +91,7 @@ private static final long serialVersionUID = 0L;
         case 12: return CREATE_BOOK;
         case 13: return PLACE_SIGNPOST;
         case 14: return TRANSFER_CONTAINER;
+        case 15: return SURVEY_HORIZON;
         case 0: return ACTION_NOT_SET;
         default: return null;
       }
@@ -527,6 +529,37 @@ private static final long serialVersionUID = 0L;
     return com.civquest.mod.grpc.v1.TransferContainerIntent.getDefaultInstance();
   }
 
+  public static final int SURVEY_HORIZON_FIELD_NUMBER = 15;
+  /**
+   * <code>.civquest.v1.SurveyHorizonIntent survey_horizon = 15;</code>
+   * @return Whether the surveyHorizon field is set.
+   */
+  @java.lang.Override
+  public boolean hasSurveyHorizon() {
+    return actionCase_ == 15;
+  }
+  /**
+   * <code>.civquest.v1.SurveyHorizonIntent survey_horizon = 15;</code>
+   * @return The surveyHorizon.
+   */
+  @java.lang.Override
+  public com.civquest.mod.grpc.v1.SurveyHorizonIntent getSurveyHorizon() {
+    if (actionCase_ == 15) {
+       return (com.civquest.mod.grpc.v1.SurveyHorizonIntent) action_;
+    }
+    return com.civquest.mod.grpc.v1.SurveyHorizonIntent.getDefaultInstance();
+  }
+  /**
+   * <code>.civquest.v1.SurveyHorizonIntent survey_horizon = 15;</code>
+   */
+  @java.lang.Override
+  public com.civquest.mod.grpc.v1.SurveyHorizonIntentOrBuilder getSurveyHorizonOrBuilder() {
+    if (actionCase_ == 15) {
+       return (com.civquest.mod.grpc.v1.SurveyHorizonIntent) action_;
+    }
+    return com.civquest.mod.grpc.v1.SurveyHorizonIntent.getDefaultInstance();
+  }
+
   private byte memoizedIsInitialized = -1;
   @java.lang.Override
   public final boolean isInitialized() {
@@ -582,6 +615,9 @@ private static final long serialVersionUID = 0L;
     }
     if (actionCase_ == 14) {
       output.writeMessage(14, (com.civquest.mod.grpc.v1.TransferContainerIntent) action_);
+    }
+    if (actionCase_ == 15) {
+      output.writeMessage(15, (com.civquest.mod.grpc.v1.SurveyHorizonIntent) action_);
     }
     getUnknownFields().writeTo(output);
   }
@@ -646,6 +682,10 @@ private static final long serialVersionUID = 0L;
     if (actionCase_ == 14) {
       size += com.google.protobuf.CodedOutputStream
         .computeMessageSize(14, (com.civquest.mod.grpc.v1.TransferContainerIntent) action_);
+    }
+    if (actionCase_ == 15) {
+      size += com.google.protobuf.CodedOutputStream
+        .computeMessageSize(15, (com.civquest.mod.grpc.v1.SurveyHorizonIntent) action_);
     }
     size += getUnknownFields().getSerializedSize();
     memoizedSize = size;
@@ -716,6 +756,10 @@ private static final long serialVersionUID = 0L;
         if (!getTransferContainer()
             .equals(other.getTransferContainer())) return false;
         break;
+      case 15:
+        if (!getSurveyHorizon()
+            .equals(other.getSurveyHorizon())) return false;
+        break;
       case 0:
       default:
     }
@@ -783,6 +827,10 @@ private static final long serialVersionUID = 0L;
       case 14:
         hash = (37 * hash) + TRANSFER_CONTAINER_FIELD_NUMBER;
         hash = (53 * hash) + getTransferContainer().hashCode();
+        break;
+      case 15:
+        hash = (37 * hash) + SURVEY_HORIZON_FIELD_NUMBER;
+        hash = (53 * hash) + getSurveyHorizon().hashCode();
         break;
       case 0:
       default:
@@ -956,6 +1004,9 @@ private static final long serialVersionUID = 0L;
       if (transferContainerBuilder_ != null) {
         transferContainerBuilder_.clear();
       }
+      if (surveyHorizonBuilder_ != null) {
+        surveyHorizonBuilder_.clear();
+      }
       actionCase_ = 0;
       action_ = null;
       return this;
@@ -1051,6 +1102,10 @@ private static final long serialVersionUID = 0L;
           transferContainerBuilder_ != null) {
         result.action_ = transferContainerBuilder_.build();
       }
+      if (actionCase_ == 15 &&
+          surveyHorizonBuilder_ != null) {
+        result.action_ = surveyHorizonBuilder_.build();
+      }
     }
 
     @java.lang.Override
@@ -1120,6 +1175,10 @@ private static final long serialVersionUID = 0L;
         }
         case TRANSFER_CONTAINER: {
           mergeTransferContainer(other.getTransferContainer());
+          break;
+        }
+        case SURVEY_HORIZON: {
+          mergeSurveyHorizon(other.getSurveyHorizon());
           break;
         }
         case ACTION_NOT_SET: {
@@ -1246,6 +1305,13 @@ private static final long serialVersionUID = 0L;
               actionCase_ = 14;
               break;
             } // case 114
+            case 122: {
+              input.readMessage(
+                  getSurveyHorizonFieldBuilder().getBuilder(),
+                  extensionRegistry);
+              actionCase_ = 15;
+              break;
+            } // case 122
             default: {
               if (!super.parseUnknownField(input, extensionRegistry, tag)) {
                 done = true; // was an endgroup tag
@@ -3084,6 +3150,148 @@ private static final long serialVersionUID = 0L;
       actionCase_ = 14;
       onChanged();
       return transferContainerBuilder_;
+    }
+
+    private com.google.protobuf.SingleFieldBuilder<
+        com.civquest.mod.grpc.v1.SurveyHorizonIntent, com.civquest.mod.grpc.v1.SurveyHorizonIntent.Builder, com.civquest.mod.grpc.v1.SurveyHorizonIntentOrBuilder> surveyHorizonBuilder_;
+    /**
+     * <code>.civquest.v1.SurveyHorizonIntent survey_horizon = 15;</code>
+     * @return Whether the surveyHorizon field is set.
+     */
+    @java.lang.Override
+    public boolean hasSurveyHorizon() {
+      return actionCase_ == 15;
+    }
+    /**
+     * <code>.civquest.v1.SurveyHorizonIntent survey_horizon = 15;</code>
+     * @return The surveyHorizon.
+     */
+    @java.lang.Override
+    public com.civquest.mod.grpc.v1.SurveyHorizonIntent getSurveyHorizon() {
+      if (surveyHorizonBuilder_ == null) {
+        if (actionCase_ == 15) {
+          return (com.civquest.mod.grpc.v1.SurveyHorizonIntent) action_;
+        }
+        return com.civquest.mod.grpc.v1.SurveyHorizonIntent.getDefaultInstance();
+      } else {
+        if (actionCase_ == 15) {
+          return surveyHorizonBuilder_.getMessage();
+        }
+        return com.civquest.mod.grpc.v1.SurveyHorizonIntent.getDefaultInstance();
+      }
+    }
+    /**
+     * <code>.civquest.v1.SurveyHorizonIntent survey_horizon = 15;</code>
+     */
+    public Builder setSurveyHorizon(com.civquest.mod.grpc.v1.SurveyHorizonIntent value) {
+      if (surveyHorizonBuilder_ == null) {
+        if (value == null) {
+          throw new NullPointerException();
+        }
+        action_ = value;
+        onChanged();
+      } else {
+        surveyHorizonBuilder_.setMessage(value);
+      }
+      actionCase_ = 15;
+      return this;
+    }
+    /**
+     * <code>.civquest.v1.SurveyHorizonIntent survey_horizon = 15;</code>
+     */
+    public Builder setSurveyHorizon(
+        com.civquest.mod.grpc.v1.SurveyHorizonIntent.Builder builderForValue) {
+      if (surveyHorizonBuilder_ == null) {
+        action_ = builderForValue.build();
+        onChanged();
+      } else {
+        surveyHorizonBuilder_.setMessage(builderForValue.build());
+      }
+      actionCase_ = 15;
+      return this;
+    }
+    /**
+     * <code>.civquest.v1.SurveyHorizonIntent survey_horizon = 15;</code>
+     */
+    public Builder mergeSurveyHorizon(com.civquest.mod.grpc.v1.SurveyHorizonIntent value) {
+      if (surveyHorizonBuilder_ == null) {
+        if (actionCase_ == 15 &&
+            action_ != com.civquest.mod.grpc.v1.SurveyHorizonIntent.getDefaultInstance()) {
+          action_ = com.civquest.mod.grpc.v1.SurveyHorizonIntent.newBuilder((com.civquest.mod.grpc.v1.SurveyHorizonIntent) action_)
+              .mergeFrom(value).buildPartial();
+        } else {
+          action_ = value;
+        }
+        onChanged();
+      } else {
+        if (actionCase_ == 15) {
+          surveyHorizonBuilder_.mergeFrom(value);
+        } else {
+          surveyHorizonBuilder_.setMessage(value);
+        }
+      }
+      actionCase_ = 15;
+      return this;
+    }
+    /**
+     * <code>.civquest.v1.SurveyHorizonIntent survey_horizon = 15;</code>
+     */
+    public Builder clearSurveyHorizon() {
+      if (surveyHorizonBuilder_ == null) {
+        if (actionCase_ == 15) {
+          actionCase_ = 0;
+          action_ = null;
+          onChanged();
+        }
+      } else {
+        if (actionCase_ == 15) {
+          actionCase_ = 0;
+          action_ = null;
+        }
+        surveyHorizonBuilder_.clear();
+      }
+      return this;
+    }
+    /**
+     * <code>.civquest.v1.SurveyHorizonIntent survey_horizon = 15;</code>
+     */
+    public com.civquest.mod.grpc.v1.SurveyHorizonIntent.Builder getSurveyHorizonBuilder() {
+      return getSurveyHorizonFieldBuilder().getBuilder();
+    }
+    /**
+     * <code>.civquest.v1.SurveyHorizonIntent survey_horizon = 15;</code>
+     */
+    @java.lang.Override
+    public com.civquest.mod.grpc.v1.SurveyHorizonIntentOrBuilder getSurveyHorizonOrBuilder() {
+      if ((actionCase_ == 15) && (surveyHorizonBuilder_ != null)) {
+        return surveyHorizonBuilder_.getMessageOrBuilder();
+      } else {
+        if (actionCase_ == 15) {
+          return (com.civquest.mod.grpc.v1.SurveyHorizonIntent) action_;
+        }
+        return com.civquest.mod.grpc.v1.SurveyHorizonIntent.getDefaultInstance();
+      }
+    }
+    /**
+     * <code>.civquest.v1.SurveyHorizonIntent survey_horizon = 15;</code>
+     */
+    private com.google.protobuf.SingleFieldBuilder<
+        com.civquest.mod.grpc.v1.SurveyHorizonIntent, com.civquest.mod.grpc.v1.SurveyHorizonIntent.Builder, com.civquest.mod.grpc.v1.SurveyHorizonIntentOrBuilder> 
+        getSurveyHorizonFieldBuilder() {
+      if (surveyHorizonBuilder_ == null) {
+        if (!(actionCase_ == 15)) {
+          action_ = com.civquest.mod.grpc.v1.SurveyHorizonIntent.getDefaultInstance();
+        }
+        surveyHorizonBuilder_ = new com.google.protobuf.SingleFieldBuilder<
+            com.civquest.mod.grpc.v1.SurveyHorizonIntent, com.civquest.mod.grpc.v1.SurveyHorizonIntent.Builder, com.civquest.mod.grpc.v1.SurveyHorizonIntentOrBuilder>(
+                (com.civquest.mod.grpc.v1.SurveyHorizonIntent) action_,
+                getParentForChildren(),
+                isClean());
+        action_ = null;
+      }
+      actionCase_ = 15;
+      onChanged();
+      return surveyHorizonBuilder_;
     }
 
     // @@protoc_insertion_point(builder_scope:civquest.v1.AgentIntent)
