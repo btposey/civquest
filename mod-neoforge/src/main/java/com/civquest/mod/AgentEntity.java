@@ -16,6 +16,7 @@ import net.minecraft.tags.DamageTypeTags;
 import net.minecraft.tags.EntityTypeTags;
 import net.minecraft.world.damagesource.DamageSource;
 import net.minecraft.world.entity.Entity;
+import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.item.enchantment.EnchantmentHelper;
 import net.minecraft.world.level.ChunkPos;
@@ -305,8 +306,9 @@ public class AgentEntity extends FakePlayer {
     }
 
     /**
-     * Applies strictly horizontal personal-space separation away from nearby alive, non-sleeping
-     * {@link AgentEntity} peers while guarding against solid obstacles, hazards, and >3-block cliffs.
+     * Applies strictly horizontal personal-space separation away from nearby alive, non-sleeping,
+     * non-spectator {@link LivingEntity} instances (peers, human players, and mobs) while guarding
+     * against solid obstacles, hazards, and >3-block cliffs.
      */
     public void applyHorizontalPeerSeparation() {
         net.minecraft.world.level.Level level = this.level();
@@ -319,13 +321,20 @@ public class AgentEntity extends FakePlayer {
         if (this.breaker != null && this.breaker.isBreaking()) {
             return;
         }
+        net.minecraft.world.phys.AABB myBox = this.getBoundingBox();
+        if (myBox == null) {
+            return;
+        }
 
-        List<AgentEntity> nearbyPeers = level.getEntitiesOfClass(
-                AgentEntity.class,
-                this.getBoundingBox().inflate(1.2, 1.2, 1.2),
-                p -> p != null && p != this && p.isAlive() && !p.isSleeping()
+        List<LivingEntity> nearbyEntities = level.getEntitiesOfClass(
+                LivingEntity.class,
+                myBox.inflate(1.5, 1.5, 1.5),
+                e -> e != null && e != this && e.isAlive() && !e.isSleeping()
+                        && !isEntitySpectatorSafe(e)
+                        && !this.isPassengerOfSameVehicle(e)
+                        && !(e instanceof net.minecraft.world.entity.decoration.ArmorStand)
         );
-        if (nearbyPeers == null || nearbyPeers.isEmpty()) {
+        if (nearbyEntities == null || nearbyEntities.isEmpty()) {
             return;
         }
 
@@ -336,16 +345,23 @@ public class AgentEntity extends FakePlayer {
         double rx = 0.0;
         double rz = 0.0;
         int affectingCount = 0;
-        List<AgentEntity> exactOverlapGroup = null;
+        List<LivingEntity> exactOverlapGroup = null;
 
-        for (AgentEntity peer : nearbyPeers) {
-            if (Math.abs(peer.getY() - curY) >= 1.2) {
+        for (LivingEntity other : nearbyEntities) {
+            net.minecraft.world.phys.AABB otherBox = other.getBoundingBox();
+            if (otherBox != null) {
+                if (otherBox.maxY <= myBox.minY + 1e-4 || otherBox.minY >= myBox.maxY - 1e-4) {
+                    continue;
+                }
+            } else if (Math.abs(other.getY() - curY) >= 1.8) {
                 continue;
             }
-            double dx = curX - peer.getX();
-            double dz = curZ - peer.getZ();
+            double dx = curX - other.getX();
+            double dz = curZ - other.getZ();
             double dist = Math.hypot(dx, dz);
-            if (dist >= PEER_SEPARATION_RADIUS) {
+            double combinedHalfWidths = (this.getBbWidth() + other.getBbWidth()) * 0.5;
+            double requiredRadius = Math.max(PEER_SEPARATION_RADIUS, combinedHalfWidths + 0.15);
+            if (dist >= requiredRadius) {
                 continue;
             }
             affectingCount++;
@@ -354,9 +370,9 @@ public class AgentEntity extends FakePlayer {
                     exactOverlapGroup = new ArrayList<>();
                     exactOverlapGroup.add(this);
                 }
-                exactOverlapGroup.add(peer);
+                exactOverlapGroup.add(other);
             } else {
-                double weight = (PEER_SEPARATION_RADIUS - dist) / PEER_SEPARATION_RADIUS;
+                double weight = (requiredRadius - dist) / requiredRadius;
                 rx += (dx / dist) * weight;
                 rz += (dz / dist) * weight;
             }
@@ -723,23 +739,80 @@ public class AgentEntity extends FakePlayer {
 
     @Override
     public boolean canCollideWith(Entity other) {
-        if (other instanceof AgentEntity) {
+        if (other == null || other == this || this.isPassengerOfSameVehicle(other)) {
             return false;
+        }
+        if (other instanceof LivingEntity) {
+            return !other.isRemoved() && other.isAlive() && !isEntitySpectatorSafe(other);
         }
         return super.canCollideWith(other);
     }
 
     @Override
     public boolean canBeCollidedWith() {
-        return false;
+        return !this.isRemoved() && this.isAlive() && !isEntitySpectatorSafe(this);
+    }
+
+    @Override
+    public boolean isPushable() {
+        boolean climbable = false;
+        try {
+            climbable = this.onClimbable();
+        } catch (Throwable ignored) {
+        }
+        return this.isAlive() && !isEntitySpectatorSafe(this) && !climbable;
     }
 
     @Override
     public void push(Entity other) {
-        if (other instanceof AgentEntity) {
+        if (other == null || other == this || this.isSleeping() || this.isPassengerOfSameVehicle(other)) {
+            return;
+        }
+        if (other.noPhysics || this.noPhysics) {
+            return;
+        }
+        if (other instanceof LivingEntity living
+                && (!living.isAlive() || living.isSleeping() || isEntitySpectatorSafe(living))) {
+            return;
+        }
+        double dx = other.getX() - this.getX();
+        double dz = other.getZ() - this.getZ();
+        double maxAbs = net.minecraft.util.Mth.absMax(dx, dz);
+        if (maxAbs < 0.01) {
+            // Deterministic horizontal tie-breaker when co-located; never apply vertical lift.
+            UUID selfId = this.getUUID();
+            UUID otherId = other.getUUID();
+            double angle = selfId != null
+                    ? ((selfId.hashCode() & 0xFFFF) * (2.0 * Math.PI / 65536.0))
+                    : 0.0;
+            if (selfId != null && otherId != null && selfId.compareTo(otherId) > 0) {
+                angle += Math.PI;
+            }
+            double pushX = Math.cos(angle) * 0.05;
+            double pushZ = Math.sin(angle) * 0.05;
+            if (!this.isVehicle() && this.isPushable()) {
+                this.push(-pushX, 0.0, -pushZ);
+            }
+            if (!other.isVehicle() && other.isPushable()) {
+                other.push(pushX, 0.0, pushZ);
+            }
             return;
         }
         super.push(other);
+    }
+
+    private static boolean isEntitySpectatorSafe(Entity entity) {
+        if (entity == null) {
+            return false;
+        }
+        try {
+            if (entity instanceof net.minecraft.server.level.ServerPlayer sp && sp.gameMode == null) {
+                return false;
+            }
+            return entity.isSpectator();
+        } catch (Throwable ignored) {
+            return false;
+        }
     }
 
     @Override

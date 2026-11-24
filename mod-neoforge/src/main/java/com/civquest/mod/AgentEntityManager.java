@@ -16,14 +16,22 @@ import net.minecraft.network.protocol.game.ClientboundPlayerInfoUpdatePacket;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.util.Mth;
+import net.minecraft.world.entity.Entity;
+import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.level.ChunkPos;
+import net.minecraft.world.level.block.Blocks;
+import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.levelgen.Heightmap;
+import net.minecraft.world.phys.AABB;
+import net.minecraft.world.phys.Vec3;
 import net.neoforged.neoforge.event.entity.living.LivingDamageEvent;
 import net.neoforged.neoforge.event.tick.ServerTickEvent;
 import org.slf4j.Logger;
 
+import java.util.ArrayList;
 import java.util.Base64;
 import java.util.Collections;
+import java.util.Comparator;
 import java.util.EnumSet;
 import java.util.List;
 import java.util.Map;
@@ -209,6 +217,11 @@ public class AgentEntityManager {
             y = level.getHeight(Heightmap.Types.MOTION_BLOCKING_NO_LEAVES, surfaceX, surfaceZ);
         }
 
+        Vec3 resolvedSpawn = findSafeUnoccupiedSpawnPos(level, x, y, z);
+        x = resolvedSpawn.x;
+        y = resolvedSpawn.y;
+        z = resolvedSpawn.z;
+
         agent.moveTo(x, y, z, 0.0f, 0.0f);
         agent.setYRot(0.0f);
         agent.setXRot(0.0f);
@@ -317,6 +330,288 @@ public class AgentEntityManager {
         LOGGER.info("AgentEntity registered and spawned: agentId='{}', uuid='{}', entityId={}",
                 agentId, agent.getUUID(), agent.getId());
         return agent;
+    }
+
+    private static final int SPAWN_DECONFLICT_MAX_RADIUS = 8;
+    private static final double MIN_SPAWN_ENTITY_SEPARATION = 1.0;
+
+    /**
+     * Resolves the nearest safe, standable, non-hazardous, and horizontally unoccupied spawn
+     * coordinate starting from {@code (desiredX, desiredY, desiredZ)} and spiraling outward.
+     */
+    public Vec3 findSafeUnoccupiedSpawnPos(ServerLevel level, double desiredX, double desiredY, double desiredZ) {
+        int baseBx = Mth.floor(desiredX);
+        int baseBy = Mth.floor(desiredY + 0.05);
+        int baseBz = Mth.floor(desiredZ);
+
+        Vec3 tier2Fallback = null;
+
+        // Ring 0: exact desired coordinate first
+        Vec3 exact = evaluateSpawnColumn(level, desiredX, desiredY, desiredZ, baseBy, false);
+        if (exact != null) {
+            return exact;
+        }
+        if (isSpawnSpotUnoccupied(level, desiredX, desiredY, desiredZ)
+                && isSpawnSpotPassableAndHazardFree(level, desiredX, baseBy, desiredZ)) {
+            tier2Fallback = new Vec3(desiredX, desiredY, desiredZ);
+        }
+
+        // Rings 1..SPAWN_DECONFLICT_MAX_RADIUS sorted by squared horizontal distance
+        for (int radius = 1; radius <= SPAWN_DECONFLICT_MAX_RADIUS; radius++) {
+            List<int[]> ringOffsets = new ArrayList<>();
+            for (int dx = -radius; dx <= radius; dx++) {
+                for (int dz = -radius; dz <= radius; dz++) {
+                    if (Math.max(Math.abs(dx), Math.abs(dz)) == radius) {
+                        ringOffsets.add(new int[]{dx, dz});
+                    }
+                }
+            }
+            ringOffsets.sort(Comparator.comparingInt(o -> o[0] * o[0] + o[1] * o[1]));
+
+            for (int[] offset : ringOffsets) {
+                double candX = baseBx + offset[0] + 0.5;
+                double candZ = baseBz + offset[1] + 0.5;
+                Vec3 idealSameY = evaluateSpawnColumnAtY(level, candX, candZ, baseBy);
+                if (idealSameY != null) {
+                    return idealSameY;
+                }
+            }
+            for (int[] offset : ringOffsets) {
+                double candX = baseBx + offset[0] + 0.5;
+                double candZ = baseBz + offset[1] + 0.5;
+                Vec3 ideal = evaluateSpawnColumn(level, candX, desiredY, candZ, baseBy, true);
+                if (ideal != null) {
+                    return ideal;
+                }
+                if (tier2Fallback == null
+                        && isSpawnSpotUnoccupied(level, candX, desiredY, candZ)
+                        && isSpawnSpotPassableAndHazardFree(level, candX, baseBy, candZ)) {
+                    tier2Fallback = new Vec3(candX, desiredY, candZ);
+                }
+            }
+        }
+
+        return tier2Fallback != null ? tier2Fallback : new Vec3(desiredX, desiredY, desiredZ);
+    }
+
+    private Vec3 evaluateSpawnColumnAtY(ServerLevel level, double candX, double candZ, int by) {
+        if (level == null) {
+            return null;
+        }
+        double candY = (double) by;
+        if (hasSpawnStandableFloorAndNoCliff(level, candX, by, candZ)
+                && isSpawnSpotPassableAndHazardFree(level, candX, by, candZ)
+                && isSpawnSpotUnoccupied(level, candX, candY, candZ)) {
+            return new Vec3(candX, candY, candZ);
+        }
+        return null;
+    }
+
+    private Vec3 evaluateSpawnColumn(
+            ServerLevel level, double candX, double desiredY, double candZ, int baseBy, boolean snapYToBlock) {
+        if (level == null) {
+            return null;
+        }
+        List<Integer> candidateYs = new ArrayList<>(6);
+        candidateYs.add(baseBy);
+        if (snapYToBlock) {
+            candidateYs.add(baseBy + 1);
+            candidateYs.add(baseBy - 1);
+            candidateYs.add(baseBy + 2);
+            candidateYs.add(baseBy - 2);
+            try {
+                int hmY = level.getHeight(Heightmap.Types.MOTION_BLOCKING_NO_LEAVES, Mth.floor(candX), Mth.floor(candZ));
+                if (hmY > level.getMinBuildHeight() && Math.abs(hmY - baseBy) <= 6 && !candidateYs.contains(hmY)) {
+                    candidateYs.add(hmY);
+                }
+            } catch (Throwable ignored) {
+            }
+        }
+
+        for (int by : candidateYs) {
+            double candY = (!snapYToBlock && by == baseBy) ? desiredY : (double) by;
+            if (hasSpawnStandableFloorAndNoCliff(level, candX, by, candZ)
+                    && isSpawnSpotPassableAndHazardFree(level, candX, by, candZ)
+                    && isSpawnSpotUnoccupied(level, candX, candY, candZ)) {
+                return new Vec3(candX, candY, candZ);
+            }
+        }
+        return null;
+    }
+
+    private boolean isSpawnSpotUnoccupied(ServerLevel level, double candX, double candY, double candZ) {
+        for (AgentEntity existing : agents.values()) {
+            if (conflictsWithSpawnPos(existing, candX, candY, candZ)) {
+                return false;
+            }
+        }
+        if (level == null) {
+            return true;
+        }
+        try {
+            for (var player : level.players()) {
+                if (conflictsWithSpawnPos(player, candX, candY, candZ)) {
+                    return false;
+                }
+            }
+        } catch (Throwable ignored) {
+        }
+        try {
+            AABB searchBox = new AABB(
+                    candX - 2.0, candY - 2.0, candZ - 2.0,
+                    candX + 2.0, candY + 3.0, candZ + 2.0
+            );
+            List<LivingEntity> nearby = level.getEntitiesOfClass(
+                    LivingEntity.class,
+                    searchBox,
+                    e -> e != null && !e.isRemoved() && e.isAlive()
+                            && !(e instanceof net.minecraft.world.entity.decoration.ArmorStand)
+            );
+            if (nearby != null) {
+                for (LivingEntity entity : nearby) {
+                    if (conflictsWithSpawnPos(entity, candX, candY, candZ)) {
+                        return false;
+                    }
+                }
+            }
+        } catch (Throwable ignored) {
+        }
+        return true;
+    }
+
+    private static boolean conflictsWithSpawnPos(Entity entity, double candX, double candY, double candZ) {
+        if (entity == null || entity.isRemoved() || !entity.isAlive()) {
+            return false;
+        }
+        try {
+            if (entity instanceof net.minecraft.server.level.ServerPlayer sp && sp.gameMode != null && sp.isSpectator()) {
+                return false;
+            }
+        } catch (Throwable ignored) {
+        }
+        if (entity instanceof net.minecraft.world.entity.decoration.ArmorStand) {
+            return false;
+        }
+        double otherHeight = Math.max(1.8, entity.getBbHeight());
+        if (candY + 1.8 <= entity.getY() + 1e-4 || candY >= entity.getY() + otherHeight - 1e-4) {
+            return false;
+        }
+        double minDist = Math.max(MIN_SPAWN_ENTITY_SEPARATION, 0.3 + entity.getBbWidth() * 0.5 + 0.1);
+        double dist = Math.hypot(entity.getX() - candX, entity.getZ() - candZ);
+        return dist < minDist;
+    }
+
+    private static boolean isSpawnSpotPassableAndHazardFree(ServerLevel level, double candX, int by, double candZ) {
+        if (level == null) {
+            return true;
+        }
+        int minBx = Mth.floor(candX - 0.25);
+        int maxBx = Mth.floor(candX + 0.25);
+        int minBz = Mth.floor(candZ - 0.25);
+        int maxBz = Mth.floor(candZ + 0.25);
+        for (int bx = minBx; bx <= maxBx; bx++) {
+            for (int bz = minBz; bz <= maxBz; bz++) {
+                BlockPos feetPos = new BlockPos(bx, by, bz);
+                BlockPos headPos = new BlockPos(bx, by + 1, bz);
+                BlockPos belowPos = new BlockPos(bx, by - 1, bz);
+                if (isSpawnSolid(level, feetPos) || isSpawnSolid(level, headPos)) {
+                    return false;
+                }
+                if (isSpawnHazard(level, feetPos) || isSpawnHazard(level, headPos) || isSpawnHazard(level, belowPos)) {
+                    return false;
+                }
+                if (isSpawnWater(level, feetPos) || isSpawnWater(level, belowPos)) {
+                    // Reject deep water (> 2 blocks deep)
+                    boolean shallowFloor = isSpawnSolid(level, new BlockPos(bx, by - 1, bz))
+                            || isSpawnSolid(level, new BlockPos(bx, by - 2, bz))
+                            || isSpawnSolid(level, new BlockPos(bx, by - 3, bz));
+                    if (!shallowFloor || isSpawnWater(level, headPos)) {
+                        return false;
+                    }
+                }
+            }
+        }
+        return true;
+    }
+
+    private static boolean hasSpawnStandableFloorAndNoCliff(ServerLevel level, double candX, int by, double candZ) {
+        if (level == null) {
+            return false;
+        }
+        int minBx = Mth.floor(candX - 0.25);
+        int maxBx = Mth.floor(candX + 0.25);
+        int minBz = Mth.floor(candZ - 0.25);
+        int maxBz = Mth.floor(candZ + 0.25);
+        for (int bx = minBx; bx <= maxBx; bx++) {
+            for (int bz = minBz; bz <= maxBz; bz++) {
+                BlockPos belowPos = new BlockPos(bx, by - 1, bz);
+                if (isSpawnHazard(level, belowPos) || !isSpawnSolid(level, belowPos)) {
+                    return false;
+                }
+            }
+        }
+        return true;
+    }
+
+    private static boolean isSpawnSolid(ServerLevel level, BlockPos pos) {
+        try {
+            BlockState state = level.getBlockState(pos);
+            if (state == null || state.isAir()) {
+                return false;
+            }
+            var shape = state.getCollisionShape(level, pos);
+            return shape != null && !shape.isEmpty();
+        } catch (Throwable ignored) {
+            return false;
+        }
+    }
+
+    private static boolean isSpawnWater(ServerLevel level, BlockPos pos) {
+        try {
+            BlockState state = level.getBlockState(pos);
+            if (state == null) {
+                return false;
+            }
+            var fluid = state.getFluidState();
+            return (fluid != null && fluid.is(net.minecraft.tags.FluidTags.WATER))
+                    || state.is(Blocks.WATER);
+        } catch (Throwable ignored) {
+            return false;
+        }
+    }
+
+    private static boolean isSpawnHazard(ServerLevel level, BlockPos pos) {
+        try {
+            BlockState state = level.getBlockState(pos);
+            if (state != null) {
+                var fluid = state.getFluidState();
+                if (fluid != null && (fluid.is(net.minecraft.tags.FluidTags.LAVA)
+                        || fluid.is(net.minecraft.world.level.material.Fluids.LAVA)
+                        || fluid.is(net.minecraft.world.level.material.Fluids.FLOWING_LAVA))) {
+                    return true;
+                }
+                if (state.is(Blocks.LAVA)
+                        || state.is(Blocks.FIRE)
+                        || state.is(Blocks.SOUL_FIRE)
+                        || state.is(Blocks.CAMPFIRE)
+                        || state.is(Blocks.SOUL_CAMPFIRE)
+                        || state.is(Blocks.MAGMA_BLOCK)
+                        || state.is(Blocks.CACTUS)
+                        || state.is(Blocks.SWEET_BERRY_BUSH)
+                        || state.is(Blocks.WITHER_ROSE)
+                        || state.is(Blocks.POWDER_SNOW)) {
+                    return true;
+                }
+            }
+            var levelFluid = level.getFluidState(pos);
+            if (levelFluid != null && (levelFluid.is(net.minecraft.tags.FluidTags.LAVA)
+                    || levelFluid.is(net.minecraft.world.level.material.Fluids.LAVA)
+                    || levelFluid.is(net.minecraft.world.level.material.Fluids.FLOWING_LAVA))) {
+                return true;
+            }
+        } catch (Throwable ignored) {
+        }
+        return false;
     }
 
     /**

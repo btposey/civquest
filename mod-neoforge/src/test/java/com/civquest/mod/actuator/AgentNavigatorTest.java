@@ -6,12 +6,14 @@ import com.civquest.mod.grpc.v1.NavigationState;
 import net.minecraft.core.BlockPos;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.Vec3;
 import net.minecraft.world.phys.shapes.Shapes;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
+import java.util.List;
 import java.util.concurrent.atomic.AtomicReference;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -1009,5 +1011,166 @@ public class AgentNavigatorTest {
 
         assertTrue(navigator.isArrived(), "Navigator must arrive adjacent to elevated oak trunk; state="
                 + navigator.getNavigationState() + " pos=" + posRef.get());
+    }
+
+    @Test
+    @DisplayName("ADR-033: Navigator sidesteps around stationary ServerPlayer/Mob without AABB overlap or head-stacking jump")
+    void testHardAABBNonOverlapAndLateralSidestepAroundPlayerAndMob() {
+        AgentEntity agent = mock(AgentEntity.class);
+        Level level = mock(Level.class);
+        when(agent.level()).thenReturn(level);
+        when(level.hasChunkAt(any(BlockPos.class))).thenReturn(true);
+
+        BlockState solidBlock = mock(BlockState.class);
+        when(solidBlock.isAir()).thenReturn(false);
+        when(solidBlock.getCollisionShape(any(), any())).thenReturn(Shapes.block());
+        BlockState airBlock = mock(BlockState.class);
+        when(airBlock.isAir()).thenReturn(true);
+        when(airBlock.getCollisionShape(any(), any())).thenReturn(Shapes.empty());
+        when(level.getBlockState(any(BlockPos.class))).thenAnswer(inv -> {
+            BlockPos p = inv.getArgument(0);
+            return p.getY() <= 63 ? solidBlock : airBlock;
+        });
+
+        // Stationary ServerPlayer at (2.5, 64.0, 0.5) and Zombie at (4.5, 64.0, 0.5)
+        net.minecraft.server.level.ServerPlayer player = mock(net.minecraft.server.level.ServerPlayer.class);
+        when(player.isAlive()).thenReturn(true);
+        when(player.isRemoved()).thenReturn(false);
+        when(player.isSpectator()).thenReturn(false);
+        AABB playerBox = new AABB(2.2, 64.0, 0.2, 2.8, 65.8, 0.8);
+        when(player.getBoundingBox()).thenReturn(playerBox);
+
+        net.minecraft.world.entity.monster.Zombie zombie = mock(net.minecraft.world.entity.monster.Zombie.class);
+        when(zombie.isAlive()).thenReturn(true);
+        when(zombie.isRemoved()).thenReturn(false);
+        when(zombie.isSpectator()).thenReturn(false);
+        AABB zombieBox = new AABB(4.2, 64.0, 0.2, 4.8, 65.95, 0.8);
+        when(zombie.getBoundingBox()).thenReturn(zombieBox);
+
+        List<net.minecraft.world.entity.Entity> blockers = List.of(player, zombie);
+        when(level.getEntities(eq(agent), any(AABB.class), any())).thenAnswer(inv -> {
+            AABB query = inv.getArgument(1);
+            @SuppressWarnings("unchecked")
+            java.util.function.Predicate<net.minecraft.world.entity.Entity> pred = inv.getArgument(2);
+            java.util.List<net.minecraft.world.entity.Entity> out = new java.util.ArrayList<>();
+            for (var e : blockers) {
+                if (e.getBoundingBox().intersects(query) && (pred == null || pred.test(e))) {
+                    out.add(e);
+                }
+            }
+            return out;
+        });
+
+        AtomicReference<Vec3> posRef = new AtomicReference<>(new Vec3(0.5, 64.0, 0.5));
+        AtomicReference<Vec3> deltaRef = new AtomicReference<>(Vec3.ZERO);
+        AtomicReference<Float> yawRef = new AtomicReference<>(-90.0f);
+        when(agent.position()).thenAnswer(inv -> posRef.get());
+        when(agent.getBoundingBox()).thenAnswer(inv -> {
+            Vec3 p = posRef.get();
+            return new AABB(p.x - 0.3, p.y, p.z - 0.3, p.x + 0.3, p.y + 1.8, p.z + 0.3);
+        });
+        when(agent.getDeltaMovement()).thenAnswer(inv -> deltaRef.get());
+        when(agent.onGround()).thenReturn(true);
+        when(agent.getYRot()).thenAnswer(inv -> yawRef.get());
+        when(agent.getUUID()).thenReturn(java.util.UUID.randomUUID());
+        doAnswer(inv -> {
+            yawRef.set(inv.getArgument(0));
+            return null;
+        }).when(agent).setYRot(anyFloat());
+        doAnswer(inv -> {
+            deltaRef.set(inv.getArgument(0));
+            return null;
+        }).when(agent).setDeltaMovement(any(Vec3.class));
+        doAnswer(inv -> {
+            Vec3 move = inv.getArgument(1);
+            Vec3 cur = posRef.get();
+            assertTrue(move.y <= 0.0, "Agent must never jump onto an entity's head during avoidance: vy=" + move.y);
+            posRef.set(new Vec3(cur.x + move.x, cur.y, cur.z + move.z));
+            return null;
+        }).when(agent).move(any(), any(Vec3.class));
+
+        AgentNavigator nav = new AgentNavigator(agent);
+        nav.navigate(6.5, 64.0, 0.5, 1.0f, false, false, false, 1);
+
+        for (int i = 0; i < 160 && nav.isPathing(); i++) {
+            nav.tick();
+            AABB curBox = agent.getBoundingBox();
+            assertFalse(curBox.intersects(playerBox.deflate(1e-4)),
+                    "Agent AABB must never overlap ServerPlayer AABB at tick " + i + ": " + curBox);
+            assertFalse(curBox.intersects(zombieBox.deflate(1e-4)),
+                    "Agent AABB must never overlap Zombie AABB at tick " + i + ": " + curBox);
+            assertEquals(64.0, posRef.get().y, 1e-6, "Agent must stay at y=64.0 (zero head stacking)");
+        }
+
+        assertTrue(nav.isArrived(), "Navigator must route around ServerPlayer and Zombie to arrive at (6.5, 64, 0.5); state="
+                + nav.getNavigationState() + " pos=" + posRef.get());
+    }
+
+    @Test
+    @DisplayName("ADR-033: 1-block-wide corridor blocked by stationary entity clamps movement without overlapping or jumping")
+    void testCorridorBlockedByEntityClampsWithoutOverlapOrJump() {
+        AgentEntity agent = mock(AgentEntity.class);
+        Level level = mock(Level.class);
+        when(agent.level()).thenReturn(level);
+        when(level.hasChunkAt(any(BlockPos.class))).thenReturn(true);
+
+        BlockState solidBlock = mock(BlockState.class);
+        when(solidBlock.isAir()).thenReturn(false);
+        when(solidBlock.getCollisionShape(any(), any())).thenReturn(Shapes.block());
+        BlockState airBlock = mock(BlockState.class);
+        when(airBlock.isAir()).thenReturn(true);
+        when(airBlock.getCollisionShape(any(), any())).thenReturn(Shapes.empty());
+        // 1-block-wide corridor along z=0 with walls at z=-1 and z=1
+        when(level.getBlockState(any(BlockPos.class))).thenAnswer(inv -> {
+            BlockPos p = inv.getArgument(0);
+            if (p.getY() <= 63) return solidBlock;
+            if (p.getZ() != 0 && p.getY() >= 64 && p.getY() <= 66) return solidBlock;
+            return airBlock;
+        });
+
+        net.minecraft.server.level.ServerPlayer blocker = mock(net.minecraft.server.level.ServerPlayer.class);
+        when(blocker.isAlive()).thenReturn(true);
+        when(blocker.isRemoved()).thenReturn(false);
+        when(blocker.isSpectator()).thenReturn(false);
+        AABB blockerBox = new AABB(1.2, 64.0, 0.2, 1.8, 65.8, 0.8);
+        when(blocker.getBoundingBox()).thenReturn(blockerBox);
+        when(level.getEntities(eq(agent), any(AABB.class), any())).thenAnswer(inv -> {
+            AABB query = inv.getArgument(1);
+            return blockerBox.intersects(query) ? List.of(blocker) : List.of();
+        });
+
+        AtomicReference<Vec3> posRef = new AtomicReference<>(new Vec3(0.5, 64.0, 0.5));
+        AtomicReference<Vec3> deltaRef = new AtomicReference<>(Vec3.ZERO);
+        when(agent.position()).thenAnswer(inv -> posRef.get());
+        when(agent.getBoundingBox()).thenAnswer(inv -> {
+            Vec3 p = posRef.get();
+            return new AABB(p.x - 0.3, p.y, p.z - 0.3, p.x + 0.3, p.y + 1.8, p.z + 0.3);
+        });
+        when(agent.getDeltaMovement()).thenAnswer(inv -> deltaRef.get());
+        when(agent.onGround()).thenReturn(true);
+        when(agent.getYRot()).thenReturn(-90.0f);
+        when(agent.getUUID()).thenReturn(java.util.UUID.randomUUID());
+        doAnswer(inv -> {
+            deltaRef.set(inv.getArgument(0));
+            return null;
+        }).when(agent).setDeltaMovement(any(Vec3.class));
+        doAnswer(inv -> {
+            Vec3 move = inv.getArgument(1);
+            assertTrue(move.y <= 0.0, "Blocked corridor must not trigger jump onto blocker");
+            Vec3 cur = posRef.get();
+            posRef.set(new Vec3(cur.x + move.x, cur.y, cur.z + move.z));
+            return null;
+        }).when(agent).move(any(), any(Vec3.class));
+
+        AgentNavigator nav = new AgentNavigator(agent);
+        nav.navigate(4.5, 64.0, 0.5, 1.0f, false, false, false, 1);
+
+        for (int i = 0; i < 25; i++) {
+            nav.tick();
+            AABB curBox = agent.getBoundingBox();
+            assertFalse(curBox.intersects(blockerBox.deflate(1e-4)),
+                    "Agent must never penetrate blocker in sealed corridor at tick " + i);
+            assertEquals(64.0, posRef.get().y, 1e-6);
+        }
     }
 }

@@ -468,4 +468,51 @@ public class LocalPathPlannerTest {
         assertEquals(80, cur.x());
         assertEquals(68, cur.y());
     }
+
+    @Test
+    @DisplayName("ADR-033: Planner routes around entity-occupied cells and stops adjacent to entity target without entering it")
+    void routesAroundEntityOccupiedCellAndStopsAdjacentToEntityTarget() {
+        Set<String> occupied = new HashSet<>();
+        occupied.add("2,64,0");
+        occupied.add("3,64,0");
+        LocalPathPlanner.World entityWorld = new LocalPathPlanner.World() {
+            @Override
+            public boolean solid(int x, int y, int z) {
+                return y <= 63;
+            }
+
+            @Override
+            public boolean hazard(int x, int y, int z) {
+                return false;
+            }
+
+            @Override
+            public boolean occupiedByEntity(int x, int y, int z) {
+                return occupied.contains(x + "," + y + "," + z);
+            }
+        };
+
+        // 1. Open room: entity blockers at (2,64,0) and (3,64,0) -> route around to (5,64,0)
+        LocalPathPlanner.Result bypass = LocalPathPlanner.plan(
+                entityWorld, new LocalPathPlanner.Cell(0, 64, 0), 5.5, 64.0, 0.5, LocalPathPlanner.DEFAULT_RADIUS, null);
+        assertTrue(bypass.reachedTarget(), "Planner must reach target beyond entity blockers");
+        assertTrue(bypass.hasPath());
+        for (LocalPathPlanner.Cell c : bypass.path()) {
+            assertFalse(entityWorld.occupiedByEntity(c.x(), c.y(), c.z()),
+                    "Path must never enter entity-occupied cell: " + c);
+        }
+
+        // 2. Target itself is occupied by an entity -> stop at 4-adjacent free cell without entering (3,64,0)
+        LocalPathPlanner.Result approachEntity = LocalPathPlanner.plan(
+                entityWorld, new LocalPathPlanner.Cell(0, 64, 0), 3.5, 64.0, 0.5, LocalPathPlanner.DEFAULT_RADIUS, null);
+        assertTrue(approachEntity.reachedTarget(), "Planner must treat 4-adjacent cell as reaching an entity target");
+        assertTrue(approachEntity.hasPath());
+        for (LocalPathPlanner.Cell c : approachEntity.path()) {
+            assertFalse(entityWorld.occupiedByEntity(c.x(), c.y(), c.z()),
+                    "Approach path must never enter the entity's occupied cell: " + c);
+        }
+        LocalPathPlanner.Cell end = approachEntity.path().get(approachEntity.path().size() - 1);
+        assertEquals(1, Math.abs(end.x() - 3) + Math.abs(end.z()),
+                "Approach path must end 4-adjacent to the entity-occupied target cell: " + end);
+    }
 }

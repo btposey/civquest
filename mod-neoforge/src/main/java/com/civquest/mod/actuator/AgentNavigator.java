@@ -380,12 +380,26 @@ public class AgentNavigator {
         }
     }
 
-    /** World adapter used by the local planner, with per-plan block lookup caching. */
+    /** World adapter used by the local planner, with per-plan block and entity occupancy caching. */
     private LocalPathPlanner.World worldOf(net.minecraft.world.level.Level level) {
         final java.util.Map<Long, Boolean> solidCache = new java.util.HashMap<>();
         final java.util.Map<Long, Boolean> hazardCache = new java.util.HashMap<>();
         final java.util.Map<Long, Boolean> climbableCache = new java.util.HashMap<>();
         final java.util.Map<Long, Boolean> waterCache = new java.util.HashMap<>();
+        final java.util.Map<Long, Boolean> entityCache = new java.util.HashMap<>();
+        final List<AABB> entityBoxes;
+        if (level != null) {
+            Vec3 pos = getPosition();
+            double r = LocalPathPlanner.DEFAULT_RADIUS + 2.0;
+            double vr = LocalPathPlanner.MAX_VERTICAL_RANGE + 3.0;
+            AABB snapshotBox = new AABB(
+                    pos.x - r, pos.y - vr, pos.z - r,
+                    pos.x + r, pos.y + vr, pos.z + r
+            );
+            entityBoxes = collectBlockingEntityBoxes(level, snapshotBox);
+        } else {
+            entityBoxes = java.util.Collections.emptyList();
+        }
         return new LocalPathPlanner.World() {
             @Override
             public boolean solid(int x, int y, int z) {
@@ -415,7 +429,279 @@ public class AgentNavigator {
             public boolean chunkLoaded(int x, int z) {
                 return level != null && level.hasChunkAt(new BlockPos(x, 0, z));
             }
+
+            @Override
+            public boolean occupiedByEntity(int x, int y, int z) {
+                if (entityBoxes.isEmpty()) {
+                    return false;
+                }
+                return entityCache.computeIfAbsent(LocalPathPlanner.cellKey(x, y, z), k -> {
+                    double minX = x + 0.05;
+                    double maxX = x + 0.95;
+                    double minY = y;
+                    double maxY = y + 1.8;
+                    double minZ = z + 0.05;
+                    double maxZ = z + 0.95;
+                    for (AABB box : entityBoxes) {
+                        if (box.maxX > minX && box.minX < maxX
+                                && box.maxY > minY && box.minY < maxY
+                                && box.maxZ > minZ && box.minZ < maxZ) {
+                            return true;
+                        }
+                    }
+                    return false;
+                });
+            }
         };
+    }
+
+    private List<AABB> collectBlockingEntityBoxes(Level level, AABB queryBox) {
+        if (level == null || queryBox == null) {
+            return java.util.Collections.emptyList();
+        }
+        java.util.function.Predicate<net.minecraft.world.entity.Entity> filter = this::isBlockingLivingEntity;
+        List<net.minecraft.world.entity.Entity> entities = null;
+        try {
+            entities = level.getEntities(this.agent, queryBox, filter);
+        } catch (Throwable ignored) {
+        }
+        if (entities == null || entities.isEmpty()) {
+            try {
+                List<net.minecraft.world.entity.LivingEntity> livingList = level.getEntitiesOfClass(
+                        net.minecraft.world.entity.LivingEntity.class,
+                        queryBox,
+                        e -> isBlockingLivingEntity(e));
+                if (livingList != null && !livingList.isEmpty()) {
+                    List<AABB> boxes = new java.util.ArrayList<>(livingList.size());
+                    for (net.minecraft.world.entity.LivingEntity living : livingList) {
+                        AABB b = living.getBoundingBox();
+                        if (b != null) {
+                            boxes.add(b);
+                        }
+                    }
+                    return boxes;
+                }
+            } catch (Throwable ignored) {
+            }
+            return java.util.Collections.emptyList();
+        }
+        List<AABB> boxes = new java.util.ArrayList<>(entities.size());
+        for (net.minecraft.world.entity.Entity entity : entities) {
+            if (entity != null && entity.getBoundingBox() != null) {
+                boxes.add(entity.getBoundingBox());
+            }
+        }
+        return boxes;
+    }
+
+    private boolean isBlockingLivingEntity(net.minecraft.world.entity.Entity e) {
+        if (e == null || e == this.agent || !(e instanceof net.minecraft.world.entity.LivingEntity living)) {
+            return false;
+        }
+        if (living.isRemoved() || !living.isAlive() || isSpectatorSafe(living)) {
+            return false;
+        }
+        if (living instanceof net.minecraft.world.entity.decoration.ArmorStand) {
+            return false;
+        }
+        try {
+            if (this.agent != null && this.agent.isPassengerOfSameVehicle(living)) {
+                return false;
+            }
+        } catch (Throwable ignored) {
+        }
+        return living.getBoundingBox() != null;
+    }
+
+    private static boolean isSpectatorSafe(net.minecraft.world.entity.Entity entity) {
+        if (entity == null) {
+            return false;
+        }
+        try {
+            if (entity instanceof net.minecraft.server.level.ServerPlayer sp && sp.gameMode == null) {
+                return false;
+            }
+            return entity.isSpectator();
+        } catch (Throwable ignored) {
+            return false;
+        }
+    }
+
+    private AABB resolveAgentBox(Vec3 currentPos) {
+        if (this.agent != null) {
+            AABB box = this.agent.getBoundingBox();
+            if (box != null) {
+                return box;
+            }
+        }
+        return new AABB(
+                currentPos.x - 0.3, currentPos.y, currentPos.z - 0.3,
+                currentPos.x + 0.3, currentPos.y + 1.8, currentPos.z + 0.3
+        );
+    }
+
+    private static boolean wouldPenetrateAnyEntity(AABB agentBox, double dx, double dz, List<AABB> blockers) {
+        if (agentBox == null || blockers == null || blockers.isEmpty()) {
+            return false;
+        }
+        AABB candBox = agentBox.move(dx, 0.0, dz);
+        double curCx = (agentBox.minX + agentBox.maxX) * 0.5;
+        double curCz = (agentBox.minZ + agentBox.maxZ) * 0.5;
+        for (AABB other : blockers) {
+            if (other == null) {
+                continue;
+            }
+            if (other.maxY <= agentBox.minY + 1e-4 || other.minY >= agentBox.maxY - 1e-4) {
+                continue;
+            }
+            boolean candIntersects = candBox.maxX > other.minX + 1e-4 && candBox.minX < other.maxX - 1e-4
+                    && candBox.maxZ > other.minZ + 1e-4 && candBox.minZ < other.maxZ - 1e-4;
+            if (!candIntersects) {
+                continue;
+            }
+            boolean curIntersects = agentBox.maxX > other.minX + 1e-4 && agentBox.minX < other.maxX - 1e-4
+                    && agentBox.maxZ > other.minZ + 1e-4 && agentBox.minZ < other.maxZ - 1e-4;
+            if (!curIntersects) {
+                return true;
+            }
+            double otherCx = (other.minX + other.maxX) * 0.5;
+            double otherCz = (other.minZ + other.maxZ) * 0.5;
+            double curDistSq = (curCx - otherCx) * (curCx - otherCx) + (curCz - otherCz) * (curCz - otherCz);
+            double candDistSq = (curCx + dx - otherCx) * (curCx + dx - otherCx)
+                    + (curCz + dz - otherCz) * (curCz + dz - otherCz);
+            if (candDistSq <= curDistSq + 1e-7) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private double[] chooseSafeEntitySidestep(
+            Level level, Vec3 currentPos, AABB agentBox, double aimX, double aimZ, double speed, List<AABB> blockers) {
+        double hdx = aimX - currentPos.x;
+        double hdz = aimZ - currentPos.z;
+        double hlen = Math.hypot(hdx, hdz);
+        double ux;
+        double uz;
+        if (hlen > 1e-4) {
+            ux = hdx / hlen;
+            uz = hdz / hlen;
+        } else {
+            double rad = Math.toRadians(headYaw);
+            ux = -Math.sin(rad);
+            uz = Math.cos(rad);
+        }
+        double leftX = -uz;
+        double leftZ = ux;
+        double rightX = uz;
+        double rightZ = -ux;
+
+        // Prefer the lateral side moving away from the nearest blocker center (or toward target if symmetric).
+        double blockerScore = 0.0;
+        double bestDistSq = Double.MAX_VALUE;
+        for (AABB other : blockers) {
+            if (other.maxY <= agentBox.minY + 1e-4 || other.minY >= agentBox.maxY - 1e-4) {
+                continue;
+            }
+            double ocx = (other.minX + other.maxX) * 0.5;
+            double ocz = (other.minZ + other.maxZ) * 0.5;
+            double dSq = (currentPos.x - ocx) * (currentPos.x - ocx) + (currentPos.z - ocz) * (currentPos.z - ocz);
+            if (dSq < bestDistSq) {
+                bestDistSq = dSq;
+                blockerScore = (currentPos.x - ocx) * leftX + (currentPos.z - ocz) * leftZ;
+            }
+        }
+        boolean tryLeftFirst;
+        if (Math.abs(blockerScore) > 1e-4) {
+            tryLeftFirst = blockerScore > 0.0;
+        } else if (this.targetCoords != null) {
+            double targetDot = (this.targetCoords.x - currentPos.x) * leftX + (this.targetCoords.z - currentPos.z) * leftZ;
+            if (Math.abs(targetDot) > 1e-4) {
+                tryLeftFirst = targetDot > 0.0;
+            } else {
+                tryLeftFirst = this.agent == null || (this.agent.getUUID().hashCode() & 1) == 0;
+            }
+        } else {
+            tryLeftFirst = this.agent == null || (this.agent.getUUID().hashCode() & 1) == 0;
+        }
+
+        double[][] candidates = tryLeftFirst
+                ? new double[][]{{leftX, leftZ}, {rightX, rightZ}}
+                : new double[][]{{rightX, rightZ}, {leftX, leftZ}};
+
+        boolean enforceFloorSupport = hasFloorSupport(level, currentPos.x, currentPos.y, currentPos.z);
+        for (double[] dir : candidates) {
+            double sx = dir[0] * speed;
+            double sz = dir[1] * speed;
+            double tx = currentPos.x + sx;
+            double tz = currentPos.z + sz;
+            if (wouldPenetrateAnyEntity(agentBox, sx, sz, blockers)) {
+                continue;
+            }
+            if (isHazardFootprint(level, tx, currentPos.y, tz)) {
+                continue;
+            }
+            if (collidesWithSolidFootprint(level, tx, currentPos.y, tz)) {
+                continue;
+            }
+            if (enforceFloorSupport && !hasFloorSupport(level, tx, currentPos.y, tz)) {
+                continue;
+            }
+            return new double[]{sx, sz};
+        }
+        return null;
+    }
+
+    private boolean collidesWithSolidFootprint(Level level, double x, double y, double z) {
+        if (level == null) {
+            return false;
+        }
+        int feetY = Mth.floor(y + 0.1);
+        int headY = Mth.floor(y + 1.75);
+        int minBx = Mth.floor(x - 0.25);
+        int maxBx = Mth.floor(x + 0.25);
+        int minBz = Mth.floor(z - 0.25);
+        int maxBz = Mth.floor(z + 0.25);
+        for (int bx = minBx; bx <= maxBx; bx++) {
+            for (int bz = minBz; bz <= maxBz; bz++) {
+                for (int by = feetY; by <= headY; by++) {
+                    if (isBlockSolid(level, new BlockPos(bx, by, bz))) {
+                        return true;
+                    }
+                }
+            }
+        }
+        return false;
+    }
+
+    private boolean hasFloorSupport(Level level, double x, double y, double z) {
+        if (level == null) {
+            return false;
+        }
+        int feetY = Mth.floor(y + 0.05);
+        int minBx = Mth.floor(x - 0.25);
+        int maxBx = Mth.floor(x + 0.25);
+        int minBz = Mth.floor(z - 0.25);
+        int maxBz = Mth.floor(z + 0.25);
+        for (int bx = minBx; bx <= maxBx; bx++) {
+            for (int bz = minBz; bz <= maxBz; bz++) {
+                boolean columnSupported = false;
+                for (int drop = 1; drop <= LocalPathPlanner.MAX_DROP + 1; drop++) {
+                    BlockPos below = new BlockPos(bx, feetY - drop, bz);
+                    if (isBlockHazard(level, below)) {
+                        break;
+                    }
+                    if (isBlockSolid(level, below) || isBlockClimbable(level, below) || isSafeDropBlock(level, below)) {
+                        columnSupported = true;
+                        break;
+                    }
+                }
+                if (!columnSupported) {
+                    return false;
+                }
+            }
+        }
+        return true;
     }
 
     static boolean isBlockWater(net.minecraft.world.level.Level level, BlockPos pos) {
@@ -849,6 +1135,42 @@ public class AgentNavigator {
             }
         }
 
+        // ADR-033: Hard AABB non-overlap clamping & hazard-checked lateral sidestep around living entities
+        boolean entityBlockedForward = false;
+        if (level != null && (velX != 0.0 || velZ != 0.0)) {
+            AABB agentBox = resolveAgentBox(currentPos);
+            AABB sweepBox = agentBox.inflate(Math.abs(velX) + 0.85, 0.2, Math.abs(velZ) + 0.85);
+            List<AABB> blockers = collectBlockingEntityBoxes(level, sweepBox);
+            if (!blockers.isEmpty() && wouldPenetrateAnyEntity(agentBox, velX, velZ, blockers)) {
+                entityBlockedForward = true;
+                boolean xSafe = velX != 0.0
+                        && !wouldPenetrateAnyEntity(agentBox, velX, 0.0, blockers)
+                        && !isHazardFootprint(level, currentPos.x + velX, currentPos.y, currentPos.z);
+                boolean zSafe = velZ != 0.0
+                        && !wouldPenetrateAnyEntity(agentBox, 0.0, velZ, blockers)
+                        && !isHazardFootprint(level, currentPos.x, currentPos.y, currentPos.z + velZ);
+                if (xSafe && (!zSafe || Math.abs(velX) >= Math.abs(velZ))) {
+                    velZ = 0.0;
+                } else if (zSafe) {
+                    velX = 0.0;
+                } else {
+                    double speed = Math.max(0.08, Math.min(moveSpeed > 0.0 ? moveSpeed : WALK_SPEED, Math.hypot(velX, velZ)));
+                    double[] sidestep = chooseSafeEntitySidestep(level, currentPos, agentBox, aimX, aimZ, speed, blockers);
+                    if (sidestep != null) {
+                        velX = sidestep[0];
+                        velZ = sidestep[1];
+                    } else {
+                        velX = 0.0;
+                        velZ = 0.0;
+                    }
+                    if (!path.isEmpty()) {
+                        path.clear();
+                        this.lastPlanTick = Long.MIN_VALUE;
+                    }
+                }
+            }
+        }
+
         double vy = 0.0;
         if (this.agent != null) {
             vy = this.agent.getDeltaMovement().y;
@@ -938,18 +1260,22 @@ public class AgentNavigator {
                                     jumpSuppressed = true;
                                 }
 
-                                // 2. When there is no solid 1-block terrain step-up ahead, suppress jumps near any
-                                //    non-spectator entity to prevent flat-ground hopping onto entities (ADR-028).
+                                // 2. When there is no solid 1-block terrain step-up ahead, suppress jumps if blocked by
+                                //    an entity or near any non-spectator entity to prevent flat-ground hopping onto entities (ADR-033).
                                 //    When stepping onto solid terrain, only suppress if a collidable non-agent entity
                                 //    or an elevated stacked agent occupies the forward jump column.
                                 if (!jumpSuppressed) {
                                     boolean solidStepUp = stepUpOneBlock || hasSolidStepUpAhead;
                                     if (!solidStepUp) {
-                                        AABB entityProbeBox = agentBox.inflate(0.2, 0.05, 0.2);
-                                        List<net.minecraft.world.entity.Entity> nearby = level.getEntities(
-                                                this.agent, entityProbeBox, e -> e != null && !e.isSpectator());
-                                        if (nearby != null && !nearby.isEmpty()) {
+                                        if (entityBlockedForward) {
                                             jumpSuppressed = true;
+                                        } else {
+                                            AABB entityProbeBox = agentBox.inflate(0.2, 0.05, 0.2);
+                                            List<net.minecraft.world.entity.Entity> nearby = level.getEntities(
+                                                    this.agent, entityProbeBox, e -> e != null && !e.isSpectator());
+                                            if (nearby != null && !nearby.isEmpty()) {
+                                                jumpSuppressed = true;
+                                            }
                                         }
                                     } else {
                                         AABB forwardJumpColumn = new AABB(

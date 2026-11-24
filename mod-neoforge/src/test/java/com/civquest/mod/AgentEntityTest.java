@@ -914,26 +914,48 @@ public class AgentEntityTest {
     }
 
     @Test
-    @DisplayName("ADR-028: Inter-agent collision and push suppression between AgentEntity instances")
-    void testInterAgentCollisionSuppression() {
+    @DisplayName("ADR-033: Entity collision and purely horizontal push across AgentEntity, ServerPlayer, and Mob")
+    void testInterAgentCollisionAndHorizontalPush() {
         TestWorldContext ctx = new TestWorldContext();
         AgentEntity agent1 = ctx.createAgent("agent-1", "AgentAlpha");
         AgentEntity agent2 = ctx.createAgent("agent-2", "AgentBeta");
+        net.minecraft.server.level.ServerPlayer human = mock(net.minecraft.server.level.ServerPlayer.class);
+        when(human.isAlive()).thenReturn(true);
+        when(human.isRemoved()).thenReturn(false);
+        when(human.isSpectator()).thenReturn(false);
+        Zombie mob = mock(Zombie.class);
+        when(mob.isAlive()).thenReturn(true);
+        when(mob.isRemoved()).thenReturn(false);
+        when(mob.isSpectator()).thenReturn(false);
 
-        // canCollideWith
-        assertFalse(agent1.canCollideWith(agent2), "canCollideWith another AgentEntity must return false");
-        assertFalse(agent2.canCollideWith(agent1), "canCollideWith another AgentEntity must return false");
+        // canCollideWith & canBeCollidedWith
+        assertTrue(agent1.canCollideWith(agent2), "ADR-033: canCollideWith another AgentEntity must return true");
+        assertTrue(agent2.canCollideWith(agent1), "ADR-033: canCollideWith another AgentEntity must return true");
+        assertTrue(agent1.canCollideWith(human), "ADR-033: canCollideWith alive ServerPlayer must return true");
+        assertTrue(agent1.canCollideWith(mob), "ADR-033: canCollideWith alive Mob must return true");
+        assertTrue(agent1.canBeCollidedWith(), "ADR-033: canBeCollidedWith must return true");
+        assertTrue(agent2.canBeCollidedWith(), "ADR-033: canBeCollidedWith must return true");
 
-        // canBeCollidedWith
-        assertFalse(agent1.canBeCollidedWith(), "canBeCollidedWith must return false");
-        assertFalse(agent2.canBeCollidedWith(), "canBeCollidedWith must return false");
-
-        // push suppression
-        net.minecraft.world.phys.Vec3 originalDelta1 = agent1.getDeltaMovement();
-        net.minecraft.world.phys.Vec3 originalDelta2 = agent2.getDeltaMovement();
+        // push applies purely horizontal displacement (dy == 0.0) even when co-located or offset
+        agent1.setDeltaMovement(0.0, 0.0, 0.0);
+        agent2.setDeltaMovement(0.0, 0.0, 0.0);
         agent1.push(agent2);
-        assertEquals(originalDelta1, agent1.getDeltaMovement(), "Pushing another AgentEntity must be a no-op");
-        assertEquals(originalDelta2, agent2.getDeltaMovement(), "Pushed AgentEntity deltaMovement must remain unchanged");
+        assertEquals(0.0, agent1.getDeltaMovement().y, 1e-6, "push must never apply vertical lift to agent1");
+        assertEquals(0.0, agent2.getDeltaMovement().y, 1e-6, "push must never apply vertical lift to agent2");
+        assertTrue(agent1.getDeltaMovement().horizontalDistanceSqr() > 0.0,
+                "Co-located push must impart deterministic horizontal separation impulse to agent1");
+        assertTrue(agent2.getDeltaMovement().horizontalDistanceSqr() > 0.0,
+                "Co-located push must impart deterministic horizontal separation impulse to agent2");
+
+        agent1.setPos(0.5, 64.0, 0.5);
+        agent2.setPos(0.8, 64.0, 0.5);
+        agent1.setDeltaMovement(0.0, 0.0, 0.0);
+        agent2.setDeltaMovement(0.0, 0.0, 0.0);
+        agent1.push(agent2);
+        assertTrue(agent1.getDeltaMovement().x < 0.0, "Offset push must push agent1 away (-X)");
+        assertTrue(agent2.getDeltaMovement().x > 0.0, "Offset push must push agent2 away (+X)");
+        assertEquals(0.0, agent1.getDeltaMovement().y, 1e-6);
+        assertEquals(0.0, agent2.getDeltaMovement().y, 1e-6);
     }
 
     @Test
@@ -948,7 +970,7 @@ public class AgentEntityTest {
             BlockPos p = inv.getArgument(0);
             return p.getY() == 63 ? Blocks.GRASS_BLOCK.defaultBlockState() : Blocks.AIR.defaultBlockState();
         });
-        when(ctx.level.getEntitiesOfClass(eq(AgentEntity.class), any(net.minecraft.world.phys.AABB.class), any()))
+        when(ctx.level.getEntitiesOfClass(eq(net.minecraft.world.entity.LivingEntity.class), any(net.minecraft.world.phys.AABB.class), any()))
                 .thenReturn(java.util.List.of(peer));
 
         // 1. Sleeping suppresses separation
@@ -976,5 +998,86 @@ public class AgentEntityTest {
         assertEquals(0.5, agent.getX(), 1e-6);
         assertEquals(64.0, agent.getY(), 1e-6);
         assertEquals(0.5, agent.getZ(), 1e-6);
+    }
+
+    @Test
+    @DisplayName("ADR-033: AgentEntityManager spawn deconfliction avoids occupied entities, solids, hazards, and cliffs")
+    void testSpawnDeconflictionSkipsOccupiedSolidAndHazardCells() throws Exception {
+        TestWorldContext ctx = new TestWorldContext();
+        when(ctx.server.submit(any(java.util.function.Supplier.class))).thenAnswer(inv -> {
+            java.util.function.Supplier<?> supplier = inv.getArgument(0);
+            return CompletableFuture.completedFuture(supplier.get());
+        });
+        when(ctx.level.addFreshEntity(any())).thenReturn(true);
+        when(ctx.level.getSharedSpawnPos()).thenReturn(new BlockPos(10, 64, 10));
+        when(ctx.level.getHeight(eq(net.minecraft.world.level.levelgen.Heightmap.Types.MOTION_BLOCKING_NO_LEAVES), anyInt(), anyInt()))
+                .thenReturn(64);
+
+        // Flat stone floor at y=63 except:
+        // - (10, 64, 10): solid stone wall at feet/head
+        // - (11, 63, 10): lava hazard
+        // - (9, 63, 10): sheer 5-block drop (air at y=63)
+        // - (10, 64, 11): occupied by an alive ServerPlayer
+        when(ctx.level.getBlockState(any(BlockPos.class))).thenAnswer(inv -> {
+            BlockPos p = inv.getArgument(0);
+            if (p.getX() == 10 && p.getZ() == 10 && (p.getY() == 64 || p.getY() == 65)) {
+                return Blocks.STONE.defaultBlockState();
+            }
+            if (p.getX() == 11 && p.getZ() == 10 && p.getY() == 63) {
+                return Blocks.LAVA.defaultBlockState();
+            }
+            if (p.getX() == 9 && p.getZ() == 10 && p.getY() >= 59 && p.getY() <= 63) {
+                return Blocks.AIR.defaultBlockState();
+            }
+            return p.getY() <= 63 ? Blocks.GRASS_BLOCK.defaultBlockState() : Blocks.AIR.defaultBlockState();
+        });
+
+        net.minecraft.server.level.ServerPlayer playerAt10_11 = mock(net.minecraft.server.level.ServerPlayer.class);
+        when(playerAt10_11.isAlive()).thenReturn(true);
+        when(playerAt10_11.isRemoved()).thenReturn(false);
+        when(playerAt10_11.isSpectator()).thenReturn(false);
+        when(playerAt10_11.getX()).thenReturn(10.5);
+        when(playerAt10_11.getY()).thenReturn(64.0);
+        when(playerAt10_11.getZ()).thenReturn(11.5);
+        when(playerAt10_11.getBbWidth()).thenReturn(0.6F);
+        when(playerAt10_11.getBbHeight()).thenReturn(1.8F);
+        when(ctx.level.players()).thenReturn(java.util.List.of(playerAt10_11));
+
+        // 1. Explicit spawn request at solid wall (10.5, 64.0, 10.5) spirals to a safe, unoccupied, standable cell
+        SpawnAgentRequest explicitReq = SpawnAgentRequest.newBuilder()
+                .setAgentId("deconflict-explicit")
+                .setDisplayName("DeconflictExplicit")
+                .setClanId("clan-test")
+                .setSpawnCoords(Vec3.newBuilder().setX(10.5).setY(64.0).setZ(10.5).build())
+                .build();
+        AgentEntity spawned1 = entityManager.spawnAgent(ctx.server, ctx.level, explicitReq).get();
+        BlockPos p1 = BlockPos.containing(spawned1.getX(), spawned1.getY() + 0.05, spawned1.getZ());
+        assertNotEquals(new BlockPos(10, 64, 10), p1, "Must not spawn inside solid block");
+        assertNotEquals(new BlockPos(11, 64, 10), p1, "Must not spawn over lava");
+        assertNotEquals(new BlockPos(9, 64, 10), p1, "Must not spawn over sheer cliff drop");
+        assertNotEquals(new BlockPos(10, 64, 11), p1, "Must not spawn on top of existing ServerPlayer");
+        assertEquals(64.0, spawned1.getY(), 1e-6);
+
+        // 2. Second explicit request at the exact same coords as spawned1 must also deconflict (>= 1.0m apart)
+        SpawnAgentRequest duplicateExplicitReq = SpawnAgentRequest.newBuilder()
+                .setAgentId("deconflict-dup")
+                .setDisplayName("DeconflictDup")
+                .setClanId("clan-test")
+                .setSpawnCoords(Vec3.newBuilder().setX(spawned1.getX()).setY(spawned1.getY()).setZ(spawned1.getZ()).build())
+                .build();
+        AgentEntity spawned2 = entityManager.spawnAgent(ctx.server, ctx.level, duplicateExplicitReq).get();
+        double sep = Math.hypot(spawned1.getX() - spawned2.getX(), spawned1.getZ() - spawned2.getZ());
+        assertTrue(sep >= 1.0, "Spawn deconfliction must separate newly spawned agent >= 1.0m from existing agent; actual=" + sep);
+
+        // 3. Default grid spawn (no spawn_coords) at occupied/blocked shared spawn also deconflicts safely
+        SpawnAgentRequest gridReq = SpawnAgentRequest.newBuilder()
+                .setAgentId("deconflict-grid")
+                .setDisplayName("DeconflictGrid")
+                .setClanId("clan-test")
+                .build();
+        AgentEntity spawned3 = entityManager.spawnAgent(ctx.server, ctx.level, gridReq).get();
+        assertTrue(Math.hypot(spawned3.getX() - spawned1.getX(), spawned3.getZ() - spawned1.getZ()) >= 1.0);
+        assertTrue(Math.hypot(spawned3.getX() - spawned2.getX(), spawned3.getZ() - spawned2.getZ()) >= 1.0);
+        assertTrue(Math.hypot(spawned3.getX() - 10.5, spawned3.getZ() - 11.5) >= 1.0);
     }
 }

@@ -42,6 +42,10 @@ public final class LocalPathPlanner {
         default boolean chunkLoaded(int x, int z) {
             return true;
         }
+
+        default boolean occupiedByEntity(int x, int y, int z) {
+            return false;
+        }
     }
 
     /** A standing cell: feet block coordinates. */
@@ -89,7 +93,7 @@ public final class LocalPathPlanner {
             if (w.solid(nx, y + 1, nz) || w.solid(nx, y + 2, nz) || w.solid(x, y + 2, z)) {
                 return Integer.MIN_VALUE;
             }
-            if (w.hazard(nx, y + 1, nz) || w.hazard(nx, y, nz)) {
+            if (w.hazard(nx, y + 1, nz) || w.hazard(nx, y, nz) || w.occupiedByEntity(nx, y + 1, nz)) {
                 return Integer.MIN_VALUE;
             }
             return y + 1;
@@ -103,13 +107,13 @@ public final class LocalPathPlanner {
                 return Integer.MIN_VALUE;
             }
             if (w.climbable(nx, ny, nz) || w.climbable(nx, ny - 1, nz)) {
-                return ny;
+                return w.occupiedByEntity(nx, ny, nz) ? Integer.MIN_VALUE : ny;
             }
             if (w.solid(nx, ny - 1, nz)) {
-                return ny;
+                return w.occupiedByEntity(nx, ny, nz) ? Integer.MIN_VALUE : ny;
             }
             if (w.water(nx, ny, nz) && ((ny == y && w.water(x, y, z)) || (!w.water(nx, ny + 1, nz) && !w.solid(nx, ny + 1, nz)))) {
-                return ny;
+                return w.occupiedByEntity(nx, ny, nz) ? Integer.MIN_VALUE : ny;
             }
         }
         return Integer.MIN_VALUE;
@@ -149,10 +153,11 @@ public final class LocalPathPlanner {
         boolean hasTargetY = Double.isFinite(targetY);
         int ty = hasTargetY ? (int) Math.floor(targetY) : start.y;
         boolean targetInWater = w.water(tx, ty, tz) || (hasTargetY && w.water(tx, ty - 1, tz));
-        // Solid-column targets (e.g., tree trunks, walls, obstructed workstations) cannot be entered
-        // directly; reaching a 4-adjacent walkable cell within reach counts as reaching the target.
+        // Solid-column targets (e.g., tree trunks, walls, obstructed workstations) and entity-occupied
+        // targets cannot be entered directly; reaching a 4-adjacent walkable cell within reach counts as reaching the target.
         boolean solidTargetColumn = hasTargetY && w.solid(tx, ty, tz)
                 && (w.solid(tx, ty + 1, tz) || w.solid(tx, ty + 2, tz));
+        boolean entityTargetCell = w.occupiedByEntity(tx, ty, tz);
         int solidAdjMaxDy = (solidTargetColumn && w.solid(tx, ty + 1, tz)) ? 4 : 2;
         double startDistSq = distSq(start.x, start.z, tx, tz);
         Map<Long, Node> best = new HashMap<>();
@@ -190,10 +195,10 @@ public final class LocalPathPlanner {
             }
             boolean exactColumnReached = cur.cell.x == tx && cur.cell.z == tz
                     && (hasTargetY ? Math.abs(cur.cell.y - ty) <= 1 : Math.abs(cur.cell.y - start.y) <= 3 + MAX_DROP);
-            boolean adjacentSolidReached = solidTargetColumn
+            boolean adjacentTargetReached = (solidTargetColumn || entityTargetCell)
                     && (Math.abs(cur.cell.x - tx) + Math.abs(cur.cell.z - tz) == 1)
                     && cur.cell.y >= ty - solidAdjMaxDy && cur.cell.y <= ty + 1;
-            if (exactColumnReached || adjacentSolidReached) {
+            if (exactColumnReached || adjacentTargetReached) {
                 reached = true;
                 closest = cur;
                 break;
@@ -242,20 +247,23 @@ public final class LocalPathPlanner {
             if (w.climbable(cx, cy, cz)
                     && Math.abs((cy + 1) - start.y) <= MAX_VERTICAL_RANGE
                     && !w.solid(cx, cy + 1, cz) && !w.solid(cx, cy + 2, cz)
-                    && !w.hazard(cx, cy + 1, cz)) {
+                    && !w.hazard(cx, cy + 1, cz)
+                    && !w.occupiedByEntity(cx, cy + 1, cz)) {
                 relaxNeighbor(cx, cy + 1, cz, 1.1, cur, tx, ty, tz, hasTargetY, blocked, closed, best, open);
             }
             if ((w.climbable(cx, cy, cz) || w.climbable(cx, cy - 1, cz))
                     && Math.abs((cy - 1) - start.y) <= MAX_VERTICAL_RANGE
                     && !w.solid(cx, cy - 1, cz) && !w.solid(cx, cy, cz)
-                    && !w.hazard(cx, cy - 1, cz)) {
+                    && !w.hazard(cx, cy - 1, cz)
+                    && !w.occupiedByEntity(cx, cy - 1, cz)) {
                 relaxNeighbor(cx, cy - 1, cz, 1.1, cur, tx, ty, tz, hasTargetY, blocked, closed, best, open);
             }
             // Vertical swim-up in water to reach the surface
             if (w.water(cx, cy, cz) && w.water(cx, cy + 1, cz)
                     && Math.abs((cy + 1) - start.y) <= MAX_VERTICAL_RANGE
                     && !w.solid(cx, cy + 1, cz) && !w.solid(cx, cy + 2, cz)
-                    && !w.hazard(cx, cy + 1, cz)) {
+                    && !w.hazard(cx, cy + 1, cz)
+                    && !w.occupiedByEntity(cx, cy + 1, cz)) {
                 relaxNeighbor(cx, cy + 1, cz, 1.0, cur, tx, ty, tz, hasTargetY, blocked, closed, best, open);
             }
         }
@@ -287,6 +295,7 @@ public final class LocalPathPlanner {
                         boolean verticalProgress = Math.abs(candidateBorder.cell.y - ty) < Math.abs(start.y - ty);
                         boolean descendingPlateau = ty < start.y && candidateBorder.cell.y <= start.y + 1;
                         boolean targetHasSupport = !w.chunkLoaded(tx, tz)
+                                || entityTargetCell
                                 || w.solid(tx, ty, tz)
                                 || w.solid(tx, ty - 1, tz)
                                 || w.solid(tx, ty - 2, tz)

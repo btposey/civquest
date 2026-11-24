@@ -28,6 +28,7 @@ import net.minecraft.server.ReloadableServerRegistries;
 import net.minecraft.server.ServerScoreboard;
 import net.minecraft.server.level.ServerChunkCache;
 import net.minecraft.server.level.ServerLevel;
+import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.server.level.ServerPlayerGameMode;
 import net.minecraft.server.network.TextFilter;
 import net.minecraft.server.players.PlayerList;
@@ -71,6 +72,7 @@ import java.lang.reflect.Field;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import java.util.UUID;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
@@ -348,16 +350,17 @@ public class PeripherySeparationAndQueueRegressionTest {
             }
         }
 
-        // Assert ADR-028 invariants remain intact
+        // Assert ADR-033 invariants: physical collision restored & push is strictly horizontal (dy == 0.0)
         AgentEntity agentA = peers.get(0);
         AgentEntity agentB = peers.get(1);
-        assertions.add(() -> assertFalse(agentA.canCollideWith(agentB), "ADR-028: canCollideWith(AgentEntity) must remain false"));
-        assertions.add(() -> assertFalse(agentA.canBeCollidedWith(), "ADR-028: canBeCollidedWith() must remain false"));
-        Vec3 prePushVelA = agentA.getDeltaMovement();
-        Vec3 prePushVelB = agentB.getDeltaMovement();
+        assertions.add(() -> assertTrue(agentA.canCollideWith(agentB), "ADR-033: canCollideWith(AgentEntity) must return true"));
+        assertions.add(() -> assertTrue(agentA.canBeCollidedWith(), "ADR-033: canBeCollidedWith() must return true"));
+        agentA.setDeltaMovement(Vec3.ZERO);
+        agentB.setDeltaMovement(Vec3.ZERO);
         agentA.push(agentB);
-        assertions.add(() -> assertEquals(prePushVelA, agentA.getDeltaMovement(), "ADR-028: push(AgentEntity) must not launch agentA"));
-        assertions.add(() -> assertEquals(prePushVelB, agentB.getDeltaMovement(), "ADR-028: push(AgentEntity) must not launch agentB"));
+        assertions.add(() -> assertEquals(0.0, agentA.getDeltaMovement().y, 1e-6, "ADR-033: push(AgentEntity) must not launch agentA vertically"));
+        assertions.add(() -> assertEquals(0.0, agentB.getDeltaMovement().y, 1e-6, "ADR-033: push(AgentEntity) must not launch agentB vertically"));
+        assertions.add(() -> assertTrue(agentA.getDeltaMovement().horizontalDistanceSqr() > 0.0, "ADR-033: push(AgentEntity) must impart horizontal separation"));
 
         // --- Subtest B: Hazard & Cliff Guard ---
         PeripherySimulationHarness hazardHarness = new PeripherySimulationHarness();
@@ -415,6 +418,84 @@ public class PeripherySeparationAndQueueRegressionTest {
                         hazardPeer1.getX(), hazardPeer1.getZ(), hazardPeer2.getX(), hazardPeer2.getZ(), safeAxisSep)));
 
         assertAll(assertions);
+    }
+
+    @Test
+    @DisplayName("1C. External ServerPlayer and Mob overlapping a stationary AgentEntity trigger safe horizontal depenetration")
+    void testExternalPlayerAndMobOverlapTriggersSafeHorizontalDepenetration() {
+        PeripherySimulationHarness harness = new PeripherySimulationHarness();
+        AtomicLong gameTime = new AtomicLong(2500L);
+        wireConcreteServerLevelForRealAgents(harness, gameTime);
+
+        // Safe North/South walkway at x=0, y=63, z=-10..10; East (x=1) is lava; West (x=-1) is 5-block cliff
+        setFlatFloor(harness, 63, 0, 0, -10, 10);
+        for (int z = -10; z <= 10; z++) {
+            harness.setBlock(new BlockPos(1, 62, z), Blocks.STONE.defaultBlockState());
+            harness.setBlock(new BlockPos(1, 63, z), Blocks.LAVA.defaultBlockState());
+            harness.setBlock(new BlockPos(-1, 58, z), Blocks.STONE.defaultBlockState());
+        }
+
+        AgentEntity agent = spawnRealAgent(harness, "depen-agent", "DepenAgent", 0.5, 64.0, 0.5);
+
+        // 1. Human ServerPlayer walks directly onto the stationary agent at (0.5, 64.0, 0.6)
+        ServerPlayer humanPlayer = mock(ServerPlayer.class);
+        when(humanPlayer.isAlive()).thenReturn(true);
+        when(humanPlayer.isRemoved()).thenReturn(false);
+        when(humanPlayer.isSpectator()).thenReturn(false);
+        when(humanPlayer.isSleeping()).thenReturn(false);
+        when(humanPlayer.getX()).thenReturn(0.5);
+        when(humanPlayer.getY()).thenReturn(64.0);
+        when(humanPlayer.getZ()).thenReturn(0.6);
+        when(humanPlayer.getBbWidth()).thenReturn(0.6F);
+        when(humanPlayer.getBbHeight()).thenReturn(1.8F);
+        when(humanPlayer.getBoundingBox()).thenReturn(new AABB(0.2, 64.0, 0.3, 0.8, 65.8, 0.9));
+        when(humanPlayer.getUUID()).thenReturn(UUID.randomUUID());
+        harness.spawnEntity(humanPlayer);
+
+        for (int tick = 0; tick < 18; tick++) {
+            gameTime.incrementAndGet();
+            agent.tickCount++;
+            agent.tick();
+            assertEquals(64.0, agent.getY(), 1e-3, "Depenetration must stay strictly horizontal");
+            assertTrue(agent.getX() >= 0.0 && agent.getX() < 1.0,
+                    "Depenetration from ServerPlayer must never enter East lava or West cliff");
+            clearInvocations(harness.getMockLevel());
+        }
+        double distFromPlayer = Math.hypot(agent.getX() - 0.5, agent.getZ() - 0.6);
+        assertTrue(distFromPlayer >= 1.0,
+                "Agent must depenetrate >= 1.0m from overlapping ServerPlayer along safe axis; actual=" + distFromPlayer);
+
+        // 2. Mob (Zombie) walks onto the agent's new position
+        harness.removeEntity(humanPlayer);
+        double zombieX = agent.getX();
+        double zombieZ = agent.getZ() + 0.1;
+        net.minecraft.world.entity.monster.Zombie zombie = mock(net.minecraft.world.entity.monster.Zombie.class);
+        when(zombie.isAlive()).thenReturn(true);
+        when(zombie.isRemoved()).thenReturn(false);
+        when(zombie.isSpectator()).thenReturn(false);
+        when(zombie.isSleeping()).thenReturn(false);
+        when(zombie.getX()).thenReturn(zombieX);
+        when(zombie.getY()).thenReturn(64.0);
+        when(zombie.getZ()).thenReturn(zombieZ);
+        when(zombie.getBbWidth()).thenReturn(0.6F);
+        when(zombie.getBbHeight()).thenReturn(1.95F);
+        when(zombie.getBoundingBox()).thenReturn(
+                new AABB(zombieX - 0.3, 64.0, zombieZ - 0.3, zombieX + 0.3, 65.95, zombieZ + 0.3));
+        when(zombie.getUUID()).thenReturn(UUID.randomUUID());
+        harness.spawnEntity(zombie);
+
+        for (int tick = 0; tick < 18; tick++) {
+            gameTime.incrementAndGet();
+            agent.tickCount++;
+            agent.tick();
+            assertEquals(64.0, agent.getY(), 1e-3);
+            assertTrue(agent.getX() >= 0.0 && agent.getX() < 1.0,
+                    "Depenetration from Mob must never enter East lava or West cliff");
+            clearInvocations(harness.getMockLevel());
+        }
+        double distFromZombie = Math.hypot(agent.getX() - zombieX, agent.getZ() - zombieZ);
+        assertTrue(distFromZombie >= 1.0,
+                "Agent must depenetrate >= 1.0m from overlapping Mob along safe axis; actual=" + distFromZombie);
     }
 
     // -----------------------------------------------------------------------------------------
