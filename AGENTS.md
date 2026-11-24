@@ -91,11 +91,13 @@ Major technical decisions are formally recorded in `doc/adr/`:
 - [ADR-025: Autonomous Silviculture, Tree Felling, and Sapling Replanting](file:///home/brian/Workspaces/btposey/civquest/doc/adr/ADR-025-autonomous-silviculture-and-sapling-replanting.md)
 - [ADR-026: Hierarchical Trail-Intersection Pathfinding](file:///home/brian/Workspaces/btposey/civquest/doc/adr/ADR-026-hierarchical-trail-intersection-pathfinding.md)
 - [ADR-027: Clan Settlement Genesis and Pioneer Explorer Nucleation](file:///home/brian/Workspaces/btposey/civquest/doc/adr/ADR-027-clan-settlement-genesis-and-pioneer-explorer-nucleation.md)
-- [ADR-028: Inter-Agent Collision and Stacking Suppression for FakePlayers](file:///home/brian/Workspaces/btposey/civquest/doc/adr/ADR-028-inter-agent-collision-and-stacking-suppression.md)
+- [ADR-028: Inter-Agent Collision and Stacking Suppression for FakePlayers](file:///home/brian/Workspaces/btposey/civquest/doc/adr/ADR-028-inter-agent-collision-and-stacking-suppression.md) *(Superseded by ADR-033)*
 - [ADR-029: Data-Driven Runtime Recipe Resolution & Dynamic Orchestrator Crafting Catalog](file:///home/brian/Workspaces/btposey/civquest/doc/adr/ADR-029-data-driven-runtime-recipe-resolution.md)
 - [ADR-030: Local Inter-Agent Acoustic Perception & Community Awareness](file:///home/brian/Workspaces/btposey/civquest/doc/adr/ADR-030-local-inter-agent-discourse.md)
 - [ADR-031: Idle-Triggered System 2 Strategic Directive Bridge & LLM Contention Control](file:///home/brian/Workspaces/btposey/civquest/doc/adr/ADR-031-idle-system2-directive-bridge.md)
 - [ADR-032: Peripheral 360° Horizon Survey FSM, Shelter-Gated Bootstrap Circadian Rhythm & Clan Expedition Cartography](file:///home/brian/Workspaces/btposey/civquest/doc/adr/ADR-032-peripheral-horizon-survey-and-clan-expedition-cartography.md)
+- [ADR-033: Strict Non-Overlapping Entity Physics, Entity-Aware Pathing, and Spawn Deconfliction](file:///home/brian/Workspaces/btposey/civquest/doc/adr/ADR-033-strict-non-overlapping-entity-physics-and-pathing.md)
+- [ADR-034: Single-Owner HTPDA Activity Stack, Scoped Receipt Ownership, and Runtime State Decomposition](file:///home/brian/Workspaces/btposey/civquest/doc/adr/ADR-034-single-owner-htpda-activity-stack-and-state-ownership.md)
 
 ---
 

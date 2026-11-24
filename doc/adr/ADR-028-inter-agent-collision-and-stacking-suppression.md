@@ -1,7 +1,7 @@
 # ADR-028: Inter-Agent Collision and Stacking Suppression for FakePlayers
 
 ## Status
-Accepted
+Superseded by [ADR-033](file:///home/brian/Workspaces/btposey/civquest/doc/adr/ADR-033-strict-non-overlapping-entity-physics-and-pathing.md)
 
 ## Context
 In vanilla Minecraft, player avatars (`ServerPlayer` / `FakePlayer`) participate in mutual entity pushing via `LivingEntity.pushEntities()` and `Entity.push(Entity other)`. 

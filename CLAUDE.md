@@ -60,12 +60,31 @@ This protocol applies when ending a Beads implementation workflow. It is subordi
 
 ## Build & Test
 
-_Add your build and test commands here_
-
+### Go Orchestrator (Hermetic Default Suite)
 ```bash
-# Example:
-# npm install
-# npm test
+cd orchestrator-go && go test -count=1 ./...
+```
+- Runs 100% offline/hermetic (live-LLM and live-Minecraft integration tests are gated behind build tags).
+
+### Go Race Detector (System 1 & Agent Runtime)
+```bash
+cd orchestrator-go && go test -race -count=1 ./internal/agent/... ./internal/system1/...
+```
+
+### Live-LLM Integration Suite (Requires Running OpenAI-Compatible Endpoint)
+```bash
+cd orchestrator-go && go test -tags livellm -v ./test/integration -run TestLiveLLM
+```
+
+### Architecture Size & Complexity Baseline Check
+```bash
+./scripts/check-arch-budgets.sh          # Report mode (always exits 0)
+./scripts/check-arch-budgets.sh --strict # Enforce recorded baseline ceilings
+```
+
+### NeoForge Server Mod
+```bash
+./gradlew :mod-neoforge:build
 ```
 
 ## Architecture Overview
