@@ -23,6 +23,7 @@ type stubParent struct {
 	rig    *recoverRig
 	target [3]float64
 	budget int
+	dig    bool
 }
 
 func (*stubParent) Kind() htpda.Kind   { return "stub" }
@@ -37,6 +38,7 @@ func (p *stubParent) Step(w htpda.World, local any, ev htpda.Event) htpda.Step {
 	case htpda.Receipt:
 		lw.fsm.navTargets = map[htpda.FrameID][3]float64{e.Frame: p.target}
 		if args, ok := lw.recoverArgsFor(e, p.budget); ok {
+			args.Dig = p.dig
 			return htpda.Step{Op: htpda.OpPush, Child: activityKindRecover, Args: args}
 		}
 	case htpda.ChildDone:

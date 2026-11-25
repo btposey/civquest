@@ -1,0 +1,6 @@
+t=20 stage=SETTLEMENT routine=SLEEP stack=[shelter/1] intents=[Navigate(x=-45.5 z=16.5); Navigate(x=-45.5 z=16.5)] probe={bedAssigned=true unreachable=false}  // night: navigate to the assigned bed
+t=30 stage=SETTLEMENT routine=SLEEP stack=[recover/1] intents=[Navigate(x=-45.5 z=16.5); Navigate(x=-34.0 z=0.0)] probe={bedAssigned=true unreachable=false}  // bed navigation stuck (terrain): Recover
+t=135 stage=SETTLEMENT routine=SLEEP stack=[-/0] intents=[Navigate(x=-45.5 z=16.5)] probe={bedAssigned=true unreachable=false}  // lease expired: give-up 1, bed still retried
+t=150 stage=SETTLEMENT routine=SLEEP stack=[recover/1] intents=[Navigate(x=-45.5 z=16.5); Navigate(x=-34.0 z=0.0)] probe={bedAssigned=true unreachable=false}  // stuck again
+t=260 stage=SETTLEMENT routine=SLEEP stack=[-/0] intents=[Navigate(x=-45.5 z=16.5)] probe={bedAssigned=true unreachable=true}  // give-up 2: bed blacklisted
+t=270 stage=SETTLEMENT routine=SLEEP stack=[exploration/1] intents=[] probe={bedAssigned=false unreachable=true}  // assignment cleared, no more navigation to the bed

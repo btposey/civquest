@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/btposey/civquest/orchestrator-go/internal/db"
 	civquestv1 "github.com/btposey/civquest/orchestrator-go/internal/proto/v1"
 )
 
@@ -37,6 +38,8 @@ func replayScenarios() []replayScenario {
 		scenarioDeathClearsEverything(),
 		scenarioTerrainStuckBlacklistsControl(),
 		scenarioEmergencyPreemptsRecover(),
+		scenarioScoutingStuckDigsThrough(),
+		scenarioSleepBedUnreachableBlacklists(),
 	}
 }
 
@@ -361,6 +364,62 @@ func scenarioEmergencyPreemptsRecover() replayScenario {
 			}
 			if tr[4].Top == activityKindRecover {
 				t.Fatalf("an expired Recover must pop: %s", tr[4])
+			}
+		},
+	}
+}
+
+// 16 (cq-aik.30 c): a stuck explorer breaks the adjacent obstruction (baseline
+// TestStuckAgentEmitsHarvestBreakOnAdjacentObstruction).
+func scenarioScoutingStuckDigsThrough() replayScenario {
+	wall := withBlocks(blk(1, 64, 0, "minecraft:dirt"), blk(1, 65, 0, "minecraft:dirt"))
+	kit := withInv(survivalKit()...)
+	return replayScenario{
+		Name: "scouting_stuck_digs_through", Stage: StageSettlement, Profession: "EXPLORER",
+		Steps: []replayStep{
+			{Frame: rf(250, 3000, kit), Setup: func(st *AgentState) { st.homeOrigin = &civquestv1.Vec3{X: 0.5, Y: 64, Z: 0.5} },
+				Annotation: "exploration entered (agent already past its spawn warm-up)"},
+			{Frame: rf(310, 3000, kit), Annotation: "exploration leg in flight"},
+			{Frame: rf(320, 3000, kit, wall), Receipt: terrainStuck(2), Annotation: "stuck against a dirt wall: Recover(terrain, dig) breaks the head-height block"},
+		},
+		Check: func(t *testing.T, tr []replayRecord) {
+			if tr[2].Top != activityKindRecover || !hasIntentPrefix(tr[2], "Interact(HARVEST_BREAK 1,65,0") {
+				t.Fatalf("expected Recover to break the obstructing block (1,65,0): %s", tr[2])
+			}
+		},
+	}
+}
+
+// 17 (cq-aik.30 d): two terrain give-ups on the assigned bed's access target blacklist it and
+// clear the assignment (baseline TestEvaluateSleep_BlacklistsUnreachableAssignedBedAfterTwoStucks).
+func scenarioSleepBedUnreachableBlacklists() replayScenario {
+	seed := func(st *AgentState) {
+		st.SpatialIndex().UpsertPOI(db.AgentPOI{POIID: FormatPOIID(POICategoryHabitation, -46, 79, 17), Category: POICategoryHabitation,
+			BlockID: "minecraft:red_bed", X: -45.5, Y: 79, Z: 17.5, AccessX: -45.5, AccessY: 79, AccessZ: 16.5,
+			ElevationLayer: ElevationDugout, Reliability: 1, IsActive: true})
+	}
+	at := func(tick int64) *civquestv1.TelemetryFrame { return rf(tick, 19000+tick, withPos(-30, 86, 0)) }
+	probe := func(tick int64) func(*AgentState) string {
+		return func(st *AgentState) string {
+			return fmt.Sprintf("bedAssigned=%t unreachable=%t", st.GetAssignedBed() != nil, st.IsTargetUnreachable(-45.5, 79, 16.5, tick))
+		}
+	}
+	return replayScenario{
+		Name: "sleep_bed_unreachable_blacklists", Stage: StageSettlement, Profession: "EXPLORER",
+		Steps: []replayStep{
+			{Frame: at(20), Setup: seed, Probe: probe(20), Annotation: "night: navigate to the assigned bed"},
+			{Frame: at(30), Receipt: terrainStuck(2), Unframed: true, Probe: probe(30), Annotation: "bed navigation stuck (terrain): Recover"},
+			{Frame: at(135), Probe: probe(135), Annotation: "lease expired: give-up 1, bed still retried"},
+			{Frame: at(150), Receipt: terrainStuck(3), Unframed: true, Probe: probe(150), Annotation: "stuck again"},
+			{Frame: at(260), Probe: probe(260), Annotation: "give-up 2: bed blacklisted"},
+			{Frame: at(270), Probe: probe(270), Annotation: "assignment cleared, no more navigation to the bed"},
+		},
+		Check: func(t *testing.T, tr []replayRecord) {
+			if tr[2].Probe != "bedAssigned=true unreachable=false" {
+				t.Fatalf("one give-up must not blacklist the bed: %s", tr[2])
+			}
+			if tr[4].Probe != "bedAssigned=true unreachable=true" || tr[5].Probe != "bedAssigned=false unreachable=true" {
+				t.Fatalf("two terrain give-ups must blacklist the bed and clear the assignment: %s / %s", tr[4], tr[5])
 			}
 		},
 	}

@@ -106,6 +106,8 @@ type recoverGaveUp struct {
 type recoverEscapeLock struct {
 	DirX, DirZ int32
 	Tick       int64
+	// Clear releases the lock (the agent moved: Recover popped recovered).
+	Clear bool
 }
 
 // escapeLockTTL is how long a dig-out heading lock stays valid (the old 120-tick renewal).
@@ -130,6 +132,11 @@ type recoverArgs struct {
 	Facts     htpda.MotorFacts
 	// MaxAttempts overrides the lease/attempt budget when > 0.
 	MaxAttempts int
+	// Dig lets a terrain Recover break an adjacent diggable obstruction (staircase
+	// excavation, as the enclosed dig-out does) before sidestepping. Set by a scouting
+	// parent (exploration) whose stuck explorer should dig through a dirt wall instead of
+	// only contouring around it (cq-aik.30; baseline scouting stuck dig-through).
+	Dig bool
 }
 
 type recoverLocal struct {
@@ -356,7 +363,23 @@ func (a recoverActivity) advance(lw *fsmWorld, loc recoverLocal) htpda.Step {
 			loc.Attempts++ // enclosed is bounded by the lease, not the attempt budget (digging takes time)
 		}
 	default:
+		if loc.Dig && hasAdjacentObstruction(f, loc.Bearing, pos) {
+			var isNav bool
+			intent, isNav = loc.enclosedStep(lw.agentID(), f, pos, tick, &loc)
+			if intent == nil || (isNav && tick < loc.NavNotBefore) {
+				return htpda.Step{Op: htpda.OpStay, Next: loc} // wait for the break to register
+			}
+			if isNav {
+				loc.Attempts++
+			}
+			break
+		}
 		offsets := [...]float32{90, -90, 135, -135, 180}
+		// Peers stuck against the same wall fan out to different sides first (the retired
+		// unstuck's agent-specific angular rotation): even-hash agents try +90 first.
+		if crc32.ChecksumIEEE([]byte(lw.agentID()))%2 == 1 {
+			offsets = [...]float32{-90, 90, -135, 135, 180}
+		}
 		b := normalizeBearingDeg(loc.Bearing + offsets[loc.Attempts%len(offsets)])
 		dx, dz := bearingToUnitVector(b)
 		d := recoverTunables.SidestepDist
@@ -370,7 +393,11 @@ func (a recoverActivity) advance(lw *fsmWorld, loc recoverLocal) htpda.Step {
 // pop ends the frame with result, keeping the enclosed dig heading for the next episode.
 func (recoverActivity) pop(loc recoverLocal, result any) htpda.Step {
 	st := htpda.Step{Op: htpda.OpPop, Result: result}
-	if loc.Locked && loc.Cause == CauseEnclosed {
+	if _, ok := result.(recovered); ok {
+		// The agent is moving again (the retired unstuck's movement-unlock): the heading lock
+		// is released so the next episode derives its direction afresh.
+		st.Memory = []htpda.MemoryWrite{recoverEscapeLock{Clear: true}}
+	} else if loc.Locked && loc.Cause == CauseEnclosed {
 		st.Memory = []htpda.MemoryWrite{recoverEscapeLock{DirX: loc.DirX, DirZ: loc.DirZ, Tick: loc.LastDig}}
 	}
 	return st
@@ -424,7 +451,7 @@ func recoverBreak(agentID string, b *civquestv1.VisibleBlock) *civquestv1.AgentI
 func (loc recoverLocal) enclosedStep(agentID string, frame *civquestv1.TelemetryFrame, pos *civquestv1.Vec3, tick int64, out *recoverLocal) (*civquestv1.AgentIntent, bool) {
 	bx, by, bz := int32(math.Floor(pos.X)), int32(math.Floor(pos.Y)), int32(math.Floor(pos.Z))
 	if !out.Locked {
-		out.DirX, out.DirZ = recoverEscapeDir(frame, loc.Bearing, bx, by, bz)
+		out.DirX, out.DirZ, _ = recoverEscapeDir(frame, loc.Bearing, bx, by, bz)
 		out.Locked = true
 	}
 	dirX, dirZ := out.DirX, out.DirZ
@@ -475,7 +502,7 @@ func (loc recoverLocal) enclosedStep(agentID string, frame *civquestv1.Telemetry
 
 // recoverEscapeDir picks the cardinal escape direction: the blocked heading, or the cardinal
 // with a diggable obstruction when the heading is open.
-func recoverEscapeDir(frame *civquestv1.TelemetryFrame, bearing float32, bx, by, bz int32) (int32, int32) {
+func recoverEscapeDir(frame *civquestv1.TelemetryFrame, bearing float32, bx, by, bz int32) (dirX, dirZ int32, obstructedDir bool) {
 	dx, dz := bearingToUnitVector(bearing)
 	cx, cz := int32(0), int32(1)
 	if math.Abs(dx) > math.Abs(dz) {
@@ -495,12 +522,19 @@ func recoverEscapeDir(frame *civquestv1.TelemetryFrame, bearing float32, bx, by,
 		return false
 	}
 	if obstructed(bx+cx, bz+cz) {
-		return cx, cz
+		return cx, cz, true
 	}
 	for _, d := range CardinalDirs {
 		if obstructed(bx+d[0], bz+d[1]) {
-			return d[0], d[1]
+			return d[0], d[1], true
 		}
 	}
-	return cx, cz
+	return cx, cz, false
+}
+
+// hasAdjacentObstruction reports whether a diggable block stands in a cardinal cell next to
+// the agent (feet to head-clearance height): the precondition of a scouting dig-through.
+func hasAdjacentObstruction(frame *civquestv1.TelemetryFrame, bearing float32, pos *civquestv1.Vec3) bool {
+	_, _, ok := recoverEscapeDir(frame, bearing, int32(math.Floor(pos.X)), int32(math.Floor(pos.Y)), int32(math.Floor(pos.Z)))
+	return ok
 }

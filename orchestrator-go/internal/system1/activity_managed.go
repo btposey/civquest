@@ -117,6 +117,7 @@ func stepManaged(a waterfallActivity, w htpda.World, local any, ev htpda.Event) 
 		}
 		// The frame that owns the failing intent owns its recovery (ADR-037 §3.2).
 		if args, ok := lw.recoverArgsFor(e, 0); ok {
+			args.Dig = scoutDigAllowed(local)
 			return htpda.Step{Op: htpda.OpPush, Child: activityKindRecover, Args: args, Next: next}
 		}
 		return htpda.Step{Op: htpda.OpStay, Next: next}
@@ -232,4 +233,13 @@ func clearStuckReceipt(local any, result any) any {
 		return rebuild(w)
 	}
 	return local
+}
+
+// scoutDigAllowed reports whether a stuck receipt on this frame may be recovered by digging
+// through an adjacent obstruction: the walk-driven (scouting) activities, as long as no
+// committed task owns the walk (a task handles its own approach failures; the retired
+// EvaluateUnstuck never masked an active task's stuck either).
+func scoutDigAllowed(local any) bool {
+	w, _, ok := walkCarrier(local)
+	return ok && !taskActive(w.task)
 }

@@ -47,12 +47,15 @@ type replayDirective struct {
 
 // replayStep is one event batch: optional directive / receipt / reflex notices plus the telemetry frame.
 type replayStep struct {
-	Frame      *civquestv1.TelemetryFrame
-	Receipt    *civquestv1.IntentReceipt
-	Reflexes   []*civquestv1.ReflexNotice
-	Directive  *replayDirective
-	StartTask  *TaskSubroutine      // a committed task started from outside any frame (applied before the tick)
-	Setup      func(st *AgentState) // world-knowledge seeding (e.g. a committed task); applied before the tick
+	Frame     *civquestv1.TelemetryFrame
+	Receipt   *civquestv1.IntentReceipt
+	Reflexes  []*civquestv1.ReflexNotice
+	Directive *replayDirective
+	StartTask *TaskSubroutine      // a committed task started from outside any frame (applied before the tick)
+	Setup     func(st *AgentState) // world-knowledge seeding (e.g. a committed task); applied before the tick
+	// Unframed leaves the receipt's frame_id 0: it answers an intent no frame owns (the
+	// pre-kernel reflex skills such as biological needs), which Recover handles as an orphan.
+	Unframed   bool
 	Probe      func(st *AgentState) string
 	ProbeTask  func(tk *TaskSubroutine) string // probes the topmost task frame's task (nil when none)
 	Annotation string
@@ -158,7 +161,7 @@ func runReplay(t *testing.T, sc replayScenario) []replayRecord {
 		}
 		if step.Receipt != nil {
 			rc := step.Receipt
-			if rc.FrameId == 0 {
+			if rc.FrameId == 0 && !step.Unframed {
 				fid, ok := batchFrame[rc.BatchId]
 				if !ok {
 					fid = lastEmitFrame
