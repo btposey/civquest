@@ -608,20 +608,6 @@ func isSaplingItemID(rawID string) bool {
 	return strings.HasSuffix(id, "_sapling") || id == "mangrove_propagule"
 }
 
-func findSaplingInInventory(frame *civquestv1.TelemetryFrame, state *AgentState) string {
-	if frame != nil && frame.Status != nil && len(frame.Status.Inventory) > 0 {
-		for _, it := range frame.Status.Inventory {
-			if it == nil || it.Count <= 0 || it.ItemId == "" {
-				continue
-			}
-			if isSaplingItemID(it.ItemId) {
-				return it.ItemId
-			}
-		}
-	}
-	return ""
-}
-
 func isSoilBlockID(rawID string) bool {
 	id := strings.ToLower(strings.TrimSpace(rawID))
 	if idx := strings.LastIndex(id, ":"); idx >= 0 {
@@ -654,7 +640,7 @@ func canPlantSaplingAt(frame *civquestv1.TelemetryFrame, tx, ty, tz int32) bool 
 			return false
 		}
 	}
-	return isAirOrPassableAt(frame, tx, ty, tz)
+	return isAirOrPassableAt(frame, tx, ty, tz) && isAirOrPassableAt(frame, tx, ty+1, tz)
 }
 
 // scanTreeClusterLogs detects contiguous trunk and branch logs within horizontal distance |dx| <= 2, |dz| <= 2
@@ -795,8 +781,7 @@ func NewHarvestTreeTask(tx, ty, tz int32, stage Stage, startTick int64) *TaskSub
 
 			// All reachable logs have been cleared. Check if autonomous sapling replanting is pending:
 			if !planted {
-				saplingID := findSaplingInInventory(frame, state)
-				if saplingID != "" && canPlantSaplingAt(frame, tx, ty, tz) {
+				if replantSaplingFor(state, frame, tx, ty, tz, woodFamily) != "" {
 					return false
 				}
 			}
@@ -903,8 +888,7 @@ func NewHarvestTreeTask(tx, ty, tz int32, stage Stage, startTick int64) *TaskSub
 			// All reachable trunk and branch logs felled (zero reachable logs left).
 			// Autonomous Sapling Replanting (ADR-025 Silviculture):
 			if !planted && (current == nil || current.Metadata["planted"] != "true") {
-				saplingID := findSaplingInInventory(frame, state)
-				if saplingID != "" && canPlantSaplingAt(frame, tx, ty, tz) {
+				if saplingID := replantSaplingFor(state, frame, tx, ty, tz, woodFamily); saplingID != "" {
 					approach := &civquestv1.Vec3{
 						X: float64(tx) + 0.5,
 						Y: float64(ty),
