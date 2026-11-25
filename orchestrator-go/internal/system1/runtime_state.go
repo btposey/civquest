@@ -92,12 +92,14 @@ type RuntimeCaches struct {
 
 // RuntimeTracking consolidates mutable per-agent runtime state under AgentState ownership.
 type RuntimeTracking struct {
-	Timers RuntimeTimers
-	Nav    RuntimeNavTracking
-	Combat RuntimeCombatTracking
-	Idle   RuntimeIdleTracking
-	Viewer RuntimeViewerState
-	Caches RuntimeCaches
+	Timers                  RuntimeTimers
+	Nav                     RuntimeNavTracking
+	Combat                  RuntimeCombatTracking
+	Idle                    RuntimeIdleTracking
+	Viewer                  RuntimeViewerState
+	Caches                  RuntimeCaches
+	ActiveActivityKind      string
+	ActiveActivityOwnsStuck bool
 }
 
 func cloneVec3(v *civquestv1.Vec3) *civquestv1.Vec3 {
@@ -1110,4 +1112,54 @@ func (s *AgentState) AdvanceConstructionProgress() int {
 	defer s.mu.Unlock()
 	s.constructionProgress++
 	return s.constructionProgress
+}
+
+// SetActiveActivityOwnership records the currently active top activity kind and stuck-recovery ownership.
+func (s *AgentState) SetActiveActivityOwnership(kind string, ownsStuck bool) {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.runtimeState.ActiveActivityKind = kind
+	s.runtimeState.ActiveActivityOwnsStuck = ownsStuck
+}
+
+// ActiveActivityKind returns the kind of the currently active top activity, or empty if none.
+func (s *AgentState) ActiveActivityKind() string {
+	if s == nil {
+		return ""
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.runtimeState.ActiveActivityKind
+}
+
+// ActiveActivityOwnsStuck returns whether the currently active top activity owns unstuck recovery.
+func (s *AgentState) ActiveActivityOwnsStuck() bool {
+	if s == nil {
+		return false
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.ActiveActivityOwnsStuckLocked()
+}
+
+// ActiveActivityOwnsStuckLocked returns whether the active top activity owns unstuck recovery assuming s.mu is held.
+func (s *AgentState) ActiveActivityOwnsStuckLocked() bool {
+	if s == nil {
+		return false
+	}
+	return s.runtimeState.ActiveActivityOwnsStuck
+}
+
+// ClearActiveActivityOwnership clears active top activity ownership metadata.
+func (s *AgentState) ClearActiveActivityOwnership() {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.runtimeState.ActiveActivityKind = ""
+	s.runtimeState.ActiveActivityOwnsStuck = false
 }

@@ -103,10 +103,10 @@ func EvaluateUnstuck(
 		return nil
 	}
 
-	// When an active task is committed and the agent is NOT physically enclosed,
+	// When an active task or stuck-owning activity is committed and the agent is NOT physically enclosed,
 	// do not mask approach stuck failures with unstuck NavigateIntents that queue
-	// behind the task's NavigateIntent and emit fake COMPLETED receipts.
-	if isStuck && !isEnclosed && state.HasActiveTaskLocked() {
+	// behind the active NavigateIntent and emit fake COMPLETED receipts.
+	if isStuck && !isEnclosed && (state.HasActiveTaskLocked() || state.ActiveActivityOwnsStuckLocked()) {
 		return nil
 	}
 

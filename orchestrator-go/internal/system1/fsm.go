@@ -310,6 +310,7 @@ type AgentFSM struct {
 	maxStackDepth       int
 	activityStack       []Activity
 	activitySuspended   bool
+	arbiter             *ActivityArbiter
 	lastFacts           *FactGraph
 	registry            *EngineRegistry
 }
@@ -377,6 +378,7 @@ func NewAgentFSMWithRegistry(initial State, onTransition func(from, to State, re
 		handlers:          make(map[Stage]StateHandler),
 		transitions:       defaultTransitionRules(),
 		onStageTransition: onTransition,
+		arbiter:           newActivityArbiter(),
 		registry:          reg,
 	}
 	fsm.RegisterHandler(&BootstrapStateHandler{})
@@ -1069,19 +1071,23 @@ func (fsm *AgentFSM) Tick(ctx *FSMContext) FSMResult {
 
 	preOnTickRoutine := fsm.currentRoutine
 
-	// 5. Execute Tier 1 top Activity if active & unsuspended; otherwise execute Stage handler
+	// 5. Execute Tier 1 ActivityArbiter / top Activity for normal stages; StageHandler for Emergency/Dead/custom
 	var intents []FSMIntent
-	if ctx != nil && fsm.currentStage != StageEmergency && fsm.currentStage != StageDead &&
-		len(fsm.activityStack) > 0 && !fsm.activitySuspended {
-		if act := fsm.activityStack[len(fsm.activityStack)-1]; act != nil {
-			var done bool
-			intents, done = act.OnTick(ctx)
-			if done {
-				fsm.popActivityLocked(ctx)
+	if ctx != nil {
+		if fsm.currentStage == StageBootstrap || fsm.currentStage == StageSettlement || fsm.currentStage == StageColonize {
+			intents = fsm.tickActivityArbiterLocked(ctx)
+		} else if fsm.currentStage != StageEmergency && fsm.currentStage != StageDead &&
+			len(fsm.activityStack) > 0 && !fsm.activitySuspended {
+			if act := fsm.activityStack[len(fsm.activityStack)-1]; act != nil {
+				var done bool
+				intents, done = act.OnTick(ctx)
+				if done {
+					fsm.popActivityLocked(ctx)
+				}
 			}
+		} else if handler, exists := fsm.handlers[fsm.currentStage]; exists {
+			intents = handler.OnTick(ctx)
 		}
-	} else if handler, exists := fsm.handlers[fsm.currentStage]; exists && ctx != nil {
-		intents = handler.OnTick(ctx)
 	}
 
 	// 5b. Synchronize active TaskSubroutine commitment with the PDA state stack

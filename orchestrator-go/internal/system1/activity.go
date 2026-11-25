@@ -1,5 +1,7 @@
 package system1
 
+import civquestv1 "github.com/btposey/civquest/orchestrator-go/internal/proto/v1"
+
 // Activity defines a formal single-owner behavior unit managed on AgentFSM's HTPDA activity stack.
 //
 // Concurrency contract: All Activity lifecycle hooks (OnStart, OnTick, OnSuspend, OnResume, OnExit)
@@ -13,6 +15,74 @@ type Activity interface {
 	OnSuspend(ctx *FSMContext, reason string)
 	OnResume(ctx *FSMContext)
 	OnExit(ctx *FSMContext)
+}
+
+// ScopedActivity extends Activity with scoped IntentReceipt batch ownership and unstuck-recovery ownership.
+type ScopedActivity interface {
+	Activity
+	ReceiptScope() *ActivityReceiptScope
+	OwnsStuckRecovery() bool
+}
+
+// ActivityReceiptScope anchors IntentReceipt batch ownership to an Activity's start or resume boundary
+// so stale receipts from preempted or superseded activities cannot advance or abort the current activity.
+type ActivityReceiptScope struct {
+	ActivityID          string
+	StartReceiptBatchID int64
+	IssuedBatchCount    int
+	LastHandledBatchID  int64
+}
+
+// Anchor sets StartReceiptBatchID from lastReceipt (0 if nil) and resets issued/handled counters.
+func (s *ActivityReceiptScope) Anchor(lastReceipt *civquestv1.IntentReceipt) {
+	if s == nil {
+		return
+	}
+	s.StartReceiptBatchID = lastReceipt.GetBatchId()
+	s.IssuedBatchCount = 0
+	s.LastHandledBatchID = 0
+}
+
+// RecordEmit increments IssuedBatchCount when the owning activity emits a motor intent.
+func (s *ActivityReceiptScope) RecordEmit() {
+	if s == nil {
+		return
+	}
+	s.IssuedBatchCount++
+}
+
+// Accept returns true only when receipt belongs to a fresh batch emitted after the last Anchor
+// and has not already been handled; records LastHandledBatchID upon acceptance.
+func (s *ActivityReceiptScope) Accept(receipt *civquestv1.IntentReceipt) bool {
+	if !s.PeekValid(receipt) {
+		return false
+	}
+	s.LastHandledBatchID = receipt.GetBatchId()
+	return true
+}
+
+// PeekValid evaluates the same scoped batch predicate as Accept without mutating LastHandledBatchID.
+func (s *ActivityReceiptScope) PeekValid(receipt *civquestv1.IntentReceipt) bool {
+	if s == nil || receipt == nil || s.IssuedBatchCount <= 0 {
+		return false
+	}
+	batchID := receipt.GetBatchId()
+	return batchID > s.StartReceiptBatchID && batchID != s.LastHandledBatchID
+}
+
+func syncActivityOwnership(act Activity, ctx *FSMContext) {
+	if ctx == nil || ctx.State == nil {
+		return
+	}
+	if act == nil {
+		ctx.State.ClearActiveActivityOwnership()
+		return
+	}
+	ownsStuck := false
+	if sa, ok := act.(ScopedActivity); ok {
+		ownsStuck = sa.OwnsStuckRecovery()
+	}
+	ctx.State.SetActiveActivityOwnership(act.Kind(), ownsStuck)
 }
 
 // PushActivity suspends any current top activity (if not already suspended), pushes act onto the
@@ -36,6 +106,7 @@ func (fsm *AgentFSM) pushActivityLocked(act Activity, ctx *FSMContext) {
 	fsm.activityStack = append(fsm.activityStack, act)
 	fsm.activitySuspended = false
 	act.OnStart(ctx)
+	syncActivityOwnership(act, ctx)
 }
 
 // PopActivity removes the top activity from the HTPDA activity stack, invokes its OnExit(ctx),
@@ -64,8 +135,11 @@ func (fsm *AgentFSM) popActivityLocked(ctx *FSMContext) (Activity, bool) {
 	if len(fsm.activityStack) > 0 {
 		if parent := fsm.activityStack[len(fsm.activityStack)-1]; parent != nil {
 			parent.OnResume(ctx)
+			syncActivityOwnership(parent, ctx)
+			return popped, true
 		}
 	}
+	syncActivityOwnership(nil, ctx)
 	return popped, true
 }
 
@@ -100,6 +174,7 @@ func (fsm *AgentFSM) suspendTopActivityLocked(ctx *FSMContext, reason string) {
 	if top := fsm.activityStack[len(fsm.activityStack)-1]; top != nil {
 		top.OnSuspend(ctx, reason)
 	}
+	syncActivityOwnership(nil, ctx)
 }
 
 func (fsm *AgentFSM) resumeTopActivityLocked(ctx *FSMContext) {
@@ -109,7 +184,10 @@ func (fsm *AgentFSM) resumeTopActivityLocked(ctx *FSMContext) {
 	fsm.activitySuspended = false
 	if top := fsm.activityStack[len(fsm.activityStack)-1]; top != nil {
 		top.OnResume(ctx)
+		syncActivityOwnership(top, ctx)
+		return
 	}
+	syncActivityOwnership(nil, ctx)
 }
 
 func (fsm *AgentFSM) clearActivitiesLocked(ctx *FSMContext) {
@@ -124,4 +202,5 @@ func (fsm *AgentFSM) clearActivitiesLocked(ctx *FSMContext) {
 	}
 	fsm.activityStack = nil
 	fsm.activitySuspended = false
+	syncActivityOwnership(nil, ctx)
 }
