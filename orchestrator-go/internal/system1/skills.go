@@ -2,6 +2,7 @@ package system1
 
 import (
 	"sync"
+	"sync/atomic"
 
 	"github.com/btposey/civquest/orchestrator-go/internal/db"
 	civquestv1 "github.com/btposey/civquest/orchestrator-go/internal/proto/v1"
@@ -84,6 +85,7 @@ type EngineRegistry struct {
 	evalOrder     []string
 	skillOrder    []string
 	evalSnapshot  []Evaluator
+	factSizeHint  atomic.Int64 // last EvaluateAll graph size, used to presize the next graph
 	skillSnapshot []Skill
 }
 
@@ -169,10 +171,10 @@ func (r *EngineRegistry) GetSkill(name string) (Skill, bool) {
 
 // EvaluateAll executes all registered evaluators against the EvaluatorContext and returns a populated FactGraph.
 func (r *EngineRegistry) EvaluateAll(ctx *EvaluatorContext) *FactGraph {
-	graph := NewFactGraph()
 	if r == nil {
-		return graph
+		return NewFactGraph()
 	}
+	graph := newFactGraphSized(int(r.factSizeHint.Load()))
 
 	r.mu.RLock()
 	evals := r.evalSnapshot
@@ -184,6 +186,7 @@ func (r *EngineRegistry) EvaluateAll(ctx *EvaluatorContext) *FactGraph {
 		}
 	}
 	graph.Freeze()
+	r.factSizeHint.Store(int64(graph.Len()))
 	return graph
 }
 

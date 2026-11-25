@@ -801,7 +801,12 @@ func (s *AgentState) ViewerReflections() (thought, dialogue, chronicle string) {
 	return v.LatestThought, v.LatestDialogue, v.LatestChronicle
 }
 
-// SafeNodes returns a defensive copy of cached safe map nodes.
+// SafeNodes returns the cached safe map nodes as an immutable snapshot.
+//
+// The backing array is shared with the cache and with other readers: callers
+// MUST treat the result as read-only. Writers (SetSafeNodes, UpsertSafeNode)
+// are copy-on-write, so a previously returned snapshot never changes. This
+// keeps the per-frame cost O(1) instead of O(nodes).
 func (s *AgentState) SafeNodes() []db.MapNode {
 	if s == nil {
 		return nil
@@ -809,12 +814,8 @@ func (s *AgentState) SafeNodes() []db.MapNode {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	nodes := s.runtimeState.Caches.SafeNodes
-	if nodes == nil {
-		return nil
-	}
-	cp := make([]db.MapNode, len(nodes))
-	copy(cp, nodes)
-	return cp
+	// Clip capacity so a caller's append can never write into shared storage.
+	return nodes[:len(nodes):len(nodes)]
 }
 
 // SetSafeNodes stores a defensive copy of safe map nodes.
@@ -833,6 +834,7 @@ func (s *AgentState) SetSafeNodes(nodes []db.MapNode) {
 }
 
 // UpsertSafeNode updates an existing safe node by ID or appends a new safe node.
+// Copy-on-write: published snapshots returned by SafeNodes are never mutated.
 func (s *AgentState) UpsertSafeNode(node db.MapNode) {
 	if s == nil {
 		return
@@ -842,10 +844,15 @@ func (s *AgentState) UpsertSafeNode(node db.MapNode) {
 	nodes := s.runtimeState.Caches.SafeNodes
 	for i := range nodes {
 		if nodes[i].ID == node.ID {
-			nodes[i] = node
+			cp := make([]db.MapNode, len(nodes))
+			copy(cp, nodes)
+			cp[i] = node
+			s.runtimeState.Caches.SafeNodes = cp
 			return
 		}
 	}
+	// Appending past len never alters any snapshot's visible elements
+	// (snapshots are capacity-clipped, so they reallocate on their own append).
 	s.runtimeState.Caches.SafeNodes = append(nodes, node)
 }
 

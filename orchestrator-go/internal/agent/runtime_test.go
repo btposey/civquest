@@ -1445,7 +1445,7 @@ func TestRuntime_QueuePriorityIntent_Eviction(t *testing.T) {
 	}
 }
 
-func TestRuntime_SafeNodesDefensiveCopy(t *testing.T) {
+func TestRuntime_SafeNodesSnapshotIsCopyOnWrite(t *testing.T) {
 	tmpDir := t.TempDir()
 	resolver := xdg.NewResolver(xdg.WithCustomRoot(tmpDir))
 
@@ -1469,11 +1469,15 @@ func TestRuntime_SafeNodesDefensiveCopy(t *testing.T) {
 		t.Fatalf("internal cache was mutated via caller slice: %+v", cached)
 	}
 
-	// Mutate returned slice: internal cache must remain unchanged
-	cached[0].ID = "corrupted_again"
-	cached2 := rt.SafeNodes()
-	if len(cached2) != 1 || cached2[0].ID != "node_1" {
-		t.Fatalf("internal cache was mutated via return slice: %+v", cached2)
+	// SafeNodes returns a shared read-only snapshot (cq-aik.29): later writes
+	// must be copy-on-write so a previously returned snapshot never changes.
+	snap := rt.SafeNodes()
+	rt.SetSafeNodes([]db.MapNode{{ID: "node_2", SafetyScore: 0.9}})
+	if len(snap) != 1 || snap[0].ID != "node_1" {
+		t.Fatalf("published snapshot changed after SetSafeNodes: %+v", snap)
+	}
+	if cur := rt.SafeNodes(); len(cur) != 1 || cur[0].ID != "node_2" {
+		t.Fatalf("cache not replaced: %+v", cur)
 	}
 }
 

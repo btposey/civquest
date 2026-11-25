@@ -41,6 +41,22 @@ func NewFactGraph() *FactGraph {
 	}
 }
 
+// newFactGraphSized initializes an empty FactGraph with capacity for n facts,
+// avoiding repeated map growth/rehash on the per-frame hot path.
+func newFactGraphSized(n int) *FactGraph {
+	return &FactGraph{facts: make(map[string]Fact, n)}
+}
+
+// Len returns the number of facts currently stored.
+func (g *FactGraph) Len() int {
+	if g == nil {
+		return 0
+	}
+	g.mu.RLock()
+	defer g.mu.RUnlock()
+	return len(g.facts)
+}
+
 // Set stores a Fact directly in the graph.
 func (g *FactGraph) Set(fact Fact) {
 	if g == nil {
