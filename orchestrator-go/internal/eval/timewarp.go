@@ -816,11 +816,7 @@ func (sim *TimeWarpSimulation) applyIntentFeedback(intent *civquestv1.AgentInten
 				sim.ActionOccurredThisStep = true
 
 				if sim.BlueprintDetector != nil {
-					idx := 0
-					if s1 := sim.runtime.System1State(); s1 != nil {
-						idx = s1.GetShelterBuildIndex()
-					}
-					sim.BlueprintDetector.OnBlockPlaced(pos, blockID, sim.currentTick, idx)
+					sim.BlueprintDetector.OnBlockPlaced(pos, blockID, sim.currentTick, sim.BlueprintDetector.Count())
 				}
 			}
 

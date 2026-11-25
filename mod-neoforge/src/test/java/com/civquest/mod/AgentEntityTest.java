@@ -3,7 +3,6 @@ package com.civquest.mod;
 import com.civquest.mod.actuator.BlockBreaker;
 import com.civquest.mod.actuator.IntentActuator;
 import com.civquest.mod.actuator.motor.AgentMotorFSM;
-import com.civquest.mod.actuator.motor.MotorState;
 import com.civquest.mod.grpc.v1.AgentIntent;
 import com.civquest.mod.grpc.v1.BlockPosProto;
 import com.civquest.mod.grpc.v1.DespawnAgentRequest;
@@ -829,7 +828,7 @@ public class AgentEntityTest {
     }
 
     @Test
-    @DisplayName("AgentEntity hurt() reflex preempts MINING via MotorPDA stack and popState resumes breaking with zero amnesia")
+    @DisplayName("AgentEntity hurt() reflex preempts MINING via MotorPDA stack and reflex pop resumes breaking with zero amnesia")
     void testDamageReflexPreemptsMiningAndResumesWithZeroAmnesia() {
         TestWorldContext ctx = new TestWorldContext();
         AgentEntity agent = ctx.createAgent("agent-reflex-01", "ReflexMiner");
@@ -862,7 +861,7 @@ public class AgentEntityTest {
                 .build();
 
         actuator.submitBatch(agent, batch);
-        assertEquals(MotorState.MINING, agent.getMotorFSM().getState());
+        assertInstanceOf(com.civquest.mod.actuator.motor.Mine.class, agent.getMotorFSM().topMotor().orElse(null));
 
         // Advance several ticks to accrue partial breaking progress
         for (int i = 0; i < 6; i++) {
@@ -870,7 +869,7 @@ public class AgentEntityTest {
         }
         float progressBeforeHit = agent.getBreaker().getProgress();
         assertTrue(progressBeforeHit > 0.0f, "Breaking progress must advance before interruption");
-        assertEquals(MotorState.MINING, agent.getMotorFSM().getState());
+        assertInstanceOf(com.civquest.mod.actuator.motor.Mine.class, agent.getMotorFSM().topMotor().orElse(null));
 
         // Simulate mob attack hitting the agent -> triggers hurt() reflex preemption
         Zombie attacker = mock(Zombie.class);
@@ -883,19 +882,19 @@ public class AgentEntityTest {
         // Zero knockback drift in mock air world so the agent remains within 4.5 blocks of the target ore
         agent.setDeltaMovement(0.0, 0.0, 0.0);
         agent.setPos(0.5, 64.0, 0.5);
-        assertEquals(MotorState.COMBAT_ENGAGED, agent.getMotorFSM().getState());
+        assertInstanceOf(com.civquest.mod.actuator.motor.Combat.class, agent.getMotorFSM().activeReflex().orElseThrow());
         assertEquals(1, agent.getMotorFSM().getStackDepth());
         assertEquals(IntentReceipt.ReceiptStatus.RECEIPT_STATUS_PREEMPTED_BY_REFLEX,
                 actuator.getCurrentReceipt(agent).getStatus());
         assertEquals(1, actuator.getCurrentReceipt(agent).getMotorStackDepth());
 
-        // Clear invulnerability / tick past combat timeout -> popState() restores MINING & progress
+        // Clear invulnerability / tick past combat timeout -> Combat frame pop restores MINING & progress
         for (int i = 0; i <= AgentMotorFSM.COMBAT_TIMEOUT_TICKS; i++) {
             agent.setDeltaMovement(0.0, 0.0, 0.0);
             agent.tick();
         }
-        assertEquals(MotorState.MINING, agent.getMotorFSM().getState(),
-                () -> "Expected MINING after popState, reason=" + agent.getMotorFSM().getLastAsyncFailureReason()
+        assertInstanceOf(com.civquest.mod.actuator.motor.Mine.class, agent.getMotorFSM().topMotor().orElse(null),
+                () -> "Expected MINING after reflex pop, reason=" + agent.getMotorFSM().getCurrentReceipt().getFailureReason()
                         + ", pos=(" + agent.getX() + "," + agent.getY() + "," + agent.getZ() + ")");
         assertEquals(0, agent.getMotorFSM().getStackDepth());
         assertTrue(agent.getBreaker().isBreaking());
@@ -910,7 +909,7 @@ public class AgentEntityTest {
         }
         assertEquals(IntentReceipt.ReceiptStatus.RECEIPT_STATUS_COMPLETED,
                 actuator.getCurrentReceipt(agent).getStatus());
-        assertEquals(MotorState.IDLE, agent.getMotorFSM().getState());
+        assertTrue(agent.getMotorFSM().isMotorIdle());
     }
 
     @Test
@@ -982,12 +981,12 @@ public class AgentEntityTest {
         assertEquals(0.5, spySleeping.getZ(), 1e-6);
 
         // 2. SURVEYING suppresses separation
-        agent.getMotorFSM().transitionTo(MotorState.SURVEYING, "test_survey");
+        agent.getMotorFSM().pushDirect(new com.civquest.mod.actuator.motor.Sweep(com.civquest.mod.grpc.v1.Vec3.getDefaultInstance(), 4, 48f, 2, 0, 0, java.util.List.of()));
         agent.applyHorizontalPeerSeparation();
         assertEquals(0.5, agent.getX(), 1e-6);
         assertEquals(64.0, agent.getY(), 1e-6);
         assertEquals(0.5, agent.getZ(), 1e-6);
-        agent.getMotorFSM().transitionTo(MotorState.IDLE, "test_done");
+        agent.getMotorFSM().flush();
 
         // 3. Active block breaking suppresses separation
         BlockPos breakPos = new BlockPos(1, 64, 0);

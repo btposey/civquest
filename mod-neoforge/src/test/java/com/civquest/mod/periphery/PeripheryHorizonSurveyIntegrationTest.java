@@ -4,7 +4,6 @@ import com.civquest.mod.AgentEntity;
 import com.civquest.mod.actuator.AgentNavigator;
 import com.civquest.mod.actuator.motor.AgentMotorFSM;
 import com.civquest.mod.actuator.motor.AgentWatchdogFSM;
-import com.civquest.mod.actuator.motor.MotorState;
 import com.civquest.mod.actuator.motor.WatchdogState;
 import com.civquest.mod.grpc.v1.AgentIntent;
 import com.civquest.mod.grpc.v1.BlockPosProto;
@@ -255,13 +254,13 @@ public class PeripheryHorizonSurveyIntegrationTest {
                 .build();
 
         harness.sendIntentBatch(surveyBatch);
-        assertEquals(MotorState.SURVEYING, agent.getMotorFSM().getState(),
-                "AgentMotorFSM must enter SURVEYING upon SurveyHorizonIntent");
+        assertTrue(agent.getMotorFSM().isSweeping(),
+                "AgentMotorFSM must push a Sweep frame upon SurveyHorizonIntent");
 
         // Tick 80 ticks (4.0 seconds) with NO additional IntentBatches from Go while survey runs
         tickServer(80);
 
-        assertEquals(MotorState.IDLE, agent.getMotorFSM().getState(),
+        assertTrue(agent.getMotorFSM().isMotorIdle(),
                 "AgentMotorFSM must return to IDLE after completing 72-tick horizon survey");
         assertEquals(IntentReceipt.ReceiptStatus.RECEIPT_STATUS_COMPLETED,
                 harness.getIntentActuator().getCurrentReceipt(agent).getStatus(),
@@ -317,13 +316,13 @@ public class PeripheryHorizonSurveyIntegrationTest {
 
         harness.sendIntentBatch(sleepBatch);
         assertTrue(agent.isSleeping(), "Agent must be sleeping after SLEEP_IN_BED");
-        assertEquals(MotorState.SLEEPING, agent.getMotorFSM().getState(),
-                "AgentMotorFSM must enter MotorState.SLEEPING");
+        assertInstanceOf(com.civquest.mod.actuator.motor.Sleep.class, agent.getMotorFSM().topMotor().orElse(null),
+                "AgentMotorFSM must hold a Sleep frame");
 
         // Tick 120 ticks (6.0 seconds) without Go sending new intents while sleeping
         tickServer(120);
 
-        assertEquals(MotorState.SLEEPING, agent.getMotorFSM().getState(),
+        assertInstanceOf(com.civquest.mod.actuator.motor.Sleep.class, agent.getMotorFSM().topMotor().orElse(null),
                 "AgentMotorFSM must remain SLEEPING for the full 120-tick night sleep");
         assertAll(
                 () -> assertFalse(observedWatchdogStates.contains(WatchdogState.STREAM_DEGRADED),
@@ -355,7 +354,7 @@ public class PeripheryHorizonSurveyIntegrationTest {
                 .build();
 
         harness.sendIntentBatch(initialSurvey);
-        assertEquals(MotorState.SURVEYING, agent.getMotorFSM().getState());
+        assertTrue(agent.getMotorFSM().isSweeping());
 
         // Over the next 20 ticks while SURVEYING, submit 10 duplicate SurveyHorizonIntent batches (batch_id=2..11)
         for (int i = 0; i < 20; i++) {
@@ -381,20 +380,20 @@ public class PeripheryHorizonSurveyIntegrationTest {
 
         // Tick up to tick 80 total (shortly after the ~72-tick survey finishes)
         tickServer(60);
-        MotorState stateAtTick80 = agent.getMotorFSM().getState();
+        boolean idleAtTick80 = agent.getMotorFSM().isMotorIdle();
         int queuedAtTick80 = harness.getIntentActuator().getQueuedBatchCount(agent);
 
         // Tick remainder of 200 ticks total to confirm no extra surveys execute
         tickServer(120);
 
         assertAll(
-                () -> assertEquals(MotorState.IDLE, stateAtTick80,
+                () -> assertTrue(idleAtTick80,
                         "MotorState must return to IDLE shortly after tick ~74 instead of staying locked in queued surveys"),
                 () -> assertEquals(0, queuedAtTick80,
                         "Duplicate SurveyHorizonIntent batches must not accumulate in pendingBatches"),
                 () -> assertEquals(1, queuedSurveyReports.size(),
                         "Avatar must execute EXACTLY 1 360-degree horizon survey, not 11 consecutive stationary surveys"),
-                () -> assertEquals(MotorState.IDLE, agent.getMotorFSM().getState(),
+                () -> assertTrue(agent.getMotorFSM().isMotorIdle(),
                         "MotorState must remain IDLE through tick 200 after the single survey completes")
         );
     }
@@ -439,7 +438,7 @@ public class PeripheryHorizonSurveyIntegrationTest {
 
         assertEquals(IntentReceipt.ReceiptStatus.RECEIPT_STATUS_FAILED, unreachableReceipt.getStatus(),
                 "Navigating toward unreachable elevated Y=94 OAK_LOG must cleanly report RECEIPT_STATUS_FAILED");
-        assertEquals(MotorState.IDLE, agent.getMotorFSM().getState(),
+        assertTrue(agent.getMotorFSM().isMotorIdle(),
                 "MotorState must return to IDLE after failing unreachable navigation");
 
         // Immediately submit NavigateIntent to reachable flat ground target (-10, 0, 0) relative -> (-10, 86, 0)
@@ -475,7 +474,7 @@ public class PeripheryHorizonSurveyIntegrationTest {
 
         assertEquals(IntentReceipt.ReceiptStatus.RECEIPT_STATUS_COMPLETED, reachableReceipt.getStatus(),
                 "Subsequent valid NavigateIntent to flat ground (-10, 0, 0) must succeed without lingering stuck state");
-        assertEquals(MotorState.IDLE, agent.getMotorFSM().getState(),
+        assertTrue(agent.getMotorFSM().isMotorIdle(),
                 "MotorState must return to IDLE upon arrival");
         assertTrue(positionRef.get().distanceTo(new Vec3(-9.5, 86.0, 0.5)) <= 1.5,
                 "Agent must physically arrive near (-9.5, 86.0, 0.5); actual pos=" + positionRef.get());

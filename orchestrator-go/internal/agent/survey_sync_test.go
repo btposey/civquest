@@ -11,7 +11,6 @@ import (
 	"github.com/btposey/civquest/orchestrator-go/internal/agent"
 	"github.com/btposey/civquest/orchestrator-go/internal/db"
 	civquestv1 "github.com/btposey/civquest/orchestrator-go/internal/proto/v1"
-	"github.com/btposey/civquest/orchestrator-go/internal/system1"
 	"github.com/btposey/civquest/orchestrator-go/internal/system2"
 	"github.com/btposey/civquest/orchestrator-go/internal/xdg"
 )
@@ -245,12 +244,10 @@ func TestRuntime_RendezvousSyncMergesClanDBScoresSiteAndChats(t *testing.T) {
 	})
 	_ = rt.DrainIntents() // drain initial nav intent
 
-	// Simulate returning within <= 20m of RendezvousOrigin (0, 64, 0)
-	st.ExpeditionPhase = system1.ExpeditionReturning
-	st.ExpeditionHops = 2
-
-	// First tick at (10, 64, 5): EvaluateHorizonExplorerLocked detects <=20m arrival and sets PendingRendezvousSync!
-	// Second tick (or HandleTelemetryFrame right after): processHorizonSurveyAndRendezvous consumes PendingRendezvousSync!
+	// An expedition frame returning within <= 20m of RendezvousOrigin (0, 64, 0) emits a
+	// RendezvousReport event (covered by TestExpedition_* in system1); the runtime drains it
+	// after the FSM tick.
+	rt.AgentFSM().QueueRendezvousReport("Returned from 2-hop S expedition (~90m out) to share frontier map.")
 	rt.HandleTelemetryFrame(&civquestv1.TelemetryFrame{
 		WorldTick: 300,
 		TimeOfDay: 4000,

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"google.golang.org/protobuf/proto"
 	"io"
 	"log"
 	"math"
@@ -110,23 +111,23 @@ type SocketStatusResponse struct {
 	Goals                 *system1.GoalHierarchy `json:"goals,omitempty"`
 
 	// Enriched fields for real-time Agent Viewer
-	Yaw         float32                   `json:"yaw,omitempty"`
-	Pitch       float32                   `json:"pitch,omitempty"`
-	MaxHealth   float32                   `json:"max_health,omitempty"`
-	Saturation  float32                   `json:"saturation,omitempty"`
-	Stamina     float32                   `json:"stamina,omitempty"`
-	IsSleeping  bool                      `json:"is_sleeping,omitempty"`
-	TimeOfDay   int64                     `json:"time_of_day,omitempty"`
-	Weather     string                    `json:"weather,omitempty"`
-	BiomeID     string                    `json:"biome_id,omitempty"`
-	Stage       string                    `json:"stage,omitempty"`
-	Routine     string                    `json:"routine,omitempty"`
-	Shift       string                    `json:"shift,omitempty"`
-	ArmorRating int32                     `json:"armor_rating,omitempty"`
-	StateStack  []system1.StateStackFrame `json:"state_stack,omitempty"`
-	Inventory   []CachedItem              `json:"inventory,omitempty"`
-	Blackboard  map[string]system1.Fact   `json:"blackboard,omitempty"`
-	Reflections *ViewerReflections        `json:"reflections,omitempty"`
+	Yaw           float32                     `json:"yaw,omitempty"`
+	Pitch         float32                     `json:"pitch,omitempty"`
+	MaxHealth     float32                     `json:"max_health,omitempty"`
+	Saturation    float32                     `json:"saturation,omitempty"`
+	Stamina       float32                     `json:"stamina,omitempty"`
+	IsSleeping    bool                        `json:"is_sleeping,omitempty"`
+	TimeOfDay     int64                       `json:"time_of_day,omitempty"`
+	Weather       string                      `json:"weather,omitempty"`
+	BiomeID       string                      `json:"biome_id,omitempty"`
+	Stage         string                      `json:"stage,omitempty"`
+	Routine       string                      `json:"routine,omitempty"`
+	Shift         string                      `json:"shift,omitempty"`
+	ArmorRating   int32                       `json:"armor_rating,omitempty"`
+	ActivityStack []system1.ActivityFrameView `json:"activity_stack,omitempty"`
+	Inventory     []CachedItem                `json:"inventory,omitempty"`
+	Blackboard    map[string]system1.Fact     `json:"blackboard,omitempty"`
+	Reflections   *ViewerReflections          `json:"reflections,omitempty"`
 }
 
 // ViewerReflections represents recent deliberative System 2 reflections, dialogue, and chronicles.
@@ -151,10 +152,13 @@ type AgentRuntime struct {
 	connector      StreamConnector
 
 	// Intent/batch sequence numbering and outbound queue
-	sequenceID    atomic.Int64
-	nextBatchID   atomic.Int64
-	slotQueue     *SlotQueue
-	framePipeline *FramePipeline
+	sequenceID atomic.Int64
+	// lastHarvestPos: block of the last emitted HARVEST_BREAK, taken by the receipt stage to prune its POI.
+	lastHarvestPos atomic.Pointer[civquestv1.BlockPosProto]
+	nextBatchID    atomic.Int64
+	slotQueue      *SlotQueue
+	frameSeam      frameSeam
+	framePipeline  *FramePipeline
 
 	// Diagnostics & Socket
 	socketPath string
@@ -376,11 +380,6 @@ func NewRuntime(cfg Config) (*AgentRuntime, error) {
 	return runtime, nil
 }
 
-// AgentID returns the unique identifier for this agent avatar.
-func (r *AgentRuntime) AgentID() string {
-	return r.agentID
-}
-
 // AgentUUID returns the agent's offline UUID.
 func (r *AgentRuntime) AgentUUID() string {
 	r.mu.RLock()
@@ -404,13 +403,6 @@ func (r *AgentRuntime) ReputationDB() *db.ReputationDB {
 	return r.reputationDB
 }
 
-// SetReputationDB configures the clan reputation database handle.
-func (r *AgentRuntime) SetReputationDB(rep *db.ReputationDB) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	r.reputationDB = rep
-}
-
 // PermadeathResult returns the result of the permadeath teardown, or nil if not dead.
 func (r *AgentRuntime) PermadeathResult() *PermadeathResult {
 	r.mu.RLock()
@@ -418,24 +410,9 @@ func (r *AgentRuntime) PermadeathResult() *PermadeathResult {
 	return r.permadeathResult
 }
 
-// ClanID returns the clan identifier for this agent.
-func (r *AgentRuntime) ClanID() string {
-	return r.clanID
-}
-
-// Resolver returns the XDG filesystem path resolver.
-func (r *AgentRuntime) Resolver() *xdg.Resolver {
-	return r.resolver
-}
-
 // AgentDB returns the local SQLite database handle.
 func (r *AgentRuntime) AgentDB() *db.AgentDB {
 	return r.agentDB
-}
-
-// BridgeClient returns the gRPC bridge client.
-func (r *AgentRuntime) BridgeClient() *bridge.Client {
-	return r.bridgeClient
 }
 
 // IdentityConfig returns the loaded identity YAML profile.
@@ -479,13 +456,6 @@ func (r *AgentRuntime) SecondaryHobby() string {
 	return r.identityConfig.SecondaryHobby
 }
 
-// SetDialogueService assigns the System 2 deliberative dialogue service.
-func (r *AgentRuntime) SetDialogueService(d *system2.DialogueService) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	r.dialogueService = d
-}
-
 // DialogueService returns the configured System 2 dialogue service, or nil if unset.
 func (r *AgentRuntime) DialogueService() *system2.DialogueService {
 	r.mu.RLock()
@@ -493,116 +463,11 @@ func (r *AgentRuntime) DialogueService() *system2.DialogueService {
 	return r.dialogueService
 }
 
-// ChroniclerService returns the configured System 2 Clan Chronicler service, or nil if unset.
-func (r *AgentRuntime) ChroniclerService() *system2.ChroniclerService {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-	return r.chroniclerService
-}
-
-// SetChroniclerService assigns or updates the System 2 Clan Chronicler service.
-func (r *AgentRuntime) SetChroniclerService(c *system2.ChroniclerService) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	r.chroniclerService = c
-}
-
-// ToponymyService returns the configured System 2 Toponymy naming service, or nil if unset.
-func (r *AgentRuntime) ToponymyService() *system2.ToponymyService {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-	return r.toponymyService
-}
-
-// SetToponymyService assigns or updates the System 2 Toponymy naming service.
-func (r *AgentRuntime) SetToponymyService(t *system2.ToponymyService) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	r.toponymyService = t
-}
-
 // CompanionService returns the configured System 2 Companion service, or nil if unset.
 func (r *AgentRuntime) CompanionService() *system2.CompanionService {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	return r.companionService
-}
-
-// SetCompanionService assigns or updates the System 2 Companion service.
-func (r *AgentRuntime) SetCompanionService(c *system2.CompanionService) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	r.companionService = c
-}
-
-// LandmarksDB returns the clan landmarks database handle.
-func (r *AgentRuntime) LandmarksDB() *db.LandmarksDB {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-	return r.landmarksDB
-}
-
-// SetLandmarksDB configures the clan landmarks database handle.
-func (r *AgentRuntime) SetLandmarksDB(l *db.LandmarksDB) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	r.landmarksDB = l
-}
-
-// CivicRegistryDB returns the clan civic registry database handle.
-func (r *AgentRuntime) CivicRegistryDB() *db.CivicRegistryDB {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-	return r.civicRegistryDB
-}
-
-// SetCivicRegistryDB assigns the clan civic registry database handle.
-func (r *AgentRuntime) SetCivicRegistryDB(c *db.CivicRegistryDB) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	r.civicRegistryDB = c
-}
-
-// RumorsDB returns the clan rumors database handle.
-func (r *AgentRuntime) RumorsDB() *db.RumorsDB {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-	return r.rumorsDB
-}
-
-// SetRumorsDB assigns the clan rumors database handle.
-func (r *AgentRuntime) SetRumorsDB(rum *db.RumorsDB) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	r.rumorsDB = rum
-}
-
-// DiplomacyDB returns the clan diplomacy database handle.
-func (r *AgentRuntime) DiplomacyDB() *db.DiplomacyDB {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-	return r.diplomacyDB
-}
-
-// SetDiplomacyDB assigns the clan diplomacy database handle.
-func (r *AgentRuntime) SetDiplomacyDB(d *db.DiplomacyDB) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	r.diplomacyDB = d
-}
-
-// ContemplationService returns the System 2 Contemplation service if configured.
-func (r *AgentRuntime) ContemplationService() *system2.ContemplationService {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-	return r.contemplationService
-}
-
-// SetContemplationService assigns or updates the System 2 Contemplation service.
-func (r *AgentRuntime) SetContemplationService(c *system2.ContemplationService) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	r.contemplationService = c
 }
 
 // SetPeerReplyJitterDisabled configures whether staggered peer-reply jitter is disabled (for deterministic tests).
@@ -686,11 +551,6 @@ func (r *AgentRuntime) PavingTracker() *system1.RoadPavingTracker {
 	return r.system1State.GetPavingTracker()
 }
 
-// AssignedBed returns a defensive copy of the agent's assigned bed position.
-func (r *AgentRuntime) AssignedBed() *civquestv1.BlockPosProto {
-	return r.system1State.GetAssignedBed()
-}
-
 // SetAssignedBed assigns the designated bed block position.
 func (r *AgentRuntime) SetAssignedBed(pos *civquestv1.BlockPosProto) {
 	r.system1State.SetAssignedBed(pos)
@@ -718,11 +578,6 @@ func (r *AgentRuntime) Routine() system1.Routine {
 	return r.system1State.Routine()
 }
 
-// CurrentRoutine returns the current System 1 routine state (backward compatibility).
-func (r *AgentRuntime) CurrentRoutine() system1.RoutineState {
-	return r.Routine()
-}
-
 // AgentFSM returns the System 1 Hierarchical Finite State Machine instance.
 func (r *AgentRuntime) AgentFSM() *system1.AgentFSM {
 	r.mu.RLock()
@@ -743,11 +598,6 @@ func (r *AgentRuntime) IsCompanionActive() bool {
 // SocketPath returns the bound UNIX domain socket path.
 func (r *AgentRuntime) SocketPath() string {
 	return r.socketPath
-}
-
-// PID returns the current process ID.
-func (r *AgentRuntime) PID() int {
-	return r.pid
 }
 
 // Status returns the current runtime execution status (e.g., INITIALIZING, RUNNING, DEAD, STOPPED).
@@ -792,11 +642,6 @@ func (r *AgentRuntime) LastReceipt() *civquestv1.IntentReceipt {
 	return r.system1State.GetLastReceipt()
 }
 
-// SetLastReceipt stores a defensive copy of the latest IntentReceipt received from the server.
-func (r *AgentRuntime) SetLastReceipt(receipt *civquestv1.IntentReceipt) {
-	r.system1State.SetLastReceipt(receipt)
-}
-
 // LatestFrame returns a defensive copy of the most recently received sensory TelemetryFrame.
 func (r *AgentRuntime) LatestFrame() *civquestv1.TelemetryFrame {
 	return r.system1State.LatestFrame()
@@ -807,13 +652,6 @@ func (r *AgentRuntime) IsDead() bool {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	return r.isDead
-}
-
-// DeathEvent returns the terminal DeathEvent, if recorded.
-func (r *AgentRuntime) DeathEvent() *civquestv1.DeathEvent {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-	return r.deathEvent
 }
 
 // UptimeSeconds returns elapsed runtime duration in seconds.
@@ -861,11 +699,6 @@ func (r *AgentRuntime) ActiveLLMRequests() int32 {
 // IncrementActiveLLM increments the active System 2 LLM request counter.
 func (r *AgentRuntime) IncrementActiveLLM() int32 {
 	return r.activeLLMRequests.Add(1)
-}
-
-// DecrementActiveLLM decrements the active System 2 LLM request counter.
-func (r *AgentRuntime) DecrementActiveLLM() int32 {
-	return r.activeLLMRequests.Add(-1)
 }
 
 // CurrentUtilityScores evaluates the current System 1 utility scores synchronously in <0.1ms.
@@ -999,7 +832,7 @@ func (r *AgentRuntime) QueueIntent(intent *civquestv1.AgentIntent) error {
 	}
 
 	if ib := intent.GetInteractBlock(); ib != nil && ib.InteractionType == civquestv1.InteractBlockIntent_HARVEST_BREAK && ib.Pos != nil {
-		r.system1State.SetLastHarvestPos(ib.Pos)
+		r.lastHarvestPos.Store(proto.Clone(ib.Pos).(*civquestv1.BlockPosProto))
 	}
 
 	r.slotQueue.Put(false, intent)
@@ -1073,7 +906,7 @@ func (r *AgentRuntime) QueuePriorityIntent(intent *civquestv1.AgentIntent) error
 	}
 
 	if ib := intent.GetInteractBlock(); ib != nil && ib.InteractionType == civquestv1.InteractBlockIntent_HARVEST_BREAK && ib.Pos != nil {
-		r.system1State.SetLastHarvestPos(ib.Pos)
+		r.lastHarvestPos.Store(proto.Clone(ib.Pos).(*civquestv1.BlockPosProto))
 	}
 
 	r.slotQueue.Put(true, intent)
@@ -1324,6 +1157,7 @@ func (r *AgentRuntime) sendLoop(ctx context.Context, cancel context.CancelFunc, 
 			FlushPeriphery: flush,
 			Intents:        intents,
 		}
+		r.frameSeam.stamp(batch)
 		if err := stream.Send(batch); err != nil {
 			sendErr = err
 			cancel()
@@ -1398,9 +1232,6 @@ func (r *AgentRuntime) HandleTelemetryFrame(frame *civquestv1.TelemetryFrame) {
 
 	deathEv := r.ingestFrameHeader(frame)
 	if deathEv != nil {
-		if frame.Status != nil && frame.Status.NavigationState == civquestv1.NavigationState_NAVIGATION_STATE_STUCK {
-			r.handleNavigationStuck()
-		}
 		r.executePermadeath(deathEv)
 		return
 	}
@@ -2749,20 +2580,6 @@ func (r *AgentRuntime) updateIdleTracker(frame *civquestv1.TelemetryFrame, resul
 	r.system1State.UpdateIdleTracker(frame.WorldTick, frame.Status.Position, r.IsDead() || inEmergency || isSleeping, emittedProductive)
 }
 
-// ContractsDB returns the handle to the clan contracts database.
-func (r *AgentRuntime) ContractsDB() *db.ContractsDB {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-	return r.contractsDB
-}
-
-// SharecroppingEngine returns the agrarian sharecropping engine if configured.
-func (r *AgentRuntime) SharecroppingEngine() *agrarian.SharecroppingEngine {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-	return r.sharecroppingEngine
-}
-
 // loadSafeNodes pre-loads topological nodes with SafetyScore >= 0.7 from map_graph.db into in-memory cache.
 func (r *AgentRuntime) loadSafeNodes() {
 	if r.agentDB == nil {
@@ -2950,29 +2767,22 @@ func (r *AgentRuntime) NavTargetPOIID() string {
 	return r.system1State.NavTargetPOIID()
 }
 
-// handleNavigationStuck handles NAVIGATION_STATE_STUCK telemetry while pathing toward a POI target.
-func (r *AgentRuntime) handleNavigationStuck() {
-	poiID, dest := r.system1State.TakeNavTargetForStuck()
-
-	if dest != nil && !r.system1State.IsExpeditionActive() {
-		r.system1State.RecordTargetNavigationStuck(dest.X, dest.Y, dest.Z, r.WorldTick(), system1.DefaultUnreachableTargetTTL)
-	}
+// applyRecoverGiveUps decays the reliability of the POI each Recover give-up's target belonged
+// to (ADR-037 §4). The blacklist itself was written by the Recover frame's Memory write;
+// congestion never produces a give-up event.
+func (r *AgentRuntime) applyRecoverGiveUps() {
+	r.mu.RLock()
+	fsm := r.agentFSM
+	r.mu.RUnlock()
 	si := r.system1State.SpatialIndex()
-	if si == nil {
-		return
-	}
-
-	if poiID == "" && dest != nil {
-		if poi := si.FindPOIByTargetPos(&civquestv1.Vec3{X: dest.X, Y: dest.Y, Z: dest.Z}, 1.5); poi != nil {
-			poiID = poi.POIID
+	for _, g := range fsm.DrainRecoverGiveUps() {
+		if si == nil {
+			continue
+		}
+		if poi := si.FindPOIByTargetPos(&civquestv1.Vec3{X: g.Target[0], Y: g.Target[1], Z: g.Target[2]}, 1.5); poi != nil {
+			r.HandleNavigationStuckForPOI(poi.POIID)
 		}
 	}
-
-	if poiID == "" {
-		return
-	}
-
-	r.HandleNavigationStuckForPOI(poiID)
 }
 
 // HandleNavigationStuckForPOI reduces a POI's reliability by 0.25 in SpatialIndex and AgentDB.
@@ -3038,11 +2848,6 @@ func (r *AgentRuntime) invalidatePOIsAsync(poiIDs []string) {
 			_ = agentDB.InvalidatePOI(ctx, id)
 		}
 	}()
-}
-
-// decayPOIReliabilityAsync asynchronously decays a POI's reliability in AgentDB.
-func (r *AgentRuntime) decayPOIReliabilityAsync(poiID string, delta float64) {
-	r.decayAndOptionallyInvalidatePOIAsync(poiID, delta, false)
 }
 
 // decayAndOptionallyInvalidatePOIAsync asynchronously decays a POI's reliability in AgentDB
@@ -3115,57 +2920,6 @@ func (r *AgentRuntime) persistTrailCorridorAsync(corridor db.TrailCorridor) {
 // HabitTrailTracker returns the agent's in-memory HabitTrailTracker.
 func (r *AgentRuntime) HabitTrailTracker() *system1.HabitTrailTracker {
 	return r.system1State.HabitTrailTracker()
-}
-
-// NavigateViaCorridor attempts to initiate multi-waypoint navigation along a known
-// TrailCorridor to destPOIID. Returns true if a corridor route was found and started.
-func (r *AgentRuntime) NavigateViaCorridor(destPOIID string, destPos *civquestv1.Vec3) bool {
-	if destPOIID == "" {
-		return false
-	}
-	si := r.system1State.SpatialIndex()
-	tracker := r.system1State.HabitTrailTracker()
-	if si == nil || tracker == nil {
-		return false
-	}
-
-	destPOI, ok := si.GetPOI(destPOIID)
-	if !ok || destPOI == nil {
-		return false
-	}
-
-	targetPos := destPos
-	if targetPos == nil {
-		targetPos = &civquestv1.Vec3{X: destPOI.X, Y: destPOI.Y, Z: destPOI.Z}
-	}
-
-	originID := tracker.CurrentOriginPOIID()
-	agentPos := r.Position()
-	if originID == "" || originID == destPOIID {
-		if agentPos != nil {
-			if nearPOI := si.FindNearestPOI(agentPos, "", "", 8.0, ""); nearPOI != nil && nearPOI.POIID != destPOIID {
-				originID = nearPOI.POIID
-				tracker.SetOriginPOI(nearPOI.POIID, &civquestv1.Vec3{X: nearPOI.X, Y: nearPOI.Y, Z: nearPOI.Z})
-			}
-		}
-	}
-
-	if originID == "" || originID == destPOIID {
-		return false
-	}
-
-	corridor, ok := si.GetCorridor(originID, destPOIID)
-	if !ok || corridor == nil || corridor.WaypointsJSON == "" || corridor.WaypointsJSON == "[]" {
-		return false
-	}
-
-	tracker.SetDestinationPOI(destPOIID, targetPos)
-	firstIntent, err := tracker.StartCorridorNavigation(r.agentID, corridor, targetPos)
-	if err != nil || firstIntent == nil {
-		return false
-	}
-
-	return r.QueueIntent(firstIntent) == nil
 }
 
 // prepareNavigateIntent inspects outbound NavigateIntents, resolves target POIs,
@@ -4040,12 +3794,12 @@ func (r *AgentRuntime) Snapshot() SocketStatusResponse {
 	navDest := r.NavigationDestination()
 
 	var currentStage, currentRoutine string
-	var stateStack []system1.StateStackFrame
+	var activityStack []system1.ActivityFrameView
 	var blackboard map[string]system1.Fact
 	if fsm != nil {
 		currentStage = string(fsm.CurrentStage())
 		currentRoutine = string(fsm.CurrentRoutine())
-		stateStack = fsm.StackFrames()
+		activityStack = fsm.ActivityFrames()
 		if facts := fsm.LastFacts(); facts != nil {
 			blackboard = facts.AllFacts()
 		}
@@ -4100,7 +3854,7 @@ func (r *AgentRuntime) Snapshot() SocketStatusResponse {
 		Routine:               currentRoutine,
 		Shift:                 shiftStr,
 		ArmorRating:           CalculateArmorRating(invItems),
-		StateStack:            stateStack,
+		ActivityStack:         activityStack,
 		Inventory:             invItems,
 		Blackboard:            blackboard,
 		Reflections:           refl,

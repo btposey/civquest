@@ -5,7 +5,6 @@ import com.civquest.mod.actuator.AgentNavigator;
 import com.civquest.mod.actuator.LocalPathPlanner;
 import com.civquest.mod.actuator.motor.AgentMotorFSM;
 import com.civquest.mod.actuator.motor.AgentWatchdogFSM;
-import com.civquest.mod.actuator.motor.MotorState;
 import com.civquest.mod.actuator.motor.WatchdogState;
 import com.civquest.mod.grpc.v1.AgentIntent;
 import com.civquest.mod.grpc.v1.HorizonSector;
@@ -89,7 +88,8 @@ public class PeripheryTerrainHazardIntegrationTest {
     private AtomicReference<HorizonSurveyReport> pendingSurvey;
     private int ceilingCollisionCount;
     private List<HorizonSurveyReport> completedSurveys;
-    private List<MotorState> observedMotorStates;
+    private List<String> observedMotorStates;
+    private int observedStuckFailures;
     private List<WatchdogState> observedWatchdogStates;
 
     @BeforeAll
@@ -111,6 +111,7 @@ public class PeripheryTerrainHazardIntegrationTest {
         pendingSurvey = new AtomicReference<>();
         completedSurveys = new CopyOnWriteArrayList<>();
         observedMotorStates = new ArrayList<>();
+        observedStuckFailures = 0;
         observedWatchdogStates = new ArrayList<>();
 
         doAnswer(invoc -> {
@@ -459,7 +460,12 @@ public class PeripheryTerrainHazardIntegrationTest {
             watchdogFSM.tick();
             observedWatchdogStates.add(watchdogFSM.getState());
             agent.tick();
-            observedMotorStates.add(agent.getMotorFSM().getState());
+            observedMotorStates.add(agent.getMotorFSM().topMotor().map(m -> m.getClass().getSimpleName()).orElse("Idle"));
+            com.civquest.mod.grpc.v1.IntentReceipt stuckReceipt = agent.getMotorFSM().getCurrentReceipt();
+            if (stuckReceipt.getStatus() == com.civquest.mod.grpc.v1.IntentReceipt.ReceiptStatus.RECEIPT_STATUS_FAILED
+                    && "Navigation stuck".equals(stuckReceipt.getFailureReason())) {
+                observedStuckFailures++;
+            }
             harness.getEntityManager().tickTelemetry(agent.tickCount);
             clearInvocations(mockLevel, agent);
         }
@@ -571,7 +577,7 @@ public class PeripheryTerrainHazardIntegrationTest {
     // Test 2: River / Water Crossing
     // -----------------------------------------------------------------------------------------
     @Test
-    @DisplayName("2. 3-wide, 2-deep river channel is detected as WATER by HorizonSurveyScanner and crossed without STUCK_RECOVERY")
+    @DisplayName("2. 3-wide, 2-deep river channel is detected as WATER by HorizonSurveyScanner and crossed without a stuck failure")
     void testRiverWaterCrossingWithoutStalling() {
         buildFlatGround(63, -15, 20, -20, 20);
         // 3-block-wide river channel at x=4..6, 2 blocks deep (y=62..63 water, riverbed y=61), banks at y=64
@@ -603,8 +609,8 @@ public class PeripheryTerrainHazardIntegrationTest {
         }
 
         assertTrue(enteredWater, "Agent must enter and swim/wade across the river channel");
-        assertFalse(observedMotorStates.contains(MotorState.STUCK_RECOVERY),
-                "Crossing 2-block-deep river and stepping onto bank must NOT trigger STUCK_RECOVERY; states="
+        assertEquals(0, observedStuckFailures,
+                "Crossing 2-block-deep river and stepping onto bank must NOT trigger a stuck failure (ADR-037 facts); states="
                         + observedMotorStates);
         assertEquals(IntentReceipt.ReceiptStatus.RECEIPT_STATUS_COMPLETED, receipt.getStatus(),
                 "Navigation across river must complete; status=" + receipt.getStatus()
@@ -617,16 +623,16 @@ public class PeripheryTerrainHazardIntegrationTest {
     // Test 3: Aggro Mob Cluster Ambush Mid-Survey
     // -----------------------------------------------------------------------------------------
     @Test
-    @DisplayName("3. Hostile ambush mid-72-tick survey preempts SURVEYING -> COMBAT_ENGAGED without Watchdog disconnect, then fresh survey completes")
+    @DisplayName("3. Hostile ambush mid-72-tick survey preempts the Sweep with a Dodge reflex frame without Watchdog disconnect, then fresh survey completes")
     void testAggroMobClusterMidSurveyPreemptsAndResumesCleanly() {
         buildFlatGround(63, -15, 15, -15, 15);
 
         sendSurvey(10L, 36, 64.0f, 2);
-        assertEquals(MotorState.SURVEYING, agent.getMotorFSM().getState());
+        assertTrue(agent.getMotorFSM().isSweeping());
 
         // Run first 20 ticks of the 72-tick survey
         tickServer(20);
-        assertEquals(MotorState.SURVEYING, agent.getMotorFSM().getState());
+        assertTrue(agent.getMotorFSM().isSweeping());
         assertEquals(WatchdogState.CONNECTED_ACTIVE, watchdogFSM.getState());
 
         // Tick 20: Inject hostile mob cluster ambush (hissing Creeper + incoming projectile + damage event)
@@ -657,28 +663,29 @@ public class PeripheryTerrainHazardIntegrationTest {
         when(ambushDamage.getEntity()).thenReturn(creeper);
         harness.simulateDamage(agent, ambushDamage, 4.0f);
 
-        // Next tick detects incoming projectile trajectory via checkIncomingProjectileHazard -> preemptWithCombatReflex
+        // Next tick detects incoming projectile trajectory via checkIncomingProjectileHazard -> preemptWithDodgeReflex
         tickServer(1);
 
-        assertEquals(MotorState.COMBAT_ENGAGED, agent.getMotorFSM().getState(),
-                "Ambush mid-survey must immediately preempt SURVEYING -> COMBAT_ENGAGED");
+        assertTrue(agent.getMotorFSM().activeReflex().isPresent(),
+                "Ambush mid-survey must immediately preempt the Sweep with a reflex frame");
+        assertTrue(agent.getMotorFSM().hasSweepFrame(), "Sweep stays suspended beneath the reflex");
         assertEquals(1, agent.getMotorFSM().getStackDepth(),
-                "SURVEYING frame must be pushed onto the MotorPDA stack");
+                "reflex frame must be pushed over the Sweep");
         assertEquals(IntentReceipt.ReceiptStatus.RECEIPT_STATUS_PREEMPTED_BY_REFLEX,
                 harness.getIntentActuator().getCurrentReceipt(agent).getStatus(),
-                "Receipt must report PREEMPTED_BY_REFLEX while COMBAT_ENGAGED holds the stack");
+                "Receipt must report PREEMPTED_BY_REFLEX while a reflex frame holds the stack");
 
         // Clear threats and let combat disengage cleanly (COMBAT_TIMEOUT_TICKS = 60)
         harness.removeEntity(arrow);
         harness.removeEntity(creeper);
         tickServer(AgentMotorFSM.COMBAT_TIMEOUT_TICKS + 2);
 
-        // PDA must have popped back to SURVEYING (or already completed remaining sectors); finish it cleanly
-        for (int t = 0; t < 80 && agent.getMotorFSM().getState() == MotorState.SURVEYING; t++) {
+        // Reflex must have popped back to the Sweep (or already completed remaining sectors); finish it cleanly
+        for (int t = 0; t < 80 && agent.getMotorFSM().isSweeping(); t++) {
             tickServer(1);
         }
 
-        assertEquals(MotorState.IDLE, agent.getMotorFSM().getState(),
+        assertTrue(agent.getMotorFSM().isMotorIdle(),
                 "MotorState must return to IDLE after popped survey finishes");
         assertEquals(0, agent.getMotorFSM().getStackDepth());
         assertFalse(observedWatchdogStates.contains(WatchdogState.DISCONNECTED_SAFE_MODE),
@@ -689,12 +696,12 @@ public class PeripheryTerrainHazardIntegrationTest {
         completedSurveys.clear();
         harness.clearReceivedFrames();
         sendSurvey(11L, 36, 64.0f, 2);
-        assertEquals(MotorState.SURVEYING, agent.getMotorFSM().getState());
+        assertTrue(agent.getMotorFSM().isSweeping());
         assertEquals(WatchdogState.CONNECTED_ACTIVE, watchdogFSM.getState());
 
         tickServer(80);
 
-        assertEquals(MotorState.IDLE, agent.getMotorFSM().getState(),
+        assertTrue(agent.getMotorFSM().isMotorIdle(),
                 "Fresh post-combat survey must return cleanly to IDLE");
         assertEquals(IntentReceipt.ReceiptStatus.RECEIPT_STATUS_COMPLETED,
                 harness.getIntentActuator().getCurrentReceipt(agent).getStatus());
@@ -762,8 +769,8 @@ public class PeripheryTerrainHazardIntegrationTest {
                 "Agent must climb over the y=67 mountain pass crest; maxY=" + maxYReached);
         assertEquals(0, zeroVelHops,
                 "Agent must not perform zero-velocity in-place hops during ridge pass traversal");
-        assertFalse(observedMotorStates.contains(MotorState.STUCK_RECOVERY),
-                "Mountain pass traversal must not stall into STUCK_RECOVERY; states=" + observedMotorStates);
+        assertEquals(0, observedStuckFailures,
+                "Mountain pass traversal must not stall into a stuck failure (ADR-037 facts); states=" + observedMotorStates);
         assertEquals(IntentReceipt.ReceiptStatus.RECEIPT_STATUS_COMPLETED, receipt.getStatus(),
                 "Agent must reach far side of ridge; status=" + receipt.getStatus()
                         + " reason=" + receipt.getFailureReason() + " pos=" + positionRef.get());
@@ -819,6 +826,12 @@ public class PeripheryTerrainHazardIntegrationTest {
             if (navigator.isEnclosed()) {
                 sawNavigatorEnclosed = true;
             }
+            // ADR-037: the enclosed Move now ends FAILED at once and reports enclosed as a receipt fact
+            IntentReceipt factsReceipt = harness.getIntentActuator().getCurrentReceipt(agent);
+            if (factsReceipt.getFacts().getEnclosed()) {
+                sawNavigatorEnclosed = true;
+                assertFalse(factsReceipt.getFacts().getBlockedByEntity(), "sealed alcove is terrain");
+            }
             if (deltaMovementRef.get().y > 0.35 || positionRef.get().y > 40.2) {
                 ceilingHops++;
             }
@@ -829,6 +842,7 @@ public class PeripheryTerrainHazardIntegrationTest {
         // --- Part B: Cave chamber exit up stepped tunnel ---
         harness.getIntentActuator().flush(agent);
         observedMotorStates.clear();
+        observedStuckFailures = 0;
         ceilingCollisionCount = 0;
         positionRef.set(new Vec3(1.5, 40.0, 0.5));
         deltaMovementRef.set(Vec3.ZERO);
@@ -861,8 +875,8 @@ public class PeripheryTerrainHazardIntegrationTest {
                 "Stepped cave exit must not trigger repeated jump loops in the same cell");
         assertTrue(totalJumps <= 6,
                 "4-step cave exit must require only ~1 jump per step (<=6 total); got " + totalJumps);
-        assertFalse(observedMotorStates.contains(MotorState.STUCK_RECOVERY),
-                "Cave tunnel exit must complete without STUCK_RECOVERY; states=" + observedMotorStates);
+        assertEquals(0, observedStuckFailures,
+                "Cave tunnel exit must complete without a stuck failure (ADR-037 facts); states=" + observedMotorStates);
         assertEquals(IntentReceipt.ReceiptStatus.RECEIPT_STATUS_COMPLETED, exitReceipt.getStatus(),
                 "Agent must exit cave chamber up stepped tunnel to (9.5, 44.0, 0.5); status=" + exitReceipt.getStatus()
                         + " reason=" + exitReceipt.getFailureReason() + " pos=" + positionRef.get());

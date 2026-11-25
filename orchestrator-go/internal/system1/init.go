@@ -40,8 +40,5 @@ func RegisterDefaultEvaluatorsAndSkills(reg *EngineRegistry) {
 	reg.RegisterSkill(NewStrategicDirectiveSkill())
 	reg.RegisterSkill(NewTaskSubroutineSkill())
 	reg.RegisterSkill(NewPatrolExplorationSkill())
-	reg.RegisterSkill(NewStageBootstrapSkill())
-	reg.RegisterSkill(NewStageSettlementSkill())
-	reg.RegisterSkill(NewStageColonizeSkill())
 	reg.RegisterSkill(NewStageEmergencySkill())
 }

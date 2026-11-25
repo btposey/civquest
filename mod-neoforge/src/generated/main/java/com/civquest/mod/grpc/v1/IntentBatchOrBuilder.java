@@ -62,4 +62,14 @@ public interface IntentBatchOrBuilder extends
    * @return The timeoutTicks.
    */
   long getTimeoutTicks();
+
+  /**
+   * <pre>
+   * Go Frame.ID that emitted the batch (ADR-036 s5; 0 = legacy)
+   * </pre>
+   *
+   * <code>uint64 frame_id = 6;</code>
+   * @return The frameId.
+   */
+  long getFrameId();
 }

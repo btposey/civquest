@@ -32,16 +32,6 @@ func Distance3D(a, b *civquestv1.Vec3) float64 {
 	return math.Sqrt(dx*dx + dy*dy + dz*dz)
 }
 
-// Distance2D returns the horizontal (X-Z plane) Euclidean distance between two points.
-func Distance2D(a, b *civquestv1.Vec3) float64 {
-	if a == nil || b == nil {
-		return 0
-	}
-	dx := a.X - b.X
-	dz := a.Z - b.Z
-	return math.Sqrt(dx*dx + dz*dz)
-}
-
 // EncodeWaypointsJSON serializes a slice of 3D waypoints into a JSON array of [x, y, z] triples.
 func EncodeWaypointsJSON(waypoints []*civquestv1.Vec3) (string, error) {
 	if len(waypoints) == 0 {

@@ -5,7 +5,6 @@ import com.civquest.mod.actuator.AgentNavigator;
 import com.civquest.mod.actuator.IntentActuator;
 import com.civquest.mod.actuator.motor.AgentMotorFSM;
 import com.civquest.mod.actuator.motor.AgentWatchdogFSM;
-import com.civquest.mod.actuator.motor.MotorState;
 import com.civquest.mod.grpc.v1.AgentIntent;
 import com.civquest.mod.grpc.v1.BlockPosProto;
 import com.civquest.mod.grpc.v1.CraftItemIntent;
@@ -87,7 +86,7 @@ import static org.mockito.Mockito.*;
  * RED-phase regression test suite for:
  * 1) Horizontal personal-space separation among overlapping {@link AgentEntity} peers
  *    without vertical stacking or hazard/cliff drift (cq-otm.2 / cq-otm.3).
- * 2) {@link IntentActuator} NavigateIntent-only batch coalescing during {@link MotorState#STUCK_RECOVERY}
+ * 2) {@link IntentActuator} NavigateIntent-only batch coalescing after a stuck Move failure (ADR-037)
  *    to prevent rapid-fire 1-tick arrival bursts while preserving non-navigate queued intents.
  */
 public class PeripherySeparationAndQueueRegressionTest {
@@ -499,11 +498,11 @@ public class PeripherySeparationAndQueueRegressionTest {
     }
 
     // -----------------------------------------------------------------------------------------
-    // Scenario 2: NavigateIntent-only Batches During STUCK_RECOVERY Coalescing (RED Phase)
+    // Scenario 2: NavigateIntent-only Batches After a Stuck Failure Coalesce (ADR-037)
     // -----------------------------------------------------------------------------------------
 
     @Test
-    @DisplayName("2A. Navigate-only batches during 20-tick STUCK_RECOVERY coalesce instead of queuing 5 rapid-fire arrivals")
+    @DisplayName("2A. Navigate-only batches after a stuck failure coalesce instead of queuing 5 rapid-fire arrivals")
     void testNavigateOnlyBatchesDuringStuckRecoveryCoalesceInsteadOfQueuingFiveRapidArrivals() {
         PeripherySimulationHarness harness = new PeripherySimulationHarness();
         ServerLevel mockLevel = harness.getMockLevel();
@@ -528,18 +527,7 @@ public class PeripherySeparationAndQueueRegressionTest {
                 positionRef, deltaMovementRef, yawRef, headYawRef, pitchRef);
 
         AtomicInteger navigationArrivedTransitions = new AtomicInteger(0);
-        AgentMotorFSM spyFsm = spy(new AgentMotorFSM(agent));
-        doAnswer(invoc -> {
-            MotorState prev = spyFsm.getState();
-            boolean changed = (boolean) invoc.callRealMethod();
-            MotorState target = invoc.getArgument(0);
-            String reason = invoc.getArgument(1);
-            if (changed && prev == MotorState.MOVING && target == MotorState.IDLE
-                    && ("navigation_arrived".equals(reason) || "navigate_already_arrived".equals(reason))) {
-                navigationArrivedTransitions.incrementAndGet();
-            }
-            return changed;
-        }).when(spyFsm).transitionTo(any(), any());
+        AgentMotorFSM spyFsm = new AgentMotorFSM(agent);
         when(agent.getMotorFSM()).thenReturn(spyFsm);
 
         AgentWatchdogFSM watchdogFSM = new AgentWatchdogFSM(agent);
@@ -550,52 +538,54 @@ public class PeripherySeparationAndQueueRegressionTest {
 
         // 1. Dispatch initial NavigateIntent toward (10.5, 64.0, 0.5) blocked by sheer wall
         harness.sendIntentBatch(navigateBatch("agent-stuck-coalesce", 1L, 10.5, 64.0, 0.5, 1));
-        assertEquals(MotorState.MOVING, spyFsm.getState());
+        assertInstanceOf(com.civquest.mod.actuator.motor.Move.class, spyFsm.topMotor().orElse(null));
 
-        // Advance until AgentNavigator hits stuckTicks >= 16 and MotorFSM enters STUCK_RECOVERY
-        for (int t = 0; t < 40 && spyFsm.getState() != MotorState.STUCK_RECOVERY; t++) {
+        // Advance until AgentNavigator hits stuckTicks >= 16 and the Move ends FAILED with stuck facts
+        for (int t = 0; t < 40 && (!spyFsm.isMotorIdle() || spyFsm.getCurrentReceipt().getStatus() != IntentReceipt.ReceiptStatus.RECEIPT_STATUS_FAILED); t++) {
             tickMockAgentServer(harness, mockLevel, agent, watchdogFSM, gameTime);
         }
-        assertEquals(MotorState.STUCK_RECOVERY, spyFsm.getState(),
-                "Blocked navigation against sheer wall must enter MotorState.STUCK_RECOVERY");
-
-        // 2. While in 20-tick STUCK_RECOVERY, submit 5 consecutive NavigateIntent-only batches (5 Hz EvaluateUnstuck)
         IntentActuator actuator = harness.getIntentActuator();
-        int maxQueuedDuringStuckRecovery = actuator.getQueuedBatchCount(agent);
-        int submittedDuringRecovery = 0;
+        IntentReceipt stuckReceipt = actuator.getCurrentReceipt(agent);
+        assertTrue(spyFsm.isMotorIdle(),
+                "Blocked navigation against sheer wall must end the Move (no recovery delay state)");
+        assertEquals(IntentReceipt.ReceiptStatus.RECEIPT_STATUS_FAILED, stuckReceipt.getStatus());
+        assertTrue(stuckReceipt.getFacts().getStuck(), "FAILED receipt must carry stuck facts");
+        assertFalse(stuckReceipt.getFacts().getBlockedByEntity(), "bedrock wall is terrain, not congestion");
 
-        for (int t = 0; t < AgentMotorFSM.STUCK_RECOVERY_MAX_TICKS + 2; t++) {
-            if (spyFsm.getState() == MotorState.STUCK_RECOVERY && submittedDuringRecovery < 5 && (t % 4 == 0)) {
-                double targetZ = (submittedDuringRecovery % 2 == 0) ? 0.5 : -0.5;
-                long batchId = 100L + submittedDuringRecovery;
-                harness.sendIntentBatch(navigateBatch("agent-stuck-coalesce", batchId, 1.5, 64.0, targetZ, 1));
-                submittedDuringRecovery++;
+        // 2. Submit 5 consecutive NavigateIntent-only batches (5 Hz Go retries) over the next 20 ticks
+        int maxQueued = actuator.getQueuedBatchCount(agent);
+        int submitted = 0;
+        for (int t = 0; t < 22; t++) {
+            if (submitted < 5 && (t % 4 == 0)) {
+                double targetZ = (submitted % 2 == 0) ? 0.5 : -0.5;
+                harness.sendIntentBatch(navigateBatch("agent-stuck-coalesce", 100L + submitted, 1.5, 64.0, targetZ, 1));
+                submitted++;
             }
-            if (spyFsm.getState() == MotorState.STUCK_RECOVERY) {
-                maxQueuedDuringStuckRecovery = Math.max(maxQueuedDuringStuckRecovery, actuator.getQueuedBatchCount(agent));
-            }
+            maxQueued = Math.max(maxQueued, actuator.getQueuedBatchCount(agent));
             tickMockAgentServer(harness, mockLevel, agent, watchdogFSM, gameTime);
-            if (spyFsm.getState() != MotorState.STUCK_RECOVERY && submittedDuringRecovery == 5) {
-                break;
-            }
         }
+        assertEquals(5, submitted);
 
-        assertEquals(5, submittedDuringRecovery, "All 5 NavigateIntent-only batches must be submitted during STUCK_RECOVERY");
-
-        // 3. Observe the 20 ticks after STUCK_RECOVERY exits: must NOT burst 4-5 rapid-fire arrivals
+        // 3. Observe 20 more ticks: must NOT burst 4-5 rapid-fire arrivals
         navigationArrivedTransitions.set(0);
+        long lastArrivedBatch = -1L;
         for (int t = 0; t < 20; t++) {
             tickMockAgentServer(harness, mockLevel, agent, watchdogFSM, gameTime);
+            IntentReceipt r = spyFsm.getCurrentReceipt();
+            if (r.getStatus() == IntentReceipt.ReceiptStatus.RECEIPT_STATUS_COMPLETED && r.getBatchId() != lastArrivedBatch) {
+                lastArrivedBatch = r.getBatchId();
+                navigationArrivedTransitions.incrementAndGet(); // a Move batch settled (arrival)
+            }
         }
 
-        final int observedMaxQueued = maxQueuedDuringStuckRecovery;
+        final int observedMaxQueued = maxQueued;
         final int observedArrivals = navigationArrivedTransitions.get();
         assertAll(
                 () -> assertTrue(observedMaxQueued <= 1,
-                        "NavigateIntent-only batches during STUCK_RECOVERY must coalesce so queued batch count stays <= 1; actual="
+                        "NavigateIntent-only batches must coalesce so queued batch count stays <= 1; actual="
                                 + observedMaxQueued),
                 () -> assertTrue(observedArrivals <= 1,
-                        "After STUCK_RECOVERY exits, MOVING -> IDLE (navigation_arrived) bursts over next 20 ticks must be <= 1; actual="
+                        "MOVING -> IDLE (navigation_arrived) bursts over next 20 ticks must be <= 1; actual="
                                 + observedArrivals)
         );
     }
@@ -631,7 +621,7 @@ public class PeripherySeparationAndQueueRegressionTest {
 
         // 1. Start MOVING toward (2.5, 64.0, 0.5)
         harness.sendIntentBatch(navigateBatch("agent-preserve-queue", 1L, 2.5, 64.0, 0.5, 1));
-        assertEquals(MotorState.MOVING, agent.getMotorFSM().getState());
+        assertInstanceOf(com.civquest.mod.actuator.motor.Move.class, agent.getMotorFSM().topMotor().orElse(null));
 
         // 2. Queue a 3x3 CraftItemIntent (chest) and an InteractBlockIntent (PLACE_BLOCK) behind MOVING
         IntentBatch craftBatch = IntentBatch.newBuilder()
@@ -669,7 +659,7 @@ public class PeripherySeparationAndQueueRegressionTest {
         for (int t = 0; t < 40; t++) {
             tickMockAgentServer(harness, mockLevel, agent, watchdogFSM, gameTime);
             if (harness.getIntentActuator().getQueuedBatchCount(agent) == 0
-                    && agent.getMotorFSM().getState() == MotorState.IDLE
+                    && agent.getMotorFSM().isMotorIdle()
                     && harness.getIntentActuator().getCurrentReceipt(agent).getStatus() == IntentReceipt.ReceiptStatus.RECEIPT_STATUS_COMPLETED) {
                 break;
             }

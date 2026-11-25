@@ -20,6 +20,7 @@ func TestForaging_HarvestsVisibleEdiblePlantBlocks(t *testing.T) {
 		t.Run(blockID, func(t *testing.T) {
 			agentID := "forager_plant_" + blockID
 			state := NewAgentState()
+			mem := newForageLocal()
 
 			// 1. Out of reach (10m away) -> NavigateIntent toward plant
 			farFrame := &civquestv1.TelemetryFrame{
@@ -36,7 +37,7 @@ func TestForaging_HarvestsVisibleEdiblePlantBlocks(t *testing.T) {
 					{Pos: &civquestv1.BlockPosProto{X: 10, Y: 64, Z: 0}, BlockId: blockID},
 				},
 			}
-			navIntent := EvaluateForaging(agentID, farFrame, state)
+			navIntent := EvaluateForaging(agentID, farFrame, state, mem)
 			if navIntent == nil || navIntent.GetNavigate() == nil {
 				t.Fatalf("expected NavigateIntent toward %s, got %+v", blockID, navIntent)
 			}
@@ -62,7 +63,7 @@ func TestForaging_HarvestsVisibleEdiblePlantBlocks(t *testing.T) {
 					{Pos: &civquestv1.BlockPosProto{X: 10, Y: 64, Z: 0}, BlockId: blockID},
 				},
 			}
-			harvestIntent := EvaluateForaging(agentID, nearFrame, state)
+			harvestIntent := EvaluateForaging(agentID, nearFrame, state, mem)
 			if harvestIntent == nil || harvestIntent.GetInteractBlock() == nil {
 				t.Fatalf("expected InteractBlockIntent to harvest %s, got %+v", blockID, harvestIntent)
 			}
@@ -88,6 +89,7 @@ func TestForaging_HuntsVisiblePassiveFoodAnimals(t *testing.T) {
 		t.Run(entityType, func(t *testing.T) {
 			agentID := "forager_hunt_" + entityType
 			state := NewAgentState()
+			mem := newForageLocal()
 
 			// 1. Out of melee reach -> NavigateIntent toward animal
 			farFrame := &civquestv1.TelemetryFrame{
@@ -109,7 +111,7 @@ func TestForaging_HuntsVisiblePassiveFoodAnimals(t *testing.T) {
 					},
 				},
 			}
-			navIntent := EvaluateForaging(agentID, farFrame, state)
+			navIntent := EvaluateForaging(agentID, farFrame, state, mem)
 			if navIntent == nil || navIntent.GetNavigate() == nil {
 				t.Fatalf("expected NavigateIntent toward %s, got %+v", entityType, navIntent)
 			}
@@ -137,7 +139,7 @@ func TestForaging_HuntsVisiblePassiveFoodAnimals(t *testing.T) {
 					},
 				},
 			}
-			atkIntent := EvaluateForaging(agentID, nearFrame, state)
+			atkIntent := EvaluateForaging(agentID, nearFrame, state, mem)
 			if atkIntent == nil || atkIntent.GetAttack() == nil {
 				t.Fatalf("expected AttackIntent to hunt %s, got %+v", entityType, atkIntent)
 			}
@@ -152,6 +154,7 @@ func TestForaging_HuntsVisiblePassiveFoodAnimals(t *testing.T) {
 func TestForaging_ScoutsOutwardWhenNoFoodVisible(t *testing.T) {
 	agentID := "forager_scout"
 	state := NewAgentState()
+	mem := newForageLocal()
 	frame := &civquestv1.TelemetryFrame{
 		WorldTick: 300,
 		TimeOfDay: 4000,
@@ -165,7 +168,7 @@ func TestForaging_ScoutsOutwardWhenNoFoodVisible(t *testing.T) {
 		},
 	}
 
-	intent := EvaluateForaging(agentID, frame, state)
+	intent := EvaluateForaging(agentID, frame, state, mem)
 	if intent == nil || intent.GetNavigate() == nil || intent.GetNavigate().Target == nil {
 		t.Fatalf("expected outward NavigateIntent when hungry with no visible food, got %+v", intent)
 	}
@@ -264,7 +267,7 @@ func TestForaging_YieldsToActiveHostileCombat(t *testing.T) {
 	if NewForagingSkill().Preconditions(ctx.Facts) {
 		t.Fatalf("expected ForagingSkill.Preconditions=false while hostiles are present")
 	}
-	if EvaluateForaging("forager_combat", ctx.Frame, state) != nil {
+	if EvaluateForaging("forager_combat", ctx.Frame, state, newForageLocal()) != nil {
 		t.Fatalf("expected EvaluateForaging to yield (nil) when hostile zombie is within perception radius")
 	}
 }
@@ -310,8 +313,8 @@ func BenchmarkForagingSkill_Sub5ms(b *testing.B) {
 func TestForaging_PerAgentStateIsolation(t *testing.T) {
 	const sharedAgentID = "duplicate-agent-id"
 
-	stateA := NewAgentState()
-	stateB := NewAgentState()
+	stateA, memA := NewAgentState(), newForageLocal()
+	stateB, memB := NewAgentState(), newForageLocal()
 
 	// Seed identical bush harvest frame at tick 100 for stateA only -> stateA enters cooldown on tick 102,
 	// while stateB (sharing the same agentID string) must still harvest independently.
@@ -329,7 +332,7 @@ func TestForaging_PerAgentStateIsolation(t *testing.T) {
 			{Pos: &civquestv1.BlockPosProto{X: 2, Y: 64, Z: 0}, BlockId: "minecraft:sweet_berry_bush"},
 		},
 	}
-	if intent := EvaluateForaging(sharedAgentID, harvestFrame100, stateA); intent == nil || intent.GetInteractBlock() == nil {
+	if intent := EvaluateForaging(sharedAgentID, harvestFrame100, stateA, memA); intent == nil || intent.GetInteractBlock() == nil {
 		t.Fatalf("expected stateA harvest intent at tick 100, got %+v", intent)
 	}
 
@@ -346,7 +349,7 @@ func TestForaging_PerAgentStateIsolation(t *testing.T) {
 			Status:            harvestFrame100.Status,
 			InterestingBlocks: harvestFrame100.InterestingBlocks,
 		}
-		intentA = EvaluateForaging(sharedAgentID, f102, stateA)
+		intentA = EvaluateForaging(sharedAgentID, f102, stateA, memA)
 
 		// Exercise independent explore heading mutations in parallel
 		for step := int64(0); step < 5; step++ {
@@ -361,7 +364,7 @@ func TestForaging_PerAgentStateIsolation(t *testing.T) {
 					NavigationState: civquestv1.NavigationState_NAVIGATION_STATE_IDLE,
 				},
 			}
-			if out := EvaluateForaging(sharedAgentID, ef, stateA); out != nil && out.GetNavigate() != nil {
+			if out := EvaluateForaging(sharedAgentID, ef, stateA, memA); out != nil && out.GetNavigate() != nil {
 				exploreTargetsA = append(exploreTargetsA, out.GetNavigate().Target)
 			}
 		}
@@ -375,7 +378,7 @@ func TestForaging_PerAgentStateIsolation(t *testing.T) {
 			Status:            harvestFrame100.Status,
 			InterestingBlocks: harvestFrame100.InterestingBlocks,
 		}
-		intentB = EvaluateForaging(sharedAgentID, f102, stateB)
+		intentB = EvaluateForaging(sharedAgentID, f102, stateB, memB)
 
 		// Exercise independent explore heading mutations in parallel (with STUCK steps)
 		for step := int64(0); step < 5; step++ {
@@ -390,7 +393,7 @@ func TestForaging_PerAgentStateIsolation(t *testing.T) {
 					NavigationState: civquestv1.NavigationState_NAVIGATION_STATE_STUCK,
 				},
 			}
-			if out := EvaluateForaging(sharedAgentID, ef, stateB); out != nil && out.GetNavigate() != nil {
+			if out := EvaluateForaging(sharedAgentID, ef, stateB, memB); out != nil && out.GetNavigate() != nil {
 				exploreTargetsB = append(exploreTargetsB, out.GetNavigate().Target)
 			}
 		}

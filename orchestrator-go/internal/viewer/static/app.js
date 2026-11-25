@@ -354,7 +354,7 @@
   function renderHTPDABreadcrumbs(data) {
     const stage = data.stage || 'STAGE_SETTLEMENT';
     const routine = data.routine || 'ROUTINE_PRIMARY_DUTY';
-    const stack = data.state_stack || [];
+    const stack = data.activity_stack || []; // ADR-036 single activity stack, bottom first
 
     breadcrumbsContainer.innerHTML = '';
 
@@ -374,7 +374,7 @@
     baseRoutineEl.innerHTML = `Routine: <strong>${formatStateName(routine)}</strong>`;
     breadcrumbsContainer.appendChild(baseRoutineEl);
 
-    // Render pushed stack preemption frames
+    // Render activity stack frames (bottom first)
     if (stack && stack.length > 0) {
       stack.forEach((frame) => {
         const sep = document.createElement('span');
@@ -383,17 +383,15 @@
         breadcrumbsContainer.appendChild(sep);
 
         const frameEl = document.createElement('span');
-        const stName = frame.stage || frame.routine || 'Preempt';
+        const stName = frame.kind || 'activity';
         const cls = getPreemptClass(stName);
         frameEl.className = `breadcrumb-item ${cls}`;
-        frameEl.innerHTML = `Preempt: <strong>${formatStateName(stName)}</strong>`;
-        if (frame.reason) {
-          frameEl.title = `Reason: ${frame.reason} (Entered Tick: ${frame.entered_tick || 0})`;
-        }
+        frameEl.innerHTML = `Frame: <strong>${formatStateName(stName)}</strong>`;
+        frameEl.title = `Frame #${frame.id || 0} (Start Tick: ${frame.start_tick || 0})`;
         breadcrumbsContainer.appendChild(frameEl);
       });
 
-      stackDepthBadge.textContent = `Stack Depth: ${stack.length} (Preempted)`;
+      stackDepthBadge.textContent = `Stack Depth: ${stack.length}`;
       stackDepthBadge.className = 'badge badge-purple';
     } else {
       stackDepthBadge.textContent = 'Stack Depth: 0';

@@ -549,16 +549,6 @@ const (
 	routineTestDialogue Routine = "DIALOGUE"
 )
 
-type testDialogueStateHandler struct{}
-
-func (h *testDialogueStateHandler) Name() State                         { return stageTestDialogue }
-func (h *testDialogueStateHandler) Guard(ctx *FSMContext) bool          { return true }
-func (h *testDialogueStateHandler) OnEntry(ctx *FSMContext, from State) {}
-func (h *testDialogueStateHandler) OnExit(ctx *FSMContext, to State)    {}
-func (h *testDialogueStateHandler) OnTick(ctx *FSMContext) []FSMIntent {
-	return nil
-}
-
 // TestTwoTierHFSM_PushdownAutomata verifies:
 // 1. Preemption: entering StageEmergency pushes previous stage (StageSettlement) onto stack.
 // 2. Threat clearance: ThreatsCleared() pops previous stage (StageSettlement) and resumes it with zero amnesia.
@@ -605,9 +595,10 @@ func TestTwoTierHFSM_PushdownAutomata(t *testing.T) {
 		if res.Stage != StageSettlement || res.Routine != RoutinePrimaryDuty {
 			t.Fatalf("expected initial (Settlement, PrimaryDuty), got (%s, %s)", res.Stage, res.Routine)
 		}
-		if fsm.StackDepth() != 0 {
-			t.Fatalf("expected stack depth 0 initially, got %d", fsm.StackDepth())
+		if fsm.ActiveActivityKind() == activityKindEmergency {
+			t.Fatalf("no emergency frame expected initially")
 		}
+		depthBefore := fsm.ActivityDepth()
 
 		// Preemption: Creeper appears -> StageEmergency
 		ctx.Frame.WorldTick = 2020
@@ -625,12 +616,9 @@ func TestTwoTierHFSM_PushdownAutomata(t *testing.T) {
 		if res.Stage != StageEmergency || res.Routine != RoutineEmergency {
 			t.Fatalf("expected (Emergency, Emergency), got (%s, %s)", res.Stage, res.Routine)
 		}
-		if fsm.StackDepth() != 1 {
-			t.Fatalf("expected stack depth 1 after preemption, got %d", fsm.StackDepth())
-		}
-		peek, ok := fsm.Peek()
-		if !ok || peek.Stage != StageSettlement || peek.Routine != RoutinePrimaryDuty {
-			t.Fatalf("expected top stack frame (Settlement, PrimaryDuty), got (%s, %s)", peek.Stage, peek.Routine)
+		// Preemption is a push on the single activity stack.
+		if fsm.ActiveActivityKind() != activityKindEmergency || fsm.ActivityDepth() != depthBefore+1 {
+			t.Fatalf("expected emergency frame pushed over depth %d, got top=%q depth=%d", depthBefore, fsm.ActiveActivityKind(), fsm.ActivityDepth())
 		}
 
 		// Threat clearance: Creeper despawns/killed -> threats cleared!
@@ -641,129 +629,11 @@ func TestTwoTierHFSM_PushdownAutomata(t *testing.T) {
 		if res.Stage != StageSettlement || res.Routine != RoutinePrimaryDuty {
 			t.Fatalf("expected restored (Settlement, PrimaryDuty), got (%s, %s)", res.Stage, res.Routine)
 		}
-		if fsm.StackDepth() != 0 {
-			t.Fatalf("expected stack depth 0 after pop, got %d", fsm.StackDepth())
+		if fsm.ActiveActivityKind() == activityKindEmergency {
+			t.Fatalf("expected emergency frame popped after threats cleared")
 		}
 		if state.Stage() != StageSettlement || state.Routine() != RoutinePrimaryDuty {
 			t.Fatalf("state desync after pop: (%s, %s)", state.Stage(), state.Routine())
-		}
-	})
-
-	t.Run("Multi-Level Push Pop (Dialogue Interrupt and Emergency)", func(t *testing.T) {
-		fsm := NewAgentFSM(StageSettlement, nil)
-		fsm.RegisterHandler(&testDialogueStateHandler{})
-
-		state := NewAgentState()
-		state.SetStageAndRoutine(StageSettlement, RoutinePrimaryDuty)
-
-		cfg := &xdg.AgentIdentityConfig{
-			Name:       "librarian",
-			Profession: "Chronicler",
-			Shift:      xdg.ShiftFirst,
-			Traits:     xdg.AgentTraits{Bravery: 0.5},
-		}
-
-		ctx := &FSMContext{
-			AgentID: "pda_librarian",
-			State:   state,
-			Config:  cfg,
-			Frame: &civquestv1.TelemetryFrame{
-				WorldTick: 3000,
-				TimeOfDay: 4000,
-				Status: &civquestv1.AgentStatus{
-					AgentId:   "pda_librarian",
-					Health:    20.0,
-					MaxHealth: 20.0,
-					FoodLevel: 20,
-					Position:  &civquestv1.Vec3{X: 0, Y: 64, Z: 0},
-					Inventory: []*civquestv1.ItemStackProto{
-						{ItemId: "minecraft:iron_axe", Count: 1},
-						{ItemId: "minecraft:iron_sword", Count: 1},
-						{ItemId: "minecraft:torch", Count: 8},
-					},
-				},
-			},
-		}
-
-		// 1. Initially at work
-		res := fsm.Tick(ctx)
-		if res.Stage != StageSettlement || res.Routine != RoutinePrimaryDuty {
-			t.Fatalf("expected (Settlement, PrimaryDuty), got (%s, %s)", res.Stage, res.Routine)
-		}
-
-		// 2. Dialogue interrupt: player talks to librarian
-		// Agent pushes work frame and transitions to DIALOGUE
-		fsm.Push(StageSettlement, RoutinePrimaryDuty, "work interrupted for player dialogue", 3000, map[string]string{"topic": "lore"})
-		if !fsm.TransitionTo(stageTestDialogue, "player conversation initiated", ctx) {
-			t.Fatalf("failed transition to DIALOGUE")
-		}
-		// Manually set dialogue routine on FSM/state for custom routine preservation
-		fsm.mu.Lock()
-		fsm.currentRoutine = routineTestDialogue
-		fsm.mu.Unlock()
-		state.SetStageAndRoutine(stageTestDialogue, routineTestDialogue)
-
-		if fsm.StackDepth() != 1 {
-			t.Fatalf("expected stack depth 1 during dialogue, got %d", fsm.StackDepth())
-		}
-		if fsm.CurrentStage() != stageTestDialogue || fsm.CurrentRoutine() != routineTestDialogue {
-			t.Fatalf("expected (DIALOGUE, DIALOGUE), got (%s, %s)", fsm.CurrentStage(), fsm.CurrentRoutine())
-		}
-
-		// 3. Emergency strikes while in dialogue!
-		ctx.Frame.WorldTick = 3050
-		ctx.Frame.VisibleEntities = []*civquestv1.VisibleEntity{
-			{
-				EntityId:   301,
-				EntityType: "minecraft:skeleton",
-				Distance:   4.0,
-				IsHostile:  true,
-				Position:   &civquestv1.Vec3{X: 4, Y: 64, Z: 0},
-			},
-		}
-
-		res = fsm.Tick(ctx)
-		if res.Stage != StageEmergency || res.Routine != RoutineEmergency {
-			t.Fatalf("expected (Emergency, Emergency), got (%s, %s)", res.Stage, res.Routine)
-		}
-		if fsm.StackDepth() != 2 {
-			t.Fatalf("expected stack depth 2 after emergency on dialogue, got %d", fsm.StackDepth())
-		}
-		top, ok := fsm.Peek()
-		if !ok || top.Stage != stageTestDialogue || top.Routine != routineTestDialogue {
-			t.Fatalf("expected top stack frame (DIALOGUE, DIALOGUE), got (%s, %s)", top.Stage, top.Routine)
-		}
-
-		// 4. Threats cleared!
-		ctx.Frame.WorldTick = 3100
-		ctx.Frame.VisibleEntities = nil
-
-		res = fsm.Tick(ctx)
-		// Pop 1: Must restore DIALOGUE stage and routine with zero amnesia
-		if res.Stage != stageTestDialogue || res.Routine != routineTestDialogue {
-			t.Fatalf("expected restored (DIALOGUE, DIALOGUE), got (%s, %s)", res.Stage, res.Routine)
-		}
-		if fsm.StackDepth() != 1 {
-			t.Fatalf("expected stack depth 1 after first pop, got %d", fsm.StackDepth())
-		}
-		nextTop, ok := fsm.Peek()
-		if !ok || nextTop.Stage != StageSettlement || nextTop.Routine != RoutinePrimaryDuty {
-			t.Fatalf("expected next frame (Settlement, PrimaryDuty), got (%s, %s)", nextTop.Stage, nextTop.Routine)
-		}
-
-		// 5. Dialogue concludes -> Pop 2 resumes work
-		workFrame, ok := fsm.Pop()
-		if !ok || workFrame.Stage != StageSettlement || workFrame.Routine != RoutinePrimaryDuty {
-			t.Fatalf("failed popping work frame")
-		}
-		if !fsm.TransitionTo(workFrame.Stage, "dialogue concluded; resuming primary duty", ctx) {
-			t.Fatalf("failed transition back to Settlement")
-		}
-		if fsm.CurrentStage() != StageSettlement || fsm.CurrentRoutine() != RoutinePrimaryDuty {
-			t.Fatalf("expected restored work state (Settlement, PrimaryDuty), got (%s, %s)", fsm.CurrentStage(), fsm.CurrentRoutine())
-		}
-		if fsm.StackDepth() != 0 {
-			t.Fatalf("expected empty stack after full pop sequence, got %d", fsm.StackDepth())
 		}
 	})
 
@@ -771,12 +641,16 @@ func TestTwoTierHFSM_PushdownAutomata(t *testing.T) {
 		fsm := NewAgentFSM(StageSettlement, nil)
 		state := NewAgentState()
 
-		// Push multiple frames to test stack clearing on death
-		fsm.Push(StageSettlement, RoutinePrimaryDuty, "work", 100, nil)
-		fsm.Push(StageSettlement, RoutineSecondaryHobby, "hobby", 200, nil)
-		fsm.Push(stageTestDialogue, routineTestDialogue, "dialogue", 300, nil)
-		if fsm.StackDepth() != 3 {
-			t.Fatalf("expected stack depth 3, got %d", fsm.StackDepth())
+		// Commit a task so a frame is on the activity stack before death.
+		fsm.StartTask(state, NewHarvestTreeTask(3, 64, 0, StageSettlement, 490))
+		alive := &FSMContext{AgentID: "mortal_agent", State: state, Frame: &civquestv1.TelemetryFrame{
+			WorldTick: 490, TimeOfDay: 3000,
+			Status:            &civquestv1.AgentStatus{AgentId: "mortal_agent", Health: 20, MaxHealth: 20, FoodLevel: 20, Position: &civquestv1.Vec3{X: 0.5, Y: 64, Z: 0.5}},
+			InterestingBlocks: []*civquestv1.VisibleBlock{{Pos: &civquestv1.BlockPosProto{X: 3, Y: 64, Z: 0}, BlockId: "minecraft:oak_log"}},
+		}}
+		fsm.Tick(alive)
+		if fsm.ActivityDepth() == 0 {
+			t.Fatalf("expected an activity frame before death")
 		}
 
 		ctx := &FSMContext{
@@ -796,8 +670,8 @@ func TestTwoTierHFSM_PushdownAutomata(t *testing.T) {
 		if res.Stage != StageDead || res.Routine != RoutineDead {
 			t.Fatalf("expected terminal (DEAD, DEAD), got (%s, %s)", res.Stage, res.Routine)
 		}
-		if fsm.StackDepth() != 0 {
-			t.Fatalf("expected stack cleared on death, got depth %d", fsm.StackDepth())
+		if fsm.ActivityDepth() != 1 || fsm.ActiveActivityKind() != activityKindDead || state.HasActiveTask() {
+			t.Fatalf("expected stack unwound to the dead frame and task cleared on death, got depth %d top=%q task=%v", fsm.ActivityDepth(), fsm.ActiveActivityKind(), state.HasActiveTask())
 		}
 		if state.Stage() != StageDead || state.Routine() != RoutineDead {
 			t.Fatalf("state desync on death: (%s, %s)", state.Stage(), state.Routine())
@@ -817,47 +691,6 @@ func TestTwoTierHFSM_PushdownAutomata(t *testing.T) {
 		}
 	})
 
-	t.Run("Stack Bounds and Duplicate Top Suppression", func(t *testing.T) {
-		fsm := NewAgentFSM(StageBootstrap, nil)
-		fsm.SetMaxStackDepth(4)
-
-		// 1. Pushing duplicate top should be ignored
-		fsm.Push(StageBootstrap, RoutineDawnPrep, "first", 1, nil)
-		fsm.Push(StageBootstrap, RoutineDawnPrep, "duplicate", 2, nil)
-		if fsm.StackDepth() != 1 {
-			t.Fatalf("expected duplicate top ignored, depth=%d", fsm.StackDepth())
-		}
-
-		// 2. Push up to capacity
-		fsm.Push(StageSettlement, RoutinePrimaryDuty, "work", 10, nil)
-		fsm.Push(StageSettlement, RoutineSecondaryHobby, "hobby", 20, nil)
-		fsm.Push(StageColonize, RoutinePrimaryDuty, "colony", 30, nil)
-		if fsm.StackDepth() != 4 {
-			t.Fatalf("expected depth 4 at capacity, got %d", fsm.StackDepth())
-		}
-
-		// 3. Overflow drops oldest
-		fsm.Push(StageSettlement, RoutineTavernSocial, "tavern", 40, nil)
-		if fsm.StackDepth() != 4 {
-			t.Fatalf("expected depth 4 after overflow, got %d", fsm.StackDepth())
-		}
-
-		// Top should be the newest
-		top, ok := fsm.Peek()
-		if !ok || top.Routine != RoutineTavernSocial {
-			t.Fatalf("expected newest frame on top, got %v", top)
-		}
-
-		// Clear stack
-		fsm.ClearStack()
-		if fsm.StackDepth() != 0 {
-			t.Fatalf("expected stack depth 0 after ClearStack, got %d", fsm.StackDepth())
-		}
-		_, ok = fsm.Pop()
-		if ok {
-			t.Fatalf("pop from empty stack should return false")
-		}
-	})
 }
 
 // TestTwoTierHFSM_ShiftWork verifies:

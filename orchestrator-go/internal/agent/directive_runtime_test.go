@@ -472,7 +472,7 @@ func TestRuntime_WorldTickZeroAndStalledActiveTaskContemplation(t *testing.T) {
 			return &civquestv1.Vec3{X: 20.5, Y: 64, Z: 0.5}, &civquestv1.BlockPosProto{X: 20, Y: 64, Z: 0}, "minecraft:oak_log", true
 		},
 	}, 336500)
-	rt.System1State().StartTask(task)
+	rt.AgentFSM().StartTask(rt.System1State(), task)
 
 	for _, tick := range []int64{336500, 336650, 336799} {
 		_ = mockSvc.SendFrame(&civquestv1.TelemetryFrame{

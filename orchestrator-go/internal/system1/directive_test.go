@@ -2,6 +2,7 @@ package system1
 
 import (
 	"math"
+	"strings"
 	"testing"
 	"time"
 
@@ -84,7 +85,7 @@ func TestEvaluateStrategicDirective_GatherTimber(t *testing.T) {
 		{Pos: &civquestv1.BlockPosProto{X: 2, Y: 65, Z: 0}, BlockId: "minecraft:oak_log"},
 	}
 
-	intent := EvaluateStrategicDirective(frame, state, cfg)
+	intent := EvaluateStrategicDirective(frame, state, cfg, nil)
 	if intent == nil || intent.GetInteractBlock() == nil ||
 		intent.GetInteractBlock().InteractionType != civquestv1.InteractBlockIntent_HARVEST_BREAK {
 		t.Fatalf("expected HARVEST_BREAK for GATHER_TIMBER, got %+v", intent)
@@ -105,7 +106,7 @@ func TestEvaluateStrategicDirective_MineStone(t *testing.T) {
 	frameFar.InterestingBlocks = []*civquestv1.VisibleBlock{
 		{Pos: &civquestv1.BlockPosProto{X: 10, Y: 64, Z: 0}, BlockId: "minecraft:coal_ore"},
 	}
-	navIntent := EvaluateStrategicDirective(frameFar, state, cfg)
+	navIntent := EvaluateStrategicDirective(frameFar, state, cfg, nil)
 	if navIntent == nil || navIntent.GetNavigate() == nil {
 		t.Fatalf("expected NavigateIntent toward distant coal_ore, got %+v", navIntent)
 	}
@@ -118,7 +119,7 @@ func TestEvaluateStrategicDirective_MineStone(t *testing.T) {
 	frameNear.InterestingBlocks = []*civquestv1.VisibleBlock{
 		{Pos: &civquestv1.BlockPosProto{X: 10, Y: 64, Z: 0}, BlockId: "minecraft:coal_ore"},
 	}
-	breakIntent := EvaluateStrategicDirective(frameNear, state, cfg)
+	breakIntent := EvaluateStrategicDirective(frameNear, state, cfg, nil)
 	if breakIntent == nil || breakIntent.GetInteractBlock() == nil ||
 		breakIntent.GetInteractBlock().InteractionType != civquestv1.InteractBlockIntent_HARVEST_BREAK {
 		t.Fatalf("expected HARVEST_BREAK on nearby coal_ore, got %+v", breakIntent)
@@ -139,7 +140,7 @@ func TestEvaluateStrategicDirective_MineStone(t *testing.T) {
 		IsActive:    true,
 	})
 	frameNone := newDirectiveTestFrame("aria", 300, 4000, 0.5, 64, 0.5)
-	poiIntent := EvaluateStrategicDirective(frameNone, state, cfg)
+	poiIntent := EvaluateStrategicDirective(frameNone, state, cfg, nil)
 	if poiIntent == nil || poiIntent.GetNavigate() == nil {
 		t.Fatalf("expected NavigateIntent to recalled mine POI, got %+v", poiIntent)
 	}
@@ -157,75 +158,46 @@ func TestEvaluateStrategicDirective_ForageFood(t *testing.T) {
 		{Pos: &civquestv1.BlockPosProto{X: 2, Y: 64, Z: 0}, BlockId: "minecraft:sweet_berry_bush", BlockStateString: "age=3"},
 	}
 
-	intent := EvaluateStrategicDirective(frame, state, cfg)
-	if intent == nil || intent.GetInteractBlock() == nil ||
-		intent.GetInteractBlock().InteractionType != civquestv1.InteractBlockIntent_HARVEST_BREAK {
-		t.Fatalf("expected HARVEST_BREAK on sweet_berry_bush for FORAGE_FOOD, got %+v", intent)
+	// The directive is a bid source: it makes the Foraging activity eligible (no inline executor).
+	if intent := EvaluateStrategicDirective(frame, state, cfg, nil); intent != nil {
+		t.Fatalf("directive must not execute foraging itself, got %+v", intent)
+	}
+	fsm := NewAgentFSM(StageSettlement, nil)
+	res := fsm.Tick(&FSMContext{AgentID: "aria", Frame: frame, Config: cfg, State: state})
+	if len(res.Intents) == 0 || res.Intents[0].Intent.GetInteractBlock() == nil ||
+		res.Intents[0].Intent.GetInteractBlock().InteractionType != civquestv1.InteractBlockIntent_HARVEST_BREAK {
+		t.Fatalf("expected HARVEST_BREAK on sweet_berry_bush for FORAGE_FOOD, got %+v", res.Intents)
 	}
 }
 
-func TestEvaluateStrategicDirective_ScoutFrontierFanOutAndCompletion(t *testing.T) {
-	stateA := NewAgentState()
-	stateA.SetClanSize(2)
-	stateA.SetStrategicDirective(DirectiveActionScoutFrontier, "outer sector", "SCOUT_FRONTIER: Chart sector", 500, 6500)
-	stateB := NewAgentState()
-	stateB.SetClanSize(2)
-	stateB.SetStrategicDirective(DirectiveActionScoutFrontier, "outer sector", "SCOUT_FRONTIER: Chart sector", 500, 6500)
+func TestStrategicDirective_ScoutFrontierFanOutAndCompletion(t *testing.T) {
+	a := newExpRig(t, "aria", 2)
+	b := newExpRig(t, "bran", 2)
 
-	frameA := newDirectiveTestFrame("aria", 510, 4000, 0, 64, 0)
-	frameB := newDirectiveTestFrame("bran", 510, 4000, 0, 64, 0)
-
-	// First tick emits 360° SurveyHorizonIntent (ADR-032)
-	surveyA := EvaluateStrategicDirective(frameA, stateA, xdg.DefaultAgentIdentityConfig("aria"))
-	surveyB := EvaluateStrategicDirective(frameB, stateB, xdg.DefaultAgentIdentityConfig("bran"))
-	if surveyA == nil || surveyA.GetSurveyHorizon() == nil || surveyB == nil || surveyB.GetSurveyHorizon() == nil {
-		t.Fatalf("expected initial SurveyHorizonIntents for SCOUT_FRONTIER, got A=%+v B=%+v", surveyA, surveyB)
+	// First tick starts an expedition frame over the directive and emits the 360 survey (ADR-032).
+	surveyA, surveyB := a.step(510), b.step(510)
+	if !strings.HasPrefix(firstIntent(surveyA), "Survey(") || !strings.HasPrefix(firstIntent(surveyB), "Survey(") {
+		t.Fatalf("expected initial survey intents for SCOUT_FRONTIER, got A=%v B=%v", surveyA.Intents, surveyB.Intents)
 	}
 
-	// Simulate completed uniform open plains surveys -> agents fan out by complementary clan wedge bearings
-	openSectors := make([]*civquestv1.HorizonSector, 36)
-	for i := 0; i < 36; i++ {
-		openSectors[i] = &civquestv1.HorizonSector{
-			SectorIndex: int32(i),
-			BearingDeg:  float32(i * 10),
-			HitDistance: 64.0,
-			FeatureType: "OPEN_PLAINS",
-			OpenHorizon: true,
-		}
-	}
-	report := &civquestv1.HorizonSurveyReport{
-		OriginX: 0, OriginY: 64, OriginZ: 0, CompletedTick: 540, MaxRange: 64.0, Sectors: openSectors,
-	}
-	stateA.IngestHorizonSurveyReport(report, 540)
-	stateB.IngestHorizonSurveyReport(report, 540)
-	frameA.WorldTick = 545
-	frameB.WorldTick = 545
-
-	intentA := EvaluateStrategicDirective(frameA, stateA, xdg.DefaultAgentIdentityConfig("aria"))
-	intentB := EvaluateStrategicDirective(frameB, stateB, xdg.DefaultAgentIdentityConfig("bran"))
-	if intentA == nil || intentA.GetNavigate() == nil || intentB == nil || intentB.GetNavigate() == nil {
-		t.Fatalf("expected NavigateIntents for SCOUT_FRONTIER after survey, got A=%+v B=%+v", intentA, intentB)
-	}
-
-	tA := intentA.GetNavigate().Target
-	tB := intentB.GetNavigate().Target
-	distA := math.Hypot(tA.X, tA.Z)
-	distB := math.Hypot(tB.X, tB.Z)
+	// Completed uniform open-plains surveys -> agents fan out by complementary clan wedge bearings.
+	xA, zA := navTarget(t, a.step(545, withSurvey(uniformSurvey(0, 0, 540))))
+	xB, zB := navTarget(t, b.step(545, withSurvey(uniformSurvey(0, 0, 540))))
+	distA, distB := math.Hypot(xA, zA), math.Hypot(xB, zB)
 	if distA < 31.5 || distA > 48.5 || distB < 31.5 || distB > 48.5 {
 		t.Fatalf("expected frontier target 32-48m away, got distA=%.2f distB=%.2f", distA, distB)
 	}
-	if math.Hypot(tA.X-tB.X, tA.Z-tB.Z) < 1.0 {
-		t.Fatalf("expected different agents to fan out in different directions, got tA=%+v tB=%+v", tA, tB)
+	if math.Hypot(xA-xB, zA-zB) < 1.0 {
+		t.Fatalf("expected different agents to fan out in different directions, got A=(%.1f,%.1f) B=(%.1f,%.1f)", xA, zA, xB, zB)
 	}
 
-	// Arriving within 5m clears the directive
-	arrivedFrame := newDirectiveTestFrame("aria", 600, 4000, tA.X-2.0, tA.Y, tA.Z)
-	afterIntent := EvaluateStrategicDirective(arrivedFrame, stateA, xdg.DefaultAgentIdentityConfig("aria"))
-	if afterIntent != nil {
-		t.Fatalf("expected nil intent upon reaching frontier waypoint, got %+v", afterIntent)
+	// Arriving at the waypoint ends the directive; the expedition carries on with its next survey.
+	if _, active := a.st.ActiveStrategicDirective(560); !active {
+		t.Fatal("directive must still be active before arrival")
 	}
-	if _, active := stateA.ActiveStrategicDirective(600); active {
-		t.Fatal("expected SCOUT_FRONTIER directive to be cleared after arriving within 5m")
+	a.step(600, withPos(xA, 64, zA))
+	if _, active := a.st.ActiveStrategicDirective(600); active {
+		t.Fatal("expected SCOUT_FRONTIER directive to be cleared after reaching the waypoint")
 	}
 }
 
@@ -240,7 +212,7 @@ func TestEvaluateStrategicDirective_Socialize(t *testing.T) {
 		{EntityId: 1, EntityType: "minecraft:player", DisplayName: "aria", Position: &civquestv1.Vec3{X: 0, Y: 64, Z: 0}},
 		{EntityId: 2, EntityType: "minecraft:player", DisplayName: "Bran", Position: &civquestv1.Vec3{X: 18, Y: 64, Z: 0}},
 	}
-	navIntent := EvaluateStrategicDirective(frameFar, state, cfg)
+	navIntent := EvaluateStrategicDirective(frameFar, state, cfg, nil)
 	if navIntent == nil || navIntent.GetNavigate() == nil {
 		t.Fatalf("expected NavigateIntent toward peer Bran, got %+v", navIntent)
 	}
@@ -253,7 +225,7 @@ func TestEvaluateStrategicDirective_Socialize(t *testing.T) {
 	// Within 5m of Bran -> stays in social range (nil)
 	frameNear := newDirectiveTestFrame("aria", 250, 4000, 13.0, 64, 0)
 	frameNear.VisibleEntities = frameFar.VisibleEntities
-	if nearIntent := EvaluateStrategicDirective(frameNear, state, cfg); nearIntent != nil {
+	if nearIntent := EvaluateStrategicDirective(frameNear, state, cfg, nil); nearIntent != nil {
 		t.Fatalf("expected nil intent when already within 4-6m of peer, got %+v", nearIntent)
 	}
 }
@@ -271,7 +243,7 @@ func TestEvaluateStrategicDirective_SurvivalPreemptionAndSub5ms(t *testing.T) {
 	frameHostile.InterestingBlocks = []*civquestv1.VisibleBlock{
 		{Pos: &civquestv1.BlockPosProto{X: 2, Y: 64, Z: 0}, BlockId: "minecraft:stone"},
 	}
-	if intent := EvaluateStrategicDirective(frameHostile, state, cfg); intent != nil {
+	if intent := EvaluateStrategicDirective(frameHostile, state, cfg, nil); intent != nil {
 		t.Fatalf("expected hostile threat to preempt directive, got %+v", intent)
 	}
 
@@ -279,7 +251,7 @@ func TestEvaluateStrategicDirective_SurvivalPreemptionAndSub5ms(t *testing.T) {
 	frameHungry := newDirectiveTestFrame("aria", 200, 4000, 0.5, 64, 0.5)
 	frameHungry.Status.FoodLevel = 5
 	frameHungry.InterestingBlocks = frameHostile.InterestingBlocks
-	if intent := EvaluateStrategicDirective(frameHungry, state, cfg); intent != nil {
+	if intent := EvaluateStrategicDirective(frameHungry, state, cfg, nil); intent != nil {
 		t.Fatalf("expected critical hunger to preempt directive, got %+v", intent)
 	}
 
@@ -289,7 +261,7 @@ func TestEvaluateStrategicDirective_SurvivalPreemptionAndSub5ms(t *testing.T) {
 	start := time.Now()
 	for i := 0; i < 100; i++ {
 		frameClean.WorldTick = int64(200 + i*25)
-		_ = EvaluateStrategicDirective(frameClean, state, cfg)
+		_ = EvaluateStrategicDirective(frameClean, state, cfg, nil)
 	}
 	perCall := time.Since(start) / 100
 	if perCall >= 5*time.Millisecond {
@@ -407,9 +379,7 @@ func TestAgentFSM_ExecutesDirectiveInBootstrapAndSettlement(t *testing.T) {
 func TestEvaluateStrategicDirective_IgnoresDistantHostileAndPreservesSurvey(t *testing.T) {
 	state := NewAgentState()
 	state.SetStrategicDirective(DirectiveActionMineStone, "ridge", "MINE_STONE: Gather stone", 100, 6100)
-	state.ExpeditionPhase = ExpeditionSurveying
-	state.expeditionSurveyStartTick = 180
-	state.lastSurveyEmitTick = 180
+	state.activityKinds = []string{activityKindExpedition, activityKindSurvey}
 	cfg := xdg.DefaultAgentIdentityConfig("aria")
 
 	// Zombie at 18m (> MaxPerceptionRadius 16m) must NOT preempt or clear ExpeditionSurveying.
@@ -417,15 +387,15 @@ func TestEvaluateStrategicDirective_IgnoresDistantHostileAndPreservesSurvey(t *t
 	frameDistant.VisibleEntities = []*civquestv1.VisibleEntity{
 		{EntityId: 9001, EntityType: "minecraft:zombie", IsHostile: true, Distance: 18.0, Position: &civquestv1.Vec3{X: 18, Y: 86, Z: 0}},
 	}
-	if intent := EvaluateStrategicDirective(frameDistant, state, cfg); intent != nil {
+	if intent := EvaluateStrategicDirective(frameDistant, state, cfg, nil); intent != nil {
 		t.Fatalf("expected nil during active ExpeditionSurveying, got %+v", intent)
 	}
-	if state.GetExpeditionPhase() != ExpeditionSurveying {
-		t.Fatalf("expected ExpeditionSurveying preserved when distant 18m zombie present, got %s", state.GetExpeditionPhase())
+	if !state.IsExpeditionSurveying(200) {
+		t.Fatal("expected the survey frame preserved when a distant 18m zombie is present")
 	}
 
 	// Harmless daytime zombie at 12m (> 8m) must NOT preempt directive.
-	state.ExpeditionPhase = ExpeditionIdle
+	state.activityKinds = nil
 	frameDay := newDirectiveTestFrame("aria", 220, 3000, 0.5, 64, 0.5)
 	frameDay.VisibleEntities = []*civquestv1.VisibleEntity{
 		{EntityId: 9002, EntityType: "minecraft:zombie", IsHostile: true, Distance: 12.0, Position: &civquestv1.Vec3{X: 12.5, Y: 64, Z: 0.5}},
@@ -433,7 +403,7 @@ func TestEvaluateStrategicDirective_IgnoresDistantHostileAndPreservesSurvey(t *t
 	frameDay.InterestingBlocks = []*civquestv1.VisibleBlock{
 		{Pos: &civquestv1.BlockPosProto{X: 2, Y: 64, Z: 0}, BlockId: "minecraft:stone"},
 	}
-	if intent := EvaluateStrategicDirective(frameDay, state, cfg); intent == nil || intent.GetInteractBlock() == nil {
+	if intent := EvaluateStrategicDirective(frameDay, state, cfg, nil); intent == nil || intent.GetInteractBlock() == nil {
 		t.Fatalf("expected daytime directive to ignore 12m non-creeper zombie and harvest stone, got %+v", intent)
 	}
 }

@@ -301,6 +301,37 @@ public class AgentNavigatorTest {
 
         assertEquals(NavigationState.NAVIGATION_STATE_STUCK, navigator.getNavigationState());
         assertTrue(navigator.isStuck());
+
+        // ADR-037: terrain stuck is reported as facts, never as entity congestion
+        com.civquest.mod.grpc.v1.MotorFacts facts = navigator.snapshotFacts();
+        assertNotNull(facts);
+        assertTrue(facts.getStuck());
+        assertFalse(facts.getEnclosed());
+        assertFalse(facts.getBlockedByEntity(), "terrain/legacy stuck must leave blocked_by_entity=false");
+        assertTrue(facts.getStuckTicks() >= 16, "stuck_ticks=" + facts.getStuckTicks());
+        assertEquals(315.0f, facts.getBlockedBearingDeg(), 0.5f, "ADR-032 yaw convention: +x/+z heading is 315 deg");
+        assertEquals(Math.hypot(50.0, 50.0), facts.getProgress(), 1e-6, "progress = remaining horizontal distance");
+    }
+
+    @Test
+    @DisplayName("ADR-037: facts are null while moving freely and stuck_ticks resets on displacement")
+    void testStuckFactsAbsentWhenProgressing() {
+        AgentNavigator navigator = new AgentNavigator();
+        navigator.setPosition(0.0, 64.0, 0.0);
+        navigator.navigate(50.0, 64.0, 50.0, 1.0f, false, false, false, 1);
+        assertNull(navigator.snapshotFacts());
+        for (int i = 0; i < 8; i++) {
+            navigator.tick();
+            navigator.setPosition(0.0, 64.0, 0.0);
+        }
+        com.civquest.mod.grpc.v1.MotorFacts partial = navigator.snapshotFacts();
+        assertNotNull(partial);
+        assertFalse(partial.getStuck(), "below the 16-tick threshold stuck stays false");
+        assertTrue(partial.getStuckTicks() > 0);
+        navigator.tick();
+        navigator.setPosition(5.0, 64.0, 5.0);
+        navigator.tick();
+        assertTrue(navigator.getStuckTicks() <= 1, "displacement resets stuck ticks");
     }
 
     @Test
@@ -1132,7 +1163,7 @@ public class AgentNavigatorTest {
         when(blocker.isAlive()).thenReturn(true);
         when(blocker.isRemoved()).thenReturn(false);
         when(blocker.isSpectator()).thenReturn(false);
-        AABB blockerBox = new AABB(1.2, 64.0, 0.2, 1.8, 65.8, 0.8);
+        AABB blockerBox = new AABB(0.85, 64.0, 0.2, 1.45, 65.8, 0.8);
         when(blocker.getBoundingBox()).thenReturn(blockerBox);
         when(level.getEntities(eq(agent), any(AABB.class), any())).thenAnswer(inv -> {
             AABB query = inv.getArgument(1);
@@ -1165,12 +1196,19 @@ public class AgentNavigatorTest {
         AgentNavigator nav = new AgentNavigator(agent);
         nav.navigate(4.5, 64.0, 0.5, 1.0f, false, false, false, 1);
 
-        for (int i = 0; i < 25; i++) {
+        for (int i = 0; i < 50; i++) {
             nav.tick();
             AABB curBox = agent.getBoundingBox();
             assertFalse(curBox.intersects(blockerBox.deflate(1e-4)),
                     "Agent must never penetrate blocker in sealed corridor at tick " + i);
             assertEquals(64.0, posRef.get().y, 1e-6);
         }
+
+        // ADR-037: the sealed-corridor hold-up is entity congestion, not terrain
+        assertTrue(nav.isStuck(), "agent held by a peer for 50 ticks reaches the stuck threshold");
+        com.civquest.mod.grpc.v1.MotorFacts facts = nav.snapshotFacts();
+        assertNotNull(facts);
+        assertTrue(facts.getStuck());
+        assertTrue(facts.getBlockedByEntity(), "entity AABB on the heading must set blocked_by_entity");
     }
 }

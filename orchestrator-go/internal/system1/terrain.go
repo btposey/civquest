@@ -373,7 +373,9 @@ func EvaluateTerrainExploration(
 	pos *civquestv1.Vec3,
 	state *AgentState,
 	cfg *xdg.AgentIdentityConfig,
+	walk *walkLocal,
 ) *civquestv1.AgentIntent {
+	walk = orFreshWalk(walk)
 	if frame == nil || pos == nil || state == nil {
 		return nil
 	}
@@ -458,7 +460,7 @@ func EvaluateTerrainExploration(
 		state.goals.ImmediateGoal = goalLabel
 	}
 
-	state.lastExploreTick = frame.WorldTick
+	walk.lastExploreTick = frame.WorldTick
 	return &civquestv1.AgentIntent{
 		AgentId: agentID,
 		Action: &civquestv1.AgentIntent_Navigate{

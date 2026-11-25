@@ -1,0 +1,6 @@
+t=100 stage=BOOTSTRAP routine=PRIMARY_DUTY stack=[shelter/1] intents=[Interact(PLACE_BLOCK 1,64,1 minecraft:torch)]  // night with planks: shelter build starts
+t=110 stage=BOOTSTRAP routine=PRIMARY_DUTY stack=[shelter/1] intents=[]  // shelter continues
+t=120 stage=EMERGENCY routine=EMERGENCY stack=[emergency/2] intents=[Attack(target=7 shield=false kite=false flee=true); Navigate(x=-15.5 z=0.5)]  // hostile: flee/emergency
+t=130 stage=EMERGENCY routine=EMERGENCY stack=[emergency/2] intents=[Attack(target=7 shield=false kite=false flee=true); Navigate(x=-15.5 z=0.5)]  // emergency holds
+t=160 stage=BOOTSTRAP routine=PRIMARY_DUTY stack=[shelter/1] intents=[Interact(PLACE_BLOCK 1,64,1 minecraft:torch)]  // threat gone: shelter resumes
+t=170 stage=BOOTSTRAP routine=PRIMARY_DUTY stack=[shelter/1] intents=[]  // shelter continues

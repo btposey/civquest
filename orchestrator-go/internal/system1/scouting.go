@@ -2,7 +2,6 @@ package system1
 
 import (
 	"math"
-	"strings"
 
 	civquestv1 "github.com/btposey/civquest/orchestrator-go/internal/proto/v1"
 	"github.com/btposey/civquest/orchestrator-go/internal/xdg"
@@ -15,7 +14,9 @@ func EvaluateScouting(
 	frame *civquestv1.TelemetryFrame,
 	cfg *xdg.AgentIdentityConfig,
 	state *AgentState,
+	walk *walkLocal,
 ) *civquestv1.AgentIntent {
+	walk = orFreshWalk(walk)
 	if frame == nil || frame.Status == nil || frame.Status.Position == nil || state == nil {
 		return nil
 	}
@@ -27,7 +28,7 @@ func EvaluateScouting(
 	state.mu.Lock()
 	defer state.mu.Unlock()
 
-	state.telemetryFramesSeen++
+	state.mem.telemetryFramesSeen++
 	if state.homeOrigin == nil {
 		originCopy := &civquestv1.Vec3{X: pos.X, Y: pos.Y, Z: pos.Z}
 		state.homeOrigin = originCopy
@@ -39,8 +40,8 @@ func EvaluateScouting(
 	if state.currentOutpost == nil {
 		state.currentOutpost = &civquestv1.Vec3{X: state.homeOrigin.X, Y: state.homeOrigin.Y, Z: state.homeOrigin.Z}
 	}
-	if state.lastExploreTick == 0 {
-		state.lastExploreTick = frame.WorldTick
+	if walk.lastExploreTick == 0 {
+		walk.lastExploreTick = frame.WorldTick
 	}
 
 	if state.companionActive {
@@ -49,32 +50,21 @@ func EvaluateScouting(
 
 	navState := frame.Status.NavigationState
 
-	// 1. If an active expedition is encountering a terrain barrier, let Horizon Explorer record the hazard & re-survey/flank first.
+	// 1. Terrain barriers met by an active expedition are handled by its Navigate frame (flank / re-survey).
 	if navState == civquestv1.NavigationState_NAVIGATION_STATE_STUCK || frame.Status.GetNavigationEnclosed() {
-		if state.IsExpeditionActiveLocked() && !state.HasActiveTaskLocked() {
-			if expIntent := EvaluateHorizonExplorerLocked(frame, state, cfg, agentID); expIntent != nil {
-				return expIntent
-			}
-		}
-		if unstuckIntent := EvaluateUnstuck(agentID, frame, pos, state); unstuckIntent != nil {
-			return unstuckIntent
-		}
-		if locked, _, _, _, _, _ := state.GetUnstuckLockLocked(); locked {
-			return nil // Waiting on excavation sequence, do NOT rotate heading
-		}
-		if frame.WorldTick >= state.lastExploreTick && frame.WorldTick-state.lastExploreTick < 20 {
+		if frame.WorldTick >= walk.lastExploreTick && frame.WorldTick-walk.lastExploreTick < 20 {
 			return nil
 		}
-		state.exploreStepIndex++
+		walk.exploreStepIndex++
 		// Rotate ~126 degrees away from blocked heading to contour around steep hills or cliffs
-		state.lastHeadingRad += 2.2
-		state.lastHeadingRad = math.Atan2(math.Sin(state.lastHeadingRad), math.Cos(state.lastHeadingRad))
-		state.frontierAzimuthRad = state.lastHeadingRad
-		state.frontierRadialLeg = 0
+		walk.lastHeadingRad += 2.2
+		walk.lastHeadingRad = math.Atan2(math.Sin(walk.lastHeadingRad), math.Cos(walk.lastHeadingRad))
+		walk.frontierAzimuthRad = walk.lastHeadingRad
+		walk.frontierRadialLeg = 0
 		detourDist := 10.0
-		targetX := pos.X + math.Cos(state.lastHeadingRad)*detourDist
-		targetZ := pos.Z + math.Sin(state.lastHeadingRad)*detourDist
-		state.lastExploreTick = frame.WorldTick
+		targetX := pos.X + math.Cos(walk.lastHeadingRad)*detourDist
+		targetZ := pos.Z + math.Sin(walk.lastHeadingRad)*detourDist
+		walk.lastExploreTick = frame.WorldTick
 
 		return &civquestv1.AgentIntent{
 			AgentId: agentID,
@@ -93,25 +83,25 @@ func EvaluateScouting(
 	}
 
 	// Require at least 2 observed frames so single-frame unit tests are not prematurely triggered
-	if state.telemetryFramesSeen < 2 {
+	if state.mem.telemetryFramesSeen < 2 {
 		return nil
 	}
 
 	// 2. Terrain-Aware Exploration Strategies (Valleys, Ridges, Fords, Rims, Flatlands, Canopy Trailblazing)
-	if state.currentExploreTarget == nil || navState == civquestv1.NavigationState_NAVIGATION_STATE_ARRIVED ||
-		math.Hypot(pos.X-state.currentExploreTarget.X, pos.Z-state.currentExploreTarget.Z) <= 2.0 {
-		if terrainIntent := EvaluateTerrainExploration(agentID, frame, pos, state, cfg); terrainIntent != nil {
+	if walk.currentExploreTarget == nil || navState == civquestv1.NavigationState_NAVIGATION_STATE_ARRIVED ||
+		math.Hypot(pos.X-walk.currentExploreTarget.X, pos.Z-walk.currentExploreTarget.Z) <= 2.0 {
+		if terrainIntent := EvaluateTerrainExploration(agentID, frame, pos, state, cfg, walk); terrainIntent != nil {
 			if nav := terrainIntent.GetNavigate(); nav != nil && nav.Target != nil {
-				state.currentExploreTarget = nav.Target
-				state.lastExploreProgressDist = math.Hypot(pos.X-nav.Target.X, pos.Z-nav.Target.Z)
-				state.lastExploreProgressTick = frame.WorldTick
+				walk.currentExploreTarget = nav.Target
+				walk.lastExploreProgressDist = math.Hypot(pos.X-nav.Target.X, pos.Z-nav.Target.Z)
+				walk.lastExploreProgressTick = frame.WorldTick
 			}
 			return terrainIntent
 		}
 	}
 
 	// 3. Radial sector azimuth frontier scouting
-	return evaluateScoutingLocked(agentID, frame, pos, state, cfg)
+	return evaluateScoutingLocked(agentID, frame, pos, state, cfg, walk)
 }
 
 // EvaluateFrontierScouting is an alias for EvaluateScouting.
@@ -120,8 +110,10 @@ func EvaluateFrontierScouting(
 	frame *civquestv1.TelemetryFrame,
 	cfg *xdg.AgentIdentityConfig,
 	state *AgentState,
+	walk *walkLocal,
 ) *civquestv1.AgentIntent {
-	return EvaluateScouting(agentID, frame, cfg, state)
+	walk = orFreshWalk(walk)
+	return EvaluateScouting(agentID, frame, cfg, state, walk)
 }
 
 // EvaluateScoutingDirect evaluates scouting with explicit position under locked state.
@@ -131,13 +123,15 @@ func EvaluateScoutingDirect(
 	pos *civquestv1.Vec3,
 	state *AgentState,
 	cfg *xdg.AgentIdentityConfig,
+	walk *walkLocal,
 ) *civquestv1.AgentIntent {
+	walk = orFreshWalk(walk)
 	if frame == nil || pos == nil || state == nil {
 		return nil
 	}
 	state.mu.Lock()
 	defer state.mu.Unlock()
-	return evaluateScoutingLocked(agentID, frame, pos, state, cfg)
+	return evaluateScoutingLocked(agentID, frame, pos, state, cfg, walk)
 }
 
 func evaluateScoutingLocked(
@@ -146,7 +140,9 @@ func evaluateScoutingLocked(
 	pos *civquestv1.Vec3,
 	state *AgentState,
 	cfg *xdg.AgentIdentityConfig,
+	walk *walkLocal,
 ) *civquestv1.AgentIntent {
+	walk = orFreshWalk(walk)
 	if frame == nil || frame.Status == nil || pos == nil || state == nil {
 		return nil
 	}
@@ -159,20 +155,20 @@ func evaluateScoutingLocked(
 	navState := frame.Status.NavigationState
 
 	// 1. Initialize sector azimuth if not yet set
-	if !state.frontierAzimuthSet {
+	if !walk.frontierAzimuthSet {
 		var azimuth float64
-		if state.lastHeadingRad != 0 {
-			azimuth = state.lastHeadingRad
+		if walk.lastHeadingRad != 0 {
+			azimuth = walk.lastHeadingRad
 		} else {
 			h := fnv1aString(agentID)
 			azimuth = float64(h%360) * (math.Pi / 180.0)
 		}
 		azimuth = math.Atan2(math.Sin(azimuth), math.Cos(azimuth))
-		state.frontierAzimuthRad = azimuth
-		state.frontierAzimuthSet = true
-		state.lastHeadingRad = azimuth
-		state.frontierRadialLeg = 0
-		state.currentExploreTarget = nil
+		walk.frontierAzimuthRad = azimuth
+		walk.frontierAzimuthSet = true
+		walk.lastHeadingRad = azimuth
+		walk.frontierRadialLeg = 0
+		walk.currentExploreTarget = nil
 	}
 
 	origin := state.currentOutpost
@@ -187,15 +183,15 @@ func evaluateScoutingLocked(
 	legStep := 48.0            // Progressive 48m radial legs (48m -> 96m -> 144m -> 192m)
 
 	// 3. Evaluate arrival, stuck, and timeout conditions
-	hasActiveTarget := state.currentExploreTarget != nil
+	hasActiveTarget := walk.currentExploreTarget != nil
 	if !hasActiveTarget {
-		if state.lastExploreTick > 0 && frame.WorldTick >= state.lastExploreTick && frame.WorldTick-state.lastExploreTick < cooldownTicks {
+		if walk.lastExploreTick > 0 && frame.WorldTick >= walk.lastExploreTick && frame.WorldTick-walk.lastExploreTick < cooldownTicks {
 			return nil
 		}
 	}
 	var distToTarget float64
 	if hasActiveTarget {
-		distToTarget = math.Hypot(pos.X-state.currentExploreTarget.X, pos.Z-state.currentExploreTarget.Z)
+		distToTarget = math.Hypot(pos.X-walk.currentExploreTarget.X, pos.Z-walk.currentExploreTarget.Z)
 	}
 
 	arrived := hasActiveTarget && (distToTarget <= 2.0 || navState == civquestv1.NavigationState_NAVIGATION_STATE_ARRIVED)
@@ -203,11 +199,11 @@ func evaluateScoutingLocked(
 
 	timedOut := false
 	if hasActiveTarget && !arrived && !stuck {
-		if distToTarget < state.lastExploreProgressDist-1.0 {
+		if distToTarget < walk.lastExploreProgressDist-1.0 {
 			// Forward progress was made toward waypoint
-			state.lastExploreProgressDist = distToTarget
-			state.lastExploreProgressTick = frame.WorldTick
-		} else if state.lastExploreProgressTick > 0 && frame.WorldTick-state.lastExploreProgressTick >= 600 {
+			walk.lastExploreProgressDist = distToTarget
+			walk.lastExploreProgressTick = frame.WorldTick
+		} else if walk.lastExploreProgressTick > 0 && frame.WorldTick-walk.lastExploreProgressTick >= 600 {
 			// 30 seconds (600 ticks) of zero forward progress
 			timedOut = true
 		}
@@ -220,7 +216,7 @@ func evaluateScoutingLocked(
 			return nil
 		}
 		// If idle/unspecified and cooldown hasn't passed, do not re-issue
-		if frame.WorldTick >= state.lastExploreTick && frame.WorldTick-state.lastExploreTick < 40 {
+		if frame.WorldTick >= walk.lastExploreTick && frame.WorldTick-walk.lastExploreTick < 40 {
 			return nil
 		}
 	}
@@ -228,27 +224,27 @@ func evaluateScoutingLocked(
 	// 4. Advance leg or pivot azimuth
 	if arrived {
 		// Advance to next radial leg along the SAME sector azimuth
-		state.frontierRadialLeg++
-		state.exploreStepIndex++
+		walk.frontierRadialLeg++
+		walk.exploreStepIndex++
 	} else if stuck || timedOut {
 		// Rotate to a new sector azimuth and reset to leg 0
-		newAz := math.Atan2(math.Sin(state.frontierAzimuthRad+1.2), math.Cos(state.frontierAzimuthRad+1.2))
-		state.frontierAzimuthRad = newAz
-		state.lastHeadingRad = state.frontierAzimuthRad
-		state.frontierRadialLeg = 0
-		state.exploreStepIndex++
+		newAz := math.Atan2(math.Sin(walk.frontierAzimuthRad+1.2), math.Cos(walk.frontierAzimuthRad+1.2))
+		walk.frontierAzimuthRad = newAz
+		walk.lastHeadingRad = walk.frontierAzimuthRad
+		walk.frontierRadialLeg = 0
+		walk.exploreStepIndex++
 	} else if hasActiveTarget && !isActivelyNavigating {
 		// Baritone is idle but agent hasn't arrived/stuck/timedOut and cooldown expired;
 		// re-issue navigation to the SAME target
-		state.lastExploreTick = frame.WorldTick
+		walk.lastExploreTick = frame.WorldTick
 		return &civquestv1.AgentIntent{
 			AgentId: agentID,
 			Action: &civquestv1.AgentIntent_Navigate{
 				Navigate: &civquestv1.NavigateIntent{
 					Target: &civquestv1.Vec3{
-						X: state.currentExploreTarget.X,
+						X: walk.currentExploreTarget.X,
 						Y: pos.Y,
-						Z: state.currentExploreTarget.Z,
+						Z: walk.currentExploreTarget.Z,
 					},
 					SpeedMultiplier:  1.0,
 					ArrivalTolerance: 2,
@@ -258,19 +254,19 @@ func evaluateScoutingLocked(
 	}
 
 	// 5. Generate target for current/new leg
-	legDist := float64(state.frontierRadialLeg+1) * legStep
-	targetX := origin.X + math.Cos(state.frontierAzimuthRad)*legDist
-	targetZ := origin.Z + math.Sin(state.frontierAzimuthRad)*legDist
+	legDist := float64(walk.frontierRadialLeg+1) * legStep
+	targetX := origin.X + math.Cos(walk.frontierAzimuthRad)*legDist
+	targetZ := origin.Z + math.Sin(walk.frontierAzimuthRad)*legDist
 	newTarget := &civquestv1.Vec3{
 		X: math.Round(targetX*10) / 10,
 		Y: pos.Y,
 		Z: math.Round(targetZ*10) / 10,
 	}
 
-	state.currentExploreTarget = newTarget
-	state.lastExploreProgressDist = math.Hypot(pos.X-newTarget.X, pos.Z-newTarget.Z)
-	state.lastExploreProgressTick = frame.WorldTick
-	state.lastExploreTick = frame.WorldTick
+	walk.currentExploreTarget = newTarget
+	walk.lastExploreProgressDist = math.Hypot(pos.X-newTarget.X, pos.Z-newTarget.Z)
+	walk.lastExploreProgressTick = frame.WorldTick
+	walk.lastExploreTick = frame.WorldTick
 
 	return &civquestv1.AgentIntent{
 		AgentId: agentID,
@@ -282,69 +278,4 @@ func evaluateScoutingLocked(
 			},
 		},
 	}
-}
-
-func findObstructingBlockToDig(frame *civquestv1.TelemetryFrame, pos *civquestv1.Vec3) *civquestv1.VisibleBlock {
-	if frame == nil || pos == nil {
-		return nil
-	}
-	bx := int32(math.Floor(pos.X))
-	by := int32(math.Floor(pos.Y))
-	bz := int32(math.Floor(pos.Z))
-
-	var bestHead, bestFeet *civquestv1.VisibleBlock
-	bestHeadDist := math.MaxFloat64
-	bestFeetDist := math.MaxFloat64
-
-	for _, b := range frame.InterestingBlocks {
-		if b == nil || b.Pos == nil {
-			continue
-		}
-		if b.Pos.X == bx && b.Pos.Z == bz {
-			continue
-		}
-		if b.Pos.Y != by && b.Pos.Y != by+1 {
-			continue
-		}
-		id := strings.ToLower(strings.TrimSpace(b.BlockId))
-		if !isDiggableObstruction(id) {
-			continue
-		}
-		dx := float64(b.Pos.X) + 0.5 - pos.X
-		dz := float64(b.Pos.Z) + 0.5 - pos.Z
-		hDist := math.Hypot(dx, dz)
-		if hDist > 2.5 {
-			continue
-		}
-		if b.Pos.Y == by+1 {
-			if hDist < bestHeadDist {
-				bestHeadDist = hDist
-				bestHead = b
-			}
-		} else {
-			if hDist < bestFeetDist {
-				bestFeetDist = hDist
-				bestFeet = b
-			}
-		}
-	}
-	if bestHead != nil {
-		return bestHead
-	}
-	return bestFeet
-}
-
-func isDiggableObstruction(id string) bool {
-	return strings.Contains(id, "dirt") ||
-		strings.Contains(id, "grass_block") ||
-		strings.HasSuffix(id, ":stone") || id == "stone" ||
-		strings.Contains(id, "cobblestone") ||
-		strings.Contains(id, "cobbled_deepslate") ||
-		strings.Contains(id, "sand") ||
-		strings.Contains(id, "gravel") ||
-		strings.HasSuffix(id, "_log") ||
-		strings.HasSuffix(id, "_wood") ||
-		strings.HasSuffix(id, "_stem") ||
-		strings.HasSuffix(id, "_planks") ||
-		strings.Contains(id, "leaves")
 }

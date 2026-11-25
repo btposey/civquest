@@ -1050,7 +1050,7 @@ public class IntentActuatorTest {
         assertEquals(0, receipt.getActiveIndex());
         assertEquals(IntentReceipt.ReceiptStatus.RECEIPT_STATUS_FAILED, receipt.getStatus());
         assertFalse(receipt.getFailureReason().isBlank());
-        assertEquals(com.civquest.mod.actuator.motor.MotorState.IDLE, fsm.getState(),
+        assertTrue(fsm.isMotorIdle(),
                 "Subsequent navigation intent must not run after earlier primitive failed");
     }
 
@@ -1084,7 +1084,7 @@ public class IntentActuatorTest {
                         .build())
                 .build();
         actuator.submitBatch(agent, initialBatch);
-        fsm.pushState(com.civquest.mod.actuator.motor.MotorState.COMBAT_ENGAGED, "reflex");
+        fsm.pushReflex(new com.civquest.mod.actuator.motor.Combat(0, 0), "reflex");
         assertEquals(1, fsm.getStackDepth());
         assertEquals(IntentReceipt.ReceiptStatus.RECEIPT_STATUS_PREEMPTED_BY_REFLEX,
                 actuator.getCurrentReceipt(agent).getStatus());
@@ -1167,8 +1167,9 @@ public class IntentActuatorTest {
 
         IntentReceipt aborted = actuator.getCurrentReceipt(agent);
         assertEquals(401L, aborted.getBatchId());
-        assertEquals(IntentReceipt.ReceiptStatus.RECEIPT_STATUS_ABORTED, aborted.getStatus());
-        assertEquals(com.civquest.mod.actuator.motor.MotorState.IDLE, fsm.getState());
+        assertEquals(IntentReceipt.ReceiptStatus.RECEIPT_STATUS_TIMEOUT, aborted.getStatus());
+        assertTrue(aborted.getFailureReason().contains("timed out"));
+        assertTrue(fsm.isMotorIdle());
         assertEquals(0, actuator.getQueuedBatchCount(agent));
     }
 
@@ -1244,7 +1245,7 @@ public class IntentActuatorTest {
         assertEquals(IntentReceipt.ReceiptStatus.RECEIPT_STATUS_COMPLETED, finalReceipt.getStatus(),
                 "Duplicate HARVEST_BREAK on already-air block must complete gracefully without mining_start_failed");
         assertEquals("", finalReceipt.getFailureReason());
-        assertEquals(com.civquest.mod.actuator.motor.MotorState.IDLE, fsm.getState());
+        assertTrue(fsm.isMotorIdle());
         verify(breaker, times(1)).start(targetPos);
     }
 
@@ -1511,7 +1512,7 @@ public class IntentActuatorTest {
                 .build();
         actuator.submitBatch(agent, sleepBatch);
         assertTrue(agent.isSleeping(), "Agent must be sleeping after SLEEP_IN_BED");
-        assertEquals(com.civquest.mod.actuator.motor.MotorState.SLEEPING, fsm.getState());
+        assertInstanceOf(com.civquest.mod.actuator.motor.Sleep.class, fsm.topMotor().orElse(null));
         assertEquals(IntentReceipt.ReceiptStatus.RECEIPT_STATUS_EXECUTING,
                 actuator.getCurrentReceipt(agent).getStatus());
 
@@ -1531,7 +1532,7 @@ public class IntentActuatorTest {
         actuator.submitBatch(agent, wakeBatch);
 
         assertFalse(agent.isSleeping(), "WAKE_UP must immediately clear isSleeping()");
-        assertEquals(com.civquest.mod.actuator.motor.MotorState.IDLE, fsm.getState());
+        assertTrue(fsm.isMotorIdle());
         assertEquals(0, actuator.getQueuedBatchCount(agent), "WAKE_UP must not queue behind sleeping batch");
         IntentReceipt wakeReceipt = actuator.getCurrentReceipt(agent);
         assertEquals(702L, wakeReceipt.getBatchId());
@@ -1595,7 +1596,7 @@ public class IntentActuatorTest {
     }
 
     @Test
-    @DisplayName("Queued batch behind NavigateIntent is not discarded when NavigateIntent fails in STUCK_RECOVERY")
+    @DisplayName("Queued batch behind NavigateIntent is not discarded when NavigateIntent fails stuck")
     void testQueuedBatchNotDroppedWhenNavigateStuckTimeoutFails() {
         AgentEntity agent = mock(AgentEntity.class);
         MinecraftServer server = mockServerWithRecipes();
@@ -1645,16 +1646,12 @@ public class IntentActuatorTest {
         actuator.submitBatch(agent, eatBatch);
         assertEquals(1, actuator.getQueuedBatchCount(agent));
 
-        // Transition navigator to STUCK -> MotorFSM enters STUCK_RECOVERY -> timeout fails navBatch
+        // Navigator STUCK -> Move ends FAILED immediately (ADR-037) -> queued batch advances
         when(nav.isStuck()).thenReturn(true);
-        fsm.tick(); // MOVING -> STUCK_RECOVERY
+        fsm.tick(); // MOVING -> IDLE (failed, facts captured)
+        assertTrue(fsm.isMotorIdle());
         actuator.tick(agent);
-        assertEquals(com.civquest.mod.actuator.motor.MotorState.STUCK_RECOVERY, fsm.getState());
-
-        for (int i = 0; i <= com.civquest.mod.actuator.motor.AgentMotorFSM.STUCK_RECOVERY_MAX_TICKS; i++) {
-            fsm.tick();
-            actuator.tick(agent);
-        }
+        actuator.tick(agent);
 
         IntentReceipt receipt = actuator.getCurrentReceipt(agent);
         assertEquals(912L, receipt.getBatchId(), "Queued batch must advance and execute after prior NavigateIntent fails");
@@ -1695,7 +1692,7 @@ public class IntentActuatorTest {
                 .build();
 
         actuator.submitBatch(agent, batch);
-        assertEquals(com.civquest.mod.actuator.motor.MotorState.SURVEYING, fsm.getState());
+        assertTrue(fsm.isSweeping());
         assertEquals(IntentReceipt.ReceiptStatus.RECEIPT_STATUS_EXECUTING,
                 actuator.getCurrentReceipt(agent).getStatus());
 
@@ -1703,7 +1700,7 @@ public class IntentActuatorTest {
         for (int t = 0; t < 6; t++) {
             fsm.tick();
             actuator.tick(agent);
-            assertEquals(com.civquest.mod.actuator.motor.MotorState.SURVEYING, fsm.getState());
+            assertTrue(fsm.isSweeping());
             assertEquals(IntentReceipt.ReceiptStatus.RECEIPT_STATUS_EXECUTING,
                     actuator.getCurrentReceipt(agent).getStatus());
         }
@@ -1711,7 +1708,7 @@ public class IntentActuatorTest {
         // 7th tick completes sector 3 -> IDLE -> batch receipt becomes COMPLETED
         fsm.tick();
         actuator.tick(agent);
-        assertEquals(com.civquest.mod.actuator.motor.MotorState.IDLE, fsm.getState());
+        assertTrue(fsm.isMotorIdle());
         IntentReceipt completed = actuator.getCurrentReceipt(agent);
         assertEquals(950L, completed.getBatchId());
         assertEquals(IntentReceipt.ReceiptStatus.RECEIPT_STATUS_COMPLETED, completed.getStatus());
@@ -1745,7 +1742,7 @@ public class IntentActuatorTest {
                 .setBatchId(1L)
                 .addIntents(surveyIntent)
                 .build());
-        assertEquals(com.civquest.mod.actuator.motor.MotorState.SURVEYING, fsm.getState());
+        assertTrue(fsm.isSweeping());
 
         // Duplicate survey-only batch without flushPeriphery must be deduplicated
         actuator.submitBatch(agent, IntentBatch.newBuilder()
@@ -1781,7 +1778,7 @@ public class IntentActuatorTest {
                 .build());
         assertEquals(0, actuator.getQueuedBatchCount(agent));
         assertEquals(4L, actuator.getCurrentReceipt(agent).getBatchId());
-        assertEquals(com.civquest.mod.actuator.motor.MotorState.SURVEYING, fsm.getState());
+        assertTrue(fsm.isSweeping());
     }
 
     @Test

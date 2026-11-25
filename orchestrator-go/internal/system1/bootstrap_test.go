@@ -191,7 +191,7 @@ func TestEvaluateBootstrapTimberAndCrafting(t *testing.T) {
 			NavigationState: civquestv1.NavigationState_NAVIGATION_STATE_IDLE,
 		},
 	}
-	_ = EvaluateBootstrapGoals("Able", frame1, cfg, state)
+	_ = EvaluateBootstrapGoals("Able", frame1, cfg, state, nil)
 
 	// Frame 2: Unarmed agent sees an oak_log within 3 blocks -> should harvest it!
 	frame2 := &civquestv1.TelemetryFrame{
@@ -210,7 +210,7 @@ func TestEvaluateBootstrapTimberAndCrafting(t *testing.T) {
 			},
 		},
 	}
-	harvestIntent := EvaluateBootstrapGoals("Able", frame2, cfg, state)
+	harvestIntent := EvaluateBootstrapGoals("Able", frame2, cfg, state, nil)
 	if harvestIntent == nil || harvestIntent.GetInteractBlock() == nil ||
 		harvestIntent.GetInteractBlock().InteractionType != civquestv1.InteractBlockIntent_HARVEST_BREAK {
 		t.Fatalf("expected HARVEST_BREAK intent for nearby oak_log, got %+v", harvestIntent)
@@ -231,7 +231,7 @@ func TestEvaluateBootstrapTimberAndCrafting(t *testing.T) {
 			},
 		},
 	}
-	craftPlanksIntent := EvaluateBootstrapGoals("Able", frame3, cfg, state)
+	craftPlanksIntent := EvaluateBootstrapGoals("Able", frame3, cfg, state, nil)
 	if craftPlanksIntent == nil || craftPlanksIntent.GetCraftItem() == nil || craftPlanksIntent.GetCraftItem().RecipeId != "minecraft:oak_planks" {
 		t.Fatalf("expected CraftItemIntent for minecraft:oak_planks first, got %+v", craftPlanksIntent)
 	}
@@ -251,7 +251,7 @@ func TestEvaluateBootstrapTimberAndCrafting(t *testing.T) {
 			},
 		},
 	}
-	craftTableIntent := EvaluateBootstrapGoals("Able", frame3b, cfg, state)
+	craftTableIntent := EvaluateBootstrapGoals("Able", frame3b, cfg, state, nil)
 	if craftTableIntent == nil || craftTableIntent.GetCraftItem() == nil || craftTableIntent.GetCraftItem().RecipeId != "minecraft:crafting_table" {
 		t.Fatalf("expected CraftItemIntent for minecraft:crafting_table, got %+v", craftTableIntent)
 	}
@@ -272,7 +272,7 @@ func TestEvaluateBootstrapTimberAndCrafting(t *testing.T) {
 			},
 		},
 	}
-	placeTableIntent := EvaluateBootstrapGoals("Able", frame4, cfg, state)
+	placeTableIntent := EvaluateBootstrapGoals("Able", frame4, cfg, state, nil)
 	if placeTableIntent == nil || placeTableIntent.GetInteractBlock() == nil ||
 		placeTableIntent.GetInteractBlock().InteractionType != civquestv1.InteractBlockIntent_PLACE_BLOCK ||
 		placeTableIntent.GetInteractBlock().BlockOrItemId != "minecraft:crafting_table" {
@@ -301,7 +301,7 @@ func TestEvaluateBootstrapTimberAndCrafting(t *testing.T) {
 			},
 		},
 	}
-	craftAxeIntent := EvaluateBootstrapGoals("Able", frame5, cfg, state)
+	craftAxeIntent := EvaluateBootstrapGoals("Able", frame5, cfg, state, nil)
 	if craftAxeIntent == nil || craftAxeIntent.GetCraftItem() == nil || craftAxeIntent.GetCraftItem().RecipeId != "minecraft:wooden_axe" {
 		t.Fatalf("expected CraftItemIntent for minecraft:wooden_axe near crafting table, got %+v", craftAxeIntent)
 	}
@@ -315,8 +315,8 @@ func TestEvaluateBootstrapTimberAndCrafting(t *testing.T) {
 func TestCraftingTableDistantNavigation(t *testing.T) {
 	state := NewAgentState()
 	state.SetRecipeGraph(newTestRecipeGraph())
-	state.telemetryFramesSeen = 5
-	state.lastExploreTick = 100
+	state.mem.telemetryFramesSeen = 5
+	walk := &walkLocal{lastExploreTick: 100}
 	cfg := xdg.DefaultAgentIdentityConfig("Able")
 	cfg.Profession = "EXPLORER"
 
@@ -341,7 +341,7 @@ func TestCraftingTableDistantNavigation(t *testing.T) {
 			},
 		},
 	}
-	navIntent := EvaluateBootstrapGoals("Able", frame, cfg, state)
+	navIntent := EvaluateBootstrapGoals("Able", frame, cfg, state, walk)
 	if navIntent == nil || navIntent.GetNavigate() == nil {
 		t.Fatalf("expected NavigateIntent towards distant crafting table when ready for 3x3 craft, got %+v", navIntent)
 	}
@@ -354,8 +354,8 @@ func TestCraftingTableDistantNavigation(t *testing.T) {
 func TestCraftingTableUndergroundIgnoredInFavorOfPocketCrafting(t *testing.T) {
 	state := NewAgentState()
 	state.SetRecipeGraph(newTestRecipeGraph())
-	state.telemetryFramesSeen = 5
-	state.lastExploreTick = 100
+	state.mem.telemetryFramesSeen = 5
+	walk := &walkLocal{lastExploreTick: 100}
 	cfg := xdg.DefaultAgentIdentityConfig("Able")
 	cfg.Profession = "EXPLORER"
 
@@ -384,7 +384,7 @@ func TestCraftingTableUndergroundIgnoredInFavorOfPocketCrafting(t *testing.T) {
 		},
 	}
 
-	intent := EvaluateBootstrapGoals("Able", frame, cfg, state)
+	intent := EvaluateBootstrapGoals("Able", frame, cfg, state, walk)
 	if intent == nil || intent.GetCraftItem() == nil {
 		t.Fatalf("expected CraftItemIntent for pocket crafting crafting_table, got %+v", intent)
 	}
@@ -396,7 +396,7 @@ func TestCraftingTableUndergroundIgnoredInFavorOfPocketCrafting(t *testing.T) {
 func TestCraftingTableStoneUpgrade(t *testing.T) {
 	state := NewAgentState()
 	state.SetRecipeGraph(newTestRecipeGraph())
-	state.telemetryFramesSeen = 5
+	state.mem.telemetryFramesSeen = 5
 	cfg := xdg.DefaultAgentIdentityConfig("Able")
 	cfg.Profession = "EXPLORER"
 
@@ -421,7 +421,7 @@ func TestCraftingTableStoneUpgrade(t *testing.T) {
 			},
 		},
 	}
-	craftIntent := EvaluateBootstrapGoals("Able", frame, cfg, state)
+	craftIntent := EvaluateBootstrapGoals("Able", frame, cfg, state, nil)
 	if craftIntent == nil || craftIntent.GetCraftItem() == nil || craftIntent.GetCraftItem().RecipeId != "minecraft:stone_sword" {
 		t.Fatalf("expected CraftItemIntent for minecraft:stone_sword, got %+v", craftIntent)
 	}
@@ -445,7 +445,7 @@ func TestEvaluateBootstrapGoalsDirect(t *testing.T) {
 	pos := &civquestv1.Vec3{X: 0, Y: 64, Z: 0}
 
 	start := time.Now()
-	intent := EvaluateBootstrapGoalsDirect("Able", frame, pos, civquestv1.NavigationState_NAVIGATION_STATE_IDLE, state)
+	intent := EvaluateBootstrapGoalsDirect("Able", frame, pos, civquestv1.NavigationState_NAVIGATION_STATE_IDLE, state, nil)
 	duration := time.Since(start)
 
 	// Invariant: Sub-5ms execution budget
@@ -585,7 +585,7 @@ func TestTaskSubroutine_GenericPhasesAndLifecycle(t *testing.T) {
 
 func TestHarvestTreeTask_StrictColumnCommitmentAndReachability(t *testing.T) {
 	state := NewAgentState()
-	state.telemetryFramesSeen = 5
+	state.mem.telemetryFramesSeen = 5
 	cfg := xdg.DefaultAgentIdentityConfig("Logger")
 	cfg.Profession = "EXPLORER"
 
@@ -611,13 +611,13 @@ func TestHarvestTreeTask_StrictColumnCommitmentAndReachability(t *testing.T) {
 	}
 
 	// Select and lock onto (4, 0)
-	intent1 := EvaluateBootstrapGoals("Logger", frame, cfg, state)
+	intent1 := EvaluateBootstrapGoals("Logger", frame, cfg, state, rigWalk(state))
 	if intent1 == nil || intent1.GetInteractBlock() == nil ||
 		intent1.GetInteractBlock().InteractionType != civquestv1.InteractBlockIntent_HARVEST_BREAK ||
 		intent1.GetInteractBlock().Pos.X != 4 || intent1.GetInteractBlock().Pos.Y != 64 || intent1.GetInteractBlock().Pos.Z != 0 {
 		t.Fatalf("expected HARVEST_BREAK at bottom log (4,64,0), got %+v", intent1)
 	}
-	if locked, tx, tz, _ := state.GetTargetTree(); !locked || tx != 4 || tz != 0 {
+	if locked, tx, tz := treeOf(rigTask(state)); !locked || tx != 4 || tz != 0 {
 		t.Fatalf("expected tree lock on (4,0), got locked=%v (%d,%d)", locked, tx, tz)
 	}
 
@@ -634,10 +634,10 @@ func TestHarvestTreeTask_StrictColumnCommitmentAndReachability(t *testing.T) {
 	frame.Status.Inventory = []*civquestv1.ItemStackProto{
 		{Slot: 0, ItemId: "minecraft:oak_log", Count: 2},
 	}
-	if cooldownIntent := EvaluateBootstrapGoals("Logger", frame, cfg, state); cooldownIntent != nil {
+	if cooldownIntent := EvaluateBootstrapGoals("Logger", frame, cfg, state, rigWalk(state)); cooldownIntent != nil {
 		t.Fatalf("expected nil intent during harvest cooldown (no exploration/crafting fallthrough), got %+v", cooldownIntent)
 	}
-	if exploreIntent := EvaluateExploration("Logger", frame, cfg, state); exploreIntent != nil {
+	if exploreIntent := EvaluateExploration("Logger", frame, cfg, state, rigWalk(state)); exploreIntent != nil {
 		t.Fatalf("expected EvaluateExploration to suppress wander while committed to tree, got %+v", exploreIntent)
 	}
 
@@ -649,7 +649,7 @@ func TestHarvestTreeTask_StrictColumnCommitmentAndReachability(t *testing.T) {
 		{Pos: &civquestv1.BlockPosProto{X: 4, Y: 67, Z: 0}, BlockId: "minecraft:oak_log"},
 		{Pos: &civquestv1.BlockPosProto{X: 3, Y: 64, Z: 1}, BlockId: "minecraft:birch_log"},
 	}
-	intent2 := EvaluateBootstrapGoals("Logger", frame, cfg, state)
+	intent2 := EvaluateBootstrapGoals("Logger", frame, cfg, state, rigWalk(state))
 	if intent2 == nil || intent2.GetInteractBlock() == nil ||
 		intent2.GetInteractBlock().Pos.X != 4 || intent2.GetInteractBlock().Pos.Y != 65 || intent2.GetInteractBlock().Pos.Z != 0 {
 		t.Fatalf("expected continued HARVEST_BREAK on locked trunk (4,65,0), got %+v", intent2)
@@ -662,41 +662,41 @@ func TestHarvestTreeTask_StrictColumnCommitmentAndReachability(t *testing.T) {
 		{Pos: &civquestv1.BlockPosProto{X: 4, Y: 69, Z: 0}, BlockId: "minecraft:oak_log"},
 	}
 	// Agent is within 2.5m horizontally of (4, 0) and zero logs remain within 4.5m reach -> task completes and unlocks!
-	_ = EvaluateBootstrapGoals("Logger", frame, cfg, state)
+	_ = EvaluateBootstrapGoals("Logger", frame, cfg, state, rigWalk(state))
 	if state.HasActiveTask() {
 		t.Fatalf("expected HarvestTreeTask to complete when no logs remain within 4.5m reach at trunk")
 	}
-	if locked, _, _, _ := state.GetTargetTree(); locked {
-		t.Fatalf("expected targetTreeLocked cleared once reachable logs exhausted")
+	if locked, _, _ := treeOf(rigTask(state)); locked {
+		t.Fatalf("expected the harvest focus cleared once reachable logs exhausted")
 	}
 
 	// Condition (b): New tree lock where column [Y-1..Y+5] becomes completely empty
-	state.ClearActiveTask()
+	rigClear(state)
 	frame.Status.Inventory = nil
 	frame.WorldTick = 200
 	frame.InterestingBlocks = []*civquestv1.VisibleBlock{
 		{Pos: &civquestv1.BlockPosProto{X: 2, Y: 64, Z: 0}, BlockId: "minecraft:oak_log"},
 	}
-	if startIntent := EvaluateBootstrapGoals("Logger", frame, cfg, state); startIntent == nil || startIntent.GetInteractBlock() == nil {
+	if startIntent := EvaluateBootstrapGoals("Logger", frame, cfg, state, rigWalk(state)); startIntent == nil || startIntent.GetInteractBlock() == nil {
 		t.Fatalf("expected new HARVEST_BREAK on (2,64,0), got %+v", startIntent)
 	}
 	// While pathing toward tree, exploration must stay suppressed
-	state.ClearActiveTask()
-	state.StartTask(NewHarvestTreeTask(12, 64, 0, StageBootstrap, 210))
+	rigClear(state)
+	rigStart(state, NewHarvestTreeTask(12, 64, 0, StageBootstrap, 210))
 	frame.WorldTick = 211
 	frame.Status.Position = &civquestv1.Vec3{X: 0, Y: 64, Z: 0}
 	frame.Status.NavigationState = civquestv1.NavigationState_NAVIGATION_STATE_PATHING
 	frame.InterestingBlocks = []*civquestv1.VisibleBlock{
 		{Pos: &civquestv1.BlockPosProto{X: 12, Y: 64, Z: 0}, BlockId: "minecraft:oak_log"},
 	}
-	if pathingIntent := EvaluateBootstrapGoals("Logger", frame, cfg, state); pathingIntent != nil {
+	if pathingIntent := EvaluateBootstrapGoals("Logger", frame, cfg, state, rigWalk(state)); pathingIntent != nil {
 		t.Fatalf("expected nil while Baritone pathing to locked tree (no wander), got %+v", pathingIntent)
 	}
 	// Now trunk disappears completely from [Y-1..Y+5] -> completes!
 	frame.WorldTick = 212
 	frame.Status.NavigationState = civquestv1.NavigationState_NAVIGATION_STATE_IDLE
 	frame.InterestingBlocks = nil
-	_ = EvaluateBootstrapGoals("Logger", frame, cfg, state)
+	_ = EvaluateBootstrapGoals("Logger", frame, cfg, state, rigWalk(state))
 	if state.HasActiveTask() {
 		t.Fatalf("expected task complete when column [Y-1..Y+5] has no logs")
 	}
@@ -704,11 +704,11 @@ func TestHarvestTreeTask_StrictColumnCommitmentAndReachability(t *testing.T) {
 
 func TestHarvestTreeTask_HardTimeoutUnlocksAndCoolsDown(t *testing.T) {
 	state := NewAgentState()
-	state.telemetryFramesSeen = 5
+	state.mem.telemetryFramesSeen = 5
 	cfg := xdg.DefaultAgentIdentityConfig("TimeoutAgent")
 
 	// Blocked tree at (10, 64, 0) far outside 4.5m reach, and another tree at (3, 64, 0)
-	state.StartTask(NewHarvestTreeTask(10, 64, 0, StageBootstrap, 100))
+	rigStart(state, NewHarvestTreeTask(10, 64, 0, StageBootstrap, 100))
 
 	frame := &civquestv1.TelemetryFrame{
 		WorldTick: 100,
@@ -727,15 +727,15 @@ func TestHarvestTreeTask_HardTimeoutUnlocksAndCoolsDown(t *testing.T) {
 
 	// At tick 249 (149 ticks elapsed), still committed to (10, 0)
 	frame.WorldTick = 249
-	_ = EvaluateBootstrapGoals("TimeoutAgent", frame, cfg, state)
-	if locked, tx, _, _ := state.GetTargetTree(); !locked || tx != 10 {
+	_ = EvaluateBootstrapGoals("TimeoutAgent", frame, cfg, state, rigWalk(state))
+	if locked, tx, _ := treeOf(rigTask(state)); !locked || tx != 10 {
 		t.Fatalf("expected tree lock on (10,0) before 150-tick timeout, got locked=%v tx=%d", locked, tx)
 	}
 
 	// At tick 250 (150 ticks without breaking a block) -> hard timeout, unlock, cooldown on (10, 0), select (3, 0)!
 	frame.WorldTick = 250
 	frame.Status.NavigationState = civquestv1.NavigationState_NAVIGATION_STATE_IDLE
-	intent := EvaluateBootstrapGoals("TimeoutAgent", frame, cfg, state)
+	intent := EvaluateBootstrapGoals("TimeoutAgent", frame, cfg, state, rigWalk(state))
 	if intent == nil || intent.GetInteractBlock() == nil || intent.GetInteractBlock().Pos.X != 3 {
 		t.Fatalf("expected agent to recover and target unobstructed tree (3,64,0) after timeout, got %+v", intent)
 	}
@@ -747,11 +747,11 @@ func TestHarvestTreeTask_HardTimeoutUnlocksAndCoolsDown(t *testing.T) {
 func TestHarvestTreeTask_CollectsDroppedWoodThenTransitionsCleanly(t *testing.T) {
 	state := NewAgentState()
 	state.SetRecipeGraph(newTestRecipeGraph())
-	state.telemetryFramesSeen = 5
+	state.mem.telemetryFramesSeen = 5
 	cfg := xdg.DefaultAgentIdentityConfig("Collector")
 
 	// Locked onto tree at (4, 64, 0)
-	state.StartTask(NewHarvestTreeTask(4, 64, 0, StageBootstrap, 100))
+	rigStart(state, NewHarvestTreeTask(4, 64, 0, StageBootstrap, 100))
 
 	// Tree trunk is now gone, and a dropped Oak Log entity sits at (4.5, 64, 0.5) (distance 4.5m > 2.5m pickup radius)
 	frame := &civquestv1.TelemetryFrame{
@@ -773,7 +773,7 @@ func TestHarvestTreeTask_CollectsDroppedWoodThenTransitionsCleanly(t *testing.T)
 		},
 	}
 
-	collectNav := EvaluateBootstrapGoals("Collector", frame, cfg, state)
+	collectNav := EvaluateBootstrapGoals("Collector", frame, cfg, state, rigWalk(state))
 	if collectNav == nil || collectNav.GetNavigate() == nil {
 		t.Fatalf("expected NavigateIntent toward dropped Oak Log after tree harvest, got %+v", collectNav)
 	}
@@ -789,7 +789,7 @@ func TestHarvestTreeTask_CollectsDroppedWoodThenTransitionsCleanly(t *testing.T)
 	frame.Status.Inventory = []*civquestv1.ItemStackProto{
 		{Slot: 0, ItemId: "minecraft:oak_log", Count: 2},
 	}
-	craftIntent := EvaluateBootstrapGoals("Collector", frame, cfg, state)
+	craftIntent := EvaluateBootstrapGoals("Collector", frame, cfg, state, rigWalk(state))
 	if craftIntent == nil || craftIntent.GetCraftItem() == nil || craftIntent.GetCraftItem().RecipeId != "minecraft:oak_planks" {
 		t.Fatalf("expected clean transition to CraftItemIntent(minecraft:oak_planks), got %+v", craftIntent)
 	}
@@ -839,7 +839,7 @@ func TestTaskSubroutine_ReceiptImmediateAdvancementAndRecovery(t *testing.T) {
 		},
 	}, 100)
 
-	state.StartTask(task)
+	rigStart(state, task)
 
 	// Tick 100: emits first ACT intent and sets LastActionTick = 100
 	frame := &civquestv1.TelemetryFrame{
@@ -849,48 +849,48 @@ func TestTaskSubroutine_ReceiptImmediateAdvancementAndRecovery(t *testing.T) {
 			NavigationState: civquestv1.NavigationState_NAVIGATION_STATE_IDLE,
 		},
 	}
-	res1 := state.StepActiveTask("agent", frame)
+	res1 := rigStep(state, "agent", frame)
 	if res1.Intent == nil || res1.Phase != TaskPhaseAct || stepIdx != 1 {
 		t.Fatalf("expected initial ACT intent on tick 100, got %+v (stepIdx=%d)", res1, stepIdx)
 	}
 
 	// Tick 101 without receipt: blocked by 20-tick ActionCooldown
 	frame.WorldTick = 101
-	resWait := state.StepActiveTask("agent", frame)
+	resWait := rigStep(state, "agent", frame)
 	if resWait.Intent != nil || resWait.Phase != TaskPhaseAct || stepIdx != 1 {
 		t.Fatalf("expected cooldown hold without receipt at tick 101, got %+v", resWait)
 	}
 
 	// Tick 102 with RECEIPT_STATUS_COMPLETED: must advance immediately without waiting 20 ticks
 	frame.WorldTick = 102
-	frame.Receipt = &civquestv1.IntentReceipt{
+	rigDeliver(state, &civquestv1.IntentReceipt{
 		BatchId: 10,
 		Status:  civquestv1.IntentReceipt_RECEIPT_STATUS_COMPLETED,
-	}
-	resAdvance := state.StepActiveTask("agent", frame)
+	})
+	resAdvance := rigStep(state, "agent", frame)
 	if resAdvance.Intent == nil || resAdvance.Phase != TaskPhaseAct || stepIdx != 2 {
 		t.Fatalf("expected immediate advancement to next ACT on RECEIPT_STATUS_COMPLETED, got %+v (stepIdx=%d)", resAdvance, stepIdx)
 	}
 
 	// 2. RECEIPT_STATUS_PREEMPTED_BY_REFLEX resets cooldowns without counting as failure
 	frame.WorldTick = 103
-	frame.Receipt = &civquestv1.IntentReceipt{
+	rigDeliver(state, &civquestv1.IntentReceipt{
 		BatchId: 11,
 		Status:  civquestv1.IntentReceipt_RECEIPT_STATUS_PREEMPTED_BY_REFLEX,
-	}
-	resPreempt := state.StepActiveTask("agent", frame)
+	})
+	resPreempt := rigStep(state, "agent", frame)
 	if !resPreempt.Active || resPreempt.Done || task.ConsecutiveFailures != 0 {
 		t.Fatalf("expected clean preemption reset with 0 failures, got res=%+v failures=%d", resPreempt, task.ConsecutiveFailures)
 	}
 
 	// 3. First RECEIPT_STATUS_FAILED triggers recovery without failing task
 	frame.WorldTick = 104
-	frame.Receipt = &civquestv1.IntentReceipt{
+	rigDeliver(state, &civquestv1.IntentReceipt{
 		BatchId:       12,
 		Status:        civquestv1.IntentReceipt_RECEIPT_STATUS_FAILED,
 		FailureReason: "path blocked",
-	}
-	resRecover := state.StepActiveTask("agent", frame)
+	})
+	resRecover := rigStep(state, "agent", frame)
 	if !resRecover.Active || resRecover.Done || task.ConsecutiveFailures != 1 {
 		t.Fatalf("expected recovery on first failure (failures=1), got res=%+v failures=%d", resRecover, task.ConsecutiveFailures)
 	}
@@ -900,12 +900,12 @@ func TestTaskSubroutine_ReceiptImmediateAdvancementAndRecovery(t *testing.T) {
 
 	// 4. Second RECEIPT_STATUS_FAILED reaches MaxReceiptFailures and fails task
 	frame.WorldTick = 105
-	frame.Receipt = &civquestv1.IntentReceipt{
+	rigDeliver(state, &civquestv1.IntentReceipt{
 		BatchId:       13,
 		Status:        civquestv1.IntentReceipt_RECEIPT_STATUS_FAILED,
 		FailureReason: "target unreachable",
-	}
-	resFail := state.StepActiveTask("agent", frame)
+	})
+	resFail := rigStep(state, "agent", frame)
 	if resFail.Phase != TaskPhaseFailed || !resFail.Done || !onFailCalled {
 		t.Fatalf("expected TaskPhaseFailed and OnFail callback on second failure, got res=%+v onFail=%v", resFail, onFailCalled)
 	}
@@ -934,7 +934,7 @@ func TestDistributedTreeSelection_AcrossAgents(t *testing.T) {
 
 	for _, id := range agents {
 		state := NewAgentState()
-		state.telemetryFramesSeen = 5
+		state.mem.telemetryFramesSeen = 5
 		cfg := xdg.DefaultAgentIdentityConfig(id)
 		frame := &civquestv1.TelemetryFrame{
 			WorldTick: 200,
@@ -947,11 +947,11 @@ func TestDistributedTreeSelection_AcrossAgents(t *testing.T) {
 			},
 			InterestingBlocks: blocks,
 		}
-		intent := EvaluateBootstrapGoals(id, frame, cfg, state)
+		intent := EvaluateBootstrapGoals(id, frame, cfg, state, rigWalk(state))
 		if intent == nil {
 			t.Fatalf("expected non-nil intent for agent %s", id)
 		}
-		locked, tx, tz, _ := state.GetTargetTree()
+		locked, tx, tz := treeOf(rigTask(state))
 		if !locked {
 			t.Fatalf("expected agent %s to lock onto a tree trunk", id)
 		}
@@ -966,7 +966,7 @@ func TestDistributedTreeSelection_AcrossAgents(t *testing.T) {
 func TestCraftingTableSelfPlacement_IgnoresDistantTable(t *testing.T) {
 	state := NewAgentState()
 	state.SetRecipeGraph(newTestRecipeGraph())
-	state.telemetryFramesSeen = 5
+	state.mem.telemetryFramesSeen = 5
 	cfg := xdg.DefaultAgentIdentityConfig("Able")
 	cfg.Profession = "EXPLORER"
 
@@ -993,7 +993,7 @@ func TestCraftingTableSelfPlacement_IgnoresDistantTable(t *testing.T) {
 		},
 	}
 
-	placeIntent := EvaluateBootstrapGoals("Able", frame, cfg, state)
+	placeIntent := EvaluateBootstrapGoals("Able", frame, cfg, state, nil)
 	if placeIntent == nil || placeIntent.GetInteractBlock() == nil ||
 		placeIntent.GetInteractBlock().InteractionType != civquestv1.InteractBlockIntent_PLACE_BLOCK ||
 		placeIntent.GetInteractBlock().BlockOrItemId != "minecraft:crafting_table" {
@@ -1014,7 +1014,7 @@ func TestCraftingTableSelfPlacement_IgnoresDistantTable(t *testing.T) {
 		Pos:     placedPos,
 		BlockId: "minecraft:crafting_table",
 	})
-	craftIntent := EvaluateBootstrapGoals("Able", frame, cfg, state)
+	craftIntent := EvaluateBootstrapGoals("Able", frame, cfg, state, nil)
 	if craftIntent == nil || craftIntent.GetCraftItem() == nil || craftIntent.GetCraftItem().RecipeId != "minecraft:wooden_axe" {
 		t.Fatalf("expected immediate transition to CraftItemIntent(minecraft:wooden_axe), got %+v", craftIntent)
 	}
@@ -1023,7 +1023,7 @@ func TestCraftingTableSelfPlacement_IgnoresDistantTable(t *testing.T) {
 func TestBootstrap_CraftingTableRecallFromSpatialIndex(t *testing.T) {
 	state := NewAgentState()
 	state.SetRecipeGraph(newTestRecipeGraph())
-	state.telemetryFramesSeen = 5
+	state.mem.telemetryFramesSeen = 5
 	cfg := xdg.DefaultAgentIdentityConfig("Able")
 	cfg.Profession = "EXPLORER"
 
@@ -1060,7 +1060,7 @@ func TestBootstrap_CraftingTableRecallFromSpatialIndex(t *testing.T) {
 	}
 
 	// Agent 30 blocks away with EMPTY InterestingBlocks recalls table and navigates to Access coords
-	navIntent := EvaluateBootstrapGoals("Able", frame, cfg, state)
+	navIntent := EvaluateBootstrapGoals("Able", frame, cfg, state, nil)
 	if navIntent == nil || navIntent.GetNavigate() == nil || navIntent.GetNavigate().Target == nil {
 		t.Fatalf("expected NavigateIntent towards recalled crafting table, got %+v", navIntent)
 	}
@@ -1072,7 +1072,7 @@ func TestBootstrap_CraftingTableRecallFromSpatialIndex(t *testing.T) {
 	// While pathing, exploration must not hijack navigation
 	frame.WorldTick = 110
 	frame.Status.NavigationState = civquestv1.NavigationState_NAVIGATION_STATE_PATHING
-	if pathingIntent := EvaluateBootstrapGoals("Able", frame, cfg, state); pathingIntent != nil {
+	if pathingIntent := EvaluateBootstrapGoals("Able", frame, cfg, state, nil); pathingIntent != nil {
 		t.Fatalf("expected nil while pathing to recalled table, got %+v", pathingIntent)
 	}
 
@@ -1080,7 +1080,7 @@ func TestBootstrap_CraftingTableRecallFromSpatialIndex(t *testing.T) {
 	frame.WorldTick = 150
 	frame.Status.NavigationState = civquestv1.NavigationState_NAVIGATION_STATE_IDLE
 	frame.Status.Position = &civquestv1.Vec3{X: 29.5, Y: 64.0, Z: 0.5}
-	craftIntent := EvaluateBootstrapGoals("Able", frame, cfg, state)
+	craftIntent := EvaluateBootstrapGoals("Able", frame, cfg, state, nil)
 	if craftIntent == nil || craftIntent.GetCraftItem() == nil || craftIntent.GetCraftItem().RecipeId != "minecraft:wooden_axe" {
 		t.Fatalf("expected CraftItemIntent(minecraft:wooden_axe) when within 4.5m of recalled table, got %+v", craftIntent)
 	}
@@ -1091,7 +1091,7 @@ func TestBootstrap_CraftingTableRecallFromSpatialIndex(t *testing.T) {
 	// Low reliability (< 0.5) table is ignored -> falls back to pocket crafting a new table
 	state2 := NewAgentState()
 	state2.SetRecipeGraph(newTestRecipeGraph())
-	state2.telemetryFramesSeen = 5
+	state2.mem.telemetryFramesSeen = 5
 	state2.SpatialIndex().UpsertPOI(db.AgentPOI{
 		POIID:          FormatPOIID(POICategoryWorkstation, 30, 64, 0),
 		Category:       POICategoryWorkstation,
@@ -1108,7 +1108,7 @@ func TestBootstrap_CraftingTableRecallFromSpatialIndex(t *testing.T) {
 		IsActive:       true,
 	})
 	frame.Status.Position = &civquestv1.Vec3{X: 0, Y: 64, Z: 0}
-	pocketCraft := EvaluateBootstrapGoals("Able", frame, cfg, state2)
+	pocketCraft := EvaluateBootstrapGoals("Able", frame, cfg, state2, nil)
 	if pocketCraft == nil || pocketCraft.GetCraftItem() == nil || pocketCraft.GetCraftItem().RecipeId != "minecraft:crafting_table" {
 		t.Fatalf("expected pocket crafting fallback when recalled table reliability < 0.5, got %+v", pocketCraft)
 	}
@@ -1116,7 +1116,7 @@ func TestBootstrap_CraftingTableRecallFromSpatialIndex(t *testing.T) {
 
 func TestBootstrap_TimberStandRecallFromSpatialIndex(t *testing.T) {
 	state := NewAgentState()
-	state.telemetryFramesSeen = 5
+	state.mem.telemetryFramesSeen = 5
 	cfg := xdg.DefaultAgentIdentityConfig("Logger")
 	cfg.Profession = "EXPLORER"
 
@@ -1149,7 +1149,7 @@ func TestBootstrap_TimberStandRecallFromSpatialIndex(t *testing.T) {
 		},
 	}
 
-	navIntent := EvaluateBootstrapGoals("Logger", frame, cfg, state)
+	navIntent := EvaluateBootstrapGoals("Logger", frame, cfg, state, nil)
 	if navIntent == nil || navIntent.GetNavigate() == nil || navIntent.GetNavigate().Target == nil {
 		t.Fatalf("expected NavigateIntent towards recalled timber stand, got %+v", navIntent)
 	}
@@ -1161,7 +1161,7 @@ func TestBootstrap_TimberStandRecallFromSpatialIndex(t *testing.T) {
 	// While pathing, exploration must not overwrite path
 	frame.WorldTick = 110
 	frame.Status.NavigationState = civquestv1.NavigationState_NAVIGATION_STATE_PATHING
-	if pathingIntent := EvaluateBootstrapGoals("Logger", frame, cfg, state); pathingIntent != nil {
+	if pathingIntent := EvaluateBootstrapGoals("Logger", frame, cfg, state, nil); pathingIntent != nil {
 		t.Fatalf("expected nil while pathing to recalled timber stand, got %+v", pathingIntent)
 	}
 
@@ -1169,7 +1169,7 @@ func TestBootstrap_TimberStandRecallFromSpatialIndex(t *testing.T) {
 	frame.WorldTick = 160
 	frame.Status.NavigationState = civquestv1.NavigationState_NAVIGATION_STATE_IDLE
 	frame.Status.Position = &civquestv1.Vec3{X: 29.5, Y: 64.0, Z: 0.5}
-	_ = EvaluateBootstrapGoals("Logger", frame, cfg, state)
+	_ = EvaluateBootstrapGoals("Logger", frame, cfg, state, nil)
 	if _, exists := state.SpatialIndex().GetPOI(poiID); exists {
 		t.Fatalf("expected stale log POI %s to be pruned when absent at close range", poiID)
 	}
@@ -1355,7 +1355,7 @@ func TestHierarchicalPathfinding_UndergroundRejectsDistantSurfaceTreeWithoutCorr
 	frame.Status.Inventory = []*civquestv1.ItemStackProto{} // lacks timber
 	frame.Status.NavigationState = civquestv1.NavigationState_NAVIGATION_STATE_IDLE
 
-	intent := EvaluateBootstrapGoals("Able", frame, cfg, state)
+	intent := EvaluateBootstrapGoals("Able", frame, cfg, state, nil)
 	if intent == nil || intent.GetNavigate() == nil || intent.GetNavigate().Target == nil {
 		t.Fatalf("expected corridor NavigateIntent, got %+v", intent)
 	}
@@ -1570,7 +1570,7 @@ func TestBootstrapLightCrafting_ADR029StrictRecipes(t *testing.T) {
 				InterestingBlocks: tc.interestingBlocks,
 			}
 
-			intent := EvaluateBootstrapGoalsDirect("Able", frame, pos, civquestv1.NavigationState_NAVIGATION_STATE_IDLE, state)
+			intent := EvaluateBootstrapGoalsDirect("Able", frame, pos, civquestv1.NavigationState_NAVIGATION_STATE_IDLE, state, nil)
 			if tc.wantRecipe == "" {
 				if intent != nil {
 					t.Fatalf("expected nil intent, got %+v", intent)
@@ -1620,7 +1620,7 @@ func TestBootstrapNoCoalDoesNotEmitBogusCraftOrInfiniteChop(t *testing.T) {
 		},
 	}
 
-	intent := EvaluateBootstrapGoalsDirect("Able", frame, pos, civquestv1.NavigationState_NAVIGATION_STATE_IDLE, state)
+	intent := EvaluateBootstrapGoalsDirect("Able", frame, pos, civquestv1.NavigationState_NAVIGATION_STATE_IDLE, state, nil)
 	if intent != nil {
 		t.Fatalf("expected nil bootstrap intent when agent has tools, >= 6 logs, and no coal/charcoal, got %+v", intent)
 	}
@@ -1629,7 +1629,7 @@ func TestBootstrapNoCoalDoesNotEmitBogusCraftOrInfiniteChop(t *testing.T) {
 func TestBootstrapDynamicRecipeGraph_BirchLogToWoodenAxeStepByStep(t *testing.T) {
 	state := NewAgentState()
 	state.SetRecipeGraph(newTestRecipeGraph())
-	state.telemetryFramesSeen = 5
+	state.mem.telemetryFramesSeen = 5
 	cfg := xdg.DefaultAgentIdentityConfig("BirchCrafter")
 	cfg.Profession = "EXPLORER"
 
@@ -1671,7 +1671,7 @@ func TestBootstrapDynamicRecipeGraph_BirchLogToWoodenAxeStepByStep(t *testing.T)
 			},
 			InterestingBlocks: []*civquestv1.VisibleBlock{tableBlock},
 		}
-		intent := EvaluateBootstrapGoals("BirchCrafter", frame, cfg, state)
+		intent := EvaluateBootstrapGoals("BirchCrafter", frame, cfg, state, nil)
 		craft := intent.GetCraftItem()
 		if craft == nil {
 			t.Fatalf("step %d: expected CraftItemIntent(%s), got %+v", stepIdx, wantRecipe, intent)
@@ -1707,7 +1707,7 @@ func TestBootstrapDynamicRecipeGraph_BirchLogToWoodenAxeStepByStep(t *testing.T)
 func TestBootstrapDynamicRecipeGraph_NoCraftingTableMagnetismWith1Log(t *testing.T) {
 	state := NewAgentState()
 	state.SetRecipeGraph(newTestRecipeGraph())
-	state.telemetryFramesSeen = 5
+	state.mem.telemetryFramesSeen = 5
 	cfg := xdg.DefaultAgentIdentityConfig("Forager")
 	cfg.Profession = "EXPLORER"
 
@@ -1749,7 +1749,7 @@ func TestBootstrapDynamicRecipeGraph_NoCraftingTableMagnetismWith1Log(t *testing
 		},
 	}
 
-	intent := EvaluateBootstrapGoals("Forager", frame, cfg, state)
+	intent := EvaluateBootstrapGoals("Forager", frame, cfg, state, nil)
 	if intent == nil || intent.GetInteractBlock() == nil ||
 		intent.GetInteractBlock().InteractionType != civquestv1.InteractBlockIntent_HARVEST_BREAK {
 		t.Fatalf("expected HARVEST_BREAK on nearby tree instead of walking to distant table with 1 log, got %+v", intent)
@@ -1757,12 +1757,12 @@ func TestBootstrapDynamicRecipeGraph_NoCraftingTableMagnetismWith1Log(t *testing
 
 	// With 2 birch_logs >4.5m from table and still missing planks/sticks, crafts 2x2 birch_planks first!
 	frame.WorldTick = 240
-	state.ClearActiveTask()
+	rigClear(state)
 	frame.Status.Inventory = []*civquestv1.ItemStackProto{
 		{Slot: 0, ItemId: "minecraft:wooden_sword", Count: 1},
 		{Slot: 1, ItemId: "minecraft:birch_log", Count: 2},
 	}
-	pocketIntent := EvaluateBootstrapGoals("Forager", frame, cfg, state)
+	pocketIntent := EvaluateBootstrapGoals("Forager", frame, cfg, state, nil)
 	if pocketIntent == nil || pocketIntent.GetCraftItem() == nil || pocketIntent.GetCraftItem().RecipeId != "minecraft:birch_planks" {
 		t.Fatalf("expected 2x2 pocket craft birch_planks before walking to distant table, got %+v", pocketIntent)
 	}
@@ -1770,7 +1770,7 @@ func TestBootstrapDynamicRecipeGraph_NoCraftingTableMagnetismWith1Log(t *testing
 
 func TestBootstrapDynamicRecipeGraph_FailClosedWithoutSyncedCatalog(t *testing.T) {
 	state := NewAgentState() // recipeGraph is nil (not yet synced)
-	state.telemetryFramesSeen = 5
+	state.mem.telemetryFramesSeen = 5
 	cfg := xdg.DefaultAgentIdentityConfig("NoRecipes")
 	cfg.Profession = "EXPLORER"
 
@@ -1793,7 +1793,7 @@ func TestBootstrapDynamicRecipeGraph_FailClosedWithoutSyncedCatalog(t *testing.T
 		},
 	}
 
-	intent := EvaluateBootstrapGoals("NoRecipes", frame, cfg, state)
+	intent := EvaluateBootstrapGoals("NoRecipes", frame, cfg, state, nil)
 	if intent != nil && intent.GetCraftItem() != nil {
 		t.Fatalf("expected fail-closed behavior (no CraftItemIntent) when RecipeGraph is nil, got %+v", intent)
 	}

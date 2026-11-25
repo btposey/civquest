@@ -77,6 +77,10 @@ private static final long serialVersionUID = 0L;
      * <code>RECEIPT_STATUS_ABORTED = 6;</code>
      */
     RECEIPT_STATUS_ABORTED(6),
+    /**
+     * <code>RECEIPT_STATUS_TIMEOUT = 7;</code>
+     */
+    RECEIPT_STATUS_TIMEOUT(7),
     UNRECOGNIZED(-1),
     ;
 
@@ -117,6 +121,10 @@ private static final long serialVersionUID = 0L;
      * <code>RECEIPT_STATUS_ABORTED = 6;</code>
      */
     public static final int RECEIPT_STATUS_ABORTED_VALUE = 6;
+    /**
+     * <code>RECEIPT_STATUS_TIMEOUT = 7;</code>
+     */
+    public static final int RECEIPT_STATUS_TIMEOUT_VALUE = 7;
 
 
     public final int getNumber() {
@@ -150,6 +158,7 @@ private static final long serialVersionUID = 0L;
         case 4: return RECEIPT_STATUS_PREEMPTED_BY_REFLEX;
         case 5: return RECEIPT_STATUS_FAILED;
         case 6: return RECEIPT_STATUS_ABORTED;
+        case 7: return RECEIPT_STATUS_TIMEOUT;
         default: return null;
       }
     }
@@ -206,6 +215,7 @@ private static final long serialVersionUID = 0L;
     // @@protoc_insertion_point(enum_scope:civquest.v1.IntentReceipt.ReceiptStatus)
   }
 
+  private int bitField0_;
   public static final int BATCH_ID_FIELD_NUMBER = 1;
   private long batchId_ = 0L;
   /**
@@ -288,12 +298,57 @@ private static final long serialVersionUID = 0L;
   public static final int MOTOR_STACK_DEPTH_FIELD_NUMBER = 5;
   private int motorStackDepth_ = 0;
   /**
+   * <pre>
+   * diagnostics only (ADR-036 s5)
+   * </pre>
+   *
    * <code>int32 motor_stack_depth = 5;</code>
    * @return The motorStackDepth.
    */
   @java.lang.Override
   public int getMotorStackDepth() {
     return motorStackDepth_;
+  }
+
+  public static final int FRAME_ID_FIELD_NUMBER = 6;
+  private long frameId_ = 0L;
+  /**
+   * <pre>
+   * echoed from IntentBatch.frame_id (0 = legacy mod)
+   * </pre>
+   *
+   * <code>uint64 frame_id = 6;</code>
+   * @return The frameId.
+   */
+  @java.lang.Override
+  public long getFrameId() {
+    return frameId_;
+  }
+
+  public static final int FACTS_FIELD_NUMBER = 7;
+  private com.civquest.mod.grpc.v1.MotorFacts facts_;
+  /**
+   * <code>.civquest.v1.MotorFacts facts = 7;</code>
+   * @return Whether the facts field is set.
+   */
+  @java.lang.Override
+  public boolean hasFacts() {
+    return ((bitField0_ & 0x00000001) != 0);
+  }
+  /**
+   * <code>.civquest.v1.MotorFacts facts = 7;</code>
+   * @return The facts.
+   */
+  @java.lang.Override
+  public com.civquest.mod.grpc.v1.MotorFacts getFacts() {
+    return facts_ == null ? com.civquest.mod.grpc.v1.MotorFacts.getDefaultInstance() : facts_;
+  }
+  /**
+   * <code>.civquest.v1.MotorFacts facts = 7;</code>
+   */
+  @java.lang.Override
+  public com.civquest.mod.grpc.v1.MotorFactsOrBuilder getFactsOrBuilder() {
+    return facts_ == null ? com.civquest.mod.grpc.v1.MotorFacts.getDefaultInstance() : facts_;
   }
 
   private byte memoizedIsInitialized = -1;
@@ -325,6 +380,12 @@ private static final long serialVersionUID = 0L;
     if (motorStackDepth_ != 0) {
       output.writeInt32(5, motorStackDepth_);
     }
+    if (frameId_ != 0L) {
+      output.writeUInt64(6, frameId_);
+    }
+    if (((bitField0_ & 0x00000001) != 0)) {
+      output.writeMessage(7, getFacts());
+    }
     getUnknownFields().writeTo(output);
   }
 
@@ -353,6 +414,14 @@ private static final long serialVersionUID = 0L;
       size += com.google.protobuf.CodedOutputStream
         .computeInt32Size(5, motorStackDepth_);
     }
+    if (frameId_ != 0L) {
+      size += com.google.protobuf.CodedOutputStream
+        .computeUInt64Size(6, frameId_);
+    }
+    if (((bitField0_ & 0x00000001) != 0)) {
+      size += com.google.protobuf.CodedOutputStream
+        .computeMessageSize(7, getFacts());
+    }
     size += getUnknownFields().getSerializedSize();
     memoizedSize = size;
     return size;
@@ -377,6 +446,13 @@ private static final long serialVersionUID = 0L;
         .equals(other.getFailureReason())) return false;
     if (getMotorStackDepth()
         != other.getMotorStackDepth()) return false;
+    if (getFrameId()
+        != other.getFrameId()) return false;
+    if (hasFacts() != other.hasFacts()) return false;
+    if (hasFacts()) {
+      if (!getFacts()
+          .equals(other.getFacts())) return false;
+    }
     if (!getUnknownFields().equals(other.getUnknownFields())) return false;
     return true;
   }
@@ -399,6 +475,13 @@ private static final long serialVersionUID = 0L;
     hash = (53 * hash) + getFailureReason().hashCode();
     hash = (37 * hash) + MOTOR_STACK_DEPTH_FIELD_NUMBER;
     hash = (53 * hash) + getMotorStackDepth();
+    hash = (37 * hash) + FRAME_ID_FIELD_NUMBER;
+    hash = (53 * hash) + com.google.protobuf.Internal.hashLong(
+        getFrameId());
+    if (hasFacts()) {
+      hash = (37 * hash) + FACTS_FIELD_NUMBER;
+      hash = (53 * hash) + getFacts().hashCode();
+    }
     hash = (29 * hash) + getUnknownFields().hashCode();
     memoizedHashCode = hash;
     return hash;
@@ -518,13 +601,19 @@ private static final long serialVersionUID = 0L;
 
     // Construct using com.civquest.mod.grpc.v1.IntentReceipt.newBuilder()
     private Builder() {
-
+      maybeForceBuilderInitialization();
     }
 
     private Builder(
         com.google.protobuf.GeneratedMessage.BuilderParent parent) {
       super(parent);
-
+      maybeForceBuilderInitialization();
+    }
+    private void maybeForceBuilderInitialization() {
+      if (com.google.protobuf.GeneratedMessage
+              .alwaysUseFieldBuilders) {
+        getFactsFieldBuilder();
+      }
     }
     @java.lang.Override
     public Builder clear() {
@@ -535,6 +624,12 @@ private static final long serialVersionUID = 0L;
       status_ = 0;
       failureReason_ = "";
       motorStackDepth_ = 0;
+      frameId_ = 0L;
+      facts_ = null;
+      if (factsBuilder_ != null) {
+        factsBuilder_.dispose();
+        factsBuilder_ = null;
+      }
       return this;
     }
 
@@ -583,6 +678,17 @@ private static final long serialVersionUID = 0L;
       if (((from_bitField0_ & 0x00000010) != 0)) {
         result.motorStackDepth_ = motorStackDepth_;
       }
+      if (((from_bitField0_ & 0x00000020) != 0)) {
+        result.frameId_ = frameId_;
+      }
+      int to_bitField0_ = 0;
+      if (((from_bitField0_ & 0x00000040) != 0)) {
+        result.facts_ = factsBuilder_ == null
+            ? facts_
+            : factsBuilder_.build();
+        to_bitField0_ |= 0x00000001;
+      }
+      result.bitField0_ |= to_bitField0_;
     }
 
     @java.lang.Override
@@ -613,6 +719,12 @@ private static final long serialVersionUID = 0L;
       }
       if (other.getMotorStackDepth() != 0) {
         setMotorStackDepth(other.getMotorStackDepth());
+      }
+      if (other.getFrameId() != 0L) {
+        setFrameId(other.getFrameId());
+      }
+      if (other.hasFacts()) {
+        mergeFacts(other.getFacts());
       }
       this.mergeUnknownFields(other.getUnknownFields());
       onChanged();
@@ -665,6 +777,18 @@ private static final long serialVersionUID = 0L;
               bitField0_ |= 0x00000010;
               break;
             } // case 40
+            case 48: {
+              frameId_ = input.readUInt64();
+              bitField0_ |= 0x00000020;
+              break;
+            } // case 48
+            case 58: {
+              input.readMessage(
+                  getFactsFieldBuilder().getBuilder(),
+                  extensionRegistry);
+              bitField0_ |= 0x00000040;
+              break;
+            } // case 58
             default: {
               if (!super.parseUnknownField(input, extensionRegistry, tag)) {
                 done = true; // was an endgroup tag
@@ -873,6 +997,10 @@ private static final long serialVersionUID = 0L;
 
     private int motorStackDepth_ ;
     /**
+     * <pre>
+     * diagnostics only (ADR-036 s5)
+     * </pre>
+     *
      * <code>int32 motor_stack_depth = 5;</code>
      * @return The motorStackDepth.
      */
@@ -881,6 +1009,10 @@ private static final long serialVersionUID = 0L;
       return motorStackDepth_;
     }
     /**
+     * <pre>
+     * diagnostics only (ADR-036 s5)
+     * </pre>
+     *
      * <code>int32 motor_stack_depth = 5;</code>
      * @param value The motorStackDepth to set.
      * @return This builder for chaining.
@@ -893,6 +1025,10 @@ private static final long serialVersionUID = 0L;
       return this;
     }
     /**
+     * <pre>
+     * diagnostics only (ADR-036 s5)
+     * </pre>
+     *
      * <code>int32 motor_stack_depth = 5;</code>
      * @return This builder for chaining.
      */
@@ -901,6 +1037,171 @@ private static final long serialVersionUID = 0L;
       motorStackDepth_ = 0;
       onChanged();
       return this;
+    }
+
+    private long frameId_ ;
+    /**
+     * <pre>
+     * echoed from IntentBatch.frame_id (0 = legacy mod)
+     * </pre>
+     *
+     * <code>uint64 frame_id = 6;</code>
+     * @return The frameId.
+     */
+    @java.lang.Override
+    public long getFrameId() {
+      return frameId_;
+    }
+    /**
+     * <pre>
+     * echoed from IntentBatch.frame_id (0 = legacy mod)
+     * </pre>
+     *
+     * <code>uint64 frame_id = 6;</code>
+     * @param value The frameId to set.
+     * @return This builder for chaining.
+     */
+    public Builder setFrameId(long value) {
+
+      frameId_ = value;
+      bitField0_ |= 0x00000020;
+      onChanged();
+      return this;
+    }
+    /**
+     * <pre>
+     * echoed from IntentBatch.frame_id (0 = legacy mod)
+     * </pre>
+     *
+     * <code>uint64 frame_id = 6;</code>
+     * @return This builder for chaining.
+     */
+    public Builder clearFrameId() {
+      bitField0_ = (bitField0_ & ~0x00000020);
+      frameId_ = 0L;
+      onChanged();
+      return this;
+    }
+
+    private com.civquest.mod.grpc.v1.MotorFacts facts_;
+    private com.google.protobuf.SingleFieldBuilder<
+        com.civquest.mod.grpc.v1.MotorFacts, com.civquest.mod.grpc.v1.MotorFacts.Builder, com.civquest.mod.grpc.v1.MotorFactsOrBuilder> factsBuilder_;
+    /**
+     * <code>.civquest.v1.MotorFacts facts = 7;</code>
+     * @return Whether the facts field is set.
+     */
+    public boolean hasFacts() {
+      return ((bitField0_ & 0x00000040) != 0);
+    }
+    /**
+     * <code>.civquest.v1.MotorFacts facts = 7;</code>
+     * @return The facts.
+     */
+    public com.civquest.mod.grpc.v1.MotorFacts getFacts() {
+      if (factsBuilder_ == null) {
+        return facts_ == null ? com.civquest.mod.grpc.v1.MotorFacts.getDefaultInstance() : facts_;
+      } else {
+        return factsBuilder_.getMessage();
+      }
+    }
+    /**
+     * <code>.civquest.v1.MotorFacts facts = 7;</code>
+     */
+    public Builder setFacts(com.civquest.mod.grpc.v1.MotorFacts value) {
+      if (factsBuilder_ == null) {
+        if (value == null) {
+          throw new NullPointerException();
+        }
+        facts_ = value;
+      } else {
+        factsBuilder_.setMessage(value);
+      }
+      bitField0_ |= 0x00000040;
+      onChanged();
+      return this;
+    }
+    /**
+     * <code>.civquest.v1.MotorFacts facts = 7;</code>
+     */
+    public Builder setFacts(
+        com.civquest.mod.grpc.v1.MotorFacts.Builder builderForValue) {
+      if (factsBuilder_ == null) {
+        facts_ = builderForValue.build();
+      } else {
+        factsBuilder_.setMessage(builderForValue.build());
+      }
+      bitField0_ |= 0x00000040;
+      onChanged();
+      return this;
+    }
+    /**
+     * <code>.civquest.v1.MotorFacts facts = 7;</code>
+     */
+    public Builder mergeFacts(com.civquest.mod.grpc.v1.MotorFacts value) {
+      if (factsBuilder_ == null) {
+        if (((bitField0_ & 0x00000040) != 0) &&
+          facts_ != null &&
+          facts_ != com.civquest.mod.grpc.v1.MotorFacts.getDefaultInstance()) {
+          getFactsBuilder().mergeFrom(value);
+        } else {
+          facts_ = value;
+        }
+      } else {
+        factsBuilder_.mergeFrom(value);
+      }
+      if (facts_ != null) {
+        bitField0_ |= 0x00000040;
+        onChanged();
+      }
+      return this;
+    }
+    /**
+     * <code>.civquest.v1.MotorFacts facts = 7;</code>
+     */
+    public Builder clearFacts() {
+      bitField0_ = (bitField0_ & ~0x00000040);
+      facts_ = null;
+      if (factsBuilder_ != null) {
+        factsBuilder_.dispose();
+        factsBuilder_ = null;
+      }
+      onChanged();
+      return this;
+    }
+    /**
+     * <code>.civquest.v1.MotorFacts facts = 7;</code>
+     */
+    public com.civquest.mod.grpc.v1.MotorFacts.Builder getFactsBuilder() {
+      bitField0_ |= 0x00000040;
+      onChanged();
+      return getFactsFieldBuilder().getBuilder();
+    }
+    /**
+     * <code>.civquest.v1.MotorFacts facts = 7;</code>
+     */
+    public com.civquest.mod.grpc.v1.MotorFactsOrBuilder getFactsOrBuilder() {
+      if (factsBuilder_ != null) {
+        return factsBuilder_.getMessageOrBuilder();
+      } else {
+        return facts_ == null ?
+            com.civquest.mod.grpc.v1.MotorFacts.getDefaultInstance() : facts_;
+      }
+    }
+    /**
+     * <code>.civquest.v1.MotorFacts facts = 7;</code>
+     */
+    private com.google.protobuf.SingleFieldBuilder<
+        com.civquest.mod.grpc.v1.MotorFacts, com.civquest.mod.grpc.v1.MotorFacts.Builder, com.civquest.mod.grpc.v1.MotorFactsOrBuilder> 
+        getFactsFieldBuilder() {
+      if (factsBuilder_ == null) {
+        factsBuilder_ = new com.google.protobuf.SingleFieldBuilder<
+            com.civquest.mod.grpc.v1.MotorFacts, com.civquest.mod.grpc.v1.MotorFacts.Builder, com.civquest.mod.grpc.v1.MotorFactsOrBuilder>(
+                getFacts(),
+                getParentForChildren(),
+                isClean());
+        facts_ = null;
+      }
+      return factsBuilder_;
     }
 
     // @@protoc_insertion_point(builder_scope:civquest.v1.IntentReceipt)

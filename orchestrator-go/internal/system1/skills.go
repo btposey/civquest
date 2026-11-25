@@ -13,10 +13,27 @@ type EvaluatorContext struct {
 	AgentID       string
 	Frame         *civquestv1.TelemetryFrame
 	Config        *xdg.AgentIdentityConfig
-	State         *AgentState
+	State         StateView
 	CivicDB       *db.CivicRegistryDB
 	SafeNodes     []db.MapNode
 	PavingTracker *RoadPavingTracker
+}
+
+// newEvaluatorContext builds the read-only evaluator view of an FSMContext.
+// A nil *AgentState is kept as a nil interface so `ctx.State != nil` guards stay accurate.
+func newEvaluatorContext(ctx *FSMContext) *EvaluatorContext {
+	ec := &EvaluatorContext{
+		AgentID:       ctx.AgentID,
+		Frame:         ctx.Frame,
+		Config:        ctx.Config,
+		CivicDB:       ctx.CivicDB,
+		SafeNodes:     ctx.SafeNodes,
+		PavingTracker: ctx.PavingTracker,
+	}
+	if ctx.State != nil {
+		ec.State = ctx.State
+	}
+	return ec
 }
 
 // Evaluator defines a modular sensory and environmental evaluator producing facts.
@@ -36,6 +53,17 @@ type SkillContext struct {
 	SafeNodes     []db.MapNode
 	PavingTracker *RoadPavingTracker
 	Registry      *EngineRegistry
+
+	// Shelter is the running Shelter frame's Local, bound only while that frame steps (nil otherwise).
+	Shelter *shelterLocal
+	// Forage is the running Foraging frame's Local, bound only while that frame steps (nil otherwise).
+	Forage *forageLocal
+	// Walk is the running bootstrap/exploration/shelter frame's walk cursor, bound only while it steps (nil otherwise).
+	Walk *walkLocal
+	// Directive is the running strategic_directive frame's Local, bound only while it steps (nil otherwise).
+	Directive *directiveLocal
+	// Construction is the driving activity's blueprint progress Local (nil: start at block 0, untracked).
+	Construction *ConstructionLocal
 }
 
 // Skill defines a modular behavior skill activated by preconditions on the FactGraph.
@@ -155,6 +183,7 @@ func (r *EngineRegistry) EvaluateAll(ctx *EvaluatorContext) *FactGraph {
 			_ = eval.Evaluate(ctx, graph)
 		}
 	}
+	graph.Freeze()
 	return graph
 }
 

@@ -1,7 +1,6 @@
 package system1
 
 import (
-	"github.com/btposey/civquest/orchestrator-go/internal/blueprints"
 	civquestv1 "github.com/btposey/civquest/orchestrator-go/internal/proto/v1"
 )
 
@@ -46,7 +45,7 @@ func (s *BootstrapGatherSkill) Execute(ctx *SkillContext, facts *FactGraph) ([]*
 	if ctx == nil || ctx.Frame == nil || ctx.Frame.Status == nil || ctx.State == nil {
 		return nil, nil
 	}
-	intent := EvaluateBootstrapGoals(ctx.AgentID, ctx.Frame, ctx.Config, ctx.State)
+	intent := EvaluateBootstrapGoals(ctx.AgentID, ctx.Frame, ctx.Config, ctx.State, ctx.Walk)
 	if intent == nil {
 		return nil, nil
 	}
@@ -99,7 +98,7 @@ func (s *BootstrapCraftSkill) Execute(ctx *SkillContext, facts *FactGraph) ([]*c
 	if ctx == nil || ctx.Frame == nil || ctx.Frame.Status == nil || ctx.State == nil {
 		return nil, nil
 	}
-	intent := EvaluateBootstrapGoals(ctx.AgentID, ctx.Frame, ctx.Config, ctx.State)
+	intent := EvaluateBootstrapGoals(ctx.AgentID, ctx.Frame, ctx.Config, ctx.State, ctx.Walk)
 	if intent == nil {
 		return nil, nil
 	}
@@ -145,17 +144,12 @@ func (s *ShelterConstructionSkill) Execute(ctx *SkillContext, facts *FactGraph) 
 	if ctx == nil || ctx.Frame == nil || ctx.Frame.Status == nil || ctx.State == nil {
 		return nil, nil
 	}
-	intent := EvaluateShelterGoals(ctx.AgentID, ctx.Frame, ctx.Config, ctx.State)
+	intent := EvaluateShelterGoals(ctx.AgentID, ctx.Frame, ctx.Config, ctx.State, ctx.Shelter)
 	if intent == nil {
 		return nil, nil
 	}
 	return []*civquestv1.AgentIntent{intent}, nil
 }
 
-func (s *ShelterConstructionSkill) OnComplete(ctx *SkillContext, facts *FactGraph) {
-	if ctx != nil && ctx.State != nil && facts != nil {
-		if ctx.State.GetShelterBuildIndex() >= blueprints.CabinTotalBlocks || ctx.State.GetShelterBlocksPlaced() >= blueprints.CabinTotalBlocks {
-			facts.SetBool("shelter.complete", "shelter", true, "Shelter construction complete")
-		}
-	}
-}
+// OnComplete does not write facts: shelter.complete is derived by ShelterEvaluator each tick from AgentState.
+func (s *ShelterConstructionSkill) OnComplete(ctx *SkillContext, facts *FactGraph) {}

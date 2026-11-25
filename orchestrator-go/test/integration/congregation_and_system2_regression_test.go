@@ -26,6 +26,7 @@ import (
 	"github.com/btposey/civquest/orchestrator-go/internal/xdg"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/metadata"
+	"google.golang.org/protobuf/encoding/protojson"
 )
 
 // inMemBridgeStream implements grpc.BidiStreamingClient[IntentBatch, TelemetryFrame]
@@ -150,7 +151,8 @@ type actuatorSimAgent struct {
 	navTarget              *civquestv1.Vec3
 	navTol                 float64
 	navStallTicks          int64
-	stuckRecoveryTicks     int
+	stuckHold              int // ticks telemetry keeps reporting STUCK after the Move failed
+	stuckFacts             *civquestv1.MotorFacts
 	lastNavTarget          *civquestv1.Vec3
 	lastAsyncSucceeded     bool
 	lastAsyncFailureReason string
@@ -392,7 +394,7 @@ func (a *actuatorSimAgent) submitBatch(batch *civquestv1.IntentBatch) {
 				a.navState == civquestv1.NavigationState_NAVIGATION_STATE_STUCK
 			if isUnstuckNav {
 				a.totalUnstuckNavsEmitted++
-				if a.motorState == motorStuckRecovery {
+				if a.stuckHold > 0 {
 					a.unstuckInCurrentStuckWindow++
 					if a.unstuckInCurrentStuckWindow > a.maxUnstuckInAnyStuckWindow {
 						a.maxUnstuckInAnyStuckWindow = a.unstuckInCurrentStuckWindow
@@ -480,14 +482,6 @@ func (a *actuatorSimAgent) actuateIntentLocked(in *civquestv1.AgentIntent, world
 		nav := act.Navigate
 		if nav == nil || nav.Target == nil {
 			return false
-		}
-		// Mirror AgentMotorFSM.canPreempt in STUCK_RECOVERY for identical target
-		if a.motorState == motorStuckRecovery && a.lastNavTarget != nil {
-			if math.Abs(nav.Target.X-a.lastNavTarget.X) < 0.5 &&
-				math.Abs(nav.Target.Y-a.lastNavTarget.Y) < 0.5 &&
-				math.Abs(nav.Target.Z-a.lastNavTarget.Z) < 0.5 {
-				return false
-			}
 		}
 		tgt := &civquestv1.Vec3{X: nav.Target.X, Y: nav.Target.Y, Z: nav.Target.Z}
 		a.navHistory = append(a.navHistory, navTargetRecord{
@@ -681,9 +675,13 @@ func (a *actuatorSimAgent) handleBatchFailureLocked() {
 	a.failureReason = reason
 	a.lastReceipt = &civquestv1.IntentReceipt{
 		BatchId:       a.activeBatch.BatchId,
+		FrameId:       a.activeBatch.FrameId,
 		ActiveIndex:   int32(a.activeIndex),
 		Status:        civquestv1.IntentReceipt_RECEIPT_STATUS_FAILED,
 		FailureReason: reason,
+	}
+	if reason == "Navigation stuck" {
+		a.lastReceipt.Facts, a.stuckFacts = a.stuckFacts, nil
 	}
 	if len(a.pendingBatches) > 0 {
 		next := a.pendingBatches[0]
@@ -704,6 +702,12 @@ func (a *actuatorSimAgent) stepTick(singleTick int64) {
 	defer a.mu.Unlock()
 	a.currentWorldTick = singleTick
 
+	if a.stuckHold > 0 {
+		a.stuckHold--
+		if a.stuckHold == 0 && a.navState == civquestv1.NavigationState_NAVIGATION_STATE_STUCK {
+			a.navState = civquestv1.NavigationState_NAVIGATION_STATE_IDLE
+		}
+	}
 	switch a.motorState {
 	case motorSurveying:
 		a.yaw = float32(math.Mod(float64(a.yaw)+5.0, 360.0))
@@ -725,12 +729,21 @@ func (a *actuatorSimAgent) stepTick(singleTick int64) {
 			a.motorState = motorIdle
 			break
 		}
+		dx0, dz0 := a.navTarget.X-a.pos.X, a.navTarget.Z-a.pos.Z
 		obstructed := a.isObstructedNav != nil && a.isObstructedNav(a.pos, a.navTarget)
 		if obstructed {
 			a.navStallTicks++
 			if a.navStallTicks >= 16 {
-				a.motorState = motorStuckRecovery
-				a.stuckRecoveryTicks = 0
+				// Post cq-2sr.14: the Move fails immediately with MotorFacts (no STUCK_RECOVERY).
+				a.stuckFacts = &civquestv1.MotorFacts{
+					Stuck: true, StuckTicks: 16,
+					BlockedBearingDeg: float32(math.Mod(math.Atan2(-dx0, dz0)*180.0/math.Pi+360.0, 360.0)),
+					Progress:          math.Hypot(dx0, dz0),
+				}
+				a.lastAsyncSucceeded = false
+				a.lastAsyncFailureReason = "Navigation stuck"
+				a.motorState = motorIdle
+				a.stuckHold = 20
 				a.navState = civquestv1.NavigationState_NAVIGATION_STATE_STUCK
 				a.navTarget = nil
 				a.navStallTicks = 0
@@ -766,17 +779,6 @@ func (a *actuatorSimAgent) stepTick(singleTick int64) {
 			a.yaw = float32(math.Mod(math.Atan2(-dx, dz)*180.0/math.Pi+360.0, 360.0))
 		}
 
-	case motorStuckRecovery:
-		a.stuckRecoveryTicks++
-		a.navState = civquestv1.NavigationState_NAVIGATION_STATE_STUCK
-		if a.stuckRecoveryTicks > 20 {
-			a.navState = civquestv1.NavigationState_NAVIGATION_STATE_IDLE
-			a.navTarget = nil
-			a.navStallTicks = 0
-			a.lastAsyncSucceeded = false
-			a.lastAsyncFailureReason = "Navigation stuck recovery timeout"
-			a.motorState = motorIdle
-		}
 	}
 
 	dSpawn := math.Hypot(a.pos.X-a.spawnPos.X, a.pos.Z-a.spawnPos.Z)
@@ -1174,9 +1176,26 @@ func TestIntegration_StuckHarvestTaskAndUnstuckQueueDrain_BlacklistsAndEscapes(t
 	}
 }
 
-// Scenario 2B: Active HarvestTreeTask at zero net physical displacement (< 1.5m) for >= 300 ticks
-// must unstarve daytime_idle contemplation and allow SCOUT_FRONTIER to preempt harvest_tree.
-func TestIntegration_ZeroProgressActiveTask_TriggersDaytimeIdleAndPreemptsWithScoutFrontier(t *testing.T) {
+// zeroProgressResult is what runZeroProgressScenario observed.
+type zeroProgressResult struct {
+	pre300Calls     int32
+	totalCalls      int32
+	activeTaskAt300 bool
+	surveyCount     int
+	maxDist         float64
+	taskKind        string
+	stuckWindows    int
+	// maxZeroProgressTicks is the longest run of ticks the agent spent within 1.5m of where the
+	// run of ticks began (zero net displacement), sampled once per frame.
+	maxZeroProgressTicks int64
+	hasTaskAtEnd         bool
+}
+
+// runZeroProgressScenario spawns carl among obstructedTrees (10 trees inside 16m, >= 3m apart,
+// ground-level logs) and ticks 340 ticks + 240 ticks. obstructed decides which Navigate targets the
+// sim cannot reach (it faithfully fails the Move with MotorFacts, as the real mod does).
+func runZeroProgressScenario(t *testing.T, obstructedTrees [][2]int32, obstructed func(tgt *civquestv1.Vec3) bool) zeroProgressResult {
+	t.Helper()
 	tmpDir := t.TempDir()
 	res := xdg.NewResolver(xdg.WithCustomRoot(tmpDir))
 	sockDir := makeShortSocketDir(t)
@@ -1189,21 +1208,7 @@ func TestIntegration_ZeroProgressActiveTask_TriggersDaytimeIdleAndPreemptsWithSc
 	defer srv.Close()
 	defer llmClient.Close()
 
-	// Reachable outer forests 35-55m away + 10 obstructed nearby trees inside 16m (>= 3m apart)
-	// so an active HarvestTreeTask remains committed across >= 300 ticks of zero physical displacement.
 	world := newPlaytest0849World(false, false, false)
-	obstructedTrees := [][2]int32{
-		{-46, -8},
-		{-35, -8},
-		{-41, -2},
-		{-41, -13},
-		{-45, -3},
-		{-36, -3},
-		{-45, -12},
-		{-36, -12},
-		{-50, -8},
-		{-31, -8},
-	}
 	for _, tr := range obstructedTrees {
 		for dy := int32(0); dy <= 3; dy++ {
 			world.blocks[worldBlockKey{X: tr[0], Y: 86 + dy, Z: tr[1]}] = "minecraft:oak_log"
@@ -1218,17 +1223,7 @@ func TestIntegration_ZeroProgressActiveTask_TriggersDaytimeIdleAndPreemptsWithSc
 	defer carl.close()
 
 	carl.isObstructedNav = func(_ civquestv1.Vec3, tgt *civquestv1.Vec3) bool {
-		if tgt == nil {
-			return false
-		}
-		for _, tr := range obstructedTrees {
-			cx := float64(tr[0]) + 0.5
-			cz := float64(tr[1]) + 0.5
-			if math.Hypot(tgt.X-cx, tgt.Z-cz) <= 2.5 {
-				return true
-			}
-		}
-		return false
+		return tgt != nil && obstructed(tgt)
 	}
 
 	const (
@@ -1239,8 +1234,9 @@ func TestIntegration_ZeroProgressActiveTask_TriggersDaytimeIdleAndPreemptsWithSc
 		postFrames     = 60 // 240 ticks for survey + outward dispersal
 	)
 
-	var pre300Calls int32
-	var activeTaskAt300 bool
+	var r zeroProgressResult
+	anchor := carl.pos
+	anchorTick := startTick
 	for frameIdx := 0; frameIdx < preCheckFrames; frameIdx++ {
 		worldTick := startTick + int64(frameIdx)*dt
 		tod := startTOD + int64(frameIdx)*dt
@@ -1250,10 +1246,19 @@ func TestIntegration_ZeroProgressActiveTask_TriggersDaytimeIdleAndPreemptsWithSc
 		frame := carl.buildFrame(worldTick, tod)
 		carl.deliverFrame(t, frame)
 		if worldTick-startTick < 296 {
-			pre300Calls = calls.Load()
+			r.pre300Calls = calls.Load()
 		}
 		if worldTick-startTick == 300 {
-			activeTaskAt300 = carl.runtime.System1State().HasActiveTask()
+			r.activeTaskAt300 = carl.runtime.System1State().HasActiveTask()
+		}
+		carl.mu.Lock()
+		pos := carl.pos
+		carl.mu.Unlock()
+		if math.Hypot(pos.X-anchor.X, pos.Z-anchor.Z) >= 1.5 {
+			anchor, anchorTick = pos, worldTick
+		}
+		if d := worldTick - anchorTick; d > r.maxZeroProgressTicks {
+			r.maxZeroProgressTicks = d
 		}
 	}
 
@@ -1267,7 +1272,7 @@ func TestIntegration_ZeroProgressActiveTask_TriggersDaytimeIdleAndPreemptsWithSc
 		time.Sleep(10 * time.Millisecond)
 	}
 
-	// Continue ticking so SCOUT_FRONTIER preempts active harvest_tree, surveys, and moves outward.
+	// Continue ticking so SCOUT_FRONTIER (if any) preempts active harvest_tree, surveys, and moves outward.
 	for extra := 0; extra < postFrames; extra++ {
 		worldTick := startTick + int64(preCheckFrames+extra)*dt
 		tod := startTOD + int64(preCheckFrames+extra)*dt
@@ -1278,32 +1283,92 @@ func TestIntegration_ZeroProgressActiveTask_TriggersDaytimeIdleAndPreemptsWithSc
 
 	endTick := startTick + int64(preCheckFrames+postFrames)*dt
 	carl.mu.Lock()
-	surveyCount := len(carl.surveyEmissions)
+	r.surveyCount = len(carl.surveyEmissions)
 	surveysCompleted := carl.surveysCompleted
-	maxDist := carl.maxDistFromSpawn
+	r.maxDist = carl.maxDistFromSpawn
 	posNow := carl.pos
+	r.stuckWindows = carl.stuckWindowCount
 	carl.mu.Unlock()
 
 	dir, dirActive := carl.runtime.System1State().ActiveStrategicDirective(endTick)
-	hasTask := carl.runtime.System1State().HasActiveTask()
-	_, taskKind, taskPhase, _ := carl.runtime.System1State().ActiveTaskInfo()
-	totalCalls := calls.Load()
+	r.hasTaskAtEnd = carl.runtime.System1State().HasActiveTask()
+	_, r.taskKind, _, _ = carl.runtime.System1State().ActiveTaskInfo()
+	r.totalCalls = calls.Load()
+	t.Logf("[DIAG-2B] carl zeroProgress: stuckWindows=%d activeTaskAt300=%v pre300Calls=%d totalCalls=%d dir=(%s,%v) hasTask=%v(%s) surveysEmitted=%d surveysCompleted=%d maxDist=%.1fm maxZeroProgressTicks=%d pos=(%.1f,%.1f)",
+		r.stuckWindows, r.activeTaskAt300, r.pre300Calls, r.totalCalls, dir.Action, dirActive,
+		r.hasTaskAtEnd, r.taskKind, r.surveyCount, surveysCompleted, r.maxDist, r.maxZeroProgressTicks, posNow.X, posNow.Z)
+	return r
+}
 
-	t.Logf("[DIAG-2B] carl zeroProgressPreempt: stuckWindows=%d activeTaskAt300=%v pre300Calls=%d totalCalls=%d dir=(%s,%v) hasTask=%v(%s/%s) surveysEmitted=%d surveysCompleted=%d maxDist=%.1fm pos=(%.1f,%.1f)",
-		carl.stuckWindowCount, activeTaskAt300, pre300Calls, totalCalls, dir.Action, dirActive,
-		hasTask, taskKind, taskPhase, surveyCount, surveysCompleted, maxDist, posNow.X, posNow.Z)
+var zeroProgressTrees = [][2]int32{
+	{-46, -8}, {-35, -8}, {-41, -2}, {-41, -13}, {-45, -3},
+	{-36, -3}, {-45, -12}, {-36, -12}, {-50, -8}, {-31, -8},
+}
 
-	if pre300Calls != 0 {
-		t.Errorf("pre300Calls = %d, want 0 before 300 ticks", pre300Calls)
+func nearAnyTree(tgt *civquestv1.Vec3) bool {
+	for _, tr := range zeroProgressTrees {
+		if math.Hypot(tgt.X-(float64(tr[0])+0.5), tgt.Z-(float64(tr[1])+0.5)) <= 2.5 {
+			return true
+		}
 	}
-	if !activeTaskAt300 {
-		t.Errorf("Test setup error: expected active HarvestTreeTask at tick +300")
+	return false
+}
+
+// Scenario 2B (a): Active HarvestTreeTask against obstructed trees, with the world otherwise open.
+//
+// Original (baseline) assertion: the agent sits at zero physical displacement for >= 300 ticks on
+// an active harvest_tree task, so daytime_idle contemplation fires and SCOUT_FRONTIER preempts it.
+// That path is NOT reachable here any more, and this is product behaviour, not a test artefact:
+// Java now fails a stuck Move after 16 ticks (cq-2sr.14) and Go's Recover (ADR-037) sidesteps, gives
+// up and the task fails/retargets (a tree is only blacklisted after two give-ups on the same
+// target; with 10 trees each gets one here, blacklisting is asserted by
+// TestIntegration_StuckHarvestTaskAndUnstuckQueueDrain_BlacklistsAndEscapes), so the agent never
+// idles on the task for 300 ticks (see TestIntegration_ZeroProgressBoxedIn_* for the case where Recover
+// genuinely cannot help). The strongest true invariant, asserted unconditionally: the agent never
+// sits at zero progress for 300 ticks, it did get stuck (Recover ran), the stuck harvest task
+// ended, and the agent has moved on (survey or > 10m).
+func TestIntegration_ZeroProgressActiveTask_RecoversOnItsOwnAndMovesOn(t *testing.T) {
+	r := runZeroProgressScenario(t, zeroProgressTrees, nearAnyTree)
+
+	if r.pre300Calls != 0 {
+		t.Errorf("pre300Calls = %d, want 0 before 300 ticks", r.pre300Calls)
 	}
-	if totalCalls < 1 {
-		t.Errorf("Assertion (Idle contemplation unstarved) FAIL: contemplationCalls=%d after >= 300 ticks of zero progress on HarvestTreeTask (want >= 1)", totalCalls)
+	// 2 give-ups (each <= 100-tick Recover lease) + retargeting is the product's bound; 300 is the
+	// old System 2 trigger, so staying under it proves System 2 was never needed.
+	if r.maxZeroProgressTicks >= 300 {
+		t.Errorf("agent sat at zero progress for %d ticks (>= 300): Recover must resolve or give up first", r.maxZeroProgressTicks)
 	}
-	if surveyCount < 1 && maxDist <= 10.0 {
-		t.Errorf("Assertion (System 2 directive execution) FAIL: SCOUT_FRONTIER did not preempt harvest_tree (surveys=%d, maxDist=%.1fm, activeTask=%s)", surveyCount, maxDist, taskKind)
+	if r.stuckWindows < 1 {
+		t.Errorf("test setup error: carl never got stuck (stuckWindows=%d)", r.stuckWindows)
+	}
+	if r.activeTaskAt300 {
+		t.Errorf("harvest task still active at +300 ticks: the stuck task must have failed (Recover give-up)")
+	}
+	if r.surveyCount < 1 && r.maxDist <= 10.0 {
+		t.Errorf("agent did not move on after the task failed (surveys=%d, maxDist=%.1fm)", r.surveyCount, r.maxDist)
+	}
+}
+
+// Scenario 2B (b): the original zero-progress assertions, restored UNCONDITIONALLY. The agent is
+// boxed in: every Navigate target in the world is unreachable, so Recover gives up on everything
+// and nothing it (or anyone) emits can move the agent. It therefore sits at >= 300 ticks of zero
+// displacement, daytime_idle System 2 contemplation must fire and its SCOUT_FRONTIER directive must
+// preempt the stuck task: the agent emits a horizon survey (it cannot walk, so surveys stand in for
+// "moves outward"; maxDist cannot grow).
+func TestIntegration_ZeroProgressBoxedIn_TriggersDaytimeIdleAndPreemptsWithScoutFrontier(t *testing.T) {
+	r := runZeroProgressScenario(t, zeroProgressTrees, func(*civquestv1.Vec3) bool { return true })
+
+	if r.pre300Calls != 0 {
+		t.Errorf("pre300Calls = %d, want 0 before 300 ticks", r.pre300Calls)
+	}
+	if r.maxZeroProgressTicks < 300 {
+		t.Fatalf("test setup error: agent only sat at zero progress for %d ticks (< 300)", r.maxZeroProgressTicks)
+	}
+	if r.totalCalls < 1 {
+		t.Errorf("Assertion (Idle contemplation unstarved) FAIL: contemplationCalls=%d after >= 300 ticks of zero progress (want >= 1)", r.totalCalls)
+	}
+	if r.surveyCount < 1 && r.maxDist <= 10.0 {
+		t.Errorf("Assertion (System 2 directive execution) FAIL: SCOUT_FRONTIER did not preempt harvest_tree (surveys=%d, maxDist=%.1fm, activeTask=%s)", r.surveyCount, r.maxDist, r.taskKind)
 	}
 }
 
@@ -1337,7 +1402,7 @@ func TestIntegration_HarvestTreeActiveWithSixLogs_CraftsSurvivalKitInsteadOfIgno
 	dave.mu.Unlock()
 
 	treeTask := system1.NewHarvestTreeTask(-45, 86, 0, system1.StageBootstrap, 336500)
-	dave.runtime.System1State().StartTask(treeTask)
+	dave.runtime.AgentFSM().StartTask(dave.runtime.System1State(), treeTask)
 
 	const (
 		startTick = int64(336500)
@@ -1500,7 +1565,7 @@ func TestIntegration_SixDaytimeExplorersWithNearbyObstructedTrees_RunInitialSurv
 
 		t.Logf("[RED-DIAG] explorer=%s surveysCompleted=%d surveysEmitted=%d dbSectors=%d stuckWindows=%d maxUnstuckPerWin=%d firstNav=%s maxDist=%.1fm pos=(%.1f,%.1f) phase=%s",
 			sa.id, surveys, emitted, len(sectors), stuckWin, maxUnstuck, firstTgt,
-			maxDist, posNow.X, posNow.Z, sa.runtime.System1State().GetExpeditionPhase())
+			maxDist, posNow.X, posNow.Z, sa.runtime.AgentFSM().ActiveActivityKind())
 
 		if surveys < 1 {
 			t.Errorf("Assertion 1 FAIL: explorer %s completed %d SurveyHorizonIntents, want >= 1 (even with obstructed trees near spawn)", sa.id, surveys)
@@ -1518,5 +1583,56 @@ func TestIntegration_SixDaytimeExplorersWithNearbyObstructedTrees_RunInitialSurv
 	}
 	if len(firstTargets) < 2 {
 		t.Errorf("Assertion 2 FAIL: all explorers piled onto %d initial target(s) (%v), want distinct targets/bearings", len(firstTargets), firstTargets)
+	}
+}
+
+// TestIntegration_SimMotorFactsMatchRecordedJavaFixtures pins the Go simulator's stuck receipts to
+// the facts the REAL mod recorded (testdata/motorfacts, written by the Java
+// MotorFactsFixtureRecorderTest): a walled-in Move fails "Navigation stuck" with stuck=true,
+// stuck_ticks=16 (the navigator threshold), progress = remaining horizontal distance and the
+// ADR-032 yaw bearing of the heading. If Java changes these, the fixtures change and this fails.
+func TestIntegration_SimMotorFactsMatchRecordedJavaFixtures(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join("testdata", "motorfacts", "terrain_stuck.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := &civquestv1.IntentReceipt{}
+	if err := protojson.Unmarshal(raw, want); err != nil {
+		t.Fatal(err)
+	}
+
+	// Same scenario the Java recorder runs: agent pinned at (0,64,0) navigating to (50,64,50).
+	// The formulas below are the ones actuatorSimAgent.stepFrame / simAgent.stuckReceipt use.
+	dx, dz := 50.0, 50.0
+	got := &civquestv1.MotorFacts{
+		Stuck: true, StuckTicks: 16,
+		BlockedBearingDeg: float32(math.Mod(math.Atan2(-dx, dz)*180.0/math.Pi+360.0, 360.0)),
+		Progress:          math.Hypot(dx, dz),
+	}
+	wf := want.GetFacts()
+	if want.GetFailureReason() != "Navigation stuck" || got.Stuck != wf.Stuck || got.StuckTicks != wf.StuckTicks ||
+		got.Enclosed != wf.Enclosed || got.BlockedByEntity != wf.BlockedByEntity {
+		t.Errorf("sim stuck facts shape drifted from Java fixture: sim=%v java=%v", got, wf)
+	}
+	if math.Abs(float64(got.BlockedBearingDeg-wf.BlockedBearingDeg)) > 0.5 {
+		t.Errorf("bearing convention drifted: sim=%v java=%v", got.BlockedBearingDeg, wf.BlockedBearingDeg)
+	}
+	// Java measures from where the agent actually stood at stuck time (it creeps ~0.1m first).
+	if math.Abs(got.Progress-wf.Progress) > 1.0 {
+		t.Errorf("progress semantics drifted: sim=%v java=%v", got.Progress, wf.Progress)
+	}
+
+	// The enclosed fixture documents the one fact the sim must NOT assume: Java reports an
+	// enclosed pit with stuck_ticks=0 (it never walked), so consumers must key on enclosed.
+	raw, err = os.ReadFile(filepath.Join("testdata", "motorfacts", "enclosed_pit.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	enc := &civquestv1.IntentReceipt{}
+	if err := protojson.Unmarshal(raw, enc); err != nil {
+		t.Fatal(err)
+	}
+	if !enc.GetFacts().GetEnclosed() || !enc.GetFacts().GetStuck() {
+		t.Errorf("enclosed fixture must carry enclosed+stuck, got %v", enc.GetFacts())
 	}
 }

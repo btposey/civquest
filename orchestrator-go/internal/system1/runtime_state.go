@@ -48,7 +48,6 @@ type RuntimeTimers struct {
 type RuntimeNavTracking struct {
 	Destination         *NavPosition
 	TargetPOIID         string
-	LastHarvestPos      *civquestv1.BlockPosProto
 	LastFollowNavTarget *civquestv1.Vec3
 	LastFollowNavTick   int64
 }
@@ -92,14 +91,13 @@ type RuntimeCaches struct {
 
 // RuntimeTracking consolidates mutable per-agent runtime state under AgentState ownership.
 type RuntimeTracking struct {
-	Timers                  RuntimeTimers
-	Nav                     RuntimeNavTracking
-	Combat                  RuntimeCombatTracking
-	Idle                    RuntimeIdleTracking
-	Viewer                  RuntimeViewerState
-	Caches                  RuntimeCaches
-	ActiveActivityKind      string
-	ActiveActivityOwnsStuck bool
+	Timers             RuntimeTimers
+	Nav                RuntimeNavTracking
+	Combat             RuntimeCombatTracking
+	Idle               RuntimeIdleTracking
+	Viewer             RuntimeViewerState
+	Caches             RuntimeCaches
+	ActiveActivityKind string
 }
 
 func cloneVec3(v *civquestv1.Vec3) *civquestv1.Vec3 {
@@ -107,13 +105,6 @@ func cloneVec3(v *civquestv1.Vec3) *civquestv1.Vec3 {
 		return nil
 	}
 	return proto.Clone(v).(*civquestv1.Vec3)
-}
-
-func cloneBlockPosProto(p *civquestv1.BlockPosProto) *civquestv1.BlockPosProto {
-	if p == nil {
-		return nil
-	}
-	return proto.Clone(p).(*civquestv1.BlockPosProto)
 }
 
 func cloneNavPosition(p *NavPosition) *NavPosition {
@@ -462,39 +453,6 @@ func (s *AgentState) TakeNavTargetForStuck() (string, *NavPosition) {
 	s.runtimeState.Nav.TargetPOIID = ""
 	s.runtimeState.Nav.Destination = nil
 	return poiID, dest
-}
-
-// LastHarvestPos returns a defensive copy of the last queued harvest block coordinate.
-func (s *AgentState) LastHarvestPos() *civquestv1.BlockPosProto {
-	if s == nil {
-		return nil
-	}
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	return cloneBlockPosProto(s.runtimeState.Nav.LastHarvestPos)
-}
-
-// SetLastHarvestPos stores a defensive copy of the last queued harvest block coordinate.
-func (s *AgentState) SetLastHarvestPos(pos *civquestv1.BlockPosProto) {
-	if s == nil {
-		return
-	}
-	cloned := cloneBlockPosProto(pos)
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.runtimeState.Nav.LastHarvestPos = cloned
-}
-
-// TakeLastHarvestPos atomically returns a defensive copy of LastHarvestPos and clears it.
-func (s *AgentState) TakeLastHarvestPos() *civquestv1.BlockPosProto {
-	if s == nil {
-		return nil
-	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	cloned := cloneBlockPosProto(s.runtimeState.Nav.LastHarvestPos)
-	s.runtimeState.Nav.LastHarvestPos = nil
-	return cloned
 }
 
 // LastFollowNavTarget returns a defensive copy of the last companion follow navigation target and tick.
@@ -1083,46 +1041,14 @@ func (s *AgentState) LatestNavigationState() civquestv1.NavigationState {
 	return civquestv1.NavigationState_NAVIGATION_STATE_UNSPECIFIED
 }
 
-// ConstructionProgress returns the current blueprint quadrant block index for this agent.
-func (s *AgentState) ConstructionProgress() int {
-	if s == nil {
-		return 0
-	}
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	return s.constructionProgress
-}
-
-// SetConstructionProgress sets the blueprint quadrant block index for this agent.
-func (s *AgentState) SetConstructionProgress(idx int) {
-	if s == nil {
-		return
-	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.constructionProgress = idx
-}
-
-// AdvanceConstructionProgress increments and returns the new blueprint quadrant block index.
-func (s *AgentState) AdvanceConstructionProgress() int {
-	if s == nil {
-		return 0
-	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.constructionProgress++
-	return s.constructionProgress
-}
-
-// SetActiveActivityOwnership records the currently active top activity kind and stuck-recovery ownership.
-func (s *AgentState) SetActiveActivityOwnership(kind string, ownsStuck bool) {
+// SetActiveActivityKind records the kind of the currently active top activity.
+func (s *AgentState) SetActiveActivityKind(kind string) {
 	if s == nil {
 		return
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.runtimeState.ActiveActivityKind = kind
-	s.runtimeState.ActiveActivityOwnsStuck = ownsStuck
 }
 
 // ActiveActivityKind returns the kind of the currently active top activity, or empty if none.
@@ -1135,31 +1061,12 @@ func (s *AgentState) ActiveActivityKind() string {
 	return s.runtimeState.ActiveActivityKind
 }
 
-// ActiveActivityOwnsStuck returns whether the currently active top activity owns unstuck recovery.
-func (s *AgentState) ActiveActivityOwnsStuck() bool {
-	if s == nil {
-		return false
-	}
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	return s.ActiveActivityOwnsStuckLocked()
-}
-
-// ActiveActivityOwnsStuckLocked returns whether the active top activity owns unstuck recovery assuming s.mu is held.
-func (s *AgentState) ActiveActivityOwnsStuckLocked() bool {
-	if s == nil {
-		return false
-	}
-	return s.runtimeState.ActiveActivityOwnsStuck
-}
-
-// ClearActiveActivityOwnership clears active top activity ownership metadata.
-func (s *AgentState) ClearActiveActivityOwnership() {
+// ClearActiveActivityKind clears the active top activity kind.
+func (s *AgentState) ClearActiveActivityKind() {
 	if s == nil {
 		return
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.runtimeState.ActiveActivityKind = ""
-	s.runtimeState.ActiveActivityOwnsStuck = false
 }

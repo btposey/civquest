@@ -293,12 +293,12 @@ func TestViewerServer_ActiveSocketAndWebSocketStreaming(t *testing.T) {
 			"y": 64.0,
 			"z": -250.8,
 		},
-		"state_stack": []map[string]any{
+		"activity_stack": []map[string]any{
 			{
-				"stage":        "STAGE_EMERGENCY",
-				"routine":      "ROUTINE_FLEE_THREAT",
-				"entered_tick": 24750,
-				"reason":       "Creeper detected within 4 blocks",
+				"id":         7,
+				"kind":       "emergency",
+				"band":       3,
+				"start_tick": 24750,
 			},
 		},
 		"inventory": []map[string]any{
@@ -420,13 +420,13 @@ func TestViewerServer_ActiveSocketAndWebSocketStreaming(t *testing.T) {
 	}
 
 	// Verify state stack frame was received
-	stack, ok := wsFrame["state_stack"].([]any)
+	stack, ok := wsFrame["activity_stack"].([]any)
 	if !ok || len(stack) != 1 {
-		t.Fatalf("expected 1 state stack frame, got: %+v", wsFrame["state_stack"])
+		t.Fatalf("expected 1 activity stack frame, got: %+v", wsFrame["activity_stack"])
 	}
 	firstFrame := stack[0].(map[string]any)
-	if firstFrame["stage"] != "STAGE_EMERGENCY" {
-		t.Fatalf("expected preemption STAGE_EMERGENCY, got %v", firstFrame["stage"])
+	if firstFrame["kind"] != "emergency" {
+		t.Fatalf("expected emergency frame, got %v", firstFrame["kind"])
 	}
 
 	// Verify blackboard was received

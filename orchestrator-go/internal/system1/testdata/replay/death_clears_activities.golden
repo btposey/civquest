@@ -1,0 +1,2 @@
+t=100 stage=BOOTSTRAP routine=HARVEST_TREE stack=[bootstrap/1] intents=[Interact(HARVEST_BREAK 3,64,0 minecraft:oak_log)]  // commit to trunk
+t=110 stage=DEAD routine=DEAD stack=[dead/1] intents=[] probe={hasTask=false}  // death: everything cleared

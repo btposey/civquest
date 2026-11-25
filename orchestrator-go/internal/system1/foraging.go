@@ -21,30 +21,6 @@ const (
 	forageExploreStepDist      = 24.0
 )
 
-type forageAgentMemory struct {
-	lastActionTick       int64
-	lastTargetKey        string
-	lastExploreTick      int64
-	exploreHeadingRad    float64
-	exploreTarget        *civquestv1.Vec3
-	visitedContainerPOIs map[string]int64
-}
-
-func newForageAgentMemory() *forageAgentMemory {
-	return &forageAgentMemory{
-		visitedContainerPOIs: make(map[string]int64),
-	}
-}
-
-func (s *AgentState) ensureForageMemoryLocked() *forageAgentMemory {
-	if s.forageMemory == nil {
-		s.forageMemory = newForageAgentMemory()
-	} else if s.forageMemory.visitedContainerPOIs == nil {
-		s.forageMemory.visitedContainerPOIs = make(map[string]int64)
-	}
-	return s.forageMemory
-}
-
 // ForagingSkill implements deterministic, zero-token food gathering and hunting
 // when an agent is hungry (FoodLevel <= 12) and lacks edible food in inventory.
 type ForagingSkill struct{}
@@ -99,7 +75,12 @@ func (s *ForagingSkill) Execute(ctx *SkillContext, facts *FactGraph) ([]*civques
 	if ctx == nil || ctx.Frame == nil || ctx.Frame.Status == nil {
 		return nil, nil
 	}
-	intent := EvaluateForaging(ctx.AgentID, ctx.Frame, ctx.State)
+	var intent *civquestv1.AgentIntent
+	if ctx.Forage != nil && ctx.Forage.Forced {
+		intent = EvaluateForagingDirective(ctx.AgentID, ctx.Frame, ctx.State, ctx.Forage)
+	} else {
+		intent = EvaluateForaging(ctx.AgentID, ctx.Frame, ctx.State, ctx.Forage)
+	}
 	if intent == nil {
 		return nil, nil
 	}
@@ -238,17 +219,17 @@ func setForagingGoal(state *AgentState) {
 // EvaluateForaging deterministically selects a food acquisition intent (harvest edible plants,
 // hunt passive livestock, pick up dropped food, inspect known crop/container POIs, or scout
 // outward) when FoodLevel <= 12 and no edible food is in inventory.
-func EvaluateForaging(agentID string, frame *civquestv1.TelemetryFrame, state *AgentState) *civquestv1.AgentIntent {
-	return evaluateForagingInternal(agentID, frame, state, false)
+func EvaluateForaging(agentID string, frame *civquestv1.TelemetryFrame, state *AgentState, mem *forageLocal) *civquestv1.AgentIntent {
+	return evaluateForagingInternal(agentID, frame, state, mem, false)
 }
 
 // EvaluateForagingDirective executes deterministic food gathering/hunting when directed by System 2
 // even if FoodLevel is above the reactive hunger threshold, while still yielding to sleep and threats.
-func EvaluateForagingDirective(agentID string, frame *civquestv1.TelemetryFrame, state *AgentState) *civquestv1.AgentIntent {
-	return evaluateForagingInternal(agentID, frame, state, true)
+func EvaluateForagingDirective(agentID string, frame *civquestv1.TelemetryFrame, state *AgentState, mem *forageLocal) *civquestv1.AgentIntent {
+	return evaluateForagingInternal(agentID, frame, state, mem, true)
 }
 
-func evaluateForagingInternal(agentID string, frame *civquestv1.TelemetryFrame, state *AgentState, force bool) *civquestv1.AgentIntent {
+func evaluateForagingInternal(agentID string, frame *civquestv1.TelemetryFrame, state *AgentState, mem *forageLocal, force bool) *civquestv1.AgentIntent {
 	if frame == nil || frame.Status == nil || frame.Status.Position == nil {
 		return nil
 	}
@@ -271,17 +252,20 @@ func evaluateForagingInternal(agentID string, frame *civquestv1.TelemetryFrame, 
 
 	setForagingGoal(state)
 
+	if mem == nil {
+		// No frame Local bound (direct call): a stateless evaluation with a fresh cursor.
+		mem = newForageLocal()
+	}
 	if state == nil {
-		return evaluateForagingWithMemory(agentID, frame, nil, force, newForageAgentMemory())
+		return evaluateForagingWithMemory(agentID, frame, nil, force, mem)
 	}
 
 	state.mu.Lock()
 	defer state.mu.Unlock()
-	mem := state.ensureForageMemoryLocked()
 	return evaluateForagingWithMemory(agentID, frame, state, force, mem)
 }
 
-func evaluateForagingWithMemory(agentID string, frame *civquestv1.TelemetryFrame, state *AgentState, force bool, mem *forageAgentMemory) *civquestv1.AgentIntent {
+func evaluateForagingWithMemory(agentID string, frame *civquestv1.TelemetryFrame, state *AgentState, force bool, mem *forageLocal) *civquestv1.AgentIntent {
 	pos := frame.Status.Position
 	navState := frame.Status.NavigationState
 	canSprint := frame.Status.FoodLevel > 6
@@ -304,8 +288,8 @@ func evaluateForagingWithMemory(agentID string, frame *civquestv1.TelemetryFrame
 		}
 	}
 	if bestDrop != nil {
-		if navState != civquestv1.NavigationState_NAVIGATION_STATE_PATHING || mem.lastTargetKey != fmt.Sprintf("drop:%d", bestDrop.EntityId) {
-			mem.lastTargetKey = fmt.Sprintf("drop:%d", bestDrop.EntityId)
+		if navState != civquestv1.NavigationState_NAVIGATION_STATE_PATHING || mem.LastTargetKey != fmt.Sprintf("drop:%d", bestDrop.EntityId) {
+			mem.LastTargetKey = fmt.Sprintf("drop:%d", bestDrop.EntityId)
 			return &civquestv1.AgentIntent{
 				AgentId: agentID,
 				Action: &civquestv1.AgentIntent_Navigate{
@@ -377,12 +361,12 @@ func evaluateForagingWithMemory(agentID string, frame *civquestv1.TelemetryFrame
 	// Immediate action within reach takes top priority (plant harvest or animal hunt).
 	if bestPrimePlant != nil && bestPrimeDist <= forageBlockReach {
 		targetKey := fmt.Sprintf("block:%d,%d,%d", bestPrimePlant.Pos.X, bestPrimePlant.Pos.Y, bestPrimePlant.Pos.Z)
-		if mem.lastTargetKey == targetKey && mem.lastActionTick > 0 &&
-			frame.WorldTick >= mem.lastActionTick && frame.WorldTick-mem.lastActionTick < forageActionCooldownTicks {
+		if mem.LastTargetKey == targetKey && mem.LastActionTick > 0 &&
+			frame.WorldTick >= mem.LastActionTick && frame.WorldTick-mem.LastActionTick < forageActionCooldownTicks {
 			return nil
 		}
-		mem.lastTargetKey = targetKey
-		mem.lastActionTick = frame.WorldTick
+		mem.LastTargetKey = targetKey
+		mem.LastActionTick = frame.WorldTick
 		return &civquestv1.AgentIntent{
 			AgentId: agentID,
 			Action: &civquestv1.AgentIntent_InteractBlock{
@@ -397,12 +381,12 @@ func evaluateForagingWithMemory(agentID string, frame *civquestv1.TelemetryFrame
 
 	if bestAnimal != nil && bestAnimalDist <= forageMeleeReach {
 		targetKey := fmt.Sprintf("entity:%d", bestAnimal.EntityId)
-		if mem.lastTargetKey == targetKey && mem.lastActionTick > 0 &&
-			frame.WorldTick >= mem.lastActionTick && frame.WorldTick-mem.lastActionTick < forageActionCooldownTicks {
+		if mem.LastTargetKey == targetKey && mem.LastActionTick > 0 &&
+			frame.WorldTick >= mem.LastActionTick && frame.WorldTick-mem.LastActionTick < forageActionCooldownTicks {
 			return nil
 		}
-		mem.lastTargetKey = targetKey
-		mem.lastActionTick = frame.WorldTick
+		mem.LastTargetKey = targetKey
+		mem.LastActionTick = frame.WorldTick
 		return &civquestv1.AgentIntent{
 			AgentId: agentID,
 			Action: &civquestv1.AgentIntent_Attack{
@@ -418,10 +402,10 @@ func evaluateForagingWithMemory(agentID string, frame *civquestv1.TelemetryFrame
 	// Choose closer between prime plant block and passive food animal outside reach.
 	navigateToPlant := func(b *civquestv1.VisibleBlock) *civquestv1.AgentIntent {
 		targetKey := fmt.Sprintf("nav_block:%d,%d,%d", b.Pos.X, b.Pos.Y, b.Pos.Z)
-		if navState == civquestv1.NavigationState_NAVIGATION_STATE_PATHING && mem.lastTargetKey == targetKey {
+		if navState == civquestv1.NavigationState_NAVIGATION_STATE_PATHING && mem.LastTargetKey == targetKey {
 			return nil
 		}
-		mem.lastTargetKey = targetKey
+		mem.LastTargetKey = targetKey
 		return &civquestv1.AgentIntent{
 			AgentId: agentID,
 			Action: &civquestv1.AgentIntent_Navigate{
@@ -444,10 +428,10 @@ func evaluateForagingWithMemory(agentID string, frame *civquestv1.TelemetryFrame
 			return nil
 		}
 		targetKey := fmt.Sprintf("nav_entity:%d", e.EntityId)
-		if navState == civquestv1.NavigationState_NAVIGATION_STATE_PATHING && mem.lastTargetKey == targetKey {
+		if navState == civquestv1.NavigationState_NAVIGATION_STATE_PATHING && mem.LastTargetKey == targetKey {
 			return nil
 		}
-		mem.lastTargetKey = targetKey
+		mem.LastTargetKey = targetKey
 		return &civquestv1.AgentIntent{
 			AgentId: agentID,
 			Action: &civquestv1.AgentIntent_Navigate{
@@ -474,12 +458,12 @@ func evaluateForagingWithMemory(agentID string, frame *civquestv1.TelemetryFrame
 	if bestFallbackPlant != nil {
 		if bestFallbackDist <= forageBlockReach {
 			targetKey := fmt.Sprintf("block:%d,%d,%d", bestFallbackPlant.Pos.X, bestFallbackPlant.Pos.Y, bestFallbackPlant.Pos.Z)
-			if mem.lastTargetKey == targetKey && mem.lastActionTick > 0 &&
-				frame.WorldTick >= mem.lastActionTick && frame.WorldTick-mem.lastActionTick < forageActionCooldownTicks {
+			if mem.LastTargetKey == targetKey && mem.LastActionTick > 0 &&
+				frame.WorldTick >= mem.LastActionTick && frame.WorldTick-mem.LastActionTick < forageActionCooldownTicks {
 				return nil
 			}
-			mem.lastTargetKey = targetKey
-			mem.lastActionTick = frame.WorldTick
+			mem.LastTargetKey = targetKey
+			mem.LastActionTick = frame.WorldTick
 			return &civquestv1.AgentIntent{
 				AgentId: agentID,
 				Action: &civquestv1.AgentIntent_InteractBlock{
@@ -509,8 +493,8 @@ func evaluateForagingWithMemory(agentID string, frame *civquestv1.TelemetryFrame
 				d := math.Hypot(cropPOI.X-pos.X, cropPOI.Z-pos.Z)
 				if d > 4.0 {
 					targetKey := fmt.Sprintf("poi:%s", cropPOI.POIID)
-					if navState != civquestv1.NavigationState_NAVIGATION_STATE_PATHING || mem.lastTargetKey != targetKey {
-						mem.lastTargetKey = targetKey
+					if navState != civquestv1.NavigationState_NAVIGATION_STATE_PATHING || mem.LastTargetKey != targetKey {
+						mem.LastTargetKey = targetKey
 						return &civquestv1.AgentIntent{
 							AgentId: agentID,
 							Action: &civquestv1.AgentIntent_Navigate{
@@ -540,14 +524,14 @@ func evaluateForagingWithMemory(agentID string, frame *civquestv1.TelemetryFrame
 					(acc != nil && state.IsTargetUnreachableLocked(acc.X, acc.Y, acc.Z, frame.WorldTick)) {
 					continue
 				}
-				lastVisit := mem.visitedContainerPOIs[contPOI.POIID]
+				lastVisit := mem.Visited[contPOI.POIID]
 				d := math.Hypot(contPOI.X-pos.X, contPOI.Z-pos.Z)
 				if d <= 4.0 {
-					mem.visitedContainerPOIs[contPOI.POIID] = frame.WorldTick
+					mem.Visited[contPOI.POIID] = frame.WorldTick
 				} else if lastVisit == 0 || frame.WorldTick-lastVisit > 400 {
 					targetKey := fmt.Sprintf("poi:%s", contPOI.POIID)
-					if navState != civquestv1.NavigationState_NAVIGATION_STATE_PATHING || mem.lastTargetKey != targetKey {
-						mem.lastTargetKey = targetKey
+					if navState != civquestv1.NavigationState_NAVIGATION_STATE_PATHING || mem.LastTargetKey != targetKey {
+						mem.LastTargetKey = targetKey
 						return &civquestv1.AgentIntent{
 							AgentId: agentID,
 							Action: &civquestv1.AgentIntent_Navigate{
@@ -573,13 +557,13 @@ func evaluateForagingWithMemory(agentID string, frame *civquestv1.TelemetryFrame
 	}
 
 	// 4. Outward foraging exploration when no food blocks, animals, or reachable food POIs are visible.
-	needNewExplore := mem.exploreTarget == nil ||
+	needNewExplore := mem.ExploreTarget == nil ||
 		navState == civquestv1.NavigationState_NAVIGATION_STATE_IDLE ||
 		navState == civquestv1.NavigationState_NAVIGATION_STATE_ARRIVED ||
 		navState == civquestv1.NavigationState_NAVIGATION_STATE_STUCK
 
-	if !needNewExplore && mem.exploreTarget != nil {
-		distToTarget := math.Hypot(pos.X-mem.exploreTarget.X, pos.Z-mem.exploreTarget.Z)
+	if !needNewExplore && mem.ExploreTarget != nil {
+		distToTarget := math.Hypot(pos.X-mem.ExploreTarget.X, pos.Z-mem.ExploreTarget.Z)
 		if distToTarget <= 3.0 {
 			needNewExplore = true
 		}
@@ -589,28 +573,28 @@ func evaluateForagingWithMemory(agentID string, frame *civquestv1.TelemetryFrame
 		return nil
 	}
 
-	if mem.lastExploreTick > 0 && frame.WorldTick >= mem.lastExploreTick &&
-		frame.WorldTick-mem.lastExploreTick < forageExploreCooldownTicks &&
+	if mem.LastExploreTick > 0 && frame.WorldTick >= mem.LastExploreTick &&
+		frame.WorldTick-mem.LastExploreTick < forageExploreCooldownTicks &&
 		navState != civquestv1.NavigationState_NAVIGATION_STATE_STUCK &&
-		mem.exploreTarget != nil {
+		mem.ExploreTarget != nil {
 		return nil
 	}
 
 	if navState == civquestv1.NavigationState_NAVIGATION_STATE_STUCK {
-		mem.exploreHeadingRad += 2.2
+		mem.ExploreHeadingRad += 2.2
 	} else {
-		mem.exploreHeadingRad += 0.9
+		mem.ExploreHeadingRad += 0.9
 	}
-	mem.exploreHeadingRad = math.Atan2(math.Sin(mem.exploreHeadingRad), math.Cos(mem.exploreHeadingRad))
+	mem.ExploreHeadingRad = math.Atan2(math.Sin(mem.ExploreHeadingRad), math.Cos(mem.ExploreHeadingRad))
 
 	target := &civquestv1.Vec3{
-		X: math.Round((pos.X+math.Cos(mem.exploreHeadingRad)*forageExploreStepDist)*10) / 10,
+		X: math.Round((pos.X+math.Cos(mem.ExploreHeadingRad)*forageExploreStepDist)*10) / 10,
 		Y: pos.Y,
-		Z: math.Round((pos.Z+math.Sin(mem.exploreHeadingRad)*forageExploreStepDist)*10) / 10,
+		Z: math.Round((pos.Z+math.Sin(mem.ExploreHeadingRad)*forageExploreStepDist)*10) / 10,
 	}
-	mem.exploreTarget = target
-	mem.lastExploreTick = frame.WorldTick
-	mem.lastTargetKey = fmt.Sprintf("forage_explore:%.1f,%.1f", target.X, target.Z)
+	mem.ExploreTarget = target
+	mem.LastExploreTick = frame.WorldTick
+	mem.LastTargetKey = fmt.Sprintf("forage_explore:%.1f,%.1f", target.X, target.Z)
 
 	return &civquestv1.AgentIntent{
 		AgentId: agentID,

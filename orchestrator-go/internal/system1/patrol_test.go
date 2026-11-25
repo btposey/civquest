@@ -11,6 +11,7 @@ import (
 
 func TestNonExplorerRotatesAzimuthAfterLegs(t *testing.T) {
 	state := NewAgentState()
+	walk := &walkLocal{}
 	cfg := xdg.DefaultAgentIdentityConfig("Able")
 	cfg.Profession = "CHRONICLER" // Non-explorer profession
 	cfg.Traits.Curiosity = 0.5    // legStep = 16.0 + 0.5*8.0 = 20.0
@@ -29,7 +30,7 @@ func TestNonExplorerRotatesAzimuthAfterLegs(t *testing.T) {
 			},
 		},
 	}
-	_ = EvaluatePatrol("Able", warmupFrame, cfg, state)
+	_ = EvaluatePatrol("Able", warmupFrame, cfg, state, walk)
 
 	// Tick 1000: Initial patrol target (Leg 0: 12m)
 	frame0 := &civquestv1.TelemetryFrame{
@@ -45,11 +46,11 @@ func TestNonExplorerRotatesAzimuthAfterLegs(t *testing.T) {
 			},
 		},
 	}
-	intent0 := EvaluatePatrol("Able", frame0, cfg, state)
+	intent0 := EvaluatePatrol("Able", frame0, cfg, state, walk)
 	if intent0 == nil || intent0.GetNavigate() == nil {
 		t.Fatalf("expected initial NavigateIntent, got %+v", intent0)
 	}
-	initialAz, _ := state.GetFrontierAzimuth()
+	initialAz, _ := walk.frontierAzimuth()
 	target0 := intent0.GetNavigate().GetTarget()
 	dist0 := math.Hypot(target0.X, target0.Z)
 	if math.Abs(dist0-12.0) > 0.5 {
@@ -70,7 +71,7 @@ func TestNonExplorerRotatesAzimuthAfterLegs(t *testing.T) {
 			},
 		},
 	}
-	intent1 := EvaluatePatrol("Able", frame1, cfg, state)
+	intent1 := EvaluatePatrol("Able", frame1, cfg, state, walk)
 	if intent1 == nil || intent1.GetNavigate() == nil {
 		t.Fatalf("expected NavigateIntent for Leg 1, got %+v", intent1)
 	}
@@ -79,7 +80,7 @@ func TestNonExplorerRotatesAzimuthAfterLegs(t *testing.T) {
 	if math.Abs(dist1-32.0) > 0.5 {
 		t.Fatalf("expected leg 1 target ~32m, got %.2f", dist1)
 	}
-	az1, _ := state.GetFrontierAzimuth()
+	az1, _ := walk.frontierAzimuth()
 	if math.Abs(math.Atan2(math.Sin(az1-initialAz), math.Cos(az1-initialAz))) > 0.001 {
 		t.Fatalf("expected Leg 1 to keep same azimuth, got %.4f vs %.4f", az1, initialAz)
 	}
@@ -98,7 +99,7 @@ func TestNonExplorerRotatesAzimuthAfterLegs(t *testing.T) {
 			},
 		},
 	}
-	intent2 := EvaluatePatrol("Able", frame2, cfg, state)
+	intent2 := EvaluatePatrol("Able", frame2, cfg, state, walk)
 	if intent2 == nil || intent2.GetNavigate() == nil {
 		t.Fatalf("expected NavigateIntent for Leg 2, got %+v", intent2)
 	}
@@ -122,23 +123,24 @@ func TestNonExplorerRotatesAzimuthAfterLegs(t *testing.T) {
 			},
 		},
 	}
-	intent3 := EvaluatePatrol("Able", frame3, cfg, state)
+	intent3 := EvaluatePatrol("Able", frame3, cfg, state, walk)
 	if intent3 == nil || intent3.GetNavigate() == nil {
 		t.Fatalf("expected NavigateIntent after completing Leg 2, got %+v", intent3)
 	}
-	newAz, _ := state.GetFrontierAzimuth()
+	newAz, _ := walk.frontierAzimuth()
 	expectedAz := math.Atan2(math.Sin(initialAz+math.Pi/4), math.Cos(initialAz+math.Pi/4))
 	azDiff := math.Abs(math.Atan2(math.Sin(newAz-expectedAz), math.Cos(newAz-expectedAz)))
 	if azDiff > 0.01 {
 		t.Fatalf("expected azimuth to rotate by +45 deg (Pi/4) to %.4f, got %.4f (diff: %.4f)", expectedAz, newAz, azDiff)
 	}
-	if state.GetFrontierRadialLeg() != 0 {
-		t.Fatalf("expected frontierRadialLeg to reset to 0 after completing legs, got %d", state.GetFrontierRadialLeg())
+	if walk.frontierRadialLeg != 0 {
+		t.Fatalf("expected frontierRadialLeg to reset to 0 after completing legs, got %d", walk.frontierRadialLeg)
 	}
 }
 
 func TestEvaluatePatrolLandmarkWatch(t *testing.T) {
 	state := NewAgentState()
+	walk := &walkLocal{}
 	cfg := xdg.DefaultAgentIdentityConfig("Guard")
 	cfg.Profession = "GUARD"
 
@@ -157,10 +159,10 @@ func TestEvaluatePatrolLandmarkWatch(t *testing.T) {
 	}
 
 	// Warmup
-	_ = EvaluatePatrol("Guard", frame, cfg, state)
+	_ = EvaluatePatrol("Guard", frame, cfg, state, walk)
 
 	frame.WorldTick = 400
-	intent := EvaluatePatrol("Guard", frame, cfg, state)
+	intent := EvaluatePatrol("Guard", frame, cfg, state, walk)
 	if intent == nil || intent.GetNavigate() == nil {
 		t.Fatalf("expected patrol NavigateIntent within landmark perimeter, got %+v", intent)
 	}
@@ -188,7 +190,7 @@ func TestEvaluatePatrolDirect(t *testing.T) {
 	pos := &civquestv1.Vec3{X: 10, Y: 64, Z: 10}
 
 	start := time.Now()
-	_ = EvaluatePatrolDirect("Baker", frame, pos, state, cfg)
+	_ = EvaluatePatrolDirect("Baker", frame, pos, state, cfg, nil)
 	duration := time.Since(start)
 
 	// Invariant: Sub-5ms execution budget

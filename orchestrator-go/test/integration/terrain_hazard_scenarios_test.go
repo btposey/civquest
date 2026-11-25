@@ -74,13 +74,11 @@ func TestIntegration_BarrenDesertBiome_MultiHopUntilOasisDiscovery(t *testing.T)
 	probeState.IngestHorizonSurveyReport(&civquestv1.HorizonSurveyReport{
 		OriginX: 0, OriginY: 64, OriginZ: 0, CompletedTick: 8, MaxRange: 64, Sectors: probeSectors,
 	}, 8)
-	probeNav := system1.EvaluateHorizonExplorer("desert_nomad", probeFrame, xdg.DefaultAgentIdentityConfig("desert_nomad"), probeState)
-	if probeNav != nil && probeNav.GetNavigate() != nil && probeNav.GetNavigate().Target != nil {
-		tgt := probeNav.GetNavigate().Target
-		norm := math.Hypot(tgt.X, tgt.Z)
+	if tx, tz, ok := system1.PlanExpeditionTarget("desert_nomad", probeFrame, probeState); ok {
+		norm := math.Hypot(tx, tz)
 		if norm > 1.0 {
-			oasisX = math.Round((tgt.X / norm) * oasisDist)
-			oasisZ = math.Round((tgt.Z / norm) * oasisDist)
+			oasisX = math.Round((tx / norm) * oasisDist)
+			oasisZ = math.Round((tz / norm) * oasisDist)
 		}
 	}
 
@@ -238,19 +236,20 @@ func TestIntegration_BarrenDesertBiome_MultiHopUntilOasisDiscovery(t *testing.T)
 	sa.runtime.AwaitPOIPersistence()
 
 	st := sa.runtime.System1State()
+	_, hops, _, _ := sa.runtime.AgentFSM().ExpeditionStatus()
 	distToOasis := math.Hypot(sa.pos.X-oasisX, sa.pos.Z-oasisZ)
 	oasisPOIs := st.SpatialIndex().FindPOIsInRadius(&civquestv1.Vec3{X: oasisX, Y: 64, Z: oasisZ}, system1.POICategoryResource, 32.0)
 
 	t.Logf("[DESERT-DIAG] surveys=%d/%d hops=%d maxDist=%.1fm distToOasis=%.1fm oasisPOIs=%d homesteadClaimed=%v phase=%s inFlightDup=%d maxSameSpot=%d pos=(%.1f,%.1f)",
-		len(sa.surveyEmissions), sa.surveysCompleted, st.ExpeditionHops, sa.maxDistFromSpawn,
-		distToOasis, len(oasisPOIs), st.HomesteadClaimed, st.GetExpeditionPhase(),
+		len(sa.surveyEmissions), sa.surveysCompleted, hops, sa.maxDistFromSpawn,
+		distToOasis, len(oasisPOIs), st.HomesteadClaimed, sa.runtime.AgentFSM().ActiveActivityKind(),
 		sa.surveyWhileInFlight, sa.maxConsecSameSpotSurvey, sa.pos.X, sa.pos.Z)
 
 	if sa.surveysCompleted < 2 {
 		t.Errorf("FAIL: expected >= 2 completed surveys across desert hops, got %d", sa.surveysCompleted)
 	}
-	if st.ExpeditionHops < 2 && !st.HomesteadClaimed {
-		t.Errorf("FAIL: expected >= 2 chained expedition hops across open desert, got %d", st.ExpeditionHops)
+	if hops < 2 && !st.HomesteadClaimed {
+		t.Errorf("FAIL: expected >= 2 chained expedition hops across open desert, got %d", hops)
 	}
 	if sa.maxDistFromSpawn <= 60.0 {
 		t.Errorf("FAIL: desert explorer stalled before traversing > 60m from spawn (maxDist=%.1fm)", sa.maxDistFromSpawn)
@@ -454,7 +453,7 @@ func TestIntegration_SurfaceLavaPoolAndRiverBarrier_PauseResurveyAndDetour(t *te
 
 	t.Logf("[LAVA-DIAG] stuckCount=%d hazards=%d rimResurveyed=%v surveys=%d escaped=%v maxDist=%.1fm finalPos=(%.1f,%.1f) phase=%s",
 		sa.barrierStuckCount, len(hazards), sa.barrierResurveyed, len(sa.surveyEmissions),
-		escaped, sa.maxDistFromSpawn, sa.pos.X, sa.pos.Z, sa.runtime.System1State().GetExpeditionPhase())
+		escaped, sa.maxDistFromSpawn, sa.pos.X, sa.pos.Z, sa.runtime.AgentFSM().ActiveActivityKind())
 
 	if sa.barrierStuckCount == 0 {
 		t.Fatalf("Test setup error: scout never reached the lava/river barrier edge (finalPos=(%.1f,%.1f))", sa.pos.X, sa.pos.Z)
@@ -807,8 +806,19 @@ func TestIntegration_AlpineMountainPassAndUndergroundCaveRecovery(t *testing.T) 
 		world.blocks[worldBlockKey{X: 0, Y: 43, Z: 0}] = "minecraft:stone"
 
 		world.isEnclosed = func(pos civquestv1.Vec3, blocks map[worldBlockKey]string) bool {
-			// Enclosed until agent excavates through x=1 and x=2 tunnel and reaches x >= 2.3.
-			return pos.X < 2.3
+			// Radial (not directional) on purpose, and equal to the original criterion on the one
+			// side the original covered: the old test said "enclosed while x < 2.3", i.e. 1.8m east
+			// of the pocket centre (0.5). hypot < 1.8 is exactly that at +X and the same 1.8m reach
+			// on every other side. Why not keep "must tunnel east": since cq-2sr.14 Java no longer
+			// digs; it only reports MotorFacts{enclosed}. ADR-037 s3.4 makes Recover choose the dig
+			// direction itself (heading lock seeded from the blocked bearing / the thinnest or
+			// nearest diggable face), so the pocket is sealed on all four sides by diggable stone
+			// and any excavation direction is a legitimate escape. Real mod semantics are the same
+			// (see testdata/motorfacts/enclosed_pit.json): enclosed means "no walkable neighbour
+			// within reach", a property of the whole pocket, not of one face. The pocket is escaped
+			// when the agent stands >= 1.8m from its centre, i.e. beyond the 1-thick W/N/S walls
+			// (outer face at 1.5m) or inside the dug east tunnel (cell x=2 starts at 1.5m).
+			return math.Hypot(pos.X-0.5, pos.Z-0.5) < 1.8
 		}
 
 		world.isBlocked = func(x, y, z float64) (bool, string) {

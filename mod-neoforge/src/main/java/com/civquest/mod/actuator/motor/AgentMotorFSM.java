@@ -1,129 +1,76 @@
 package com.civquest.mod.actuator.motor;
 
 import com.civquest.mod.AgentEntity;
-import com.civquest.mod.actuator.AgentNavigator;
-import com.civquest.mod.actuator.BlockBreaker;
-import com.civquest.mod.actuator.IntentActuator;
 import com.civquest.mod.grpc.v1.AgentIntent;
-import com.civquest.mod.grpc.v1.AttackIntent;
-import com.civquest.mod.grpc.v1.BuildBlockIntent;
-import com.civquest.mod.grpc.v1.HorizonSector;
-import com.civquest.mod.grpc.v1.HorizonSurveyReport;
-import com.civquest.mod.grpc.v1.IntentReceipt;
 import com.civquest.mod.grpc.v1.InteractBlockIntent;
+import com.civquest.mod.grpc.v1.IntentReceipt;
+import com.civquest.mod.grpc.v1.IntentReceipt.ReceiptStatus;
+import com.civquest.mod.grpc.v1.MotorFacts;
 import com.civquest.mod.grpc.v1.NavigateIntent;
-import com.civquest.mod.grpc.v1.PlaceSignpostIntent;
 import com.civquest.mod.grpc.v1.ReflexNotice;
-import com.civquest.mod.grpc.v1.SurveyHorizonIntent;
 import com.civquest.mod.grpc.v1.UseItemIntent;
 import com.civquest.mod.grpc.v1.Vec3;
-import com.civquest.mod.sensory.HorizonSurveyScanner;
 import com.mojang.logging.LogUtils;
-import net.minecraft.core.BlockPos;
 import net.minecraft.world.InteractionHand;
 import net.minecraft.world.entity.projectile.Projectile;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
-import net.minecraft.world.level.Level;
 import org.slf4j.Logger;
 
-import java.util.ArrayDeque;
-import java.util.ArrayList;
-import java.util.Deque;
-import java.util.HashMap;
 import java.util.List;
-import java.util.Map;
+import java.util.Optional;
+import java.util.concurrent.atomic.AtomicLong;
 
 /**
- * Layer 1A In-Engine Motor Actuator Pushdown Automaton (MotorPDA).
- * Governs physical agent action lifecycles, execution preemption matrices,
- * bounded LIFO state suspension/resumption for sub-tick reflexes, and
- * deterministic entry/exit cleanup on the 20 Hz server tick.
+ * Thin per-agent owner of the typed {@link MotorStack} (ADR-036 section 4): ticks it, owns the sub-tick
+ * reflex pushes (Combat/Dodge/Flee/emergency UseItem) and turns popped batch frames into the one receipt
+ * per batch (status, reason, {@link MotorFacts}). The agent's motor state is {@code stack.peek().motor()};
+ * there is no state enum and no batch cursor: a failure or lease timeout pops the rest of its batch.
  */
 public class AgentMotorFSM {
     private static final Logger LOGGER = LogUtils.getLogger();
 
-    public static final int COMBAT_TIMEOUT_TICKS = 60; // 3 seconds of combat disengagement
-    public static final int STUCK_RECOVERY_MAX_TICKS = 20; // 1 second stuck recovery attempt
+    public static final int COMBAT_TIMEOUT_TICKS = Combat.TIMEOUT_TICKS; // 3 seconds of combat disengagement
+    /** Maximum number of nested reflex frames (Combat/Dodge/Flee/UseItem) over the interrupted frame. */
     public static final int MAX_STACK_DEPTH = 4;
+    /** Locally generated (reflex) frame ids start here, far above Go-assigned Frame.ID values. */
+    public static final long LOCAL_FRAME_ID_BASE = 1L << 40;
     private static final double PROJECTILE_THREAT_RADIUS = 6.0;
     private static final double PROJECTILE_MISS_THRESHOLD_SQ = 4.0; // 2.0 blocks
 
     private final AgentEntity agent;
-    private final Deque<MotorStackFrame> stack = new ArrayDeque<>();
-    private volatile MotorState currentState = MotorState.IDLE;
-    private volatile MotorState previousState = MotorState.IDLE;
-    private volatile long ticksInState = 0L;
-    private volatile int combatTicks = 0;
-    private volatile int stuckRecoveryTicks = 0;
-    private volatile Vec3 lastNavTarget = null;
-    private volatile AgentIntent currentIntent = null;
-
-    private volatile long currentBatchId = 0L;
-    private volatile int currentBatchIndex = 0;
-    private volatile IntentReceipt.ReceiptStatus currentReceiptStatus = IntentReceipt.ReceiptStatus.RECEIPT_STATUS_UNSPECIFIED;
-    private volatile String currentFailureReason = "";
+    private final MotorStack motorStack = new MotorStack();
+    private final AtomicLong localFrameIds = new AtomicLong(LOCAL_FRAME_ID_BASE);
+    private volatile long tickCounter = 0L;
     private volatile long lastProcessedSequenceId = 0L;
-    private volatile boolean lastAsyncActionSucceeded = true;
-    private volatile String lastAsyncFailureReason = "";
-
-    // Peripheral 360-degree horizon survey state (ADR-032)
-    private int surveyNumSectors = 0;
-    private float surveyMaxRange = HorizonSurveyScanner.DEFAULT_MAX_RANGE;
-    private int surveyTicksPerSector = 2;
-    private int surveyCurrentSector = 0;
-    private int surveyTickCounter = 0;
-    private final List<HorizonSector> surveySectors = new ArrayList<>();
-    private double surveyOriginX = 0.0;
-    private double surveyOriginY = 0.0;
-    private double surveyOriginZ = 0.0;
+    /** Receipt of the last settled batch (null until one settles or after flush). */
+    private volatile IntentReceipt terminal = null;
+    private volatile int pushedBatchCount = 0;
+    private volatile boolean timedOut = false;
+    private volatile boolean directFailed = false;
 
     public AgentMotorFSM(AgentEntity agent) {
         this.agent = agent;
+        this.motorStack.setListener(this::onFramePopped);
+    }
+
+    public MotorStack getMotorStack() {
+        return motorStack;
     }
 
     public AgentEntity getAgent() {
         return agent;
     }
 
-    public MotorState getState() {
-        return currentState;
+    /** The motor of the top frame, if any: the agent's current motor state. */
+    public Optional<Motor> topMotor() {
+        return motorStack.peek().map(Frame::motor);
     }
 
-    public MotorState getPreviousState() {
-        return previousState;
-    }
-
-    public long getTicksInState() {
-        return ticksInState;
-    }
-
-    public Vec3 getLastNavTarget() {
-        return lastNavTarget;
-    }
-
-    public void setLastNavTarget(Vec3 lastNavTarget) {
-        this.lastNavTarget = lastNavTarget;
-    }
-
-    public int getCombatTicks() {
-        return combatTicks;
-    }
-
-    public void setCombatTicks(int combatTicks) {
-        this.combatTicks = combatTicks;
-    }
-
-    public int getStuckRecoveryTicks() {
-        return stuckRecoveryTicks;
-    }
-
-    public void setStuckRecoveryTicks(int stuckRecoveryTicks) {
-        this.stuckRecoveryTicks = stuckRecoveryTicks;
-    }
-
-    public AgentIntent getCurrentIntent() {
-        return currentIntent;
+    /** The motor clock: world game time when the agent is in a level, else the FSM's own 20 Hz counter. */
+    public long nowTick() {
+        net.minecraft.world.level.Level level = agent != null ? agent.level() : null;
+        return level != null ? level.getGameTime() : tickCounter;
     }
 
     public long getLastProcessedSequenceId() {
@@ -136,233 +83,270 @@ public class AgentMotorFSM {
         }
     }
 
-    public boolean didLastAsyncActionSucceed() {
-        return lastAsyncActionSucceeded;
-    }
+    // ---- queries over the stack ----------------------------------------------------------------
 
-    public String getLastAsyncFailureReason() {
-        return lastAsyncFailureReason;
-    }
-
-    public synchronized int getStackDepth() {
-        return stack.size();
-    }
-
-    public synchronized Deque<MotorStackFrame> getStackSnapshot() {
-        return new ArrayDeque<>(stack);
-    }
-
-    public synchronized void updateReceiptState(long batchId,
-                                                int activeIndex,
-                                                IntentReceipt.ReceiptStatus status,
-                                                String failureReason) {
-        this.currentBatchId = batchId;
-        this.currentBatchIndex = activeIndex;
-        this.currentReceiptStatus = status != null
-                ? status
-                : IntentReceipt.ReceiptStatus.RECEIPT_STATUS_UNSPECIFIED;
-        this.currentFailureReason = failureReason != null ? failureReason : "";
-    }
-
-    /**
-     * Returns an {@link IntentReceipt} snapshot of the MotorPDA execution state.
-     */
-    public synchronized IntentReceipt getCurrentReceipt() {
-        int depth = stack.size();
-        IntentReceipt.ReceiptStatus effectiveStatus = this.currentReceiptStatus;
-        if (depth > 0
-                && effectiveStatus != IntentReceipt.ReceiptStatus.RECEIPT_STATUS_FAILED
-                && effectiveStatus != IntentReceipt.ReceiptStatus.RECEIPT_STATUS_ABORTED
-                && effectiveStatus != IntentReceipt.ReceiptStatus.RECEIPT_STATUS_COMPLETED) {
-            effectiveStatus = IntentReceipt.ReceiptStatus.RECEIPT_STATUS_PREEMPTED_BY_REFLEX;
+    /** Number of reflex frames (Combat/Dodge/Flee/emergency UseItem) currently suspending the interrupted frame. */
+    public int getStackDepth() {
+        int n = 0;
+        for (Frame f : motorStack.snapshot()) {
+            if (isSuspender(f.motor())) {
+                n++;
+            }
         }
-        return IntentReceipt.newBuilder()
-                .setBatchId(this.currentBatchId)
-                .setActiveIndex(this.currentBatchIndex)
-                .setStatus(effectiveStatus)
-                .setFailureReason(this.currentFailureReason != null ? this.currentFailureReason : "")
-                .setMotorStackDepth(depth)
-                .build();
+        return n;
+    }
+
+    private static boolean isSuspender(Motor m) {
+        return m instanceof Reflex || (m instanceof UseItem u && u.emergency());
+    }
+
+    private static boolean isInstant(Motor m) {
+        return m instanceof Act || m instanceof Place;
+    }
+
+    /** The reflex frame on top of the motor stack, if one is preempting. */
+    public Optional<Motor> activeReflex() {
+        return topMotor().filter(AgentMotorFSM::isSuspender);
+    }
+
+    /** True while a horizon Sweep is the active (top, unsuspended) motor frame. */
+    public boolean isSweeping() {
+        return topMotor().filter(m -> m instanceof Sweep).isPresent();
+    }
+
+    /** True if any Sweep frame is on the motor stack, even when suspended under a reflex. */
+    public boolean hasSweepFrame() {
+        return motorStack.snapshot().stream().anyMatch(f -> f.motor() instanceof Sweep);
+    }
+
+    /** True if a Sleep frame is on the stack (even when suspended). */
+    public boolean isSleeping() {
+        return motorStack.snapshot().stream().anyMatch(f -> f.motor() instanceof Sleep);
+    }
+
+    /** No motor frame of any kind is executing. */
+    public boolean isMotorIdle() {
+        return motorStack.isEmpty();
+    }
+
+    /** True while a batch has at least one frame on the stack (reflexes and direct frames do not count). */
+    public boolean hasBatchFrames() {
+        return motorStack.snapshot().stream().anyMatch(f -> f.index() >= 0 && !isSuspender(f.motor()));
+    }
+
+    /** True if a routine frame (Mine/Move/Sweep) is on top and can be preempted by a reflex. */
+    private boolean hasPreemptableFrame() {
+        return topMotor().filter(m -> m instanceof Move || m instanceof Mine || m instanceof Sweep).isPresent();
+    }
+
+    /** Checks if a navigation intent targets the same voxel as the topmost Move frame. */
+    public boolean isSameNavigationTarget(NavigateIntent nav) {
+        Vec3 current = motorStack.snapshot().stream()
+                .map(Frame::motor).filter(m -> m instanceof Move).map(m -> ((Move) m).target())
+                .findFirst().orElse(null);
+        if (nav == null || !nav.hasTarget()) {
+            return current == null;
+        }
+        if (current == null) {
+            return false;
+        }
+        double eps = 0.5;
+        return Math.abs(nav.getTarget().getX() - current.getX()) < eps
+                && Math.abs(nav.getTarget().getY() - current.getY()) < eps
+                && Math.abs(nav.getTarget().getZ() - current.getZ()) < eps;
+    }
+
+    // ---- receipts ------------------------------------------------------------------------------
+
+    /** Records the settled receipt of a batch (also used for empty/chat-only batches). */
+    public void recordReceipt(long batchId, long frameId, int index, ReceiptStatus status, String reason, MotorFacts facts) {
+        IntentReceipt.Builder b = IntentReceipt.newBuilder()
+                .setBatchId(batchId)
+                .setFrameId(frameId)
+                .setActiveIndex(index)
+                .setStatus(status)
+                .setFailureReason(reason != null ? reason : "");
+        if (facts != null) {
+            b.setFacts(facts);
+        }
+        terminal = b.build();
+    }
+
+    /** True once if a batch ended with a lease TIMEOUT since the last call (the actuator drops its queue). */
+    public boolean takeTimedOut() {
+        boolean t = timedOut;
+        timedOut = false;
+        return t;
     }
 
     /**
-     * Pushes the currently executing motor state onto the bounded LIFO stack before
-     * switching into a reflex state (e.g., {@link MotorState#COMBAT_ENGAGED}).
+     * Receipt snapshot: EXECUTING (PREEMPTED_BY_REFLEX under a reflex) with live facts while a batch has
+     * frames on the stack, otherwise the last settled batch receipt.
+     */
+    public IntentReceipt getCurrentReceipt() {
+        int depth = getStackDepth();
+        List<Frame> frames = motorStack.snapshot();
+        Frame batchFrame = null;
+        for (Frame f : frames) {
+            if (f.index() >= 0 && !isSuspender(f.motor())) {
+                batchFrame = f;
+                break;
+            }
+        }
+        if (batchFrame != null) {
+            IntentReceipt.Builder b = IntentReceipt.newBuilder()
+                    .setBatchId(batchFrame.batchId())
+                    .setFrameId(batchFrame.frameId())
+                    .setActiveIndex(batchFrame.index())
+                    .setStatus(depth > 0 ? ReceiptStatus.RECEIPT_STATUS_PREEMPTED_BY_REFLEX
+                            : ReceiptStatus.RECEIPT_STATUS_EXECUTING)
+                    .setMotorStackDepth(depth);
+            if (depth == 0 && batchFrame.motor() instanceof Move && agent != null && agent.getNavigator() != null) {
+                MotorFacts live = agent.getNavigator().snapshotFacts();
+                if (live != null) {
+                    b.setFacts(live);
+                }
+            }
+            return b.build();
+        }
+        IntentReceipt t = terminal;
+        return (t != null ? t.toBuilder() : IntentReceipt.newBuilder()).setMotorStackDepth(depth).build();
+    }
+
+    private void onFramePopped(MotorStack.Popped p) {
+        Frame f = p.frame();
+        Motor m = f.motor();
+        if (isSuspender(m)) {
+            emitNotice(m, preemptedFrameId(motorStack.peek()), true,
+                    p.reason().isEmpty() ? String.valueOf(p.status()) : p.reason());
+            return;
+        }
+        boolean failed = p.status() == ReceiptStatus.RECEIPT_STATUS_FAILED
+                || p.status() == ReceiptStatus.RECEIPT_STATUS_TIMEOUT;
+        if (f.index() < 0) {
+            directFailed |= failed;
+            return;
+        }
+        if (p.status() == ReceiptStatus.RECEIPT_STATUS_COMPLETED) {
+            boolean more = motorStack.snapshot().stream().anyMatch(o -> sameBatch(o, f) && !isSuspender(o.motor()));
+            if (!more) {
+                recordReceipt(f.batchId(), f.frameId(), Math.max(pushedBatchCount, f.index() + 1),
+                        ReceiptStatus.RECEIPT_STATUS_COMPLETED, "", null);
+            }
+        } else if (failed) {
+            String reason = p.reason();
+            if (p.status() == ReceiptStatus.RECEIPT_STATUS_TIMEOUT) {
+                reason = "Batch timed out after " + f.lease().ticksElapsed(nowTick()) + " ticks";
+                timedOut = true;
+            } else if (reason.isBlank()) {
+                String label = m instanceof Act a ? a.label() : m instanceof Place pl ? pl.label() : m.getClass().getSimpleName();
+                reason = "Primitive at index " + f.index() + " (" + label + ") failed";
+            }
+            recordReceipt(f.batchId(), f.frameId(), f.index(), p.status(), reason, p.facts());
+            motorStack.popWhile(o -> sameBatch(o, f) && !isSuspender(o.motor()), "batch_aborted", body());
+        }
+    }
+
+    private static boolean sameBatch(Frame a, Frame b) {
+        return a.index() >= 0 && a.batchId() == b.batchId() && a.frameId() == b.frameId();
+    }
+
+    // ---- pushing frames ------------------------------------------------------------------------
+
+    /** Pushes one batch's frames (first element runs first). Returns false when the stack is too deep. */
+    public synchronized boolean pushBatch(List<Frame> frames, int intentCount) {
+        pushedBatchCount = intentCount;
+        boolean ok = motorStack.pushAll(frames, body());
+        settle();
+        return ok;
+    }
+
+    /**
+     * Pushes a single non-batch frame (direct intent). Returns false if it could not be pushed or
+     * failed in the tick it started.
+     */
+    public synchronized boolean pushDirect(Motor motor) {
+        directFailed = false;
+        Frame f = new Frame(0L, 0L, -1, motor, Lease.ofTicks(nowTick(), motor.defaultLeaseTicks()));
+        boolean ok = motorStack.push(f, body());
+        settle();
+        return ok && !directFailed;
+    }
+
+    /** Runs instant frames (Act/Place) that reached the top so batch chaining needs no extra tick. */
+    public synchronized void settle() {
+        for (int i = 0; i < 512; i++) {
+            Optional<Motor> top = topMotor();
+            if (top.isEmpty() || !isInstant(top.get())) {
+                return;
+            }
+            motorStack.tick(body());
+        }
+    }
+
+    /**
+     * Pushes a reflex (or emergency use-item) frame over the top frame; the interrupted frame is
+     * suspended through its own {@link Motor#onSuspend}. Emits a pushed {@link ReflexNotice}.
      *
-     * @return true if the frame was pushed and state transitioned, false if rejected (null/identical/stack full)
+     * @return false if the nesting limit {@link #MAX_STACK_DEPTH} is hit
      */
-    public synchronized boolean pushState(MotorState reflexState, String reason) {
-        if (reflexState == null || reflexState == this.currentState) {
+    public synchronized boolean pushReflex(Motor reflex, String reason) {
+        if (reflex == null || !isSuspender(reflex)) {
             return false;
         }
-        if (stack.size() >= MAX_STACK_DEPTH) {
-            LOGGER.warn("Agent '{}' MotorPDA stack is at capacity ({}); rejecting pushState({})",
-                    agent != null ? agent.getAgentId() : "unknown", MAX_STACK_DEPTH, reflexState);
+        if (getStackDepth() >= MAX_STACK_DEPTH) {
+            LOGGER.warn("Agent '{}' reflex stack is at capacity ({}); rejecting {}",
+                    agent != null ? agent.getAgentId() : "unknown", MAX_STACK_DEPTH, reflex);
             return false;
         }
-
-        Map<String, Object> context = new HashMap<>();
-        int progressTicks = (int) this.ticksInState;
-        double lastProgressValue = 0.0;
-
-        if (this.currentState == MotorState.MINING && agent != null && agent.getBreaker() != null && agent.getBreaker().isBreaking()) {
-            BlockBreaker breaker = agent.getBreaker();
-            progressTicks = breaker.getTicks();
-            lastProgressValue = breaker.getProgress();
-            if (breaker.getPos() != null) {
-                context.put("breakPos", breaker.getPos().immutable());
-            }
-        } else if (this.currentState == MotorState.MOVING) {
-            if (this.lastNavTarget != null) {
-                context.put("lastNavTarget", this.lastNavTarget);
-            }
-            if (agent != null && agent.getNavigator() != null && agent.getNavigator().getTargetCoords() != null) {
-                AgentNavigator nav = agent.getNavigator();
-                net.minecraft.world.phys.Vec3 targetVec = nav.getTargetCoords();
-                context.put("navTargetVec", targetVec);
-                context.put("navSpeedMultiplier", (float) nav.getSpeedMultiplier());
-                context.put("navSprint", nav.isSprint());
-                context.put("navAllowBreak", nav.isAllowBreak());
-                context.put("navAllowPlace", nav.isAllowPlace());
-                context.put("navArrivalTolerance", nav.getArrivalTolerance());
-                lastProgressValue = nav.getPosition().distanceTo(targetVec);
-            }
-        } else if (this.currentState == MotorState.SURVEYING) {
-            progressTicks = this.surveyTickCounter;
-            lastProgressValue = this.surveyCurrentSector;
-            context.put("surveyNumSectors", this.surveyNumSectors);
-            context.put("surveyMaxRange", this.surveyMaxRange);
-            context.put("surveyTicksPerSector", this.surveyTicksPerSector);
-            context.put("surveyCurrentSector", this.surveyCurrentSector);
-            context.put("surveyTickCounter", this.surveyTickCounter);
-            context.put("surveySectors", new ArrayList<>(this.surveySectors));
-            context.put("surveyOriginX", this.surveyOriginX);
-            context.put("surveyOriginY", this.surveyOriginY);
-            context.put("surveyOriginZ", this.surveyOriginZ);
+        long preempted = preemptedFrameId(motorStack.peek());
+        long batchId = motorStack.peek().map(Frame::batchId).orElse(0L);
+        Frame frame = new Frame(batchId, localFrameIds.incrementAndGet(), -1, reflex,
+                Lease.ofTicks(nowTick(), reflexLeaseTicks(reflex)));
+        if (!motorStack.push(frame, body())) {
+            return false;
         }
-
-        if (reason != null) {
-            context.put("pushReason", reason);
-        }
-        context.put("ticksInState", this.ticksInState);
-
-        MotorStackFrame frame = new MotorStackFrame(
-                this.currentState,
-                this.currentIntent,
-                progressTicks,
-                lastProgressValue,
-                context
-        );
-        stack.push(frame);
-        transitionTo(reflexState, reason != null ? reason : "pda_push");
+        emitNotice(reflex, preempted, false, reason);
         return true;
     }
 
-    /**
-     * Pops the most recently suspended {@link MotorStackFrame} from the LIFO stack
-     * and resumes its execution (e.g., block breaking or pathfinding) with zero amnesia.
-     *
-     * @return true if a frame was popped and restored, false if the stack was empty
-     */
-    public synchronized boolean popState() {
-        if (stack.isEmpty()) {
-            return false;
+    private static long reflexLeaseTicks(Motor m) {
+        return switch (m) {
+            case Combat c -> Combat.TIMEOUT_TICKS + 20L;
+            case Dodge d -> d.ticksRemaining() + 20L;
+            case Flee f -> f.ticksRemaining() + 20L;
+            default -> 400L; // emergency use-item
+        };
+    }
+
+    private static long preemptedFrameId(Optional<Frame> below) {
+        return below.map(Frame::frameId).orElse(0L);
+    }
+
+    private void emitNotice(Motor motor, long preemptedFrameId, boolean popped, String details) {
+        if (agent == null || !(motor instanceof Reflex)) {
+            return;
         }
-
-        MotorStackFrame frame = stack.pop();
-        MotorState targetState = frame.getState() != null ? frame.getState() : MotorState.IDLE;
-
-        transitionTo(targetState, "pda_pop_restore");
-        this.currentIntent = frame.getIntent();
-
-        Object savedTicks = frame.getContextValue("ticksInState");
-        if (savedTicks instanceof Long l) {
-            this.ticksInState = l;
-        } else {
-            this.ticksInState = frame.getProgressTicks();
-        }
-
-        if (targetState == MotorState.MINING) {
-            Object bp = frame.getContextValue("breakPos");
-            if (bp instanceof BlockPos breakPos && agent != null && agent.getBreaker() != null) {
-                boolean resumed = agent.getBreaker().resume(
-                        breakPos,
-                        (float) frame.getLastProgressValue(),
-                        frame.getProgressTicks()
-                );
-                if (!resumed && agent.level() != null) {
-                    lastAsyncActionSucceeded = false;
-                    lastAsyncFailureReason = "Failed to resume block breaking at " + breakPos;
-                    transitionTo(MotorState.IDLE, "resume_mining_failed");
-                }
-            } else if (frame.getIntent() != null && frame.getIntent().hasInteractBlock()
-                    && agent != null && agent.getBreaker() != null) {
-                com.civquest.mod.grpc.v1.BlockPosProto protoPos = frame.getIntent().getInteractBlock().getPos();
-                BlockPos breakPos = new BlockPos(protoPos.getX(), protoPos.getY(), protoPos.getZ());
-                boolean resumed = agent.getBreaker().resume(
-                        breakPos,
-                        (float) frame.getLastProgressValue(),
-                        frame.getProgressTicks()
-                );
-                if (!resumed && agent.level() != null) {
-                    lastAsyncActionSucceeded = false;
-                    lastAsyncFailureReason = "Failed to resume block breaking at " + breakPos;
-                    transitionTo(MotorState.IDLE, "resume_mining_failed");
-                }
-            }
-        } else if (targetState == MotorState.MOVING) {
-            Object lnt = frame.getContextValue("lastNavTarget");
-            if (lnt instanceof Vec3 v) {
-                this.lastNavTarget = v;
-            } else if (frame.getIntent() != null && frame.getIntent().hasNavigate()
-                    && frame.getIntent().getNavigate().hasTarget()) {
-                this.lastNavTarget = frame.getIntent().getNavigate().getTarget();
-            }
-
-            if (agent != null && agent.getNavigator() != null) {
-                Object tv = frame.getContextValue("navTargetVec");
-                if (tv instanceof net.minecraft.world.phys.Vec3 targetVec) {
-                    float speed = frame.getContextValue("navSpeedMultiplier") instanceof Float f ? f : 1.0f;
-                    boolean sprint = Boolean.TRUE.equals(frame.getContextValue("navSprint"));
-                    boolean allowBreak = Boolean.TRUE.equals(frame.getContextValue("navAllowBreak"));
-                    boolean allowPlace = Boolean.TRUE.equals(frame.getContextValue("navAllowPlace"));
-                    int tolerance = frame.getContextValue("navArrivalTolerance") instanceof Integer i ? i : 1;
-                    agent.getNavigator().navigate(
-                            targetVec.x, targetVec.y, targetVec.z,
-                            speed, sprint, allowBreak, allowPlace, tolerance
-                    );
-                } else if (frame.getIntent() != null && frame.getIntent().hasNavigate()) {
-                    agent.getNavigator().navigate(frame.getIntent().getNavigate());
-                }
-            }
-        } else if (targetState == MotorState.SURVEYING) {
-            this.surveyNumSectors = frame.getContextValue("surveyNumSectors") instanceof Integer i ? i : 36;
-            this.surveyMaxRange = frame.getContextValue("surveyMaxRange") instanceof Float f ? f : HorizonSurveyScanner.DEFAULT_MAX_RANGE;
-            this.surveyTicksPerSector = frame.getContextValue("surveyTicksPerSector") instanceof Integer i ? i : 2;
-            this.surveyCurrentSector = frame.getContextValue("surveyCurrentSector") instanceof Integer i ? i : 0;
-            this.surveyTickCounter = frame.getContextValue("surveyTickCounter") instanceof Integer i ? i : 0;
-            this.surveyOriginX = frame.getContextValue("surveyOriginX") instanceof Double d ? d : 0.0;
-            this.surveyOriginY = frame.getContextValue("surveyOriginY") instanceof Double d ? d : 0.0;
-            this.surveyOriginZ = frame.getContextValue("surveyOriginZ") instanceof Double d ? d : 0.0;
-            this.surveySectors.clear();
-            if (frame.getContextValue("surveySectors") instanceof List<?> savedList) {
-                for (Object item : savedList) {
-                    if (item instanceof HorizonSector hs) {
-                        this.surveySectors.add(hs);
-                    }
-                }
-            }
-        }
-
-        return true;
+        ReflexNotice.ReflexType type = switch (motor) {
+            case Dodge d -> ReflexNotice.ReflexType.REFLEX_TYPE_DODGE;
+            case Flee f -> ReflexNotice.ReflexType.REFLEX_TYPE_FLEE;
+            default -> ReflexNotice.ReflexType.REFLEX_TYPE_COMBAT;
+        };
+        agent.recordReflexNotice(ReflexNotice.newBuilder()
+                .setReflexType(type)
+                .setTick(agent.tickCount)
+                .setDetails(details != null ? details : "")
+                .setPreemptedFrameId(preemptedFrameId)
+                .setPopped(popped)
+                .build());
     }
 
     /**
-     * Immediately flushes the MotorPDA: clears the LIFO stack, cancels active block breaking
-     * and navigation, releases active item/sleep state, and resets the FSM to {@link MotorState#IDLE}.
+     * Immediately flushes the stack: every frame is dropped ABORTED (hooks release breaking, navigation,
+     * item use and sleep), and the settled receipt is cleared.
      */
     public synchronized void flush() {
-        stack.clear();
+        motorStack.clear("flush", body());
         if (agent != null) {
             if (agent.getBreaker() != null) {
                 agent.getBreaker().cancel();
@@ -377,163 +361,41 @@ public class AgentMotorFSM {
                 agent.stopSleeping();
             }
         }
-        this.previousState = this.currentState;
-        this.currentState = MotorState.IDLE;
-        this.ticksInState = 0L;
-        this.combatTicks = 0;
-        this.stuckRecoveryTicks = 0;
-        this.lastNavTarget = null;
-        this.currentIntent = null;
-        this.lastAsyncActionSucceeded = true;
-        this.lastAsyncFailureReason = "";
-        clearSurveyState();
+        terminal = null;
+        timedOut = false;
     }
 
-    private void clearSurveyState() {
-        this.surveyNumSectors = 0;
-        this.surveyMaxRange = HorizonSurveyScanner.DEFAULT_MAX_RANGE;
-        this.surveyTicksPerSector = 2;
-        this.surveyCurrentSector = 0;
-        this.surveyTickCounter = 0;
-        this.surveySectors.clear();
-        this.surveyOriginX = 0.0;
-        this.surveyOriginY = 0.0;
-        this.surveyOriginZ = 0.0;
+    /** Lock-free {@link Body} over this FSM's agent clocked by the FSM's own tick counter. */
+    private Body body() {
+        return agent != null ? new AgentBody(agent, this::nowTick) : new Body() {
+            public long tick() { return nowTick(); }
+            public double x() { return 0; }
+            public double y() { return 0; }
+            public double z() { return 0; }
+            public void log(String message) { }
+        };
     }
 
     /**
-     * Executes state transition with entry and exit cleanup hooks.
-     * Returns true if transition occurred, false if state was already active.
-     */
-    public synchronized boolean transitionTo(MotorState newState, String reason) {
-        if (newState == null || newState == this.currentState) {
-            return false;
-        }
-
-        MotorState oldState = this.currentState;
-
-        // ---- Exit Hooks ----
-        switch (oldState) {
-            case MINING -> {
-                if (agent != null && agent.getBreaker() != null) {
-                    agent.getBreaker().cancel();
-                }
-            }
-            case MOVING -> {
-                if (newState != MotorState.STUCK_RECOVERY && agent != null && agent.getNavigator() != null) {
-                    agent.getNavigator().stop();
-                }
-            }
-            case USING_ITEM -> {
-                if (agent != null && agent.isUsingItem()) {
-                    agent.stopUsingItem();
-                }
-            }
-            case COMBAT_ENGAGED -> {
-                combatTicks = 0;
-                if (agent != null && agent.isUsingItem() && agent.getUseItem().is(Items.SHIELD)) {
-                    agent.stopUsingItem();
-                }
-            }
-            case SLEEPING -> {
-                if (agent != null && agent.isSleeping()) {
-                    agent.stopSleeping();
-                }
-            }
-            case STUCK_RECOVERY -> {
-                stuckRecoveryTicks = 0;
-                if (agent != null && agent.getNavigator() != null) {
-                    agent.getNavigator().stop();
-                }
-            }
-            case SURVEYING -> {
-                clearSurveyState();
-            }
-            default -> {
-            }
-        }
-
-        this.previousState = oldState;
-        this.currentState = newState;
-        this.ticksInState = 0L;
-
-        // ---- Entry Hooks ----
-        switch (newState) {
-            case COMBAT_ENGAGED -> combatTicks = 0;
-            case STUCK_RECOVERY -> stuckRecoveryTicks = 0;
-            case IDLE -> {
-                lastNavTarget = null;
-                currentIntent = null;
-            }
-            default -> {
-            }
-        }
-
-        LOGGER.debug("Agent '{}' MotorFSM transition: {} -> {} (reason: {})",
-                agent != null ? agent.getAgentId() : "unknown", oldState, newState, reason);
-        return true;
-    }
-
-    /**
-     * Evaluates whether an incoming intent can preempt the current motor state.
-     * Priority/emergency actions immediately interrupt routine mining/building/moving.
+     * Evaluates whether an incoming intent can preempt the current top frame. Priority/emergency actions
+     * interrupt routine frames; sleep yields only to emergencies and an explicit wake.
      */
     public boolean canPreempt(AgentIntent intent) {
         if (intent == null) {
             return false;
         }
-
         boolean isEmergency = isPriorityOrEmergencyIntent(intent);
-
-        switch (currentState) {
-            case IDLE -> {
-                return true;
-            }
-            case SLEEPING -> {
-                // Only emergency combat/panic or explicit wake can preempt sleep
-                return isEmergency
-                        || (intent.hasInteractBlock() && intent.getInteractBlock().getInteractionType() == InteractBlockIntent.InteractionType.WAKE_UP);
-            }
-            case COMBAT_ENGAGED -> {
-                // Active combat can only be preempted by emergency actions (new attacks, emergency flee/shield, eating)
-                return isEmergency;
-            }
-            case STUCK_RECOVERY -> {
-                if (isEmergency) {
-                    return true;
-                }
-                // Prevent repeated identical navigation intents from infinitely resetting STUCK_RECOVERY
-                if (intent.hasNavigate()) {
-                    NavigateIntent nav = intent.getNavigate();
-                    if (isSameNavigationTarget(nav)) {
-                        return false;
-                    }
-                }
-                return true;
-            }
-            case MINING, BUILDING, USING_ITEM -> {
-                // Priority / emergency intents immediately preempt routine actions
-                // Routine navigation and other intents can also cleanly transition
-                return true;
-            }
-            case MOVING -> {
-                // Any valid intent can redirect or preempt movement
-                return true;
-            }
-            case SURVEYING -> {
-                // Emergency combat/eating or explicit new intents can cleanly preempt an ongoing horizon survey
-                return true;
-            }
-            default -> {
-                return true;
-            }
+        if (activeReflex().filter(m -> m instanceof Reflex).isPresent()) {
+            return isEmergency;
         }
+        if (topMotor().filter(m -> m instanceof Sleep).isPresent()) {
+            return isEmergency
+                    || (intent.hasInteractBlock() && intent.getInteractBlock().getInteractionType() == InteractBlockIntent.InteractionType.WAKE_UP);
+        }
+        return true;
     }
 
-    /**
-     * Determines whether an intent represents an emergency/priority action.
-     * Routine sprint navigation is NOT treated as an emergency action.
-     */
+    /** Whether an intent is an emergency/priority action. Routine sprint navigation is NOT. */
     public boolean isPriorityOrEmergencyIntent(AgentIntent intent) {
         if (intent == null) {
             return false;
@@ -548,39 +410,64 @@ public class AgentMotorFSM {
         return false;
     }
 
-    /**
-     * Checks if a navigation intent targets the same voxel/location as the active navigation target.
-     */
-    public boolean isSameNavigationTarget(NavigateIntent nav) {
-        if (nav == null || !nav.hasTarget()) {
-            return lastNavTarget == null;
-        }
-        if (lastNavTarget == null) {
-            return false;
-        }
-        double eps = 0.5;
-        return Math.abs(nav.getTarget().getX() - lastNavTarget.getX()) < eps
-                && Math.abs(nav.getTarget().getY() - lastNavTarget.getY()) < eps
-                && Math.abs(nav.getTarget().getZ() - lastNavTarget.getZ()) < eps;
+    /** True if the agent has a routine frame that an emergency use-item may preempt (or is already preempted). */
+    public boolean canEmergencyPreempt() {
+        return hasPreemptableFrame() || getStackDepth() > 0;
     }
 
+    // ---- reflexes ------------------------------------------------------------------------------
+
     /**
-     * Preempts {@link MotorState#MINING}, {@link MotorState#MOVING}, or {@link MotorState#SURVEYING}
-     * with {@link MotorState#COMBAT_ENGAGED} via the PDA stack when an immediate physical hazard is detected.
+     * Pushes a {@link Combat} frame over a Mine/Move/Sweep when an immediate physical hazard is
+     * detected. If a Combat frame or an engaged Strike is on top it is refreshed (timeout restarts).
      */
     public synchronized boolean preemptWithCombatReflex(String reason) {
-        if (currentState != MotorState.MINING && currentState != MotorState.MOVING && currentState != MotorState.SURVEYING) {
-            if (currentState == MotorState.COMBAT_ENGAGED) {
-                combatTicks = 0;
-            }
+        if (refreshCombat(-1)) {
             return false;
         }
-        boolean pushed = pushState(MotorState.COMBAT_ENGAGED, reason);
+        if (!hasPreemptableFrame() && getStackDepth() == 0) {
+            return false;
+        }
+        boolean pushed = pushReflex(new Combat(0, 0), reason);
         if (pushed) {
-            combatTicks = 0;
             engageReflexShield();
         }
         return pushed;
+    }
+
+    /** Pushes a {@link Dodge} frame (incoming projectile) over a Mine/Move/Sweep. */
+    public synchronized boolean preemptWithDodgeReflex(String reason) {
+        if (!hasPreemptableFrame()) {
+            return false;
+        }
+        boolean pushed = pushReflex(new Dodge(Dodge.DEFAULT_TICKS), reason);
+        if (pushed) {
+            engageReflexShield();
+        }
+        return pushed;
+    }
+
+    /** Pushes a {@link Flee} frame retreating from {@code from} over the top frame. */
+    public synchronized boolean preemptWithFleeReflex(Vec3 from, String reason) {
+        if (!hasPreemptableFrame() && getStackDepth() == 0) {
+            return false;
+        }
+        return pushReflex(new Flee(from, Flee.DEFAULT_TICKS), reason);
+    }
+
+    /** Restarts the timeout of a Combat/Strike frame already on top; returns true if one was. */
+    private boolean refreshCombat(int targetEntityId) {
+        Optional<Frame> top = motorStack.peek();
+        if (top.isPresent() && top.get().motor() instanceof Combat c) {
+            motorStack.refreshTop(new Combat(0, targetEntityId >= 0 ? targetEntityId : c.targetEntityId()),
+                    Lease.ofTicks(nowTick(), reflexLeaseTicks(c)));
+            return true;
+        }
+        if (top.isPresent() && top.get().motor() instanceof Strike s) {
+            motorStack.refreshTop(new Strike(s.action(), 0), top.get().lease());
+            return true;
+        }
+        return false;
     }
 
     private void engageReflexShield() {
@@ -642,7 +529,7 @@ public class AgentMotorFSM {
                 double t = dot / vel.lengthSqr();
                 net.minecraft.world.phys.Vec3 closestPoint = proj.position().add(vel.scale(t));
                 if (closestPoint.distanceToSqr(agentCenter) <= PROJECTILE_MISS_THRESHOLD_SQ) {
-                    return preemptWithCombatReflex("arrow_trajectory_interception");
+                    return preemptWithDodgeReflex("arrow_trajectory_interception");
                 }
             }
         } catch (Throwable ignored) {
@@ -650,339 +537,13 @@ public class AgentMotorFSM {
         return false;
     }
 
-    /**
-     * Routes intent execution through the motor FSM, handling preemption and state transitions.
-     */
-    public synchronized boolean handleIntent(AgentIntent intent, IntentActuator actuator) {
-        if (intent == null || actuator == null) {
-            return false;
-        }
-
-        if (!canPreempt(intent)) {
-            LOGGER.debug("Agent '{}' MotorFSM rejected preemption of state {} by intent {}",
-                    agent != null ? agent.getAgentId() : "null", currentState, intent.getActionCase());
-            return false;
-        }
-
-        if (intent.getSequenceId() > 0) {
-            this.lastProcessedSequenceId = intent.getSequenceId();
-        }
-        this.lastAsyncActionSucceeded = true;
-        this.lastAsyncFailureReason = "";
-
-        switch (intent.getActionCase()) {
-            case NAVIGATE -> {
-                NavigateIntent nav = intent.getNavigate();
-                lastNavTarget = nav.hasTarget() ? nav.getTarget() : null;
-                transitionTo(MotorState.MOVING, "navigate_intent");
-                this.currentIntent = intent;
-                if (agent == null) {
-                    return true;
-                }
-                boolean started = actuator.actuateNavigate(agent, nav);
-                if (!started || (agent.getNavigator() != null
-                        && !agent.getNavigator().isPathing()
-                        && !agent.getNavigator().isArrived())) {
-                    lastAsyncActionSucceeded = false;
-                    lastAsyncFailureReason = "Navigate rejected (invalid target coordinates)";
-                    transitionTo(MotorState.IDLE, "navigate_start_failed");
-                    return false;
-                }
-                if (agent.getNavigator() != null && agent.getNavigator().isArrived()) {
-                    lastAsyncActionSucceeded = true;
-                    lastAsyncFailureReason = "";
-                    transitionTo(MotorState.IDLE, "navigate_already_arrived");
-                }
-                return true;
-            }
-            case ATTACK -> {
-                AttackIntent atk = intent.getAttack();
-                if (currentState == MotorState.MINING || currentState == MotorState.MOVING || currentState == MotorState.SURVEYING) {
-                    pushState(MotorState.COMBAT_ENGAGED, "attack_intent_reflex");
-                } else {
-                    transitionTo(MotorState.COMBAT_ENGAGED, "attack_intent");
-                }
-                this.currentIntent = intent;
-                combatTicks = 0;
-                return agent != null ? actuator.actuateAttack(agent, atk) : true;
-            }
-            case INTERACT_BLOCK -> {
-                InteractBlockIntent interact = intent.getInteractBlock();
-                switch (interact.getInteractionType()) {
-                    case HARVEST_BREAK -> {
-                        transitionTo(MotorState.MINING, "harvest_break_intent");
-                        this.currentIntent = intent;
-                        boolean started = agent != null ? actuator.actuateInteractBlock(agent, interact) : true;
-                        if (!started && agent != null && (agent.getBreaker() == null || !agent.getBreaker().isBreaking())) {
-                            lastAsyncActionSucceeded = false;
-                            lastAsyncFailureReason = "HARVEST_BREAK failed (unbreakable, fluid, or out of reach)";
-                            transitionTo(MotorState.IDLE, "mining_start_failed");
-                        } else if (started && agent != null && (agent.getBreaker() == null || !agent.getBreaker().isBreaking())) {
-                            lastAsyncActionSucceeded = true;
-                            lastAsyncFailureReason = "";
-                            transitionTo(MotorState.IDLE, "mining_instant_finished");
-                        }
-                        return started;
-                    }
-                    case SLEEP_IN_BED -> {
-                        transitionTo(MotorState.SLEEPING, "sleep_intent");
-                        this.currentIntent = intent;
-                        boolean sleeping = agent != null ? actuator.actuateInteractBlock(agent, interact) : true;
-                        if (!sleeping && agent != null && !agent.isSleeping()) {
-                            lastAsyncActionSucceeded = false;
-                            lastAsyncFailureReason = "SLEEP_IN_BED failed (out of reach, occupied, or daytime)";
-                            transitionTo(MotorState.IDLE, "sleep_start_failed");
-                        }
-                        return sleeping;
-                    }
-                    case WAKE_UP -> {
-                        boolean woke = agent != null ? actuator.actuateInteractBlock(agent, interact) : true;
-                        transitionTo(MotorState.IDLE, "wake_up_intent");
-                        return woke;
-                    }
-                    case PLACE_BLOCK, PAVE_ROAD_PATH, RING_BELL -> {
-                        return agent != null ? actuator.actuateInteractBlock(agent, interact) : true;
-                    }
-                    default -> {
-                        return agent != null ? actuator.actuateInteractBlock(agent, interact) : true;
-                    }
-                }
-            }
-            case BUILD_BLOCK -> {
-                BuildBlockIntent build = intent.getBuildBlock();
-                return agent != null ? actuator.actuateBuildBlock(agent, build) : true;
-            }
-            case PLACE_SIGNPOST -> {
-                PlaceSignpostIntent sign = intent.getPlaceSignpost();
-                return agent != null ? actuator.actuatePlaceSignpost(agent, sign) : true;
-            }
-            case USE_ITEM -> {
-                UseItemIntent use = intent.getUseItem();
-                boolean preempted = (currentState == MotorState.MINING || currentState == MotorState.MOVING || currentState == MotorState.SURVEYING)
-                        && isPriorityOrEmergencyIntent(intent);
-                if (preempted) {
-                    pushState(MotorState.USING_ITEM, "use_item_reflex_preempt");
-                } else {
-                    transitionTo(MotorState.USING_ITEM, "use_item_intent");
-                }
-                this.currentIntent = intent;
-                boolean used = agent != null ? actuator.actuateUseItem(agent, use) : true;
-                if (agent != null && !agent.isUsingItem()) {
-                    if (preempted && !stack.isEmpty()) {
-                        popState();
-                    } else {
-                        transitionTo(MotorState.IDLE, "use_item_complete");
-                    }
-                }
-                return used;
-            }
-            case CRAFT_ITEM -> {
-                return agent != null ? actuator.actuateCraftItem(agent, intent.getCraftItem()) : true;
-            }
-            case CREATE_BOOK -> {
-                return agent != null ? actuator.actuateCreateWrittenBook(agent, intent.getCreateBook()) : true;
-            }
-            case CHAT -> {
-                return agent != null ? actuator.actuateSendChat(agent, intent.getChat()) : true;
-            }
-            case TRADE_RESPONSE -> {
-                return agent != null ? actuator.actuateRespondTrade(agent, intent.getTradeResponse()) : true;
-            }
-            case SURVEY_HORIZON -> {
-                SurveyHorizonIntent survey = intent.getSurveyHorizon();
-                if (agent != null && agent.getNavigator() != null) {
-                    agent.getNavigator().stop();
-                }
-                int rawSectors = survey.getNumSectors();
-                int numSectors = rawSectors <= 0 ? 36 : Math.max(1, Math.min(360, rawSectors));
-                float maxRange = HorizonSurveyScanner.clampMaxRange(survey.getMaxRange());
-                int rawTicks = survey.getTicksPerSector();
-                int ticksPerSector = rawTicks <= 0 ? 2 : Math.max(1, Math.min(10, rawTicks));
-
-                transitionTo(MotorState.SURVEYING, "survey_horizon_intent");
-                clearSurveyState();
-                this.surveyNumSectors = numSectors;
-                this.surveyMaxRange = maxRange;
-                this.surveyTicksPerSector = ticksPerSector;
-                this.surveyCurrentSector = 0;
-                this.surveyTickCounter = 0;
-                if (agent != null) {
-                    net.minecraft.world.phys.Vec3 eyePos = agent.getEyePosition();
-                    if (eyePos != null) {
-                        this.surveyOriginX = eyePos.x;
-                        this.surveyOriginY = eyePos.y;
-                        this.surveyOriginZ = eyePos.z;
-                    } else {
-                        this.surveyOriginX = agent.getX();
-                        this.surveyOriginY = agent.getY() + 1.62;
-                        this.surveyOriginZ = agent.getZ();
-                    }
-                }
-                this.currentIntent = intent;
-                return true;
-            }
-            default -> {
-                LOGGER.debug("Unhandled intent action in MotorFSM: {}", intent.getActionCase());
-                return false;
-            }
-        }
-    }
-
-    /**
-     * Server-thread 20 Hz tick update for active motor state progression.
-     */
+    /** Server-thread 20 Hz tick: projectile hazard check, then one step of the motor stack. */
     public synchronized void tick() {
-        ticksInState++;
-
-        if (currentState == MotorState.MINING || currentState == MotorState.MOVING || currentState == MotorState.SURVEYING) {
+        tickCounter++;
+        if (getStackDepth() == 0 && hasPreemptableFrame()) {
             checkIncomingProjectileHazard();
         }
-
-        switch (currentState) {
-            case MINING -> {
-                if (agent != null && agent.getBreaker() != null && agent.getBreaker().isBreaking()) {
-                    boolean broken = agent.getBreaker().tick();
-                    if (broken) {
-                        lastAsyncActionSucceeded = true;
-                        lastAsyncFailureReason = "";
-                        transitionTo(MotorState.IDLE, "mining_finished");
-                    } else if (!agent.getBreaker().isBreaking()) {
-                        lastAsyncActionSucceeded = false;
-                        lastAsyncFailureReason = "Block breaking cancelled or target unreachable";
-                        transitionTo(MotorState.IDLE, "mining_cancelled");
-                    }
-                } else {
-                    lastAsyncActionSucceeded = true;
-                    lastAsyncFailureReason = "";
-                    transitionTo(MotorState.IDLE, "mining_inactive");
-                }
-            }
-            case MOVING -> {
-                if (agent != null && agent.getNavigator() != null) {
-                    agent.getNavigator().tick();
-                    if (agent.getNavigator().isArrived()) {
-                        lastAsyncActionSucceeded = true;
-                        lastAsyncFailureReason = "";
-                        transitionTo(MotorState.IDLE, "navigation_arrived");
-                    } else if (agent.getNavigator().isStuck()) {
-                        transitionTo(MotorState.STUCK_RECOVERY, "navigation_stuck");
-                    } else if (agent.getNavigator().isIdle()) {
-                        lastAsyncActionSucceeded = false;
-                        lastAsyncFailureReason = "Navigation stopped before reaching destination";
-                        transitionTo(MotorState.IDLE, "navigation_idle");
-                    }
-                } else {
-                    lastAsyncActionSucceeded = true;
-                    lastAsyncFailureReason = "";
-                    transitionTo(MotorState.IDLE, "navigator_null");
-                }
-            }
-            case COMBAT_ENGAGED -> {
-                if (agent != null && agent.getNavigator() != null && agent.getNavigator().isPathing()) {
-                    agent.getNavigator().tick();
-                }
-                combatTicks++;
-                if (combatTicks > COMBAT_TIMEOUT_TICKS) {
-                    lastAsyncActionSucceeded = true;
-                    lastAsyncFailureReason = "";
-                    if (!stack.isEmpty()) {
-                        popState();
-                    } else {
-                        transitionTo(MotorState.IDLE, "combat_timeout_disengaged");
-                    }
-                }
-            }
-            case USING_ITEM -> {
-                if (agent != null && !agent.isUsingItem()) {
-                    lastAsyncActionSucceeded = true;
-                    lastAsyncFailureReason = "";
-                    if (!stack.isEmpty()) {
-                        popState();
-                    } else {
-                        transitionTo(MotorState.IDLE, "use_item_finished");
-                    }
-                }
-            }
-            case SLEEPING -> {
-                if (agent != null && !agent.isSleeping()) {
-                    lastAsyncActionSucceeded = true;
-                    lastAsyncFailureReason = "";
-                    transitionTo(MotorState.IDLE, "sleeping_finished");
-                }
-            }
-            case STUCK_RECOVERY -> {
-                stuckRecoveryTicks++;
-                if (stuckRecoveryTicks > STUCK_RECOVERY_MAX_TICKS) {
-                    if (agent != null && agent.getNavigator() != null) {
-                        agent.getNavigator().stop();
-                    }
-                    lastAsyncActionSucceeded = false;
-                    lastAsyncFailureReason = "Navigation stuck recovery timeout";
-                    if (!stack.isEmpty()) {
-                        popState();
-                    } else {
-                        transitionTo(MotorState.IDLE, "stuck_recovery_timeout");
-                    }
-                }
-            }
-            case BUILDING -> {
-                transitionTo(MotorState.IDLE, "building_cycle_finished");
-            }
-            case SURVEYING -> {
-                if (surveyNumSectors <= 0) {
-                    transitionTo(MotorState.IDLE, "survey_invalid_sectors");
-                    break;
-                }
-                if (surveyTickCounter % Math.max(1, surveyTicksPerSector) == 0) {
-                    float bearingDeg = (surveyCurrentSector * 360.0f) / surveyNumSectors;
-                    if (agent != null) {
-                        agent.faceBearingAndSync(bearingDeg);
-                        Level level = agent.level();
-                        net.minecraft.world.phys.Vec3 eyePos = agent.getEyePosition();
-                        if (eyePos == null) {
-                            eyePos = new net.minecraft.world.phys.Vec3(surveyOriginX, surveyOriginY, surveyOriginZ);
-                        }
-                        HorizonSector sector = HorizonSurveyScanner.scanSector(
-                                level, agent, eyePos, surveyCurrentSector, bearingDeg, surveyMaxRange);
-                        surveySectors.add(sector);
-                    } else {
-                        surveySectors.add(HorizonSector.newBuilder()
-                                .setSectorIndex(surveyCurrentSector)
-                                .setBearingDeg(bearingDeg)
-                                .setHitDistance(surveyMaxRange)
-                                .setFeatureType(HorizonSurveyScanner.FEATURE_OPEN_PLAINS)
-                                .setHitBlockId("minecraft:air")
-                                .setOpenHorizon(true)
-                                .setOccluded(false)
-                                .build());
-                    }
-                    surveyCurrentSector++;
-                    if (surveyCurrentSector >= surveyNumSectors) {
-                        long completedTick = (agent != null && agent.level() != null)
-                                ? agent.level().getGameTime()
-                                : (agent != null ? agent.tickCount : 0L);
-                        HorizonSurveyReport report = HorizonSurveyReport.newBuilder()
-                                .setOriginX(surveyOriginX)
-                                .setOriginY(surveyOriginY)
-                                .setOriginZ(surveyOriginZ)
-                                .setCompletedTick(completedTick)
-                                .setMaxRange(surveyMaxRange)
-                                .addAllSectors(surveySectors)
-                                .build();
-                        if (agent != null) {
-                            agent.queueHorizonSurveyReport(report);
-                        }
-                        lastAsyncActionSucceeded = true;
-                        lastAsyncFailureReason = "";
-                        transitionTo(MotorState.IDLE, "horizon_survey_complete");
-                        break;
-                    }
-                }
-                surveyTickCounter++;
-            }
-            case IDLE -> {
-                // Receptive idle
-            }
-        }
+        motorStack.tick(body());
+        settle();
     }
 }

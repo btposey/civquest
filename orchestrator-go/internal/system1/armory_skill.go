@@ -147,8 +147,5 @@ func (s *ArmoryCraftingSkill) Execute(ctx *SkillContext, facts *FactGraph) ([]*c
 	return []*civquestv1.AgentIntent{intent}, nil
 }
 
-func (s *ArmoryCraftingSkill) OnComplete(ctx *SkillContext, facts *FactGraph) {
-	if facts != nil {
-		facts.SetBool("armory.sufficient", "Armory", true, "Armory crafting cycle complete")
-	}
-}
+// OnComplete does not write facts: armory.sufficient is derived by the armory evaluator each tick.
+func (s *ArmoryCraftingSkill) OnComplete(ctx *SkillContext, facts *FactGraph) {}

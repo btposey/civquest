@@ -4,7 +4,6 @@ import com.civquest.mod.AgentEntity;
 import com.civquest.mod.actuator.AgentNavigator;
 import com.civquest.mod.actuator.IntentActuator;
 import com.civquest.mod.actuator.motor.AgentMotorFSM;
-import com.civquest.mod.actuator.motor.MotorState;
 import com.civquest.mod.grpc.v1.AgentIntent;
 import com.civquest.mod.grpc.v1.AgentStatus;
 import com.civquest.mod.grpc.v1.BlockPosProto;
@@ -291,8 +290,8 @@ public class SensoryFrustumCollectorTest {
                         .build())
                 .build());
         // Simulate reflex preemption depth = 1 on MotorPDA while navigating
-        assertEquals(MotorState.MOVING, fsm.getState());
-        fsm.pushState(MotorState.COMBAT_ENGAGED, "reflex");
+        assertInstanceOf(com.civquest.mod.actuator.motor.Move.class, fsm.topMotor().orElse(null));
+        fsm.pushReflex(new com.civquest.mod.actuator.motor.Combat(0, 0), "reflex");
 
         TelemetryFrame frame = collector.collectFrame(agent);
         assertTrue(frame.hasReceipt());

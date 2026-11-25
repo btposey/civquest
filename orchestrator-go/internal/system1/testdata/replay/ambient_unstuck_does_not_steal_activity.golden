@@ -1,0 +1,5 @@
+t=100 stage=BOOTSTRAP routine=HARVEST_TREE stack=[bootstrap/1] intents=[Interact(HARVEST_BREAK 3,64,0 minecraft:oak_log)]  // commit to trunk
+t=130 stage=BOOTSTRAP routine=HARVEST_TREE stack=[task_subroutine/2] intents=[Interact(HARVEST_BREAK 3,64,0 minecraft:oak_log)]  // telemetry stuck, no receipt: owning activity keeps control, no recovery intent
+t=160 stage=BOOTSTRAP routine=HARVEST_TREE stack=[task_subroutine/2] intents=[Interact(HARVEST_BREAK 3,64,0 minecraft:oak_log)]  // still telemetry stuck
+t=190 stage=BOOTSTRAP routine=HARVEST_TREE stack=[task_subroutine/2] intents=[Interact(HARVEST_BREAK 3,64,0 minecraft:oak_log)]  // telemetry enclosed, no receipt: still no ambient unstuck
+t=220 stage=BOOTSTRAP routine=HARVEST_TREE stack=[recover/3] intents=[Navigate(x=-2.3 z=0.5)]  // enclosed stuck RECEIPT for the owning frame: Recover(Enclosed) acts

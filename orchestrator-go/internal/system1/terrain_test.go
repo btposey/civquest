@@ -189,7 +189,7 @@ func TestEvaluateTerrainExplorationIntents(t *testing.T) {
 		WorldTick:         100,
 	}
 
-	intent := EvaluateTerrainExploration("Able", frame, agentPos, state, nil)
+	intent := EvaluateTerrainExploration("Able", frame, agentPos, state, nil, nil)
 	if intent == nil {
 		t.Fatal("expected non-nil intent for valley exploration")
 	}

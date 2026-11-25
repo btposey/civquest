@@ -13,6 +13,9 @@ import (
 type FSMIntent struct {
 	Intent   *civquestv1.AgentIntent
 	Priority bool
+	// Frame is the activity frame that emitted the intent (0 = not frame-owned, e.g. biological
+	// needs). The runtime stamps it onto the outgoing IntentBatch.frame_id (ADR-036 §5).
+	Frame uint64
 }
 
 // FSMContext encapsulates sensory frames, agent configuration, spatial state, and vitals for evaluation.
@@ -248,7 +251,7 @@ func (c *FSMContext) IsDawnOrDay() bool {
 	return !c.IsDuskOrNight()
 }
 
-// HasAssignedBed returns true if state has an assigned bed.
+// HasAssignedBed returns true if the frozen shelter.has_bed fact (or, without facts, state) records a bed.
 func (c *FSMContext) HasAssignedBed() bool {
 	if c != nil && c.Facts != nil {
 		if _, exists := c.Facts.Get("shelter.has_bed"); exists {
@@ -271,8 +274,7 @@ func (c *FSMContext) IsShelterComplete() bool {
 	if c == nil || c.State == nil {
 		return false
 	}
-	return c.State.GetShelterBuildIndex() >= blueprints.CabinTotalBlocks ||
-		c.State.GetShelterBlocksPlaced() >= blueprints.CabinTotalBlocks
+	return c.State.GetCabinBuilt() >= blueprints.CabinTotalBlocks
 }
 
 // IsShelterOnCooldown checks if shelter construction is on backoff cooldown after a stuck timeout.

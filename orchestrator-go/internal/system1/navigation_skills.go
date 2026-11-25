@@ -35,7 +35,7 @@ func (s *CivicPatrolSkill) Execute(ctx *SkillContext, facts *FactGraph) ([]*civq
 	if ctx == nil || ctx.Frame == nil || ctx.Frame.Status == nil || ctx.State == nil {
 		return nil, nil
 	}
-	intent := EvaluateCivicPatrol(ctx.AgentID, ctx.Frame, ctx.Config, ctx.State)
+	intent := EvaluateCivicPatrol(ctx.AgentID, ctx.Frame, ctx.Config, ctx.State, ctx.Walk)
 	if intent == nil {
 		return nil, nil
 	}
@@ -76,7 +76,7 @@ func (s *FrontierScoutingSkill) Execute(ctx *SkillContext, facts *FactGraph) ([]
 	if ctx == nil || ctx.Frame == nil || ctx.Frame.Status == nil || ctx.State == nil {
 		return nil, nil
 	}
-	intent := EvaluateFrontierScouting(ctx.AgentID, ctx.Frame, ctx.Config, ctx.State)
+	intent := EvaluateFrontierScouting(ctx.AgentID, ctx.Frame, ctx.Config, ctx.State, ctx.Walk)
 	if intent == nil {
 		return nil, nil
 	}

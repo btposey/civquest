@@ -246,10 +246,15 @@ message ReflexNotice {
     REFLEX_TYPE_SHIELD_DEFENSE = 1;
     REFLEX_TYPE_AUTO_EAT = 2;
     REFLEX_TYPE_ITEM_VACUUM = 3;
+    REFLEX_TYPE_DODGE = 4;
+    REFLEX_TYPE_FLEE = 5;
+    REFLEX_TYPE_COMBAT = 6;
   }
   ReflexType reflex_type = 1;
   int64 tick = 2;
   string details = 3;
+  uint64 preempted_frame_id = 4;  // ADR-036 s5: Go Frame.ID preempted by the reflex (0 = unknown)
+  bool popped = 5;                // false = pushed, true = popped (Go may resume)
 }
 
 message IntentReceipt {
@@ -261,12 +266,25 @@ message IntentReceipt {
     RECEIPT_STATUS_PREEMPTED_BY_REFLEX = 4;
     RECEIPT_STATUS_FAILED = 5;
     RECEIPT_STATUS_ABORTED = 6;
+    RECEIPT_STATUS_TIMEOUT = 7;
   }
   int64 batch_id = 1;
   int32 active_index = 2;
   ReceiptStatus status = 3;
   string failure_reason = 4;
-  int32 motor_stack_depth = 5;
+  int32 motor_stack_depth = 5;  // diagnostics only (ADR-036 s5)
+  uint64 frame_id = 6;          // echoed from IntentBatch.frame_id (0 = legacy mod)
+  MotorFacts facts = 7;
+}
+
+// MotorFacts: Java reports facts, Go decides (ADR-036 s5).
+message MotorFacts {
+  bool stuck = 1;
+  bool enclosed = 2;
+  float blocked_bearing_deg = 3;  // ADR-032 yaw convention
+  int32 stuck_ticks = 4;
+  double progress = 5;            // action-specific (mine progress, remaining distance)
+  bool blocked_by_entity = 6;     // ADR-037: obstruction is an alive entity (ADR-033 congestion), not terrain; false = terrain/legacy
 }
 
 // HorizonSector summarizes a single azimuth slice of a 360-degree peripheral horizon survey (ADR-032).
@@ -306,6 +324,7 @@ message IntentBatch {
   bool flush_periphery = 3;
   repeated AgentIntent intents = 4;
   int64 timeout_ticks = 5;
+  uint64 frame_id = 6;  // Go Frame.ID that emitted the batch (ADR-036 s5; 0 = legacy)
 }
 
 message AgentIntent {

@@ -284,10 +284,12 @@ func TestShelterConstructionSkill_Execute(t *testing.T) {
 	}
 	state := NewAgentState()
 	state.ShelterPos = &civquestv1.BlockPosProto{X: 10, Y: 64, Z: 10}
+	local := newShelterLocal(state)
 	skillCtx := &SkillContext{
 		AgentID: "agent-shelter",
 		Frame:   frame,
 		State:   state,
+		Shelter: &local,
 	}
 	facts := NewFactGraph()
 	facts.SetBool("circadian.is_dusk_or_night", "Circadian", true, "night")

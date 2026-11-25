@@ -16,7 +16,9 @@ func EvaluatePatrol(
 	frame *civquestv1.TelemetryFrame,
 	cfg *xdg.AgentIdentityConfig,
 	state *AgentState,
+	walk *walkLocal,
 ) *civquestv1.AgentIntent {
+	walk = orFreshWalk(walk)
 	if frame == nil || frame.Status == nil || frame.Status.Position == nil || state == nil {
 		return nil
 	}
@@ -28,7 +30,7 @@ func EvaluatePatrol(
 	state.mu.Lock()
 	defer state.mu.Unlock()
 
-	state.telemetryFramesSeen++
+	state.mem.telemetryFramesSeen++
 	if state.homeOrigin == nil {
 		originCopy := &civquestv1.Vec3{X: pos.X, Y: pos.Y, Z: pos.Z}
 		state.homeOrigin = originCopy
@@ -40,8 +42,8 @@ func EvaluatePatrol(
 	if state.currentOutpost == nil {
 		state.currentOutpost = &civquestv1.Vec3{X: state.homeOrigin.X, Y: state.homeOrigin.Y, Z: state.homeOrigin.Z}
 	}
-	if state.lastExploreTick == 0 {
-		state.lastExploreTick = frame.WorldTick
+	if walk.lastExploreTick == 0 {
+		walk.lastExploreTick = frame.WorldTick
 	}
 
 	if state.companionActive {
@@ -52,25 +54,19 @@ func EvaluatePatrol(
 
 	// 1. Immediate terrain unsticking / dig-out or contouring detour when STUCK or ENCLOSED
 	if navState == civquestv1.NavigationState_NAVIGATION_STATE_STUCK || frame.Status.GetNavigationEnclosed() {
-		if unstuckIntent := EvaluateUnstuck(agentID, frame, pos, state); unstuckIntent != nil {
-			return unstuckIntent
-		}
-		if locked, _, _, _, _, _ := state.GetUnstuckLockLocked(); locked {
-			return nil // Waiting on excavation sequence, do NOT rotate heading
-		}
-		if frame.WorldTick >= state.lastExploreTick && frame.WorldTick-state.lastExploreTick < 20 {
+		if frame.WorldTick >= walk.lastExploreTick && frame.WorldTick-walk.lastExploreTick < 20 {
 			return nil
 		}
-		state.exploreStepIndex++
+		walk.exploreStepIndex++
 		// Rotate ~126 degrees away from blocked heading to contour around steep hills or cliffs
-		state.lastHeadingRad += 2.2
-		state.lastHeadingRad = math.Atan2(math.Sin(state.lastHeadingRad), math.Cos(state.lastHeadingRad))
-		state.frontierAzimuthRad = state.lastHeadingRad
-		state.frontierRadialLeg = 0
+		walk.lastHeadingRad += 2.2
+		walk.lastHeadingRad = math.Atan2(math.Sin(walk.lastHeadingRad), math.Cos(walk.lastHeadingRad))
+		walk.frontierAzimuthRad = walk.lastHeadingRad
+		walk.frontierRadialLeg = 0
 		detourDist := 10.0
-		targetX := pos.X + math.Cos(state.lastHeadingRad)*detourDist
-		targetZ := pos.Z + math.Sin(state.lastHeadingRad)*detourDist
-		state.lastExploreTick = frame.WorldTick
+		targetX := pos.X + math.Cos(walk.lastHeadingRad)*detourDist
+		targetZ := pos.Z + math.Sin(walk.lastHeadingRad)*detourDist
+		walk.lastExploreTick = frame.WorldTick
 
 		return &civquestv1.AgentIntent{
 			AgentId: agentID,
@@ -89,11 +85,11 @@ func EvaluatePatrol(
 	}
 
 	// Require at least 2 observed frames so single-frame unit tests are not prematurely triggered
-	if state.telemetryFramesSeen < 2 {
+	if state.mem.telemetryFramesSeen < 2 {
 		return nil
 	}
 
-	return evaluatePatrolLocked(agentID, frame, pos, state, cfg)
+	return evaluatePatrolLocked(agentID, frame, pos, state, cfg, walk)
 }
 
 // EvaluateCivicPatrol is an alias for EvaluatePatrol.
@@ -102,8 +98,10 @@ func EvaluateCivicPatrol(
 	frame *civquestv1.TelemetryFrame,
 	cfg *xdg.AgentIdentityConfig,
 	state *AgentState,
+	walk *walkLocal,
 ) *civquestv1.AgentIntent {
-	return EvaluatePatrol(agentID, frame, cfg, state)
+	walk = orFreshWalk(walk)
+	return EvaluatePatrol(agentID, frame, cfg, state, walk)
 }
 
 // EvaluatePatrolDirect evaluates patrol with explicit position under locked state.
@@ -113,13 +111,15 @@ func EvaluatePatrolDirect(
 	pos *civquestv1.Vec3,
 	state *AgentState,
 	cfg *xdg.AgentIdentityConfig,
+	walk *walkLocal,
 ) *civquestv1.AgentIntent {
+	walk = orFreshWalk(walk)
 	if frame == nil || pos == nil || state == nil {
 		return nil
 	}
 	state.mu.Lock()
 	defer state.mu.Unlock()
-	return evaluatePatrolLocked(agentID, frame, pos, state, cfg)
+	return evaluatePatrolLocked(agentID, frame, pos, state, cfg, walk)
 }
 
 func evaluatePatrolLocked(
@@ -128,7 +128,9 @@ func evaluatePatrolLocked(
 	pos *civquestv1.Vec3,
 	state *AgentState,
 	cfg *xdg.AgentIdentityConfig,
+	walk *walkLocal,
 ) *civquestv1.AgentIntent {
+	walk = orFreshWalk(walk)
 	if frame == nil || frame.Status == nil || pos == nil || state == nil {
 		return nil
 	}
@@ -141,20 +143,20 @@ func evaluatePatrolLocked(
 	navState := frame.Status.NavigationState
 
 	// 1. Initialize sector azimuth if not yet set
-	if !state.frontierAzimuthSet {
+	if !walk.frontierAzimuthSet {
 		var azimuth float64
-		if state.lastHeadingRad != 0 {
-			azimuth = state.lastHeadingRad
+		if walk.lastHeadingRad != 0 {
+			azimuth = walk.lastHeadingRad
 		} else {
 			h := fnv1aString(agentID)
 			azimuth = float64(h%360) * (math.Pi / 180.0)
 		}
 		azimuth = math.Atan2(math.Sin(azimuth), math.Cos(azimuth))
-		state.frontierAzimuthRad = azimuth
-		state.frontierAzimuthSet = true
-		state.lastHeadingRad = azimuth
-		state.frontierRadialLeg = 0
-		state.currentExploreTarget = nil
+		walk.frontierAzimuthRad = azimuth
+		walk.frontierAzimuthSet = true
+		walk.lastHeadingRad = azimuth
+		walk.frontierRadialLeg = 0
+		walk.currentExploreTarget = nil
 	}
 
 	// Landmark perimeter watch: if in a landmark zone, patrol around landmark center or settlement home origin
@@ -170,15 +172,15 @@ func evaluatePatrolLocked(
 	legStep := 16.0 + curiosity*8.0
 
 	// 2. Evaluate arrival, stuck, and timeout conditions
-	hasActiveTarget := state.currentExploreTarget != nil
+	hasActiveTarget := walk.currentExploreTarget != nil
 	if !hasActiveTarget {
-		if state.lastExploreTick > 0 && frame.WorldTick >= state.lastExploreTick && frame.WorldTick-state.lastExploreTick < cooldownTicks {
+		if walk.lastExploreTick > 0 && frame.WorldTick >= walk.lastExploreTick && frame.WorldTick-walk.lastExploreTick < cooldownTicks {
 			return nil
 		}
 	}
 	var distToTarget float64
 	if hasActiveTarget {
-		distToTarget = math.Hypot(pos.X-state.currentExploreTarget.X, pos.Z-state.currentExploreTarget.Z)
+		distToTarget = math.Hypot(pos.X-walk.currentExploreTarget.X, pos.Z-walk.currentExploreTarget.Z)
 	}
 
 	arrived := hasActiveTarget && (distToTarget <= 2.0 || navState == civquestv1.NavigationState_NAVIGATION_STATE_ARRIVED)
@@ -186,10 +188,10 @@ func evaluatePatrolLocked(
 
 	timedOut := false
 	if hasActiveTarget && !arrived && !stuck {
-		if distToTarget < state.lastExploreProgressDist-1.0 {
-			state.lastExploreProgressDist = distToTarget
-			state.lastExploreProgressTick = frame.WorldTick
-		} else if state.lastExploreProgressTick > 0 && frame.WorldTick-state.lastExploreProgressTick >= 600 {
+		if distToTarget < walk.lastExploreProgressDist-1.0 {
+			walk.lastExploreProgressDist = distToTarget
+			walk.lastExploreProgressTick = frame.WorldTick
+		} else if walk.lastExploreProgressTick > 0 && frame.WorldTick-walk.lastExploreProgressTick >= 600 {
 			timedOut = true
 		}
 	}
@@ -200,41 +202,41 @@ func evaluatePatrolLocked(
 		if isActivelyNavigating {
 			return nil
 		}
-		if frame.WorldTick >= state.lastExploreTick && frame.WorldTick-state.lastExploreTick < 40 {
+		if frame.WorldTick >= walk.lastExploreTick && frame.WorldTick-walk.lastExploreTick < 40 {
 			return nil
 		}
 	}
 
 	// 3. Determine new waypoint
 	if arrived {
-		if state.frontierRadialLeg >= 2 {
+		if walk.frontierRadialLeg >= 2 {
 			// Non-explorers rotate azimuth after legs to patrol a perimeter polygon rather than oscillating in 1D
-			newAz := math.Atan2(math.Sin(state.frontierAzimuthRad+math.Pi/4), math.Cos(state.frontierAzimuthRad+math.Pi/4))
-			state.frontierAzimuthRad = newAz
-			state.lastHeadingRad = state.frontierAzimuthRad
-			state.frontierRadialLeg = 0
+			newAz := math.Atan2(math.Sin(walk.frontierAzimuthRad+math.Pi/4), math.Cos(walk.frontierAzimuthRad+math.Pi/4))
+			walk.frontierAzimuthRad = newAz
+			walk.lastHeadingRad = walk.frontierAzimuthRad
+			walk.frontierRadialLeg = 0
 		} else {
-			state.frontierRadialLeg++
+			walk.frontierRadialLeg++
 		}
-		state.exploreStepIndex++
+		walk.exploreStepIndex++
 	} else if stuck || timedOut {
 		// Rotate to a new sector azimuth and reset to leg 0
-		newAz := math.Atan2(math.Sin(state.frontierAzimuthRad+1.2), math.Cos(state.frontierAzimuthRad+1.2))
-		state.frontierAzimuthRad = newAz
-		state.lastHeadingRad = state.frontierAzimuthRad
-		state.frontierRadialLeg = 0
-		state.exploreStepIndex++
+		newAz := math.Atan2(math.Sin(walk.frontierAzimuthRad+1.2), math.Cos(walk.frontierAzimuthRad+1.2))
+		walk.frontierAzimuthRad = newAz
+		walk.lastHeadingRad = walk.frontierAzimuthRad
+		walk.frontierRadialLeg = 0
+		walk.exploreStepIndex++
 	} else if hasActiveTarget && !isActivelyNavigating {
 		// Re-issue navigation to the SAME target
-		state.lastExploreTick = frame.WorldTick
+		walk.lastExploreTick = frame.WorldTick
 		return &civquestv1.AgentIntent{
 			AgentId: agentID,
 			Action: &civquestv1.AgentIntent_Navigate{
 				Navigate: &civquestv1.NavigateIntent{
 					Target: &civquestv1.Vec3{
-						X: state.currentExploreTarget.X,
+						X: walk.currentExploreTarget.X,
 						Y: pos.Y,
-						Z: state.currentExploreTarget.Z,
+						Z: walk.currentExploreTarget.Z,
 					},
 					SpeedMultiplier:  1.0,
 					ArrivalTolerance: 2,
@@ -244,19 +246,19 @@ func evaluatePatrolLocked(
 	}
 
 	// 4. Generate target for current/new leg
-	legDist := 12.0 + float64(state.frontierRadialLeg)*legStep
-	targetX := origin.X + math.Cos(state.frontierAzimuthRad)*legDist
-	targetZ := origin.Z + math.Sin(state.frontierAzimuthRad)*legDist
+	legDist := 12.0 + float64(walk.frontierRadialLeg)*legStep
+	targetX := origin.X + math.Cos(walk.frontierAzimuthRad)*legDist
+	targetZ := origin.Z + math.Sin(walk.frontierAzimuthRad)*legDist
 	newTarget := &civquestv1.Vec3{
 		X: math.Round(targetX*10) / 10,
 		Y: pos.Y,
 		Z: math.Round(targetZ*10) / 10,
 	}
 
-	state.currentExploreTarget = newTarget
-	state.lastExploreProgressDist = math.Hypot(pos.X-newTarget.X, pos.Z-newTarget.Z)
-	state.lastExploreProgressTick = frame.WorldTick
-	state.lastExploreTick = frame.WorldTick
+	walk.currentExploreTarget = newTarget
+	walk.lastExploreProgressDist = math.Hypot(pos.X-newTarget.X, pos.Z-newTarget.Z)
+	walk.lastExploreProgressTick = frame.WorldTick
+	walk.lastExploreTick = frame.WorldTick
 
 	return &civquestv1.AgentIntent{
 		AgentId: agentID,

@@ -111,8 +111,8 @@ func (s *ConstructionSkill) Execute(ctx *SkillContext, facts *FactGraph) ([]*civ
 				if err := coord.AssignAgent(q, agentID); err == nil {
 					quadrant = q
 					assigned = true
-					if ctx.State != nil {
-						ctx.State.SetConstructionProgress(0)
+					if ctx.Construction != nil {
+						ctx.Construction.Index = 0
 					}
 					break
 				}
@@ -134,8 +134,8 @@ func (s *ConstructionSkill) Execute(ctx *SkillContext, facts *FactGraph) ([]*civ
 	}
 
 	idx := 0
-	if ctx.State != nil {
-		idx = ctx.State.ConstructionProgress()
+	if ctx.Construction != nil {
+		idx = ctx.Construction.Index
 	}
 
 	if idx >= len(intents) {
@@ -148,8 +148,8 @@ func (s *ConstructionSkill) Execute(ctx *SkillContext, facts *FactGraph) ([]*civ
 	targetWork := intents[idx]
 	targetVoxel := targetWork.TargetVoxel
 	if targetVoxel == nil {
-		if ctx.State != nil {
-			ctx.State.AdvanceConstructionProgress()
+		if ctx.Construction != nil {
+			ctx.Construction.Index++
 		}
 		return nil, nil
 	}
@@ -255,8 +255,8 @@ func (s *ConstructionSkill) Execute(ctx *SkillContext, facts *FactGraph) ([]*civ
 	}
 
 	// Advance progress to next block in quadrant
-	if ctx.State != nil {
-		ctx.State.AdvanceConstructionProgress()
+	if ctx.Construction != nil {
+		ctx.Construction.Index++
 	}
 
 	return []*civquestv1.AgentIntent{placeIntent}, nil
@@ -273,10 +273,6 @@ func (s *ConstructionSkill) OnComplete(ctx *SkillContext, facts *FactGraph) {
 	}
 
 	if coord.IsComplete() {
-		if facts != nil {
-			facts.SetBool("construction.complete", "construction", true, "All quadrants completed")
-		}
-
 		// Register functional zone in CivicDB if available
 		if ctx != nil && ctx.CivicDB != nil {
 			bpPurpose := "SHELTER"

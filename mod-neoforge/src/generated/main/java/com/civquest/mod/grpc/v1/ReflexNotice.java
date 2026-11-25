@@ -65,6 +65,18 @@ private static final long serialVersionUID = 0L;
      * <code>REFLEX_TYPE_ITEM_VACUUM = 3;</code>
      */
     REFLEX_TYPE_ITEM_VACUUM(3),
+    /**
+     * <code>REFLEX_TYPE_DODGE = 4;</code>
+     */
+    REFLEX_TYPE_DODGE(4),
+    /**
+     * <code>REFLEX_TYPE_FLEE = 5;</code>
+     */
+    REFLEX_TYPE_FLEE(5),
+    /**
+     * <code>REFLEX_TYPE_COMBAT = 6;</code>
+     */
+    REFLEX_TYPE_COMBAT(6),
     UNRECOGNIZED(-1),
     ;
 
@@ -93,6 +105,18 @@ private static final long serialVersionUID = 0L;
      * <code>REFLEX_TYPE_ITEM_VACUUM = 3;</code>
      */
     public static final int REFLEX_TYPE_ITEM_VACUUM_VALUE = 3;
+    /**
+     * <code>REFLEX_TYPE_DODGE = 4;</code>
+     */
+    public static final int REFLEX_TYPE_DODGE_VALUE = 4;
+    /**
+     * <code>REFLEX_TYPE_FLEE = 5;</code>
+     */
+    public static final int REFLEX_TYPE_FLEE_VALUE = 5;
+    /**
+     * <code>REFLEX_TYPE_COMBAT = 6;</code>
+     */
+    public static final int REFLEX_TYPE_COMBAT_VALUE = 6;
 
 
     public final int getNumber() {
@@ -123,6 +147,9 @@ private static final long serialVersionUID = 0L;
         case 1: return REFLEX_TYPE_SHIELD_DEFENSE;
         case 2: return REFLEX_TYPE_AUTO_EAT;
         case 3: return REFLEX_TYPE_ITEM_VACUUM;
+        case 4: return REFLEX_TYPE_DODGE;
+        case 5: return REFLEX_TYPE_FLEE;
+        case 6: return REFLEX_TYPE_COMBAT;
         default: return null;
       }
     }
@@ -247,6 +274,36 @@ private static final long serialVersionUID = 0L;
     }
   }
 
+  public static final int PREEMPTED_FRAME_ID_FIELD_NUMBER = 4;
+  private long preemptedFrameId_ = 0L;
+  /**
+   * <pre>
+   * ADR-036 s5: Go Frame.ID preempted by the reflex (0 = unknown)
+   * </pre>
+   *
+   * <code>uint64 preempted_frame_id = 4;</code>
+   * @return The preemptedFrameId.
+   */
+  @java.lang.Override
+  public long getPreemptedFrameId() {
+    return preemptedFrameId_;
+  }
+
+  public static final int POPPED_FIELD_NUMBER = 5;
+  private boolean popped_ = false;
+  /**
+   * <pre>
+   * false = pushed, true = popped (Go may resume)
+   * </pre>
+   *
+   * <code>bool popped = 5;</code>
+   * @return The popped.
+   */
+  @java.lang.Override
+  public boolean getPopped() {
+    return popped_;
+  }
+
   private byte memoizedIsInitialized = -1;
   @java.lang.Override
   public final boolean isInitialized() {
@@ -270,6 +327,12 @@ private static final long serialVersionUID = 0L;
     if (!com.google.protobuf.GeneratedMessage.isStringEmpty(details_)) {
       com.google.protobuf.GeneratedMessage.writeString(output, 3, details_);
     }
+    if (preemptedFrameId_ != 0L) {
+      output.writeUInt64(4, preemptedFrameId_);
+    }
+    if (popped_ != false) {
+      output.writeBool(5, popped_);
+    }
     getUnknownFields().writeTo(output);
   }
 
@@ -289,6 +352,14 @@ private static final long serialVersionUID = 0L;
     }
     if (!com.google.protobuf.GeneratedMessage.isStringEmpty(details_)) {
       size += com.google.protobuf.GeneratedMessage.computeStringSize(3, details_);
+    }
+    if (preemptedFrameId_ != 0L) {
+      size += com.google.protobuf.CodedOutputStream
+        .computeUInt64Size(4, preemptedFrameId_);
+    }
+    if (popped_ != false) {
+      size += com.google.protobuf.CodedOutputStream
+        .computeBoolSize(5, popped_);
     }
     size += getUnknownFields().getSerializedSize();
     memoizedSize = size;
@@ -310,6 +381,10 @@ private static final long serialVersionUID = 0L;
         != other.getTick()) return false;
     if (!getDetails()
         .equals(other.getDetails())) return false;
+    if (getPreemptedFrameId()
+        != other.getPreemptedFrameId()) return false;
+    if (getPopped()
+        != other.getPopped()) return false;
     if (!getUnknownFields().equals(other.getUnknownFields())) return false;
     return true;
   }
@@ -328,6 +403,12 @@ private static final long serialVersionUID = 0L;
         getTick());
     hash = (37 * hash) + DETAILS_FIELD_NUMBER;
     hash = (53 * hash) + getDetails().hashCode();
+    hash = (37 * hash) + PREEMPTED_FRAME_ID_FIELD_NUMBER;
+    hash = (53 * hash) + com.google.protobuf.Internal.hashLong(
+        getPreemptedFrameId());
+    hash = (37 * hash) + POPPED_FIELD_NUMBER;
+    hash = (53 * hash) + com.google.protobuf.Internal.hashBoolean(
+        getPopped());
     hash = (29 * hash) + getUnknownFields().hashCode();
     memoizedHashCode = hash;
     return hash;
@@ -462,6 +543,8 @@ private static final long serialVersionUID = 0L;
       reflexType_ = 0;
       tick_ = 0L;
       details_ = "";
+      preemptedFrameId_ = 0L;
+      popped_ = false;
       return this;
     }
 
@@ -504,6 +587,12 @@ private static final long serialVersionUID = 0L;
       if (((from_bitField0_ & 0x00000004) != 0)) {
         result.details_ = details_;
       }
+      if (((from_bitField0_ & 0x00000008) != 0)) {
+        result.preemptedFrameId_ = preemptedFrameId_;
+      }
+      if (((from_bitField0_ & 0x00000010) != 0)) {
+        result.popped_ = popped_;
+      }
     }
 
     @java.lang.Override
@@ -528,6 +617,12 @@ private static final long serialVersionUID = 0L;
         details_ = other.details_;
         bitField0_ |= 0x00000004;
         onChanged();
+      }
+      if (other.getPreemptedFrameId() != 0L) {
+        setPreemptedFrameId(other.getPreemptedFrameId());
+      }
+      if (other.getPopped() != false) {
+        setPopped(other.getPopped());
       }
       this.mergeUnknownFields(other.getUnknownFields());
       onChanged();
@@ -570,6 +665,16 @@ private static final long serialVersionUID = 0L;
               bitField0_ |= 0x00000004;
               break;
             } // case 26
+            case 32: {
+              preemptedFrameId_ = input.readUInt64();
+              bitField0_ |= 0x00000008;
+              break;
+            } // case 32
+            case 40: {
+              popped_ = input.readBool();
+              bitField0_ |= 0x00000010;
+              break;
+            } // case 40
             default: {
               if (!super.parseUnknownField(input, extensionRegistry, tag)) {
                 done = true; // was an endgroup tag
@@ -740,6 +845,94 @@ private static final long serialVersionUID = 0L;
       checkByteStringIsUtf8(value);
       details_ = value;
       bitField0_ |= 0x00000004;
+      onChanged();
+      return this;
+    }
+
+    private long preemptedFrameId_ ;
+    /**
+     * <pre>
+     * ADR-036 s5: Go Frame.ID preempted by the reflex (0 = unknown)
+     * </pre>
+     *
+     * <code>uint64 preempted_frame_id = 4;</code>
+     * @return The preemptedFrameId.
+     */
+    @java.lang.Override
+    public long getPreemptedFrameId() {
+      return preemptedFrameId_;
+    }
+    /**
+     * <pre>
+     * ADR-036 s5: Go Frame.ID preempted by the reflex (0 = unknown)
+     * </pre>
+     *
+     * <code>uint64 preempted_frame_id = 4;</code>
+     * @param value The preemptedFrameId to set.
+     * @return This builder for chaining.
+     */
+    public Builder setPreemptedFrameId(long value) {
+
+      preemptedFrameId_ = value;
+      bitField0_ |= 0x00000008;
+      onChanged();
+      return this;
+    }
+    /**
+     * <pre>
+     * ADR-036 s5: Go Frame.ID preempted by the reflex (0 = unknown)
+     * </pre>
+     *
+     * <code>uint64 preempted_frame_id = 4;</code>
+     * @return This builder for chaining.
+     */
+    public Builder clearPreemptedFrameId() {
+      bitField0_ = (bitField0_ & ~0x00000008);
+      preemptedFrameId_ = 0L;
+      onChanged();
+      return this;
+    }
+
+    private boolean popped_ ;
+    /**
+     * <pre>
+     * false = pushed, true = popped (Go may resume)
+     * </pre>
+     *
+     * <code>bool popped = 5;</code>
+     * @return The popped.
+     */
+    @java.lang.Override
+    public boolean getPopped() {
+      return popped_;
+    }
+    /**
+     * <pre>
+     * false = pushed, true = popped (Go may resume)
+     * </pre>
+     *
+     * <code>bool popped = 5;</code>
+     * @param value The popped to set.
+     * @return This builder for chaining.
+     */
+    public Builder setPopped(boolean value) {
+
+      popped_ = value;
+      bitField0_ |= 0x00000010;
+      onChanged();
+      return this;
+    }
+    /**
+     * <pre>
+     * false = pushed, true = popped (Go may resume)
+     * </pre>
+     *
+     * <code>bool popped = 5;</code>
+     * @return This builder for chaining.
+     */
+    public Builder clearPopped() {
+      bitField0_ = (bitField0_ & ~0x00000010);
+      popped_ = false;
       onChanged();
       return this;
     }

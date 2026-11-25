@@ -42,7 +42,7 @@ func (e *CircadianEvaluator) Evaluate(ctx *EvaluatorContext, graph *FactGraph) e
 		shift = ctx.Config.EffectiveShift()
 	}
 
-	var state *AgentState
+	var state StateView
 	if ctx != nil {
 		state = ctx.State
 	}

@@ -71,7 +71,7 @@ func TestEvaluateTopologicalMappingAndExploration(t *testing.T) {
 	}
 
 	// Test terrain unsticking when NAVIGATION_STATE_STUCK
-	_ = EvaluateExploration("Able", frame1, cfg, state)
+	_ = EvaluateExploration("Able", frame1, cfg, state, nil)
 	stuckFrame := &civquestv1.TelemetryFrame{
 		WorldTick: 1200,
 		TimeOfDay: 2200,
@@ -82,7 +82,7 @@ func TestEvaluateTopologicalMappingAndExploration(t *testing.T) {
 			NavigationState: civquestv1.NavigationState_NAVIGATION_STATE_STUCK,
 		},
 	}
-	detourIntent := EvaluateExploration("Able", stuckFrame, cfg, state)
+	detourIntent := EvaluateExploration("Able", stuckFrame, cfg, state, nil)
 	if detourIntent == nil || detourIntent.GetNavigate() == nil {
 		t.Fatalf("expected terrain detour navigate intent when STUCK, got %+v", detourIntent)
 	}
@@ -103,7 +103,8 @@ func TestEvaluateExplorationBackwardCompatibility(t *testing.T) {
 			NavigationState: civquestv1.NavigationState_NAVIGATION_STATE_IDLE,
 		},
 	}
-	_ = EvaluateExploration("Able", warmupFrame, cfg, state)
+	walk := &walkLocal{}
+	_ = EvaluateExploration("Able", warmupFrame, cfg, state, walk)
 
 	frameExplore := &civquestv1.TelemetryFrame{
 		WorldTick: 200,
@@ -120,34 +121,12 @@ func TestEvaluateExplorationBackwardCompatibility(t *testing.T) {
 			},
 		},
 	}
-	intent := EvaluateExploration("Able", frameExplore, cfg, state)
-	if intent == nil || intent.GetSurveyHorizon() == nil {
-		t.Fatalf("expected initial SurveyHorizonIntent from EvaluateExploration (ADR-032), got %+v", intent)
+	// Explorers start an expedition frame (ADR-032/036): the evaluator only asks the running
+	// activity to push it (the frames themselves are covered by the TestExpedition_* tests).
+	if intent := EvaluateExploration("Able", frameExplore, cfg, state, walk); intent != nil {
+		t.Fatalf("expected no direct intent from EvaluateExploration, got %+v", intent)
 	}
-
-	// Simulate completed 360° HorizonSurveyReport -> next EvaluateExploration picks best bearing and emits NavigateIntent
-	sectors := make([]*civquestv1.HorizonSector, 36)
-	for i := 0; i < 36; i++ {
-		sectors[i] = &civquestv1.HorizonSector{
-			SectorIndex: int32(i),
-			BearingDeg:  float32(i * 10),
-			HitDistance: 64.0,
-			FeatureType: "OPEN_PLAINS",
-			OpenHorizon: true,
-		}
-	}
-	state.IngestHorizonSurveyReport(&civquestv1.HorizonSurveyReport{
-		OriginX:       0,
-		OriginY:       64,
-		OriginZ:       0,
-		CompletedTick: 220,
-		MaxRange:      64.0,
-		Sectors:       sectors,
-	}, 220)
-
-	frameExplore.WorldTick = 225
-	navIntent := EvaluateExploration("Able", frameExplore, cfg, state)
-	if navIntent == nil || navIntent.GetNavigate() == nil {
-		t.Fatalf("expected NavigateIntent from EvaluateExploration after survey report, got %+v", navIntent)
+	if !walk.wantExpedition {
+		t.Fatal("expected EvaluateExploration to request an expedition frame for an explorer")
 	}
 }

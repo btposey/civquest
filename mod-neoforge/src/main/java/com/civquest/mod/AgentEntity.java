@@ -3,7 +3,6 @@ package com.civquest.mod;
 import com.civquest.mod.actuator.AgentNavigator;
 import com.civquest.mod.actuator.motor.AgentMotorFSM;
 import com.civquest.mod.actuator.motor.AgentWatchdogFSM;
-import com.civquest.mod.actuator.motor.MotorState;
 import com.civquest.mod.grpc.v1.DeathEvent;
 import com.civquest.mod.grpc.v1.TelemetryFrame;
 import com.civquest.mod.sensory.SensoryFrustumCollector;
@@ -225,7 +224,7 @@ public class AgentEntity extends FakePlayer {
                     this.watchdogFSM.tick();
                 }
                 if (this.motorFSM != null) {
-                    this.motorFSM.tick();
+                    this.motorFSM.tick(); // also ticks the ADR-036 typed motor stack (Sweep)
                 } else {
                     if (this.breaker.isBreaking()) {
                         this.breaker.tick();
@@ -238,12 +237,12 @@ public class AgentEntity extends FakePlayer {
                     this.intentActuator.tick(this);
                 }
                 if (this.isAlive() && !this.isSleeping()
-                        && (this.motorFSM == null || this.motorFSM.getState() != MotorState.SURVEYING)
+                        && (this.motorFSM == null || !this.motorFSM.isSweeping())
                         && (this.breaker == null || !this.breaker.isBreaking())) {
                     applyHorizontalPeerSeparation();
                 }
                 if (this.isAlive() && !this.isSleeping() && !this.breaker.isBreaking()
-                        && (this.motorFSM == null || this.motorFSM.getState() != MotorState.SURVEYING)
+                        && (this.motorFSM == null || !this.motorFSM.isSweeping())
                         && (this.navigator == null || this.navigator.getNavigationState() != com.civquest.mod.grpc.v1.NavigationState.NAVIGATION_STATE_PATHING)) {
                     updateIdleSocialGaze();
                 }
@@ -315,7 +314,7 @@ public class AgentEntity extends FakePlayer {
         if (level == null || level.isClientSide || this.isRemoved() || !this.isAlive() || this.isSleeping()) {
             return;
         }
-        if (this.motorFSM != null && this.motorFSM.getState() == MotorState.SURVEYING) {
+        if (this.motorFSM != null && this.motorFSM.isSweeping()) {
             return;
         }
         if (this.breaker != null && this.breaker.isBreaking()) {
@@ -930,7 +929,7 @@ public class AgentEntity extends FakePlayer {
             this.watchdogFSM.onAgentDeath();
         }
         if (this.motorFSM != null) {
-            this.motorFSM.transitionTo(MotorState.IDLE, "agent_death");
+            this.motorFSM.flush();
         }
 
         // Release forced chunk
@@ -957,7 +956,7 @@ public class AgentEntity extends FakePlayer {
             this.watchdogFSM.onAgentDespawn();
         }
         if (this.motorFSM != null) {
-            this.motorFSM.transitionTo(MotorState.IDLE, "agent_removed");
+            this.motorFSM.flush();
         }
         releaseForcedChunk();
         if (cleanedUp.compareAndSet(false, true)) {

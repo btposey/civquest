@@ -79,6 +79,7 @@ func TestCivicPatrolSkill_Execute(t *testing.T) {
 	}
 
 	ctx := &SkillContext{
+		Walk:    &walkLocal{},
 		AgentID: "guard-1",
 		Frame:   frame1,
 		Config:  cfg,
@@ -187,6 +188,7 @@ func TestFrontierScoutingSkill_Execute(t *testing.T) {
 	}
 
 	ctx := &SkillContext{
+		Walk:    &walkLocal{},
 		AgentID: "scout-1",
 		Frame:   frame1,
 		Config:  cfg,
@@ -288,6 +290,7 @@ func TestRoadPavingSkill_Execute(t *testing.T) {
 		},
 	}
 	ctx := &SkillContext{
+		Walk:          &walkLocal{},
 		AgentID:       "builder-1",
 		Frame:         frame1,
 		State:         state,
@@ -392,6 +395,7 @@ func TestDefaultRegistry_NavigationSkillsIntegration(t *testing.T) {
 
 	cfg := &xdg.AgentIdentityConfig{Profession: "GUARD"}
 	skillCtx := &SkillContext{
+		Walk:    &walkLocal{},
 		AgentID: "reg-guard",
 		Frame:   frame1,
 		Config:  cfg,

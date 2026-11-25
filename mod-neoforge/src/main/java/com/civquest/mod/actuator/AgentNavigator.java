@@ -95,6 +95,16 @@ public class AgentNavigator {
     private boolean allowPlace = false;
     private int arrivalTolerance = 1;
     private int stuckTicks = 0;
+    /** ADR-037: last tick an alive entity (ADR-033) blocked the heading; distinguishes congestion from terrain. */
+    private long lastEntityBlockedTick = Long.MIN_VALUE;
+    private boolean stuckByEntity = false;
+    /** Last replan failed only because live entities occupy the corridor (ADR-033). */
+    private boolean planBlockedByEntity = false;
+    private boolean planSawEntities = false;
+    private double lastAimDx = 0.0;
+    private double lastAimDz = 0.0;
+    /** Ticks within which an entity block still attributes a stuck declaration to congestion. */
+    private static final int ENTITY_BLOCK_ATTRIBUTION_TICKS = 6;
     private int baritoneInactivityTicks = 0;
     private Vec3 lastPosition = null;
     private Vec3 simulatedPos = Vec3.ZERO;
@@ -167,6 +177,9 @@ public class AgentNavigator {
         this.allowPlace = allowPlace;
         this.arrivalTolerance = arrivalTolerance > 0 ? arrivalTolerance : 1;
         this.stuckTicks = 0;
+        this.lastEntityBlockedTick = Long.MIN_VALUE;
+        this.stuckByEntity = false;
+        this.planBlockedByEntity = false;
         this.baritoneInactivityTicks = 0;
         this.lastPosition = getPosition();
         this.path = new java.util.ArrayList<>();
@@ -382,13 +395,17 @@ public class AgentNavigator {
 
     /** World adapter used by the local planner, with per-plan block and entity occupancy caching. */
     private LocalPathPlanner.World worldOf(net.minecraft.world.level.Level level) {
+        return worldOf(level, false);
+    }
+
+    private LocalPathPlanner.World worldOf(net.minecraft.world.level.Level level, boolean ignoreEntities) {
         final java.util.Map<Long, Boolean> solidCache = new java.util.HashMap<>();
         final java.util.Map<Long, Boolean> hazardCache = new java.util.HashMap<>();
         final java.util.Map<Long, Boolean> climbableCache = new java.util.HashMap<>();
         final java.util.Map<Long, Boolean> waterCache = new java.util.HashMap<>();
         final java.util.Map<Long, Boolean> entityCache = new java.util.HashMap<>();
         final List<AABB> entityBoxes;
-        if (level != null) {
+        if (level != null && !ignoreEntities) {
             Vec3 pos = getPosition();
             double r = LocalPathPlanner.DEFAULT_RADIUS + 2.0;
             double vr = LocalPathPlanner.MAX_VERTICAL_RANGE + 3.0;
@@ -397,6 +414,7 @@ public class AgentNavigator {
                     pos.x + r, pos.y + vr, pos.z + r
             );
             entityBoxes = collectBlockingEntityBoxes(level, snapshotBox);
+            this.planSawEntities = !entityBoxes.isEmpty();
         } else {
             entityBoxes = java.util.Collections.emptyList();
         }
@@ -888,6 +906,17 @@ public class AgentNavigator {
         LocalPathPlanner.Result r = LocalPathPlanner.plan(worldOf(level),
                 new LocalPathPlanner.Cell(bx, by, bz), targetCoords.x, targetCoords.y, targetCoords.z,
                 LocalPathPlanner.DEFAULT_RADIUS, k -> failedCells.containsKey(k));
+        // ADR-037: attribute a failed plan to entity congestion only if the same plan succeeds without entities.
+        this.planBlockedByEntity = false;
+        if (!r.reachedTarget() && level != null && planSawEntities) {
+            LocalPathPlanner.Result ignoringEntities = LocalPathPlanner.plan(worldOf(level, true),
+                    new LocalPathPlanner.Cell(bx, by, bz), targetCoords.x, targetCoords.y, targetCoords.z,
+                    LocalPathPlanner.DEFAULT_RADIUS, k -> failedCells.containsKey(k));
+            this.planBlockedByEntity = ignoringEntities.reachedTarget() && !ignoringEntities.enclosed();
+            if (this.planBlockedByEntity) {
+                r = new LocalPathPlanner.Result(r.path(), r.reachedTarget(), false, r.exploredCells());
+            }
+        }
         this.path = new java.util.ArrayList<>(r.path());
         this.enclosed = r.enclosed();
         this.reachedTargetCell = r.reachedTarget();
@@ -1137,12 +1166,15 @@ public class AgentNavigator {
 
         // ADR-033: Hard AABB non-overlap clamping & hazard-checked lateral sidestep around living entities
         boolean entityBlockedForward = false;
+        this.lastAimDx = aimX - currentPos.x;
+        this.lastAimDz = aimZ - currentPos.z;
         if (level != null && (velX != 0.0 || velZ != 0.0)) {
             AABB agentBox = resolveAgentBox(currentPos);
             AABB sweepBox = agentBox.inflate(Math.abs(velX) + 0.85, 0.2, Math.abs(velZ) + 0.85);
             List<AABB> blockers = collectBlockingEntityBoxes(level, sweepBox);
             if (!blockers.isEmpty() && wouldPenetrateAnyEntity(agentBox, velX, velZ, blockers)) {
                 entityBlockedForward = true;
+                this.lastEntityBlockedTick = navTick;
                 boolean xSafe = velX != 0.0
                         && !wouldPenetrateAnyEntity(agentBox, velX, 0.0, blockers)
                         && !isHazardFootprint(level, currentPos.x + velX, currentPos.y, currentPos.z);
@@ -1377,6 +1409,9 @@ public class AgentNavigator {
                     path.clear();
                 }
                 if (this.stuckTicks >= 16) {
+                    if (this.navigationState != NavigationState.NAVIGATION_STATE_STUCK) {
+                        this.stuckByEntity = isBlockedByEntity(); // latched at declaration (ADR-037)
+                    }
                     this.navigationState = NavigationState.NAVIGATION_STATE_STUCK;
                     velX = 0.0;
                     velZ = 0.0;
@@ -1664,6 +1699,9 @@ public class AgentNavigator {
         this.navigationState = NavigationState.NAVIGATION_STATE_IDLE;
         this.targetCoords = null;
         this.stuckTicks = 0;
+        this.lastEntityBlockedTick = Long.MIN_VALUE;
+        this.stuckByEntity = false;
+        this.planBlockedByEntity = false;
         this.baritoneInactivityTicks = 0;
         this.enclosed = false;
         this.reachedTargetCell = false;
@@ -1752,6 +1790,44 @@ public class AgentNavigator {
 
     public boolean isStuck() {
         return getReportedNavigationState() == NavigationState.NAVIGATION_STATE_STUCK;
+    }
+
+    /** True when the current obstruction on the heading is an alive entity (ADR-033), not terrain. */
+    public boolean isBlockedByEntity() {
+        if (navigationState == NavigationState.NAVIGATION_STATE_STUCK && stuckByEntity) {
+            return true;
+        }
+        if (planBlockedByEntity && path.isEmpty()) {
+            return true;
+        }
+        return lastEntityBlockedTick != Long.MIN_VALUE
+                && navTick - lastEntityBlockedTick <= ENTITY_BLOCK_ATTRIBUTION_TICKS;
+    }
+
+    /**
+     * ADR-037 stuck facts for the receipt: observations only, no recovery decision. Callers must
+     * snapshot before {@link #stop()} (which resets the counters). Returns null if nothing is blocked.
+     */
+    public com.civquest.mod.grpc.v1.MotorFacts snapshotFacts() {
+        boolean stuck = isStuck();
+        if (!stuck && !enclosed && stuckTicks <= 0) {
+            return null;
+        }
+        double bearing = Math.toDegrees(Math.atan2(-lastAimDx, lastAimDz));
+        bearing = ((bearing % 360.0) + 360.0) % 360.0;
+        double remaining = 0.0;
+        if (targetCoords != null) {
+            Vec3 pos = getPosition();
+            remaining = Math.hypot(targetCoords.x - pos.x, targetCoords.z - pos.z);
+        }
+        return com.civquest.mod.grpc.v1.MotorFacts.newBuilder()
+                .setStuck(stuck)
+                .setEnclosed(enclosed)
+                .setBlockedBearingDeg((float) bearing)
+                .setStuckTicks(stuckTicks)
+                .setProgress(remaining)
+                .setBlockedByEntity(isBlockedByEntity())
+                .build();
     }
 
     public boolean isIdle() {

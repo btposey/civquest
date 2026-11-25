@@ -17,6 +17,7 @@ func EvaluateShelterGoals(
 	frame *civquestv1.TelemetryFrame,
 	cfg *xdg.AgentIdentityConfig,
 	state *AgentState,
+	prog *shelterLocal,
 ) *civquestv1.AgentIntent {
 	if frame == nil || frame.Status == nil || frame.Status.Position == nil || state == nil {
 		return nil
@@ -28,8 +29,9 @@ func EvaluateShelterGoals(
 	pos := frame.Status.Position
 	state.mu.Lock()
 	defer state.mu.Unlock()
+	walk := shelterWalk(prog)
 
-	state.telemetryFramesSeen++
+	state.mem.telemetryFramesSeen++
 	if state.homeOrigin == nil {
 		originCopy := &civquestv1.Vec3{X: pos.X, Y: pos.Y, Z: pos.Z}
 		state.homeOrigin = originCopy
@@ -41,12 +43,9 @@ func EvaluateShelterGoals(
 	if state.currentOutpost == nil {
 		state.currentOutpost = &civquestv1.Vec3{X: state.homeOrigin.X, Y: state.homeOrigin.Y, Z: state.homeOrigin.Z}
 	}
-	if state.lastExploreTick == 0 {
-		state.lastExploreTick = frame.WorldTick
-	}
 
 	navState := frame.Status.NavigationState
-	return evaluateDuskNightOutpostShelterLocked(agentID, frame, pos, navState, state)
+	return evaluateDuskNightOutpostShelterLocked(agentID, frame, pos, navState, state, prog, walk)
 }
 
 // EvaluateShelterGoalsDirect evaluates dusk/night outpost shelter goals with explicit pos and navState.
@@ -56,13 +55,14 @@ func EvaluateShelterGoalsDirect(
 	pos *civquestv1.Vec3,
 	navState civquestv1.NavigationState,
 	state *AgentState,
+	prog *shelterLocal,
 ) *civquestv1.AgentIntent {
 	if frame == nil || pos == nil || state == nil {
 		return nil
 	}
 	state.mu.Lock()
 	defer state.mu.Unlock()
-	return evaluateDuskNightOutpostShelterLocked(agentID, frame, pos, navState, state)
+	return evaluateDuskNightOutpostShelterLocked(agentID, frame, pos, navState, state, prog, shelterWalk(prog))
 }
 
 func evaluateDuskNightOutpostShelterLocked(
@@ -71,11 +71,23 @@ func evaluateDuskNightOutpostShelterLocked(
 	pos *civquestv1.Vec3,
 	navState civquestv1.NavigationState,
 	state *AgentState,
+	prog *shelterLocal,
+	walk *walkLocal,
 ) *civquestv1.AgentIntent {
+	walk = orFreshWalk(walk)
 	if frame == nil || frame.Status == nil || pos == nil || state == nil {
 		return nil
 	}
-	state.navigatingToPOI = false
+	walk.navigatingToPOI = false
+
+	// Build progress belongs to the Shelter frame's Local. Callers outside a Shelter frame
+	// (prog == nil) evaluate against a read-only snapshot of the store: they may navigate,
+	// harvest and craft, but never place cabin blocks.
+	owned := prog != nil
+	if prog == nil {
+		scratch := seedShelterLocalLocked(state)
+		prog = &scratch
+	}
 
 	outpost := state.currentOutpost
 	if outpost == nil {
@@ -86,7 +98,7 @@ func evaluateDuskNightOutpostShelterLocked(
 	inv := inspectBootstrapInventory(frame.Status.Inventory)
 	hasBuildMaterials := inv.logCount > 0 || inv.planksCount > 0 || inv.buildingBlockCount > 0
 	hasShelterMaterials := hasBuildMaterials || inv.hasLight
-	isShelterComplete := state.ShelterBuildIndex >= blueprints.CabinTotalBlocks || state.shelterBlocksPlaced >= blueprints.CabinTotalBlocks
+	isShelterComplete := prog.complete()
 
 	// ADR-022: Recall known bed or campfire from SpatialIndex before establishing a duplicate
 	// forward outpost or placing duplicate habitation blocks.
@@ -101,18 +113,6 @@ func evaluateDuskNightOutpostShelterLocked(
 				si.RemovePOI(recalledHabPOI.POIID)
 			}
 			recalledHabPOI = nil
-		} else if navState == civquestv1.NavigationState_NAVIGATION_STATE_STUCK {
-			acc := poiAccessTarget(recalledHabPOI)
-			if acc != nil {
-				blacklisted, _ := state.RecordTargetNavigationStuckLocked(acc.X, acc.Y, acc.Z, frame.WorldTick, DefaultUnreachableTargetTTL)
-				if blacklisted {
-					state.MarkTargetUnreachableLocked(recalledHabPOI.X, recalledHabPOI.Y, recalledHabPOI.Z, frame.WorldTick, DefaultUnreachableTargetTTL)
-				}
-			}
-			if si := state.SpatialIndexLocked(); si != nil {
-				si.DecayPOIReliability(recalledHabPOI.POIID, 0.25)
-			}
-			recalledHabPOI = nil
 		}
 	}
 
@@ -124,17 +124,20 @@ func evaluateDuskNightOutpostShelterLocked(
 		state.currentOutpost = newOutpost
 		state.homeOrigin = newOutpost
 		state.outposts = append(state.outposts, newOutpost)
-		state.ShelterPos = &civquestv1.BlockPosProto{
+		prog.Pos = &civquestv1.BlockPosProto{
 			X: int32(math.Floor(pos.X)),
 			Y: int32(math.Floor(pos.Y)),
 			Z: int32(math.Floor(pos.Z)),
 		}
+		// A new outpost starts a new cabin.
+		prog.BuildIndex, prog.Phase = 0, 0
+		isShelterComplete = false
 		// Reset lastMapNodeID so EvaluateTopologicalMapping records this sector as OUTPOST
 		state.lastMapNodeID = ""
-		state.frontierRadialLeg = 0
-		state.currentExploreTarget = nil
-		state.lastExploreProgressDist = 0
-		state.lastExploreProgressTick = frame.WorldTick
+		walk.frontierRadialLeg = 0
+		walk.currentExploreTarget = nil
+		walk.lastExploreProgressDist = 0
+		walk.lastExploreProgressTick = frame.WorldTick
 		outpost = newOutpost
 	}
 
@@ -142,14 +145,14 @@ func evaluateDuskNightOutpostShelterLocked(
 	targetY := pos.Y
 	targetZ := pos.Z
 	if recalledHabPOI != nil && (hasShelterMaterials || isShelterComplete || strings.Contains(strings.ToLower(recalledHabPOI.BlockID), "bed")) &&
-		(state.ShelterPos == nil || math.Hypot(pos.X-float64(state.ShelterPos.X), pos.Z-float64(state.ShelterPos.Z)) > 32.0) {
+		(prog.Pos == nil || math.Hypot(pos.X-float64(prog.Pos.X), pos.Z-float64(prog.Pos.Z)) > 32.0) {
 		accessTarget := poiAccessTarget(recalledHabPOI)
 		if math.Hypot(pos.X-recalledHabPOI.X, pos.Z-recalledHabPOI.Z) > 4.0 && !isStuckOrEnclosed {
 			if navState == civquestv1.NavigationState_NAVIGATION_STATE_PATHING {
 				return nil
 			}
-			if state.lastBootstrapNavTick == 0 || frame.WorldTick < state.lastBootstrapNavTick || frame.WorldTick-state.lastBootstrapNavTick >= 40 {
-				state.lastBootstrapNavTick = frame.WorldTick
+			if walk.lastBootstrapNavTick == 0 || frame.WorldTick < walk.lastBootstrapNavTick || frame.WorldTick-walk.lastBootstrapNavTick >= 40 {
+				walk.lastBootstrapNavTick = frame.WorldTick
 				return &civquestv1.AgentIntent{
 					AgentId: agentID,
 					Action: &civquestv1.AgentIntent_Navigate{
@@ -164,10 +167,10 @@ func evaluateDuskNightOutpostShelterLocked(
 			return nil
 		}
 	}
-	if state.ShelterPos != nil && math.Hypot(pos.X-float64(state.ShelterPos.X), pos.Z-float64(state.ShelterPos.Z)) <= 32.0 {
-		targetX = float64(state.ShelterPos.X) + 0.5
-		targetY = float64(state.ShelterPos.Y)
-		targetZ = float64(state.ShelterPos.Z) + 0.5
+	if prog.Pos != nil && math.Hypot(pos.X-float64(prog.Pos.X), pos.Z-float64(prog.Pos.Z)) <= 32.0 {
+		targetX = float64(prog.Pos.X) + 0.5
+		targetY = float64(prog.Pos.Y)
+		targetZ = float64(prog.Pos.Z) + 0.5
 	} else if outpost != nil {
 		targetX = outpost.X
 		targetY = outpost.Y
@@ -181,10 +184,10 @@ func evaluateDuskNightOutpostShelterLocked(
 		if navState == civquestv1.NavigationState_NAVIGATION_STATE_PATHING {
 			return nil
 		}
-		if frame.WorldTick >= state.lastExploreTick && frame.WorldTick-state.lastExploreTick < 40 {
+		if frame.WorldTick >= walk.lastExploreTick && frame.WorldTick-walk.lastExploreTick < 40 {
 			return nil
 		}
-		state.lastExploreTick = frame.WorldTick
+		walk.lastExploreTick = frame.WorldTick
 		return &civquestv1.AgentIntent{
 			AgentId: agentID,
 			Action: &civquestv1.AgentIntent_Navigate{
@@ -203,33 +206,32 @@ func evaluateDuskNightOutpostShelterLocked(
 
 	invMap := crafting.InventoryMapFromProtos(frame.Status.Inventory)
 	recipeGraph := state.RecipeGraphLocked()
-	canCraft := state.lastCraftTick == 0 || frame.WorldTick < state.lastCraftTick || frame.WorldTick-state.lastCraftTick >= 20
-	canPlace := state.lastShelterPlaceTick == 0 || frame.WorldTick < state.lastShelterPlaceTick || frame.WorldTick-state.lastShelterPlaceTick >= 20
+	canCraft := state.mem.lastCraftTick == 0 || frame.WorldTick < state.mem.lastCraftTick || frame.WorldTick-state.mem.lastCraftTick >= 20
+	canPlace := state.mem.lastShelterPlaceTick == 0 || frame.WorldTick < state.mem.lastShelterPlaceTick || frame.WorldTick-state.mem.lastShelterPlaceTick >= 20
 
 	cx := int32(math.Floor(pos.X))
 	cy := int32(math.Floor(pos.Y))
 	cz := int32(math.Floor(pos.Z))
 
-	if state.ShelterPos == nil && (hasShelterMaterials || isShelterComplete) {
-		state.ShelterPos = &civquestv1.BlockPosProto{X: cx, Y: cy, Z: cz}
+	if prog.Pos == nil && (hasShelterMaterials || isShelterComplete) {
+		prog.Pos = &civquestv1.BlockPosProto{X: cx, Y: cy, Z: cz}
 	}
 	centerVec := &civquestv1.Vec3{
 		X: float64(cx),
 		Y: float64(cy),
 		Z: float64(cz),
 	}
-	if state.ShelterPos != nil {
+	if prog.Pos != nil {
 		centerVec = &civquestv1.Vec3{
-			X: float64(state.ShelterPos.X),
-			Y: float64(state.ShelterPos.Y),
-			Z: float64(state.ShelterPos.Z),
+			X: float64(prog.Pos.X),
+			Y: float64(prog.Pos.Y),
+			Z: float64(prog.Pos.Z),
 		}
 	}
 	cabinIntents := blueprints.FrontierCabinIntents(centerVec)
 
 	// Check if all cabin blueprint blocks have been completed
-	if state.ShelterBuildIndex >= len(cabinIntents) {
-		state.shelterBlocksPlaced = len(cabinIntents)
+	if prog.BuildIndex >= len(cabinIntents) {
 		distToCenter := math.Hypot(pos.X-centerVec.X-0.5, pos.Z-centerVec.Z-0.5)
 		if distToCenter > 1.5 && navState != civquestv1.NavigationState_NAVIGATION_STATE_PATHING {
 			return &civquestv1.AgentIntent{
@@ -251,14 +253,14 @@ func evaluateDuskNightOutpostShelterLocked(
 	}
 
 	// 1. Convert logs in inventory into planks via dynamic RecipeGraph if building blocks are needed
-	remainingBlocks := len(cabinIntents) - state.ShelterBuildIndex
+	remainingBlocks := len(cabinIntents) - prog.BuildIndex
 	if remainingBlocks < 0 {
 		remainingBlocks = 0
 	}
 	if inv.logCount >= 1 && inv.nonLogBuildingCount < 16 && inv.nonLogBuildingCount < int32(remainingBlocks) &&
-		state.ShelterBuildIndex < len(cabinIntents) && canCraft && !recipeGraph.IsEmpty() {
+		prog.BuildIndex < len(cabinIntents) && canCraft && !recipeGraph.IsEmpty() {
 		if plankStep, ok := recipeGraph.PlanNextStepForSuffix("_planks", invMap, false); ok && plankStep.CanExecuteNow {
-			state.lastCraftTick = frame.WorldTick
+			state.mem.lastCraftTick = frame.WorldTick
 			return &civquestv1.AgentIntent{
 				AgentId: agentID,
 				Action: &civquestv1.AgentIntent_CraftItem{
@@ -272,11 +274,11 @@ func evaluateDuskNightOutpostShelterLocked(
 	}
 
 	// 2. Harvest timber when building blocks are depleted or inventory low
-	if (inv.buildingBlockCount < 16 && inv.logCount < 4) && state.ShelterBuildIndex < len(cabinIntents) {
+	if (inv.buildingBlockCount < 16 && inv.logCount < 4) && prog.BuildIndex < len(cabinIntents) {
 		var nearestLog *civquestv1.VisibleBlock
 		bestDistSq := math.MaxFloat64
 
-		treeLocked, tx, tz, _ := state.GetTargetTreeLocked()
+		treeLocked, tx, tz := prog.targetTree()
 		var focusedLog *civquestv1.VisibleBlock
 		focusedDistSq := math.MaxFloat64
 
@@ -320,10 +322,10 @@ func evaluateDuskNightOutpostShelterLocked(
 		}
 
 		if targetLog != nil {
-			state.SetTargetTreeLocked(true, targetLog.Pos.X, targetLog.Pos.Z, frame.WorldTick)
+			prog.focusTree(targetLog.Pos.X, targetLog.Pos.Z)
 			if targetDistSq <= 20.25 { // Within 4.5 blocks melee/harvest reach
-				if state.lastHarvestTick == 0 || frame.WorldTick < state.lastHarvestTick || frame.WorldTick-state.lastHarvestTick >= 20 {
-					state.lastHarvestTick = frame.WorldTick
+				if state.mem.lastHarvestTick == 0 || frame.WorldTick < state.mem.lastHarvestTick || frame.WorldTick-state.mem.lastHarvestTick >= 20 {
+					state.mem.lastHarvestTick = frame.WorldTick
 					return &civquestv1.AgentIntent{
 						AgentId: agentID,
 						Action: &civquestv1.AgentIntent_InteractBlock{
@@ -339,8 +341,8 @@ func evaluateDuskNightOutpostShelterLocked(
 			}
 
 			if navState != civquestv1.NavigationState_NAVIGATION_STATE_PATHING {
-				if state.lastExploreTick == 0 || frame.WorldTick < state.lastExploreTick || frame.WorldTick-state.lastExploreTick >= 40 {
-					state.lastExploreTick = frame.WorldTick
+				if walk.lastExploreTick == 0 || frame.WorldTick < walk.lastExploreTick || frame.WorldTick-walk.lastExploreTick >= 40 {
+					walk.lastExploreTick = frame.WorldTick
 					return &civquestv1.AgentIntent{
 						AgentId: agentID,
 						Action: &civquestv1.AgentIntent_Navigate{
@@ -362,10 +364,10 @@ func evaluateDuskNightOutpostShelterLocked(
 
 		// ADR-022: No logs in local 16m frustum; query SpatialIndex for remembered tree stands.
 		if treeLocked {
-			state.ClearTargetTreeLocked()
+			prog.clearTreeFocus()
 		}
 		if _, recalledTreePOI := findNearestTreeTrunk(agentID, frame, pos, state); recalledTreePOI != nil {
-			if navIntent, handled := navigateToRecalledTreePOILocked(agentID, frame, pos, navState, state, recalledTreePOI); handled {
+			if navIntent, handled := navigateToRecalledTreePOILocked(agentID, frame, pos, navState, state, recalledTreePOI, walk); handled {
 				return navIntent
 			}
 		}
@@ -394,8 +396,8 @@ func evaluateDuskNightOutpostShelterLocked(
 					if navState == civquestv1.NavigationState_NAVIGATION_STATE_PATHING {
 						return nil
 					}
-					if state.lastBootstrapNavTick == 0 || frame.WorldTick < state.lastBootstrapNavTick || frame.WorldTick-state.lastBootstrapNavTick >= 40 {
-						state.lastBootstrapNavTick = frame.WorldTick
+					if walk.lastBootstrapNavTick == 0 || frame.WorldTick < walk.lastBootstrapNavTick || frame.WorldTick-walk.lastBootstrapNavTick >= 40 {
+						walk.lastBootstrapNavTick = frame.WorldTick
 						return &civquestv1.AgentIntent{
 							AgentId: agentID,
 							Action: &civquestv1.AgentIntent_Navigate{
@@ -412,14 +414,14 @@ func evaluateDuskNightOutpostShelterLocked(
 			}
 		}
 		if inv.hasLight && canPlace {
-			state.lastShelterPlaceTick = frame.WorldTick
+			state.mem.lastShelterPlaceTick = frame.WorldTick
 			lightPos := &civquestv1.BlockPosProto{
 				X: cx + 1,
 				Y: cy,
 				Z: cz + 1,
 			}
-			if state.ShelterPos == nil {
-				state.ShelterPos = &civquestv1.BlockPosProto{X: cx, Y: cy, Z: cz}
+			if prog.Pos == nil {
+				prog.Pos = &civquestv1.BlockPosProto{X: cx, Y: cy, Z: cz}
 			}
 			return &civquestv1.AgentIntent{
 				AgentId: agentID,
@@ -441,15 +443,15 @@ func evaluateDuskNightOutpostShelterLocked(
 	}
 
 	// 3. Progressively build bottom-up 5x5 Frontier Cabin structure per ADR-010
-	if inv.buildingBlockCount > 0 && state.ShelterBuildIndex < len(cabinIntents) && canPlace {
-		target := cabinIntents[state.ShelterBuildIndex]
+	if owned && inv.buildingBlockCount > 0 && prog.BuildIndex < len(cabinIntents) && canPlace {
+		target := cabinIntents[prog.BuildIndex]
 
 		// Ensure the agent is positioned outside the target block voxel before placing.
 		// If pos is within 1.0 block horizontally and vertically of target.GetTargetVoxel(),
 		// emit a micro-step NavigateIntent to step back outside the construction boundary.
 		if targetVoxel := target.GetTargetVoxel(); targetVoxel != nil && blueprints.IsCollidingWithVoxel(pos, targetVoxel) {
-			stepBackPos := blueprints.CalculateCabinStepBack(pos, targetVoxel, state.ShelterPos)
-			state.lastExploreTick = frame.WorldTick
+			stepBackPos := blueprints.CalculateCabinStepBack(pos, targetVoxel, prog.Pos)
+			walk.lastExploreTick = frame.WorldTick
 			return &civquestv1.AgentIntent{
 				AgentId: agentID,
 				Action: &civquestv1.AgentIntent_Navigate{
@@ -466,10 +468,9 @@ func evaluateDuskNightOutpostShelterLocked(
 			}
 		}
 
-		state.ShelterBuildPhase = blueprints.CabinBlockPhase(state.ShelterBuildIndex)
-		state.ShelterBuildIndex++
-		state.shelterBlocksPlaced = state.ShelterBuildIndex
-		state.lastShelterPlaceTick = frame.WorldTick
+		prog.Phase = blueprints.CabinBlockPhase(prog.BuildIndex)
+		prog.BuildIndex++
+		state.mem.lastShelterPlaceTick = frame.WorldTick
 
 		blockID := target.GetBlockStateString()
 		if blockID == "" {

@@ -118,6 +118,7 @@ func EvaluateStrategicDirective(
 	frame *civquestv1.TelemetryFrame,
 	state *AgentState,
 	cfg *xdg.AgentIdentityConfig,
+	loc *directiveLocal,
 ) *civquestv1.AgentIntent {
 	agentID := ""
 	if frame != nil && frame.Status != nil && frame.Status.AgentId != "" {
@@ -125,7 +126,7 @@ func EvaluateStrategicDirective(
 	} else if cfg != nil {
 		agentID = cfg.Name
 	}
-	return EvaluateStrategicDirectiveWithID(agentID, frame, state, cfg)
+	return EvaluateStrategicDirectiveWithID(agentID, frame, state, cfg, loc)
 }
 
 // EvaluateStrategicDirectiveWithID executes the active System 2 strategic directive with an explicit agentID.
@@ -134,38 +135,15 @@ func EvaluateStrategicDirectiveWithID(
 	frame *civquestv1.TelemetryFrame,
 	state *AgentState,
 	cfg *xdg.AgentIdentityConfig,
+	loc *directiveLocal,
 ) *civquestv1.AgentIntent {
-	if frame == nil || frame.Status == nil || frame.Status.Position == nil || state == nil {
+	dir, ok := runnableDirective(frame, state)
+	if !ok {
 		return nil
 	}
-	if frame.DeathEvent != nil || frame.Status.Health <= 0 || frame.Status.IsSleeping {
-		return nil
-	}
-	if len(frame.IncomingChats) > 0 || frame.PendingTrade != nil {
-		return nil
-	}
-	if state.IsCompanionActive() {
-		return nil
-	}
-
-	// Survival reflexes ALWAYS take priority over strategic directives.
-	if hasSurvivalPreemption(frame) {
-		if hasEmergencyPreemption(frame) {
-			state.ClearExpeditionSurveyingIfActive()
-		}
-		return nil
-	}
-
-	tod := ((frame.TimeOfDay % 24000) + 24000) % 24000
-	isDuskOrNight := tod >= 11500 && tod < 23500
-	shelterGated := state.Stage() == StageBootstrap && !state.IsCompanionActive() && !isStateShelterOrBedSatisfied(state)
-	if !shelterGated && (isDuskOrNight || frame.Weather == civquestv1.Weather_WEATHER_THUNDER || state.Routine() == RoutineSleep) {
-		return nil
-	}
-
-	dir, active := state.ActiveStrategicDirective(frame.WorldTick)
-	if !active {
-		return nil
+	if loc == nil {
+		// No frame Local bound (direct call): a stateless evaluation with a fresh cursor.
+		loc = &directiveLocal{}
 	}
 
 	if dir.Action != DirectiveActionSocialize && state.IsExpeditionSurveying(frame.WorldTick) {
@@ -184,41 +162,31 @@ func EvaluateStrategicDirectiveWithID(
 	navState := frame.Status.NavigationState
 
 	// Let active horizon expeditions handle terrain barriers (ravine rim hazard + re-survey + flank)
-	// before generic EvaluateUnstuck swallows NAVIGATION_STATE_STUCK.
+	// (stuck recovery itself is the Recover frame, ADR-037).
 	if (navState == civquestv1.NavigationState_NAVIGATION_STATE_STUCK || frame.Status.GetNavigationEnclosed()) &&
 		state.IsExpeditionActive() && !state.HasActiveTask() {
-		if dir.Action == DirectiveActionScoutFrontier {
-			return evaluateDirectiveScoutFrontier(agentID, frame, pos, navState, state, dir)
-		}
 		return nil
-	}
-
-	// Terrain unsticking takes precedence if stuck/enclosed while executing a non-expedition directive.
-	if navState == civquestv1.NavigationState_NAVIGATION_STATE_STUCK || frame.Status.GetNavigationEnclosed() {
-		if unstuckIntent := EvaluateUnstuck(agentID, frame, pos, state); unstuckIntent != nil {
-			return unstuckIntent
-		}
 	}
 
 	switch dir.Action {
 	case DirectiveActionGatherTimber:
-		return evaluateDirectiveGatherTimber(agentID, frame, pos, navState, state, dir)
+		return evaluateDirectiveGatherTimber(agentID, frame, pos, navState, state, dir, loc)
 	case DirectiveActionMineStone:
-		return evaluateDirectiveMineStone(agentID, frame, pos, navState, state, dir)
+		return evaluateDirectiveMineStone(agentID, frame, pos, navState, state, dir, loc)
 	case DirectiveActionForageFood:
-		return EvaluateForagingDirective(agentID, frame, state)
-	case DirectiveActionCraftSurvivalKit:
-		return EvaluateBootstrapGoals(agentID, frame, cfg, state)
+		// A bid source, not an executor: the directive makes the Foraging activity eligible
+		// (directiveForcesForaging) and the Foraging frame does the work.
+		return nil
 	case DirectiveActionBuildShelter:
+		// Without materials the directive gathers timber; with them it bids for the Shelter
+		// activity (directiveBuildsShelter), which owns block placement.
 		inv := inspectBootstrapInventory(frame.Status.Inventory)
 		if inv.buildingBlockCount == 0 {
-			return evaluateDirectiveGatherTimber(agentID, frame, pos, navState, state, dir)
+			return evaluateDirectiveGatherTimber(agentID, frame, pos, navState, state, dir, loc)
 		}
-		return EvaluateShelterGoals(agentID, frame, cfg, state)
-	case DirectiveActionScoutFrontier:
-		return evaluateDirectiveScoutFrontier(agentID, frame, pos, navState, state, dir)
+		return nil
 	case DirectiveActionSocialize:
-		return evaluateDirectiveSocialize(agentID, frame, pos, navState, state, cfg)
+		return evaluateDirectiveSocialize(agentID, frame, pos, navState, state, cfg, loc)
 	default:
 		return nil
 	}
@@ -277,14 +245,16 @@ func evaluateDirectiveGatherTimber(
 	navState civquestv1.NavigationState,
 	state *AgentState,
 	dir StrategicDirectiveState,
+	loc *directiveLocal,
 ) *civquestv1.AgentIntent {
 	state.mu.Lock()
 	defer state.mu.Unlock()
 
-	if state.activeTask != nil {
-		kind := state.activeTask.Spec.Kind
+	walk := &loc.Walk
+	if walk.hasTask() {
+		kind := walk.task.Spec.Kind
 		if kind == "harvest_tree" || kind == "collect_items" {
-			stepRes := state.StepActiveTaskLocked(agentID, frame)
+			stepRes := walk.stepTaskLocked(agentID, state, frame)
 			if stepRes.Active {
 				return stepRes.Intent
 			}
@@ -294,8 +264,8 @@ func evaluateDirectiveGatherTimber(
 	targetLog, recalledTreePOI := findNearestTreeTrunk(agentID, frame, pos, state)
 	if targetLog != nil {
 		treeTask := NewHarvestTreeTask(targetLog.Pos.X, targetLog.Pos.Y, targetLog.Pos.Z, state.stage, frame.WorldTick)
-		state.StartTaskLocked(treeTask)
-		stepRes := state.StepActiveTaskLocked(agentID, frame)
+		walk.startTaskLocked(state, treeTask)
+		stepRes := walk.stepTaskLocked(agentID, state, frame)
 		if stepRes.Active {
 			return stepRes.Intent
 		}
@@ -311,9 +281,9 @@ func evaluateDirectiveGatherTimber(
 				si.RemovePOI(recalledTreePOI.POIID)
 			}
 		} else if navState != civquestv1.NavigationState_NAVIGATION_STATE_PATHING &&
-			canDispatchDirectiveNavLocked(state, frame.WorldTick, "poi:"+recalledTreePOI.POIID) {
-			state.lastDirectiveActionTick = frame.WorldTick
-			state.lastDirectiveNavKey = "poi:" + recalledTreePOI.POIID
+			canDispatchDirectiveNavLocked(loc, frame.WorldTick, "poi:"+recalledTreePOI.POIID) {
+			loc.LastActionTick = frame.WorldTick
+			loc.LastNavKey = "poi:" + recalledTreePOI.POIID
 			return &civquestv1.AgentIntent{
 				AgentId: agentID,
 				Action: &civquestv1.AgentIntent_Navigate{
@@ -331,7 +301,7 @@ func evaluateDirectiveGatherTimber(
 		return nil
 	}
 
-	return evaluateDirectiveScoutOutwardLocked(agentID, frame, pos, navState, state, dir.IssuedTick)
+	return evaluateDirectiveScoutOutwardLocked(agentID, frame, pos, navState, loc, dir.IssuedTick)
 }
 
 func evaluateDirectiveMineStone(
@@ -341,6 +311,7 @@ func evaluateDirectiveMineStone(
 	navState civquestv1.NavigationState,
 	state *AgentState,
 	dir StrategicDirectiveState,
+	loc *directiveLocal,
 ) *civquestv1.AgentIntent {
 	state.mu.Lock()
 	defer state.mu.Unlock()
@@ -349,11 +320,11 @@ func evaluateDirectiveMineStone(
 	if bestBlock != nil {
 		dy := math.Abs(float64(bestBlock.Pos.Y) + 0.5 - pos.Y)
 		if bestDistSq <= directiveReachRadius*directiveReachRadius && dy <= 3.0 {
-			if state.lastDirectiveActionTick > 0 && frame.WorldTick >= state.lastDirectiveActionTick &&
-				frame.WorldTick-state.lastDirectiveActionTick < directiveActionCooldownTicks {
+			if loc.LastActionTick > 0 && frame.WorldTick >= loc.LastActionTick &&
+				frame.WorldTick-loc.LastActionTick < directiveActionCooldownTicks {
 				return nil
 			}
-			state.lastDirectiveActionTick = frame.WorldTick
+			loc.LastActionTick = frame.WorldTick
 			return &civquestv1.AgentIntent{
 				AgentId: agentID,
 				Action: &civquestv1.AgentIntent_InteractBlock{
@@ -367,12 +338,12 @@ func evaluateDirectiveMineStone(
 		}
 
 		navKey := fmt.Sprintf("mine:%d,%d,%d", bestBlock.Pos.X, bestBlock.Pos.Y, bestBlock.Pos.Z)
-		if navState == civquestv1.NavigationState_NAVIGATION_STATE_PATHING && state.lastDirectiveNavKey == navKey {
+		if navState == civquestv1.NavigationState_NAVIGATION_STATE_PATHING && loc.LastNavKey == navKey {
 			return nil
 		}
-		if canDispatchDirectiveNavLocked(state, frame.WorldTick, navKey) {
-			state.lastDirectiveActionTick = frame.WorldTick
-			state.lastDirectiveNavKey = navKey
+		if canDispatchDirectiveNavLocked(loc, frame.WorldTick, navKey) {
+			loc.LastActionTick = frame.WorldTick
+			loc.LastNavKey = navKey
 			return &civquestv1.AgentIntent{
 				AgentId: agentID,
 				Action: &civquestv1.AgentIntent_Navigate{
@@ -399,9 +370,9 @@ func evaluateDirectiveMineStone(
 			if dx*dx+dy*dy+dz*dz <= 12.25 {
 				si.RemovePOI(minePOI.POIID)
 			} else if navState != civquestv1.NavigationState_NAVIGATION_STATE_PATHING &&
-				canDispatchDirectiveNavLocked(state, frame.WorldTick, "poi:"+minePOI.POIID) {
-				state.lastDirectiveActionTick = frame.WorldTick
-				state.lastDirectiveNavKey = "poi:" + minePOI.POIID
+				canDispatchDirectiveNavLocked(loc, frame.WorldTick, "poi:"+minePOI.POIID) {
+				loc.LastActionTick = frame.WorldTick
+				loc.LastNavKey = "poi:" + minePOI.POIID
 				return &civquestv1.AgentIntent{
 					AgentId: agentID,
 					Action: &civquestv1.AgentIntent_Navigate{
@@ -418,30 +389,7 @@ func evaluateDirectiveMineStone(
 		}
 	}
 
-	return evaluateDirectiveScoutOutwardLocked(agentID, frame, pos, navState, state, dir.IssuedTick)
-}
-
-func evaluateDirectiveScoutFrontier(
-	agentID string,
-	frame *civquestv1.TelemetryFrame,
-	pos *civquestv1.Vec3,
-	navState civquestv1.NavigationState,
-	state *AgentState,
-	dir StrategicDirectiveState,
-) *civquestv1.AgentIntent {
-	state.mu.Lock()
-	defer state.mu.Unlock()
-
-	hopsBefore := state.ExpeditionHops
-	intent := EvaluateHorizonExplorerLocked(frame, state, nil, agentID)
-	if state.ExpeditionHops > hopsBefore {
-		state.strategicDirective = nil
-		state.directiveScoutTarget = nil
-		state.lastDirectiveActionTick = 0
-		state.lastDirectiveNavKey = ""
-		return nil
-	}
-	return intent
+	return evaluateDirectiveScoutOutwardLocked(agentID, frame, pos, navState, loc, dir.IssuedTick)
 }
 
 func evaluateDirectiveSocialize(
@@ -451,6 +399,7 @@ func evaluateDirectiveSocialize(
 	navState civquestv1.NavigationState,
 	state *AgentState,
 	cfg *xdg.AgentIdentityConfig,
+	loc *directiveLocal,
 ) *civquestv1.AgentIntent {
 	selfName := agentID
 	if cfg != nil && cfg.Name != "" {
@@ -523,14 +472,14 @@ func evaluateDirectiveSocialize(
 
 	state.mu.Lock()
 	defer state.mu.Unlock()
-	if navState == civquestv1.NavigationState_NAVIGATION_STATE_PATHING && state.lastDirectiveNavKey == navKey {
+	if navState == civquestv1.NavigationState_NAVIGATION_STATE_PATHING && loc.LastNavKey == navKey {
 		return nil
 	}
-	if !canDispatchDirectiveNavLocked(state, frame.WorldTick, navKey) {
+	if !canDispatchDirectiveNavLocked(loc, frame.WorldTick, navKey) {
 		return nil
 	}
-	state.lastDirectiveActionTick = frame.WorldTick
-	state.lastDirectiveNavKey = navKey
+	loc.LastActionTick = frame.WorldTick
+	loc.LastNavKey = navKey
 
 	// Stand 4.5m from peer/campfire along the approach line so we stop within 4-6m.
 	standoff := 4.5
@@ -560,31 +509,31 @@ func evaluateDirectiveScoutOutwardLocked(
 	frame *civquestv1.TelemetryFrame,
 	pos *civquestv1.Vec3,
 	navState civquestv1.NavigationState,
-	state *AgentState,
+	loc *directiveLocal,
 	issuedTick int64,
 ) *civquestv1.AgentIntent {
-	if state.directiveScoutTarget == nil ||
-		math.Hypot(pos.X-state.directiveScoutTarget.X, pos.Z-state.directiveScoutTarget.Z) <= 4.0 ||
+	if loc.ScoutTarget == nil ||
+		math.Hypot(pos.X-loc.ScoutTarget.X, pos.Z-loc.ScoutTarget.Z) <= 4.0 ||
 		navState == civquestv1.NavigationState_NAVIGATION_STATE_ARRIVED {
-		state.directiveScoutTarget = computeDirectiveFrontierWaypoint(agentID, issuedTick+int64(state.exploreStepIndex), pos)
-		state.exploreStepIndex++
+		loc.ScoutTarget = computeDirectiveFrontierWaypoint(agentID, issuedTick+int64(loc.ScoutStep), pos)
+		loc.ScoutStep++
 	}
-	if navState == civquestv1.NavigationState_NAVIGATION_STATE_PATHING && state.lastDirectiveNavKey == "scout_outward" {
+	if navState == civquestv1.NavigationState_NAVIGATION_STATE_PATHING && loc.LastNavKey == "scout_outward" {
 		return nil
 	}
-	if !canDispatchDirectiveNavLocked(state, frame.WorldTick, "scout_outward") {
+	if !canDispatchDirectiveNavLocked(loc, frame.WorldTick, "scout_outward") {
 		return nil
 	}
-	state.lastDirectiveActionTick = frame.WorldTick
-	state.lastDirectiveNavKey = "scout_outward"
+	loc.LastActionTick = frame.WorldTick
+	loc.LastNavKey = "scout_outward"
 	return &civquestv1.AgentIntent{
 		AgentId: agentID,
 		Action: &civquestv1.AgentIntent_Navigate{
 			Navigate: &civquestv1.NavigateIntent{
 				Target: &civquestv1.Vec3{
-					X: state.directiveScoutTarget.X,
-					Y: state.directiveScoutTarget.Y,
-					Z: state.directiveScoutTarget.Z,
+					X: loc.ScoutTarget.X,
+					Y: loc.ScoutTarget.Y,
+					Z: loc.ScoutTarget.Z,
 				},
 				SpeedMultiplier:  1.0,
 				ArrivalTolerance: 2,
@@ -604,11 +553,11 @@ func computeDirectiveFrontierWaypoint(agentID string, seedTick int64, pos *civqu
 	}
 }
 
-func canDispatchDirectiveNavLocked(state *AgentState, worldTick int64, navKey string) bool {
-	if state.lastDirectiveNavKey != navKey || state.lastDirectiveActionTick == 0 || worldTick < state.lastDirectiveActionTick {
+func canDispatchDirectiveNavLocked(loc *directiveLocal, worldTick int64, navKey string) bool {
+	if loc.LastNavKey != navKey || loc.LastActionTick == 0 || worldTick < loc.LastActionTick {
 		return true
 	}
-	return worldTick-state.lastDirectiveActionTick >= directiveNavCooldownTicks
+	return worldTick-loc.LastActionTick >= directiveNavCooldownTicks
 }
 
 func isMineableStoneBlockID(raw string) bool {
@@ -687,8 +636,8 @@ func canExecuteImmediateBootstrapCraftLocked(frame *civquestv1.TelemetryFrame, s
 	invMap := crafting.InventoryMapFromProtos(frame.Status.Inventory)
 
 	recipeGraph := state.RecipeGraphLocked()
-	lastCraftTick := state.lastCraftTick
-	lastPlaceTick := state.lastShelterPlaceTick
+	lastCraftTick := state.mem.lastCraftTick
+	lastPlaceTick := state.mem.lastShelterPlaceTick
 
 	if recipeGraph.IsEmpty() {
 		return false

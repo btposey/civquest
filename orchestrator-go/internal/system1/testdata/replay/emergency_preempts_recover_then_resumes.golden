@@ -1,0 +1,5 @@
+t=100 stage=BOOTSTRAP routine=HARVEST_TREE stack=[bootstrap/1] intents=[Interact(HARVEST_BREAK 3,64,0 minecraft:oak_log)]  // commit to trunk
+t=110 stage=BOOTSTRAP routine=HARVEST_TREE stack=[recover/2] intents=[Navigate(x=-3.5 z=0.5)]  // terrain stuck receipt: Recover(terrain) sidesteps
+t=120 stage=EMERGENCY routine=EMERGENCY stack=[emergency/3] intents=[Attack(target=901 shield=false kite=false flee=true); Navigate(x=-15.5 z=0.5)]  // creeper: emergency preempts Recover
+t=130 stage=BOOTSTRAP routine=HARVEST_TREE stack=[recover/2] intents=[Navigate(x=4.5 z=0.5)]  // threat gone: Recover is exposed again (within its lease)
+t=215 stage=BOOTSTRAP routine=HARVEST_TREE stack=[task_subroutine/2] intents=[Interact(HARVEST_BREAK 3,64,0 minecraft:oak_log)]  // lease expired: Recover gives up Blocked to the task

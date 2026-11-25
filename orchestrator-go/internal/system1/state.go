@@ -3,6 +3,7 @@ package system1
 import (
 	"strings"
 	"sync"
+	"sync/atomic"
 
 	"github.com/btposey/civquest/orchestrator-go/internal/crafting"
 	"github.com/btposey/civquest/orchestrator-go/internal/db"
@@ -127,13 +128,29 @@ type StrategicDirectiveState struct {
 }
 
 type receiptSlot struct {
-	last    *civquestv1.IntentReceipt
-	pending bool
+	last *civquestv1.IntentReceipt
 }
+
+// agentMemory is the single explicit cross-activity Memory (ADR-036): knowledge and
+// progress marks that outlive any one activity frame because several activities (and the
+// liveness heuristic in fsm.go / fsm_context.go) read them. Activity-private progress does
+// not belong here; it lives in the owning frame's Local.
+type agentMemory struct {
+	lastHarvestTick      int64 // any harvest action; read by unstuck/shelter throttles and liveness
+	lastCraftTick        int64 // craft throttle shared by bootstrap/shelter/armory/directive; liveness
+	lastShelterPlaceTick int64 // place throttle shared by bootstrap/shelter/armory/directive; liveness
+	telemetryFramesSeen  int64 // multi-increment quirk (ADR-036 section: replay pins it)
+	// failedTrees is durable tree-trunk knowledge with decay (failedTreeCooldownTicks).
+	failedTrees map[[2]int32]int64
+}
+
+// failedTreeCooldownTicks is how long a trunk that timed out or was unreachable stays blacklisted.
+const failedTreeCooldownTicks = 600
 
 // AgentState tracks volatile in-memory System 1 agent routine, needs, and paving state.
 type AgentState struct {
 	mu                        sync.RWMutex
+	mem                       agentMemory
 	AssignedBed               *civquestv1.BlockPosProto
 	ShelterPos                *civquestv1.BlockPosProto
 	stage                     Stage
@@ -145,68 +162,31 @@ type AgentState struct {
 	patrolWaypoints           []*civquestv1.Vec3
 	patrolWaypointIndex       int
 	lastSleepAttemptTick      int64
-	lastShelterPlaceTick      int64
 	lastShelterTimeoutTick    int64
 	lastBootstrapTimeoutTick  int64
 	establishingNewSettlement bool
-	shelterBlocksPlaced       int
-	ShelterBuildPhase         int
-	ShelterBuildIndex         int
-	lastHarvestTick           int64
-	lastCraftTick             int64
+	CabinBuilt                int // Store: blocks of the frontier cabin at ShelterPos already placed (banked by the Shelter frame on exit)
 	PavingTracker             *RoadPavingTracker
 
-	// Unstuck and excavation navigation state
-	unstuckLocked       bool
-	unstuckDirX         int32
-	unstuckDirZ         int32
-	unstuckStartTick    int64
-	unstuckStartX       float64
-	unstuckStartZ       float64
-	lastUnstuckNavTick  int64
-	unstuckAttemptCount int
-	lastUnstuckPosX     float64
-	lastUnstuckPosZ     float64
-	hasLastUnstuckPos   bool
-
-	// Timber tree trunk harvesting focus and generic task subroutine commitment
-	targetTreeLocked        bool
-	targetTreeX             int32
-	targetTreeZ             int32
-	targetTreeStartTick     int64
-	activeTask              *TaskSubroutine
-	failedTrees             map[[2]int32]int64
+	// taskView is the read-only value projection of the committed task (ADR-036): a task's
+	// progress is its frame Local (taskLocal) or, between starting inline and being framed, the
+	// starting frame's walk cursor. Waterfalls and the kernel adapter publish this snapshot
+	// whenever the task changes; readers (eligibility, facts, stage derivation) never see the
+	// task itself.
+	taskView                atomic.Pointer[taskInfo]
 	unreachableWorkstations map[[3]int32]int64
 	unreachableTargets      []*unreachableTargetEntry
 
 	// Autonomous exploration, forward outposts & topological mapping state
-	homeOrigin              *civquestv1.Vec3
-	currentOutpost          *civquestv1.Vec3
-	outposts                []*civquestv1.Vec3
-	lastExploreTick         int64
-	lastBootstrapNavTick    int64
-	navigatingToPOI         bool
-	exploreStepIndex        int
-	lastHeadingRad          float64
-	frontierAzimuthRad      float64
-	frontierAzimuthSet      bool
-	frontierRadialLeg       int
-	currentExploreTarget    *civquestv1.Vec3
-	lastExploreProgressDist float64
-	lastExploreProgressTick int64
-	lastMapNodeID           string
-	lastMapPos              *civquestv1.Vec3
-	telemetryFramesSeen     int64
-	goals                   GoalHierarchy
+	homeOrigin     *civquestv1.Vec3
+	currentOutpost *civquestv1.Vec3
+	outposts       []*civquestv1.Vec3
+	lastMapNodeID  string
+	lastMapPos     *civquestv1.Vec3
+	goals          GoalHierarchy
 
 	// Intent execution receipt tracking from the motor periphery
 	receipt receiptSlot
-
-	// Per-agent foraging memory (eliminates package-global foraging state)
-	forageMemory *forageAgentMemory
-
-	// Per-agent blueprint construction progress index
-	constructionProgress int
 
 	// Consolidated per-agent runtime state owned by AgentState
 	runtimeState RuntimeTracking
@@ -221,43 +201,23 @@ type AgentState struct {
 	recipeGraph *crafting.RecipeGraph
 
 	// Active System 2 -> System 1 strategic directive bridge state (ADR-031)
-	strategicDirective      *StrategicDirectiveState
-	directiveScoutTarget    *civquestv1.Vec3
-	lastDirectiveActionTick int64
-	lastDirectiveNavKey     string
+	strategicDirective *StrategicDirectiveState
 
 	// Peripheral 360-degree horizon survey & chained expedition state (ADR-032)
-	LatestSurvey              *civquestv1.HorizonSurveyReport
-	LastSurveyTick            int64
-	LastSurveyOrigin          [3]float64
-	ExpeditionPhase           ExpeditionPhase
-	ExpeditionHops            int
-	ExpeditionTarget          [3]float64
-	ExpeditionBearing         float32
-	ExpeditionFlankCount      int
-	ExpeditionNavAttempts     int
-	ClanSize                  int
-	RendezvousOrigin          [3]float64
-	HomesteadClaimed          bool
-	HomesteadPos              [3]float64
-	PendingRendezvousSync     bool
-	PendingRendezvousSummary  string
-	CollectiveSiteChosen      bool
-	CollectiveSitePos         [3]float64
-	expeditionSurveyStartTick int64
-	lastSurveyEmitTick        int64
-	lastSurveyEmitOrigin      [3]float64
-	lastSurveyEmitOriginSet   bool
-	expeditionLastNavTick     int64
-	expeditionPrimaryTarget   [3]float64
-	expeditionPrimaryBearing  float32
-	expeditionReturning       bool
-	expeditionPrevOrigin      [3]float64
-	expeditionPrevOriginSet   bool
-	expeditionBlockedBearings []float32
-	rendezvousOriginSet       bool
-	clanSizeExplicit          bool
-	latestSurveySummary       string
+	LatestSurvey     *civquestv1.HorizonSurveyReport
+	LastSurveyTick   int64
+	LastSurveyOrigin [3]float64
+	ClanSize         int
+	RendezvousOrigin *[3]float64 // nil = the home origin (resolved when an expedition starts)
+	HomesteadClaimed bool
+	HomesteadPos     [3]float64
+	// Collective clan settlement site chosen at rendezvous (durable knowledge).
+	CollectiveSiteChosen bool
+	CollectiveSitePos    [3]float64
+	clanSizeExplicit     bool
+	// Derived projection of the activity stack (kinds, bottom first); not progress state:
+	// expedition progress lives in the expedition frame Local.
+	activityKinds []string
 }
 
 // NewAgentState creates an initialized AgentState.
@@ -269,14 +229,12 @@ func NewAgentState() *AgentState {
 		PavingTracker:           NewRoadPavingTracker(DefaultPavingCapacity, DefaultPavingThreshold),
 		spatialIndex:            NewSpatialIndex(),
 		habitTrailTracker:       NewHabitTrailTracker(DefaultBreadcrumbDisplacement, DefaultArrivalThreshold, DefaultFinalTransitionDist),
-		forageMemory:            newForageAgentMemory(),
 		runtimeState: RuntimeTracking{
 			Idle: RuntimeIdleTracking{
 				LastContemplatedDay: -1,
 			},
 		},
-		ExpeditionPhase: ExpeditionIdle,
-		ClanSize:        1,
+		ClanSize: 1,
 		goals: GoalHierarchy{
 			ImmediateGoal: "GATHER_TIMBER: Gather 4 logs and craft basic wooden tools",
 			ShortTermGoal: "ESTABLISH_OUTPOST_CHAIN: Advance frontier and establish safe day-night outposts with tools & light",
@@ -713,7 +671,7 @@ func (s *AgentState) GetTelemetryFramesSeen() int64 {
 	}
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	return s.telemetryFramesSeen
+	return s.mem.telemetryFramesSeen
 }
 
 // GetLastShelterPlaceTick returns the world tick when a shelter block/torch/campfire was last placed.
@@ -723,7 +681,7 @@ func (s *AgentState) GetLastShelterPlaceTick() int64 {
 	}
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	return s.lastShelterPlaceTick
+	return s.mem.lastShelterPlaceTick
 }
 
 // SetLastShelterPlaceTick records the world tick when a shelter block/torch/campfire was placed.
@@ -733,17 +691,7 @@ func (s *AgentState) SetLastShelterPlaceTick(tick int64) {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.lastShelterPlaceTick = tick
-}
-
-// GetLastShelterTimeoutTick safely returns the world tick of the last shelter fallback timeout.
-func (s *AgentState) GetLastShelterTimeoutTick() int64 {
-	if s == nil {
-		return 0
-	}
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	return s.lastShelterTimeoutTick
+	s.mem.lastShelterPlaceTick = tick
 }
 
 // SetLastShelterTimeoutTick safely records the world tick of a shelter fallback timeout.
@@ -767,16 +715,6 @@ func (s *AgentState) IsShelterOnCooldown(currentTick int64) bool {
 		return false
 	}
 	return (currentTick - s.lastShelterTimeoutTick) < 600
-}
-
-// GetLastBootstrapTimeoutTick safely returns the world tick of a bootstrap fallback timeout.
-func (s *AgentState) GetLastBootstrapTimeoutTick() int64 {
-	if s == nil {
-		return 0
-	}
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	return s.lastBootstrapTimeoutTick
 }
 
 // SetLastBootstrapTimeoutTick safely records the world tick of a bootstrap fallback timeout.
@@ -829,7 +767,7 @@ func (s *AgentState) GetLastHarvestTick() int64 {
 	}
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	return s.lastHarvestTick
+	return s.mem.lastHarvestTick
 }
 
 // SetLastHarvestTick safely records the tick of the last block harvesting event.
@@ -839,7 +777,7 @@ func (s *AgentState) SetLastHarvestTick(tick int64) {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.lastHarvestTick = tick
+	s.mem.lastHarvestTick = tick
 }
 
 // GetLastCraftTick safely returns the tick of the last crafting event.
@@ -849,7 +787,7 @@ func (s *AgentState) GetLastCraftTick() int64 {
 	}
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	return s.lastCraftTick
+	return s.mem.lastCraftTick
 }
 
 // SetLastCraftTick safely records the tick of the last crafting event.
@@ -859,184 +797,27 @@ func (s *AgentState) SetLastCraftTick(tick int64) {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.lastCraftTick = tick
+	s.mem.lastCraftTick = tick
 }
 
-// GetShelterBlocksPlaced returns the count of emergency shelter wall blocks placed during the current night.
-func (s *AgentState) GetShelterBlocksPlaced() int {
+// GetCabinBuilt returns the durable count of frontier-cabin blocks already placed at ShelterPos.
+func (s *AgentState) GetCabinBuilt() int {
 	if s == nil {
 		return 0
 	}
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	return s.shelterBlocksPlaced
+	return s.CabinBuilt
 }
 
-// SetShelterBlocksPlaced updates the count of emergency shelter wall blocks placed.
-func (s *AgentState) SetShelterBlocksPlaced(count int) {
+// SetCabinBuilt records the durable frontier-cabin block count (Store write by the Shelter frame).
+func (s *AgentState) SetCabinBuilt(n int) {
 	if s == nil {
 		return
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.shelterBlocksPlaced = count
-}
-
-// GetShelterBuildPhase returns the active construction phase for the emergency shelter / frontier cabin.
-func (s *AgentState) GetShelterBuildPhase() int {
-	if s == nil {
-		return 0
-	}
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	return s.ShelterBuildPhase
-}
-
-// SetShelterBuildPhase safely updates the active construction phase for the frontier cabin.
-func (s *AgentState) SetShelterBuildPhase(phase int) {
-	if s == nil {
-		return
-	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.ShelterBuildPhase = phase
-}
-
-// GetShelterBuildIndex returns the current block index within the frontier cabin construction sequence.
-func (s *AgentState) GetShelterBuildIndex() int {
-	if s == nil {
-		return 0
-	}
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	return s.ShelterBuildIndex
-}
-
-// SetShelterBuildIndex safely updates the block index within the frontier cabin construction sequence.
-func (s *AgentState) SetShelterBuildIndex(idx int) {
-	if s == nil {
-		return
-	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.ShelterBuildIndex = idx
-}
-
-// GetFrontierAzimuth returns the current locked frontier sector azimuth heading and whether it is set.
-func (s *AgentState) GetFrontierAzimuth() (float64, bool) {
-	if s == nil {
-		return 0, false
-	}
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	return s.frontierAzimuthRad, s.frontierAzimuthSet
-}
-
-// SetFrontierAzimuth locks the agent's outward frontier sector azimuth heading.
-func (s *AgentState) SetFrontierAzimuth(rad float64) {
-	if s == nil {
-		return
-	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.frontierAzimuthRad = rad
-	s.frontierAzimuthSet = true
-	s.lastHeadingRad = rad
-}
-
-// GetFrontierRadialLeg returns the current progressive outward radial leg index.
-func (s *AgentState) GetFrontierRadialLeg() int {
-	if s == nil {
-		return 0
-	}
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	return s.frontierRadialLeg
-}
-
-// SetFrontierRadialLeg sets the current progressive outward radial leg index.
-func (s *AgentState) SetFrontierRadialLeg(leg int) {
-	if s == nil {
-		return
-	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.frontierRadialLeg = leg
-}
-
-// GetCurrentExploreTarget returns a defensive copy of the current active exploration target waypoint.
-func (s *AgentState) GetCurrentExploreTarget() *civquestv1.Vec3 {
-	if s == nil {
-		return nil
-	}
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	if s.currentExploreTarget == nil {
-		return nil
-	}
-	return &civquestv1.Vec3{
-		X: s.currentExploreTarget.X,
-		Y: s.currentExploreTarget.Y,
-		Z: s.currentExploreTarget.Z,
-	}
-}
-
-// SetCurrentExploreTarget sets the current active exploration target waypoint.
-func (s *AgentState) SetCurrentExploreTarget(pos *civquestv1.Vec3) {
-	if s == nil {
-		return
-	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if pos == nil {
-		s.currentExploreTarget = nil
-		return
-	}
-	s.currentExploreTarget = &civquestv1.Vec3{
-		X: pos.X,
-		Y: pos.Y,
-		Z: pos.Z,
-	}
-}
-
-// GetLastHeadingRad returns the last recorded heading in radians.
-func (s *AgentState) GetLastHeadingRad() float64 {
-	if s == nil {
-		return 0
-	}
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	return s.lastHeadingRad
-}
-
-// SetLastHeadingRad sets the last recorded heading in radians.
-func (s *AgentState) SetLastHeadingRad(rad float64) {
-	if s == nil {
-		return
-	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.lastHeadingRad = rad
-}
-
-// GetExploreStepIndex returns the exploration/patrol step index.
-func (s *AgentState) GetExploreStepIndex() int {
-	if s == nil {
-		return 0
-	}
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	return s.exploreStepIndex
-}
-
-// SetExploreStepIndex sets the exploration/patrol step index.
-func (s *AgentState) SetExploreStepIndex(idx int) {
-	if s == nil {
-		return
-	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.exploreStepIndex = idx
+	s.CabinBuilt = n
 }
 
 // GetPatrolWaypoints returns a defensive copy of configured patrol waypoints.
@@ -1110,187 +891,21 @@ func (s *AgentState) SetPavingTracker(t *RoadPavingTracker) {
 	s.PavingTracker = t
 }
 
-// GetUnstuckLock returns the active unstuck escape direction lock.
-func (s *AgentState) GetUnstuckLock() (locked bool, dirX, dirZ int32, startTick int64, startX, startZ float64) {
-	if s == nil {
-		return false, 0, 0, 0, 0, 0
-	}
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	return s.GetUnstuckLockLocked()
-}
-
-// GetUnstuckLockLocked returns the active unstuck escape direction lock assuming mutex is held.
-func (s *AgentState) GetUnstuckLockLocked() (locked bool, dirX, dirZ int32, startTick int64, startX, startZ float64) {
-	if s == nil {
-		return false, 0, 0, 0, 0, 0
-	}
-	return s.unstuckLocked, s.unstuckDirX, s.unstuckDirZ, s.unstuckStartTick, s.unstuckStartX, s.unstuckStartZ
-}
-
-// SetUnstuckLock locks the unstuck escape direction and origin.
-func (s *AgentState) SetUnstuckLock(locked bool, dirX, dirZ int32, startTick int64, startX, startZ float64) {
-	if s == nil {
-		return
-	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.SetUnstuckLockLocked(locked, dirX, dirZ, startTick, startX, startZ)
-}
-
-// SetUnstuckLockLocked locks the unstuck escape direction assuming mutex is held.
-func (s *AgentState) SetUnstuckLockLocked(locked bool, dirX, dirZ int32, startTick int64, startX, startZ float64) {
-	if s == nil {
-		return
-	}
-	s.unstuckLocked = locked
-	s.unstuckDirX = dirX
-	s.unstuckDirZ = dirZ
-	s.unstuckStartTick = startTick
-	s.unstuckStartX = startX
-	s.unstuckStartZ = startZ
-}
-
-// ClearUnstuckLock clears any active unstuck escape lock.
-func (s *AgentState) ClearUnstuckLock() {
-	if s == nil {
-		return
-	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.ClearUnstuckLockLocked()
-}
-
-// ClearUnstuckLockLocked clears any active unstuck escape lock assuming mutex is held.
-func (s *AgentState) ClearUnstuckLockLocked() {
-	if s == nil {
-		return
-	}
-	s.unstuckLocked = false
-	s.unstuckDirX = 0
-	s.unstuckDirZ = 0
-	s.unstuckStartTick = 0
-	s.unstuckStartX = 0
-	s.unstuckStartZ = 0
-}
-
-// GetTargetTree returns the focused tree trunk coordinates.
-func (s *AgentState) GetTargetTree() (locked bool, x, z int32, startTick int64) {
-	if s == nil {
-		return false, 0, 0, 0
-	}
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	return s.GetTargetTreeLocked()
-}
-
-// GetTargetTreeLocked returns the focused tree trunk coordinates assuming mutex is held.
-func (s *AgentState) GetTargetTreeLocked() (locked bool, x, z int32, startTick int64) {
-	if s == nil {
-		return false, 0, 0, 0
-	}
-	return s.targetTreeLocked, s.targetTreeX, s.targetTreeZ, s.targetTreeStartTick
-}
-
-// SetTargetTree sets the focused tree trunk coordinates.
-func (s *AgentState) SetTargetTree(locked bool, x, z int32, startTick int64) {
-	if s == nil {
-		return
-	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.SetTargetTreeLocked(locked, x, z, startTick)
-}
-
-// SetTargetTreeLocked sets the focused tree trunk coordinates assuming mutex is held.
-func (s *AgentState) SetTargetTreeLocked(locked bool, x, z int32, startTick int64) {
-	if s == nil {
-		return
-	}
-	s.targetTreeLocked = locked
-	s.targetTreeX = x
-	s.targetTreeZ = z
-	s.targetTreeStartTick = startTick
-}
-
-// ClearTargetTree clears the focused tree trunk.
-func (s *AgentState) ClearTargetTree() {
-	if s == nil {
-		return
-	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.ClearTargetTreeLocked()
-}
-
-// ClearTargetTreeLocked clears the focused tree trunk assuming mutex is held.
-func (s *AgentState) ClearTargetTreeLocked() {
-	if s == nil {
-		return
-	}
-	s.targetTreeLocked = false
-	s.targetTreeX = 0
-	s.targetTreeZ = 0
-	s.targetTreeStartTick = 0
-}
-
-// StartTask installs a committed TaskSubroutine on the agent state.
-func (s *AgentState) StartTask(sub *TaskSubroutine) {
-	if s == nil {
-		return
-	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.StartTaskLocked(sub)
-}
-
-// StartTaskLocked installs a committed TaskSubroutine assuming mutex is held.
-func (s *AgentState) StartTaskLocked(sub *TaskSubroutine) {
-	if s == nil {
-		return
-	}
-	s.activeTask = sub
-	s.unstuckAttemptCount = 0
-	s.hasLastUnstuckPos = false
-	if sub != nil && sub.Spec.Kind == "harvest_tree" && sub.Spec.Target.BlockPos != nil {
-		s.SetTargetTreeLocked(true, sub.Spec.Target.BlockPos.X, sub.Spec.Target.BlockPos.Z, sub.StartedTick)
-	}
-}
-
-// GetActiveTask returns the currently active TaskSubroutine if any.
-func (s *AgentState) GetActiveTask() *TaskSubroutine {
-	if s == nil {
-		return nil
-	}
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	return s.activeTask
-}
-
-// GetActiveTaskLocked returns the currently active TaskSubroutine assuming mutex is held.
-func (s *AgentState) GetActiveTaskLocked() *TaskSubroutine {
-	if s == nil {
-		return nil
-	}
-	return s.activeTask
-}
-
 // HasActiveTask returns true if an active, non-terminal TaskSubroutine is committed.
 func (s *AgentState) HasActiveTask() bool {
 	if s == nil {
 		return false
 	}
-	s.mu.RLock()
-	defer s.mu.RUnlock()
 	return s.HasActiveTaskLocked()
 }
 
-// HasActiveTaskLocked returns true if an active, non-terminal TaskSubroutine is committed assuming mutex is held.
+// HasActiveTaskLocked is HasActiveTask for callers that hold the mutex (the view is atomic).
 func (s *AgentState) HasActiveTaskLocked() bool {
-	if s == nil || s.activeTask == nil {
+	if s == nil {
 		return false
 	}
-	return s.activeTask.Phase != TaskPhaseComplete && s.activeTask.Phase != TaskPhaseFailed
+	v := s.taskView.Load()
+	return v != nil && v.Active
 }
 
 // ActiveTaskInfo returns a race-free value snapshot of the active task's status.
@@ -1298,108 +913,21 @@ func (s *AgentState) ActiveTaskInfo() (active bool, kind string, phase TaskPhase
 	if s == nil {
 		return false, "", "", ""
 	}
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	if s.activeTask == nil || s.activeTask.Phase == TaskPhaseComplete || s.activeTask.Phase == TaskPhaseFailed {
+	v := s.taskView.Load()
+	if v == nil || !v.Active {
 		return false, "", "", ""
 	}
-	return true, s.activeTask.Spec.Kind, s.activeTask.Phase, s.activeTask.Spec.Routine
+	return true, v.Kind, v.Phase, v.Routine
 }
 
-// IsActiveTaskPushedToPDA returns whether the active task's parent frame has been pushed onto the PDA stack.
-func (s *AgentState) IsActiveTaskPushedToPDA() bool {
-	if s == nil {
-		return false
-	}
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	return s.activeTask != nil && s.activeTask.PushedToPDA
-}
-
-// SetActiveTaskPushedToPDA updates whether the active task's parent frame is on the PDA stack.
-func (s *AgentState) SetActiveTaskPushedToPDA(pushed bool) {
-	if s == nil {
-		return
-	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.activeTask != nil {
-		s.activeTask.PushedToPDA = pushed
-	}
-}
-
-// GetActiveTaskMetadata returns a defensive metadata snapshot for the active task, or nil if none.
-func (s *AgentState) GetActiveTaskMetadata() map[string]string {
-	if s == nil {
-		return nil
-	}
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	if s.activeTask == nil {
-		return nil
-	}
-	return s.activeTask.MetadataSnapshot()
-}
-
-// PauseActiveTask marks the active task as paused at the given tick during emergency preemption.
-func (s *AgentState) PauseActiveTask(tick int64) {
-	if s == nil {
-		return
-	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.activeTask != nil {
-		s.activeTask.Pause(tick)
-	}
-}
-
-// HandleEmergencyPreempt pauses a preemptible active task and returns its metadata for the PDA stack,
-// or clears a non-preemptible active task so it is not resumed after emergency clearance.
-func (s *AgentState) HandleEmergencyPreempt(tick int64) map[string]string {
-	if s == nil {
-		return nil
-	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.activeTask == nil || s.activeTask.Phase == TaskPhaseComplete || s.activeTask.Phase == TaskPhaseFailed {
-		return nil
-	}
-	if !s.activeTask.Spec.Preemptible {
-		s.ClearActiveTaskLocked()
-		return nil
-	}
-	s.activeTask.Pause(tick)
-	return s.activeTask.MetadataSnapshot()
-}
-
-// ResumeActiveTask resumes the active task after emergency clearance, compensating timeout ticks.
-func (s *AgentState) ResumeActiveTask(tick int64) {
-	if s == nil {
-		return
-	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.activeTask != nil {
-		s.activeTask.Resume(tick)
-	}
-}
-
-// IngestReceipt stores the latest IntentReceipt from a telemetry frame so
-// active tasks can react immediately to completion, preemption, or failure.
+// IngestReceipt records the latest IntentReceipt from a telemetry frame for diagnostics
+// (GetLastReceipt). It does NOT deliver the receipt to any activity: receipts reach
+// activities only via Kernel.Dispatch, routed by frame ID.
 func (s *AgentState) IngestReceipt(receipt *civquestv1.IntentReceipt) {
-	if s == nil || receipt == nil {
-		return
-	}
-	cloned := proto.Clone(receipt).(*civquestv1.IntentReceipt)
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.receipt = receiptSlot{
-		last:    cloned,
-		pending: true,
-	}
+	s.SetLastReceipt(receipt)
 }
 
-// SetLastReceipt stores a defensive copy of the most recent IntentReceipt without marking it pending.
+// SetLastReceipt stores a defensive copy of the most recent IntentReceipt.
 func (s *AgentState) SetLastReceipt(receipt *civquestv1.IntentReceipt) {
 	if s == nil {
 		return
@@ -1430,82 +958,28 @@ func (s *AgentState) GetLastReceipt() *civquestv1.IntentReceipt {
 	return proto.Clone(s.receipt.last).(*civquestv1.IntentReceipt)
 }
 
-// StepActiveTask advances the active TaskSubroutine by one tick, clearing it upon completion or failure.
-func (s *AgentState) StepActiveTask(agentID string, frame *civquestv1.TelemetryFrame) TaskStepResult {
-	if s == nil {
-		return TaskStepResult{}
-	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.StepActiveTaskLocked(agentID, frame)
-}
-
-// StepActiveTaskLocked advances the active TaskSubroutine assuming mutex is held.
-func (s *AgentState) StepActiveTaskLocked(agentID string, frame *civquestv1.TelemetryFrame) TaskStepResult {
-	if s == nil || s.activeTask == nil {
-		if s != nil {
-			s.receipt.pending = false
-		}
-		return TaskStepResult{}
-	}
-	var receipt *civquestv1.IntentReceipt
-	if frame != nil && frame.GetReceipt() != nil {
-		cloned := proto.Clone(frame.GetReceipt()).(*civquestv1.IntentReceipt)
-		s.receipt.last = cloned
-		receipt = cloned
-	} else if s.receipt.pending && s.receipt.last != nil {
-		receipt = s.receipt.last
-	}
-	s.receipt.pending = false
-
-	res := s.activeTask.TickWithReceipt(agentID, s, frame, receipt)
-	if res.Done {
-		s.activeTask = nil
-	}
-	return res
-}
-
-// ClearActiveTask clears any active task subroutine and unlocks any focused tree.
-func (s *AgentState) ClearActiveTask() {
-	if s == nil {
-		return
-	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.ClearActiveTaskLocked()
-}
-
-// ClearActiveTaskLocked clears any active task subroutine assuming mutex is held.
-func (s *AgentState) ClearActiveTaskLocked() {
-	if s == nil {
-		return
-	}
-	s.activeTask = nil
-	s.ClearTargetTreeLocked()
-}
-
 // MarkTreeFailedLocked records a temporary cooldown for an unreachable/blocked tree trunk.
 func (s *AgentState) MarkTreeFailedLocked(x, z int32, tick int64) {
 	if s == nil {
 		return
 	}
-	if s.failedTrees == nil {
-		s.failedTrees = make(map[[2]int32]int64)
+	if s.mem.failedTrees == nil {
+		s.mem.failedTrees = make(map[[2]int32]int64)
 	}
-	s.failedTrees[[2]int32{x, z}] = tick
+	s.mem.failedTrees[[2]int32{x, z}] = tick
 }
 
 // IsTreeOnCooldownLocked returns true if a tree trunk recently timed out and is on retry backoff.
 func (s *AgentState) IsTreeOnCooldownLocked(x, z int32, tick int64) bool {
-	if s == nil || s.failedTrees == nil {
+	if s == nil || s.mem.failedTrees == nil {
 		return false
 	}
-	failedTick, ok := s.failedTrees[[2]int32{x, z}]
+	failedTick, ok := s.mem.failedTrees[[2]int32{x, z}]
 	if !ok {
 		return false
 	}
-	if tick < failedTick || tick-failedTick >= 600 {
-		delete(s.failedTrees, [2]int32{x, z})
+	if tick < failedTick || tick-failedTick >= failedTreeCooldownTicks {
+		delete(s.mem.failedTrees, [2]int32{x, z})
 		return false
 	}
 	return true
@@ -1551,7 +1025,7 @@ func (s *AgentState) IsWorkstationUnreachableLocked(x, y, z int32, tick int64) b
 	if !ok {
 		return false
 	}
-	if tick < failedTick || tick-failedTick >= 600 {
+	if tick < failedTick || tick-failedTick >= failedTreeCooldownTicks {
 		return false
 	}
 	return true
@@ -1625,19 +1099,22 @@ func (s *AgentState) MarkTargetUnreachableLocked(x, y, z float64, worldTick, ttl
 	})
 }
 
-// RecordTargetNavigationStuck records a NAVIGATION_STATE_STUCK failure near (x, y, z).
-// After 2 stuck failures within 2.5m, the target coordinate is blacklisted for ttlTicks.
-func (s *AgentState) RecordTargetNavigationStuck(x, y, z float64, worldTick, ttlTicks int64) (bool, int) {
+// RecordTargetNavigationStuck records one Recover give-up near (x, y, z) (ADR-037 §4).
+// After giveUps give-ups within 2.5m, the target coordinate is blacklisted for ttlTicks.
+func (s *AgentState) RecordTargetNavigationStuck(x, y, z float64, worldTick, ttlTicks int64, giveUps int) (bool, int) {
 	if s == nil {
 		return false, 0
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.RecordTargetNavigationStuckLocked(x, y, z, worldTick, ttlTicks)
+	return s.RecordTargetNavigationStuckLocked(x, y, z, worldTick, ttlTicks, giveUps)
 }
 
-// RecordTargetNavigationStuckLocked records a NAVIGATION_STATE_STUCK failure while s.mu is held.
-func (s *AgentState) RecordTargetNavigationStuckLocked(x, y, z float64, worldTick, ttlTicks int64) (bool, int) {
+// RecordTargetNavigationStuckLocked records a Recover give-up while s.mu is held.
+func (s *AgentState) RecordTargetNavigationStuckLocked(x, y, z float64, worldTick, ttlTicks int64, giveUps int) (bool, int) {
+	if giveUps < 1 {
+		giveUps = 1
+	}
 	if s == nil {
 		return false, 0
 	}
@@ -1652,7 +1129,7 @@ func (s *AgentState) RecordTargetNavigationStuckLocked(x, y, z float64, worldTic
 			}
 			entry.failures++
 			entry.lastFailTick = worldTick
-			if entry.failures >= 2 {
+			if entry.failures >= giveUps {
 				if worldTick+ttlTicks > entry.blacklistUntil {
 					entry.blacklistUntil = worldTick + ttlTicks
 				}
@@ -1661,14 +1138,12 @@ func (s *AgentState) RecordTargetNavigationStuckLocked(x, y, z float64, worldTic
 			return false, entry.failures
 		}
 	}
-	s.unreachableTargets = append(s.unreachableTargets, &unreachableTargetEntry{
-		x:            x,
-		y:            y,
-		z:            z,
-		failures:     1,
-		lastFailTick: worldTick,
-	})
-	return false, 1
+	e := &unreachableTargetEntry{x: x, y: y, z: z, failures: 1, lastFailTick: worldTick}
+	if giveUps <= 1 {
+		e.blacklistUntil = worldTick + ttlTicks
+	}
+	s.unreachableTargets = append(s.unreachableTargets, e)
+	return giveUps <= 1, 1
 }
 
 // IsTargetUnreachable returns true if (x, y, z) is within 2.5m of an active blacklisted coordinate.
@@ -1775,9 +1250,6 @@ func (s *AgentState) SetStrategicDirective(action, target, immediateGoal string,
 	defer s.mu.Unlock()
 	if normAction == "" {
 		s.strategicDirective = nil
-		s.directiveScoutTarget = nil
-		s.lastDirectiveActionTick = 0
-		s.lastDirectiveNavKey = ""
 		return
 	}
 	s.strategicDirective = &StrategicDirectiveState{
@@ -1787,9 +1259,6 @@ func (s *AgentState) SetStrategicDirective(action, target, immediateGoal string,
 		IssuedTick:    issuedTick,
 		ExpiresTick:   expiresTick,
 	}
-	s.directiveScoutTarget = nil
-	s.lastDirectiveActionTick = 0
-	s.lastDirectiveNavKey = ""
 }
 
 // ActiveStrategicDirective returns the current non-expired StrategicDirectiveState, if any.
@@ -1816,7 +1285,4 @@ func (s *AgentState) ClearStrategicDirective() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.strategicDirective = nil
-	s.directiveScoutTarget = nil
-	s.lastDirectiveActionTick = 0
-	s.lastDirectiveNavKey = ""
 }

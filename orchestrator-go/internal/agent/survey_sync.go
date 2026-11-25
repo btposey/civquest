@@ -149,19 +149,23 @@ func (r *AgentRuntime) processHorizonSurveyAndRendezvous(frame *civquestv1.Telem
 			})
 		}
 	}
-
-	// 2. Check for pending clan rendezvous sync upon returning within 20m of camp.
-	r.syncPendingRendezvous(frame)
 }
 
+// syncPendingRendezvous handles the RendezvousReport events emitted by expeditions that
+// returned within 20m of camp since the last FSM tick (events, not a state mailbox).
 func (r *AgentRuntime) syncPendingRendezvous(frame *civquestv1.TelemetryFrame) {
 	if r == nil || frame == nil || r.IsDead() {
 		return
 	}
-	synced, summary := r.system1State.ConsumePendingRendezvousSync()
-	if !synced {
-		return
+	r.mu.RLock()
+	fsm := r.agentFSM
+	r.mu.RUnlock()
+	for _, rep := range fsm.DrainRendezvousReports() {
+		r.syncRendezvousReport(frame, rep.Summary)
 	}
+}
+
+func (r *AgentRuntime) syncRendezvousReport(frame *civquestv1.TelemetryFrame, summary string) {
 
 	r.mu.RLock()
 	agentID := r.agentID

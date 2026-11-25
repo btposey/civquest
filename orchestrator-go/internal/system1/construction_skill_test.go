@@ -95,6 +95,7 @@ func TestConstructionSkill_QuadrantExecutionAndSubterraneanExcavation(t *testing
 	skill := NewConstructionSkill(coord)
 	fg := NewFactGraph()
 	state := NewAgentState()
+	progress := &ConstructionLocal{}
 
 	// 1. Far away from build site -> should emit NavigateIntent
 	farFrame := &civquestv1.TelemetryFrame{
@@ -104,10 +105,11 @@ func TestConstructionSkill_QuadrantExecutionAndSubterraneanExcavation(t *testing
 		},
 	}
 	ctxFar := &SkillContext{
-		AgentID: "builder-1",
-		Frame:   farFrame,
-		State:   state,
-		CivicDB: civicDB,
+		AgentID:      "builder-1",
+		Frame:        farFrame,
+		State:        state,
+		Construction: progress,
+		CivicDB:      civicDB,
 	}
 
 	intents, err := skill.Execute(ctxFar, fg)
@@ -136,10 +138,11 @@ func TestConstructionSkill_QuadrantExecutionAndSubterraneanExcavation(t *testing
 		},
 	}
 	ctxNear := &SkillContext{
-		AgentID: "builder-1",
-		Frame:   nearFrame,
-		State:   state,
-		CivicDB: civicDB,
+		AgentID:      "builder-1",
+		Frame:        nearFrame,
+		State:        state,
+		Construction: progress,
+		CivicDB:      civicDB,
 	}
 
 	digIntents, err := skill.Execute(ctxNear, fg)
@@ -169,10 +172,11 @@ func TestConstructionSkill_QuadrantExecutionAndSubterraneanExcavation(t *testing
 		},
 	}
 	ctxCleared := &SkillContext{
-		AgentID: "builder-1",
-		Frame:   clearedFrame,
-		State:   state,
-		CivicDB: civicDB,
+		AgentID:      "builder-1",
+		Frame:        clearedFrame,
+		State:        state,
+		Construction: progress,
+		CivicDB:      civicDB,
 	}
 
 	placeIntents, err := skill.Execute(ctxCleared, fg)
@@ -191,8 +195,8 @@ func TestConstructionSkill_QuadrantExecutionAndSubterraneanExcavation(t *testing
 	}
 
 	// Verify progress advanced
-	if state.ConstructionProgress() != 1 {
-		t.Errorf("expected progress = 1, got %d", state.ConstructionProgress())
+	if progress.Index != 1 {
+		t.Errorf("expected progress = 1, got %d", progress.Index)
 	}
 }
 
@@ -247,6 +251,7 @@ func TestConstructionSkill_MultiBuilderCollaborationAndCompletion(t *testing.T) 
 	builders := []string{"builder-NW", "builder-NE", "builder-SW", "builder-SE"}
 	for _, b := range builders {
 		bState := NewAgentState()
+		bProgress := &ConstructionLocal{}
 		frame := &civquestv1.TelemetryFrame{
 			WorldTick: 200,
 			Status: &civquestv1.AgentStatus{
@@ -257,10 +262,11 @@ func TestConstructionSkill_MultiBuilderCollaborationAndCompletion(t *testing.T) 
 			},
 		}
 		ctx := &SkillContext{
-			AgentID: b,
-			Frame:   frame,
-			State:   bState,
-			CivicDB: civicDB,
+			AgentID:      b,
+			Frame:        frame,
+			State:        bState,
+			Construction: bProgress,
+			CivicDB:      civicDB,
 		}
 
 		// Execute placement for single block in quadrant
@@ -345,14 +351,14 @@ func TestConstructionSkill_PerAgentStateIsolation(t *testing.T) {
 
 	stateA := NewAgentState()
 	stateB := NewAgentState()
+	progA, progB := &ConstructionLocal{Index: 99}, &ConstructionLocal{Index: 42}
 	// Seed pre-existing non-zero progress to confirm quadrant assignment resets each agent's own state independently.
-	stateA.SetConstructionProgress(99)
-	stateB.SetConstructionProgress(42)
 
-	makeCtx := func(agentID string, st *AgentState) *SkillContext {
+	makeCtx := func(agentID string, st *AgentState, cp *ConstructionLocal) *SkillContext {
 		return &SkillContext{
-			AgentID: agentID,
-			State:   st,
+			AgentID:      agentID,
+			State:        st,
+			Construction: cp,
 			Frame: &civquestv1.TelemetryFrame{
 				WorldTick: 300,
 				Status: &civquestv1.AgentStatus{
@@ -369,9 +375,9 @@ func TestConstructionSkill_PerAgentStateIsolation(t *testing.T) {
 	var firstStepWg sync.WaitGroup
 	firstStepWg.Add(2)
 	var placedA, placedB int
-	runBuilder := func(agentID string, st *AgentState, placed *int) {
+	runBuilder := func(agentID string, st *AgentState, cp *ConstructionLocal, placed *int) {
 		defer wg.Done()
-		ctx := makeCtx(agentID, st)
+		ctx := makeCtx(agentID, st, cp)
 		for i := 0; i < 16 && !coord.IsComplete(); i++ {
 			intents, execErr := skill.Execute(ctx, fg)
 			if execErr != nil {
@@ -394,8 +400,8 @@ func TestConstructionSkill_PerAgentStateIsolation(t *testing.T) {
 	}
 
 	wg.Add(2)
-	go runBuilder("builder-A", stateA, &placedA)
-	go runBuilder("builder-B", stateB, &placedB)
+	go runBuilder("builder-A", stateA, progA, &placedA)
+	go runBuilder("builder-B", stateB, progB, &placedB)
 	wg.Wait()
 
 	if !coord.IsComplete() {
@@ -407,8 +413,8 @@ func TestConstructionSkill_PerAgentStateIsolation(t *testing.T) {
 	if placedA == 0 || placedB == 0 {
 		t.Fatalf("expected both builders to place blocks independently (placedA=%d, placedB=%d)", placedA, placedB)
 	}
-	if stateA.ConstructionProgress() == 99 || stateB.ConstructionProgress() == 42 {
+	if progA.Index == 99 || progB.Index == 42 {
 		t.Fatalf("expected seeded progress reset on quadrant assignment (A=%d, B=%d)",
-			stateA.ConstructionProgress(), stateB.ConstructionProgress())
+			progA.Index, progB.Index)
 	}
 }

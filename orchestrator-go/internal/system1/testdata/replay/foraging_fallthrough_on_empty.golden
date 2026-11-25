@@ -1,0 +1,4 @@
+t=100 stage=SETTLEMENT routine=PRIMARY_DUTY stack=[foraging/1] intents=[Interact(HARVEST_BREAK 2,64,0 minecraft:sweet_berry_bush)]  // hungry with berries: foraging
+t=110 stage=SETTLEMENT routine=PRIMARY_DUTY stack=[foraging/1] intents=[Navigate(x=15.4 z=19.3)]  // hungry, nothing to forage: what runs instead
+t=120 stage=SETTLEMENT routine=PRIMARY_DUTY stack=[foraging/1] intents=[]  // still empty
+t=130 stage=SETTLEMENT routine=PRIMARY_DUTY stack=[exploration/1] intents=[]  // fed again

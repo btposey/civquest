@@ -4,17 +4,9 @@ import (
 	"sync"
 
 	civquestv1 "github.com/btposey/civquest/orchestrator-go/internal/proto/v1"
+	"github.com/btposey/civquest/orchestrator-go/internal/system1/htpda"
 	"github.com/btposey/civquest/orchestrator-go/internal/xdg"
 )
-
-// StateHandler defines the interface for each HFSM state lifecycle hooks.
-type StateHandler interface {
-	Name() State
-	Guard(ctx *FSMContext) bool
-	OnEntry(ctx *FSMContext, from State)
-	OnTick(ctx *FSMContext) []FSMIntent
-	OnExit(ctx *FSMContext, to State)
-}
 
 // StageTransitionRule defines a directed edge for Tier 1 macro stage transitions evaluated in priority order.
 type StageTransitionRule struct {
@@ -202,74 +194,14 @@ func executeStageSkill(ctx *FSMContext, skillName string, fallback Skill, emerge
 	return wrapStageIntents(raw, emergency)
 }
 
-// BootstrapStateHandler handles survival kit bootstrap goals.
-type BootstrapStateHandler struct{}
-
-func (h *BootstrapStateHandler) Name() State                      { return StageBootstrap }
-func (h *BootstrapStateHandler) Guard(ctx *FSMContext) bool       { return true }
-func (h *BootstrapStateHandler) OnEntry(ctx *FSMContext, _ State) {}
-func (h *BootstrapStateHandler) OnExit(ctx *FSMContext, _ State)  {}
-func (h *BootstrapStateHandler) OnTick(ctx *FSMContext) []FSMIntent {
-	return executeStageSkill(ctx, "stage_bootstrap", NewStageBootstrapSkill(), false)
-}
-
-// SettlementStateHandler handles established settlement living, vocational duties, hobbies, and social routines.
-type SettlementStateHandler struct{}
-
-func (h *SettlementStateHandler) Name() State                      { return StageSettlement }
-func (h *SettlementStateHandler) Guard(ctx *FSMContext) bool       { return true }
-func (h *SettlementStateHandler) OnEntry(ctx *FSMContext, _ State) {}
-func (h *SettlementStateHandler) OnExit(ctx *FSMContext, to State) {
-	if ctx != nil && ctx.State != nil && ctx.Frame != nil && to == StageSettlement {
-		ctx.State.SetLastShelterTimeoutTick(ctx.Frame.WorldTick)
-	}
-}
-func (h *SettlementStateHandler) OnTick(ctx *FSMContext) []FSMIntent {
-	return executeStageSkill(ctx, "stage_settlement", NewStageSettlementSkill(), false)
-}
-
-// ColonizeStateHandler handles establishing and building a new frontier settlement node.
-type ColonizeStateHandler struct{}
-
-func (h *ColonizeStateHandler) Name() State                      { return StageColonize }
-func (h *ColonizeStateHandler) Guard(ctx *FSMContext) bool       { return true }
-func (h *ColonizeStateHandler) OnEntry(ctx *FSMContext, _ State) {}
-func (h *ColonizeStateHandler) OnExit(ctx *FSMContext, _ State)  {}
-func (h *ColonizeStateHandler) OnTick(ctx *FSMContext) []FSMIntent {
-	return executeStageSkill(ctx, "stage_colonize", NewStageColonizeSkill(), false)
-}
-
-// EmergencyStateHandler handles reactive combat, fleeing, and survival reflexes.
-type EmergencyStateHandler struct{}
-
-func (h *EmergencyStateHandler) Name() State                { return StageEmergency }
-func (h *EmergencyStateHandler) Guard(ctx *FSMContext) bool { return true }
-func (h *EmergencyStateHandler) OnEntry(ctx *FSMContext, _ State) {
-	if ctx != nil && ctx.State != nil {
-		ctx.State.ClearExpeditionSurveyingIfActive()
-	}
-}
-func (h *EmergencyStateHandler) OnExit(ctx *FSMContext, _ State) {}
-func (h *EmergencyStateHandler) OnTick(ctx *FSMContext) []FSMIntent {
-	return executeStageSkill(ctx, "stage_emergency", NewStageEmergencySkill(), true)
-}
-
-// DeadStateHandler handles terminal permadeath state where all agent loops cease.
-type DeadStateHandler struct{}
-
-func (h *DeadStateHandler) Name() State                         { return StageDead }
-func (h *DeadStateHandler) Guard(ctx *FSMContext) bool          { return true }
-func (h *DeadStateHandler) OnEntry(ctx *FSMContext, from State) {}
-func (h *DeadStateHandler) OnExit(ctx *FSMContext, to State)    {}
-func (h *DeadStateHandler) OnTick(ctx *FSMContext) []FSMIntent  { return nil }
-
-// StateStackFrame represents a snapshot of an interrupted state context in the HTPDA pushdown automata stack.
-type StateStackFrame struct {
-	Stage       Stage             `json:"stage"`
-	Routine     Routine           `json:"routine"`
-	EnteredTick int64             `json:"entered_tick"`
-	Reason      string            `json:"reason"`
-	Metadata    map[string]string `json:"metadata,omitempty"`
+// ActivityFrameView is a read-only snapshot of one frame of the agent's activity stack
+// (viewer / diagnostics). The stack itself is the htpda.Kernel owned by AgentFSM.
+type ActivityFrameView struct {
+	ID        uint64 `json:"id"`
+	Kind      string `json:"kind"`
+	Band      uint8  `json:"band"`
+	Parent    uint64 `json:"parent,omitempty"`
+	StartTick int64  `json:"start_tick"`
 }
 
 // FSMResult encapsulates the output of an FSM tick in the Two-Tier HFSM.
@@ -302,17 +234,50 @@ type AgentFSM struct {
 	routineEnteredTick  int64
 	stuckTicks          int64
 	lastPos             *civquestv1.Vec3
-	handlers            map[Stage]StateHandler
 	transitions         []StageTransitionRule
 	onStageTransition   func(from, to Stage, reason string)
 	onRoutineTransition func(from, to Routine, reason string)
-	stack               []StateStackFrame
-	maxStackDepth       int
-	activityStack       []Activity
-	activitySuspended   bool
-	arbiter             *ActivityArbiter
-	lastFacts           *FactGraph
-	registry            *EngineRegistry
+	// kernel is the ONE activity stack (ADR-036). Preemption is a push, resume is a pop.
+	kernel      *htpda.Kernel
+	managed     []waterfallActivity // waterfall activities, highest priority first
+	startedTask *TaskSubroutine     // see StartTask; consumed by the task activity's Init
+	// startedReceipt is the receipt routed to startedTask while it was an inline-started task
+	// whose starting frame exited before the kernel framed it (handOffPendingTask).
+	startedReceipt *civquestv1.IntentReceipt
+	// rcptBatch/rcptStatus: newest receipt admitted by the seam guard (admitReceiptLocked).
+	rcptBatch  int64
+	rcptStatus civquestv1.IntentReceipt_ReceiptStatus
+	lastFacts  *FactGraph
+	registry   *EngineRegistry
+	// rendezvousOutbox holds RendezvousReport events from returned expeditions until the
+	// runtime drains them (DrainRendezvousReports).
+	rendezvousOutbox []RendezvousReport
+	// navTargets is the last Navigate target each live frame emitted (the target a Recover
+	// frame pushed by that frame is recovering); pruned to the live stack after every dispatch.
+	navTargets map[htpda.FrameID][3]float64
+	// recoverOutbox holds Recover give-ups until the runtime drains them (POI decay).
+	recoverOutbox []RecoverGiveUp
+	// orphan is a stuck receipt for an intent no live frame owns (unframed reflex skills);
+	// Recover bids for it as a root frame. orphanNav is the last unframed Navigate target.
+	escapeLock   *recoverEscapeLock // enclosed dig heading kept across Recover episodes
+	orphan       *recoverArgs
+	orphanTick   int64
+	orphanNav    [3]float64
+	hasOrphanNav bool
+	lastDiag     []htpda.Diagnostic
+}
+
+// StartTask commits a task from outside any frame; the task activity pushes it as a task frame.
+func (fsm *AgentFSM) StartTask(state *AgentState, t *TaskSubroutine) {
+	if fsm == nil || !taskActive(t) {
+		return
+	}
+	fsm.mu.Lock()
+	defer fsm.mu.Unlock()
+	fsm.startedTask = t
+	if state != nil {
+		state.publishTask(t)
+	}
 }
 
 // Registry returns the EngineRegistry bound to this AgentFSM.
@@ -348,7 +313,7 @@ func (fsm *AgentFSM) LastFacts() *FactGraph {
 	return fsm.lastFacts
 }
 
-// NewAgentFSM constructs an initialized AgentFSM with default state handlers, transition table,
+// NewAgentFSM constructs an initialized AgentFSM with the stage transition table,
 // and an isolated default EngineRegistry.
 func NewAgentFSM(initial State, onTransition func(from, to State, reason string)) *AgentFSM {
 	return NewAgentFSMWithRegistry(initial, onTransition, nil)
@@ -374,171 +339,60 @@ func NewAgentFSMWithRegistry(initial State, onTransition func(from, to State, re
 		previousStage:     initial,
 		currentRoutine:    initialRoutine,
 		previousRoutine:   initialRoutine,
-		maxStackDepth:     8,
-		handlers:          make(map[Stage]StateHandler),
 		transitions:       defaultTransitionRules(),
 		onStageTransition: onTransition,
-		arbiter:           newActivityArbiter(),
 		registry:          reg,
 	}
-	fsm.RegisterHandler(&BootstrapStateHandler{})
-	fsm.RegisterHandler(&SettlementStateHandler{})
-	fsm.RegisterHandler(&ColonizeStateHandler{})
-	fsm.RegisterHandler(&EmergencyStateHandler{})
-	fsm.RegisterHandler(&DeadStateHandler{})
+	fsm.managed = newManagedActivities()
+	fsm.kernel = newActivityKernel(fsm.managed)
 	return fsm
 }
 
-func (fsm *AgentFSM) pushLocked(stage Stage, routine Routine, reason string, tick int64, metadata map[string]string) {
-	if stage == "" {
-		return
-	}
-	// Check duplicate top: ignore if duplicate top (same Stage and Routine)
-	if n := len(fsm.stack); n > 0 {
-		top := fsm.stack[n-1]
-		if top.Stage == stage && top.Routine == routine {
-			return
-		}
-	}
-
-	maxDepth := fsm.maxStackDepth
-	if maxDepth <= 0 {
-		maxDepth = 8
-	}
-
-	// Drop oldest if overflow
-	if len(fsm.stack) >= maxDepth {
-		fsm.stack = fsm.stack[1:]
-	}
-
-	var metaCopy map[string]string
-	if metadata != nil {
-		metaCopy = make(map[string]string, len(metadata))
-		for k, v := range metadata {
-			metaCopy[k] = v
-		}
-	}
-
-	fsm.stack = append(fsm.stack, StateStackFrame{
-		Stage:       stage,
-		Routine:     routine,
-		EnteredTick: tick,
-		Reason:      reason,
-		Metadata:    metaCopy,
-	})
-}
-
-func (fsm *AgentFSM) popLocked() (StateStackFrame, bool) {
-	n := len(fsm.stack)
-	if n == 0 {
-		return StateStackFrame{}, false
-	}
-	frame := fsm.stack[n-1]
-	fsm.stack = fsm.stack[:n-1]
-	return frame, true
-}
-
-func (fsm *AgentFSM) peekLocked() (StateStackFrame, bool) {
-	n := len(fsm.stack)
-	if n == 0 {
-		return StateStackFrame{}, false
-	}
-	return fsm.stack[n-1], true
-}
-
-func (fsm *AgentFSM) stackDepthLocked() int {
-	return len(fsm.stack)
-}
-
-func (fsm *AgentFSM) clearStackLocked() {
-	fsm.stack = nil
-}
-
-// Push pushes a state stack frame onto the HTPDA stack. Caps at maxStackDepth, dropping oldest on overflow, or ignoring if duplicate top.
-func (fsm *AgentFSM) Push(stage Stage, routine Routine, reason string, tick int64, metadata map[string]string) {
+// ActivityFrames returns a snapshot of the activity stack, bottom first.
+func (fsm *AgentFSM) ActivityFrames() []ActivityFrameView {
 	if fsm == nil {
-		return
-	}
-	fsm.mu.Lock()
-	defer fsm.mu.Unlock()
-	fsm.pushLocked(stage, routine, reason, tick, metadata)
-}
-
-// Pop pops the topmost state stack frame from the HTPDA stack. Returns false if empty.
-func (fsm *AgentFSM) Pop() (StateStackFrame, bool) {
-	if fsm == nil {
-		return StateStackFrame{}, false
-	}
-	fsm.mu.Lock()
-	defer fsm.mu.Unlock()
-	return fsm.popLocked()
-}
-
-// Peek inspects the topmost state stack frame without removing it. Returns false if empty.
-func (fsm *AgentFSM) Peek() (StateStackFrame, bool) {
-	if fsm == nil {
-		return StateStackFrame{}, false
+		return nil
 	}
 	fsm.mu.RLock()
 	defer fsm.mu.RUnlock()
-	return fsm.peekLocked()
+	if fsm.kernel == nil {
+		return nil
+	}
+	frames := fsm.kernel.Frames()
+	out := make([]ActivityFrameView, 0, len(frames))
+	for _, f := range frames {
+		out = append(out, ActivityFrameView{ID: uint64(f.ID), Kind: string(f.Kind()), Band: uint8(f.Band), Parent: uint64(f.Parent), StartTick: f.Lease.StartTick})
+	}
+	return out
 }
 
-// StackDepth returns the number of frames currently stored in the HTPDA state stack.
-func (fsm *AgentFSM) StackDepth() int {
+// ActiveActivityKind returns the kind of the top activity frame, or "" when the stack is empty.
+func (fsm *AgentFSM) ActiveActivityKind() string {
+	if fsm == nil {
+		return ""
+	}
+	fsm.mu.RLock()
+	defer fsm.mu.RUnlock()
+	if fsm.kernel == nil {
+		return ""
+	}
+	if top, ok := fsm.kernel.Top(); ok {
+		return string(top.Kind())
+	}
+	return ""
+}
+
+// ActivityDepth returns the number of frames on the activity stack.
+func (fsm *AgentFSM) ActivityDepth() int {
 	if fsm == nil {
 		return 0
 	}
 	fsm.mu.RLock()
 	defer fsm.mu.RUnlock()
-	return fsm.stackDepthLocked()
-}
-
-// StackFrames returns a snapshot copy of the current HTPDA state stack frames from bottom to top.
-func (fsm *AgentFSM) StackFrames() []StateStackFrame {
-	if fsm == nil {
-		return nil
+	if fsm.kernel == nil {
+		return 0
 	}
-	fsm.mu.RLock()
-	defer fsm.mu.RUnlock()
-	if len(fsm.stack) == 0 {
-		return nil
-	}
-	cpy := make([]StateStackFrame, len(fsm.stack))
-	copy(cpy, fsm.stack)
-	return cpy
-}
-
-// ClearStack empties the HTPDA state stack.
-func (fsm *AgentFSM) ClearStack() {
-	if fsm == nil {
-		return
-	}
-	fsm.mu.Lock()
-	defer fsm.mu.Unlock()
-	fsm.clearStackLocked()
-}
-
-// SetMaxStackDepth updates the maximum stack capacity.
-func (fsm *AgentFSM) SetMaxStackDepth(depth int) {
-	if fsm == nil {
-		return
-	}
-	fsm.mu.Lock()
-	defer fsm.mu.Unlock()
-	if depth > 0 {
-		fsm.maxStackDepth = depth
-	}
-}
-
-// RegisterHandler registers a lifecycle handler for an FSM state.
-func (fsm *AgentFSM) RegisterHandler(handler StateHandler) {
-	if fsm == nil || handler == nil {
-		return
-	}
-	fsm.mu.Lock()
-	defer fsm.mu.Unlock()
-	fsm.handlers[handler.Name()] = handler
+	return fsm.kernel.Depth()
 }
 
 // CurrentStage returns the active Tier 1 macro strategic stage.
@@ -623,39 +477,16 @@ func (fsm *AgentFSM) TransitionTo(target State, reason string, ctx *FSMContext) 
 		return false
 	}
 
-	targetHandler, ok := fsm.handlers[target]
-	if ok && ctx != nil && !targetHandler.Guard(ctx) {
-		return false
-	}
-
 	fromStage := fsm.currentStage
 
-	// When transitioning into StageEmergency from any non-emergency stage,
-	// suspend active Activity and push the current (currentStage, currentRoutine, reason, tick, metadata) onto the stack.
-	if target == StageEmergency && fromStage != StageEmergency && fromStage != StageDead {
-		tick := int64(0)
-		if ctx != nil && ctx.Frame != nil {
-			tick = ctx.Frame.WorldTick
-		}
-		fsm.suspendTopActivityLocked(ctx, reason)
-		var taskMeta map[string]string
-		if ctx != nil && ctx.State != nil && ctx.State.HasActiveTask() {
-			taskMeta = ctx.State.HandleEmergencyPreempt(tick)
-		}
-		fsm.pushLocked(fromStage, fsm.currentRoutine, reason, tick, taskMeta)
+	// Emergency preemption is a push on the activity stack: the next Tick's arbitration
+	// pushes the emergency frame over whatever runs (no separate stage stack).
+	if target == StageEmergency {
+		fsm.onEmergencyEntryLocked(ctx)
 	}
-
-	// Terminal dead state: clear stack, activities, and any active task
+	// Terminal dead state: unwind the activity stack and drop any committed task.
 	if target == StageDead {
-		fsm.clearActivitiesLocked(ctx)
-		fsm.clearStackLocked()
-		if ctx != nil && ctx.State != nil {
-			ctx.State.ClearActiveTask()
-		}
-	}
-
-	if currentHandler, exists := fsm.handlers[fromStage]; exists && ctx != nil {
-		currentHandler.OnExit(ctx, target)
+		fsm.cancelActivitiesLocked(ctx, reason)
 	}
 
 	fsm.previousStage = fromStage
@@ -679,20 +510,12 @@ func (fsm *AgentFSM) TransitionTo(target State, reason string, ctx *FSMContext) 
 		}
 	}
 
-	if targetHandler != nil && ctx != nil {
-		targetHandler.OnEntry(ctx, fromStage)
-	}
-
 	if fsm.onStageTransition != nil {
 		fsm.onStageTransition(fromStage, target, reason)
 	}
 
 	if ctx != nil && ctx.State != nil {
 		ctx.State.SetStageAndRoutine(target, fsm.currentRoutine)
-	}
-
-	if fromStage == StageEmergency && target != StageEmergency && target != StageDead {
-		fsm.resumeTopActivityLocked(ctx)
 	}
 
 	return true
@@ -717,15 +540,7 @@ func (fsm *AgentFSM) Tick(ctx *FSMContext) FSMResult {
 			ctx.Registry = reg
 			restoreCtxRegistry = true
 		}
-		evalCtx := &EvaluatorContext{
-			AgentID:       ctx.AgentID,
-			Frame:         ctx.Frame,
-			Config:        ctx.Config,
-			State:         ctx.State,
-			CivicDB:       ctx.CivicDB,
-			SafeNodes:     ctx.SafeNodes,
-			PavingTracker: ctx.PavingTracker,
-		}
+		evalCtx := newEvaluatorContext(ctx)
 		ctx.Facts = reg.EvaluateAll(evalCtx)
 	}
 	if restoreCtxRegistry {
@@ -757,26 +572,17 @@ func (fsm *AgentFSM) Tick(ctx *FSMContext) FSMResult {
 	// When ctx.Frame.Status.Health <= 0 or death detected:
 	// - clear activities & stack
 	// - transition to StageDead / RoutineDead.
-	isDead := false
-	if fsm.currentStage == StageDead {
-		isDead = true
-	} else if ctx != nil && ctx.Frame != nil {
-		if ctx.Frame.DeathEvent != nil || (ctx.Frame.Status != nil && ctx.Frame.Status.Health <= 0) {
-			isDead = true
-		}
-	}
+	isDead := fsm.currentStage == StageDead || fsm.topIsDeadLocked() || (ctx != nil && frameIsDead(ctx.Frame))
 
 	if isDead {
-		fsm.clearActivitiesLocked(ctx)
-		fsm.clearStackLocked()
-		if ctx != nil && ctx.State != nil {
-			ctx.State.ClearActiveTask()
+		// Death dispatches Cancel (unwinding every frame) and the arbiter then pushes the
+		// terminal dead frame (BandDead); it is never popped.
+		if !fsm.topIsDeadLocked() {
+			fsm.cancelActivitiesLocked(ctx, "terminal agent death detected")
+			fsm.dispatchLocked(newFSMWorld(fsm, ctx, nil, nil), htpda.Tick{})
 		}
 		if fsm.currentStage != StageDead {
 			fromStage := fsm.currentStage
-			if currentHandler, exists := fsm.handlers[fromStage]; exists && ctx != nil {
-				currentHandler.OnExit(ctx, StageDead)
-			}
 			fsm.previousStage = fromStage
 			fsm.currentStage = StageDead
 			fsm.stateEnteredTick = worldTick
@@ -790,9 +596,6 @@ func (fsm *AgentFSM) Tick(ctx *FSMContext) FSMResult {
 			fsm.currentRoutine = RoutineDead
 			fsm.routineEnteredTick = worldTick
 
-			if targetHandler, exists := fsm.handlers[StageDead]; exists && targetHandler != nil && ctx != nil {
-				targetHandler.OnEntry(ctx, fromStage)
-			}
 			if fsm.onStageTransition != nil {
 				fsm.onStageTransition(fromStage, StageDead, "terminal agent death detected")
 			}
@@ -879,29 +682,17 @@ func (fsm *AgentFSM) Tick(ctx *FSMContext) FSMResult {
 	// 2. Evaluate Tier 1 Macro Stage Transitions
 	stageTransitioned := false
 	routineTransitioned := false
-	pdaRestored := false
 	emergencyPreempted := false
 	var transitionReason string
 
-	// Priority 1: EMERGENCY Preemption from any non-emergency stage (PDA pushdown)
+	// Priority 1: EMERGENCY preemption from any non-emergency stage. The running activity is
+	// suspended by the emergency frame the kernel pushes this tick (step 5).
 	if fsm.currentStage != StageEmergency && fsm.currentStage != StageDead && ctx != nil && ctx.IsEmergency() {
 		fromStage := fsm.currentStage
 		toStage := StageEmergency
 		ruleDesc := "Hostile threat, damage, or critical vitals detected; preempting to emergency"
-
-		fsm.suspendTopActivityLocked(ctx, ruleDesc)
 		emergencyPreempted = true
-
-		var taskMeta map[string]string
-		if ctx != nil && ctx.State != nil && ctx.State.HasActiveTask() {
-			taskMeta = ctx.State.HandleEmergencyPreempt(worldTick)
-		}
-		// Automatically push current state onto the stack before switching to emergency
-		fsm.pushLocked(fromStage, fsm.currentRoutine, ruleDesc, worldTick, taskMeta)
-
-		if currentHandler, exists := fsm.handlers[fromStage]; exists && ctx != nil {
-			currentHandler.OnExit(ctx, toStage)
-		}
+		fsm.onEmergencyEntryLocked(ctx)
 
 		fsm.previousStage = fromStage
 		fsm.currentStage = toStage
@@ -914,27 +705,21 @@ func (fsm *AgentFSM) Tick(ctx *FSMContext) FSMResult {
 		stageTransitioned = true
 		transitionReason = ruleDesc
 
-		if targetHandler, exists := fsm.handlers[toStage]; exists && targetHandler != nil && ctx != nil {
-			targetHandler.OnEntry(ctx, fromStage)
-		}
-
 		if fsm.onStageTransition != nil {
 			fsm.onStageTransition(fromStage, toStage, ruleDesc)
 		}
 	}
 
-	// Pushdown Automata check: pop back to interrupted frame once ThreatsCleared()
-	if !stageTransitioned && fsm.currentStage == StageEmergency && ctx != nil && ctx.ThreatsCleared() {
-		if frame, ok := fsm.popLocked(); ok {
-			fromStage := fsm.currentStage
-			toStage := frame.Stage
-
-			if currentHandler, exists := fsm.handlers[fromStage]; exists && ctx != nil {
-				currentHandler.OnExit(ctx, toStage)
+	// Leaving EMERGENCY is an ordinary derived stage transition (rules below); the emergency
+	// frame pops this Tick (ThreatsCleared) and the suspended frame resumes with its locals intact.
+	if !stageTransitioned {
+		for _, rule := range fsm.transitions {
+			if rule.FromStage != fsm.currentStage || !rule.Condition(ctx) {
+				continue
 			}
-
+			fromStage := fsm.currentStage
 			fsm.previousStage = fromStage
-			fsm.currentStage = toStage
+			fsm.currentStage = rule.ToStage
 			fsm.stateEnteredTick = worldTick
 			fsm.stuckTicks = 0
 			if ctx != nil {
@@ -942,90 +727,16 @@ func (fsm *AgentFSM) Tick(ctx *FSMContext) FSMResult {
 				ctx.StuckTicks = 0
 			}
 			stageTransitioned = true
-			transitionReason = "Threats cleared; restored previous state from PDA stack (" + string(toStage) + ")"
-
-			if targetHandler, exists := fsm.handlers[toStage]; exists && targetHandler != nil && ctx != nil {
-				targetHandler.OnEntry(ctx, fromStage)
-			}
-
+			transitionReason = rule.Description
 			if fsm.onStageTransition != nil {
-				fsm.onStageTransition(fromStage, toStage, transitionReason)
+				fsm.onStageTransition(fromStage, rule.ToStage, rule.Description)
 			}
-
-			// Restore frame.Routine directly from the stack
-			prevR := fsm.currentRoutine
-			fsm.previousRoutine = prevR
-			fsm.currentRoutine = frame.Routine
-			fsm.routineEnteredTick = worldTick
-			if prevR != frame.Routine {
-				routineTransitioned = true
-				if fsm.onRoutineTransition != nil {
-					fsm.onRoutineTransition(prevR, frame.Routine, "restored routine from PDA stack")
-				}
-			}
-			pdaRestored = true
-
-			if ctx.State != nil {
-				ctx.State.ResumeActiveTask(worldTick)
-				ctx.State.SetRoutine(frame.Routine)
-				ctx.State.SetStageAndRoutine(toStage, frame.Routine)
-			}
-			fsm.resumeTopActivityLocked(ctx)
+			break
 		}
 	}
-
-	if !stageTransitioned {
-		for _, rule := range fsm.transitions {
-			if rule.FromStage == fsm.currentStage && rule.Condition(ctx) {
-				targetHandler, ok := fsm.handlers[rule.ToStage]
-				if !ok || targetHandler.Guard(ctx) {
-					fromStage := fsm.currentStage
-					toStage := rule.ToStage
-
-					if toStage == StageEmergency && fromStage != StageEmergency && fromStage != StageDead {
-						fsm.suspendTopActivityLocked(ctx, rule.Description)
-						emergencyPreempted = true
-						var taskMeta map[string]string
-						if ctx != nil && ctx.State != nil && ctx.State.HasActiveTask() {
-							taskMeta = ctx.State.HandleEmergencyPreempt(worldTick)
-						}
-						fsm.pushLocked(fromStage, fsm.currentRoutine, rule.Description, worldTick, taskMeta)
-					}
-
-					if currentHandler, exists := fsm.handlers[fromStage]; exists && ctx != nil {
-						currentHandler.OnExit(ctx, toStage)
-					}
-
-					fsm.previousStage = fromStage
-					fsm.currentStage = toStage
-					fsm.stateEnteredTick = worldTick
-					fsm.stuckTicks = 0
-					if ctx != nil {
-						ctx.TimeInState = 0
-						ctx.StuckTicks = 0
-					}
-					stageTransitioned = true
-					transitionReason = rule.Description
-
-					if targetHandler != nil && ctx != nil {
-						targetHandler.OnEntry(ctx, fromStage)
-					}
-
-					if fsm.onStageTransition != nil {
-						fsm.onStageTransition(fromStage, toStage, rule.Description)
-					}
-					break
-				}
-			}
-		}
-	}
-
-	// Capture pre-Step-3 routine in case a TaskSubroutine was installed externally before Tick.
-	preStep3Routine := fsm.currentRoutine
-	taskActiveBeforeStep3 := false
 
 	// 3. Evaluate Tier 2 Circadian Operational Routine
-	if !pdaRestored {
+	{
 		var newRoutine Routine
 		if fsm.currentStage == StageEmergency {
 			newRoutine = RoutineEmergency
@@ -1035,7 +746,6 @@ func (fsm *AgentFSM) Tick(ctx *FSMContext) FSMResult {
 			newRoutine = fsm.currentRoutine
 		} else if ctx != nil && ctx.State != nil {
 			if active, _, _, taskRoutine := ctx.State.ActiveTaskInfo(); active && taskRoutine != "" {
-				taskActiveBeforeStep3 = true
 				newRoutine = taskRoutine
 			} else {
 				newRoutine = computeStageCircadianRoutine(fsm.currentStage, tod, weather, ctx.Config, ctx.State, ctx)
@@ -1064,82 +774,54 @@ func (fsm *AgentFSM) Tick(ctx *FSMContext) FSMResult {
 	if ctx != nil && ctx.State != nil {
 		ctx.State.SetStageAndRoutine(fsm.currentStage, fsm.currentRoutine)
 	}
-	if stageTransitioned && !pdaRestored && fsm.previousStage == StageEmergency &&
-		fsm.currentStage != StageEmergency && fsm.currentStage != StageDead {
-		fsm.resumeTopActivityLocked(ctx)
-	}
 
-	preOnTickRoutine := fsm.currentRoutine
-
-	// 5. Execute Tier 1 ActivityArbiter / top Activity for normal stages; StageHandler for Emergency/Dead/custom
+	// 5. Tick the activity stack (ADR-036 single stack, single dispatch path). Settled stages
+	// first run the biological-needs and road-paving reflex skills, then every stage (emergency
+	// and dead included) is driven by the kernel: Emergency and Dead are ordinary activities
+	// whose private state is their frame Local, and ReflexNotices are Reflex events.
 	var intents []FSMIntent
 	if ctx != nil {
-		if fsm.currentStage == StageBootstrap || fsm.currentStage == StageSettlement || fsm.currentStage == StageColonize {
-			intents = fsm.tickActivityArbiterLocked(ctx)
-		} else if fsm.currentStage != StageEmergency && fsm.currentStage != StageDead &&
-			len(fsm.activityStack) > 0 && !fsm.activitySuspended {
-			if act := fsm.activityStack[len(fsm.activityStack)-1]; act != nil {
-				var done bool
-				intents, done = act.OnTick(ctx)
-				if done {
-					fsm.popActivityLocked(ctx)
-				}
-			}
-		} else if handler, exists := fsm.handlers[fsm.currentStage]; exists {
-			intents = handler.OnTick(ctx)
-		}
-	}
-
-	// 5b. Synchronize active TaskSubroutine commitment with the PDA state stack
-	if ctx != nil && ctx.State != nil && fsm.currentStage != StageEmergency && fsm.currentStage != StageDead {
-		active, taskKind, _, taskRoutine := ctx.State.ActiveTaskInfo()
-		topHasTaskFrame := len(fsm.stack) > 0 && fsm.stack[len(fsm.stack)-1].Metadata != nil &&
-			fsm.stack[len(fsm.stack)-1].Metadata["task_frame"] == "true"
-
-		if active {
-			if !topHasTaskFrame && !ctx.State.IsActiveTaskPushedToPDA() {
-				parentR := preOnTickRoutine
-				if taskActiveBeforeStep3 {
-					parentR = preStep3Routine
-				}
-				if parentR == "" || parentR == RoutineHarvestTree || parentR == RoutineCollectItems ||
-					parentR == RoutineEmergency || parentR == RoutineDead {
-					parentR = computeStageCircadianRoutine(fsm.currentStage, tod, weather, ctx.Config, ctx.State, ctx)
-				}
-				meta := ctx.State.GetActiveTaskMetadata()
-				fsm.pushLocked(fsm.currentStage, parentR, "task subroutine committed: "+taskKind, worldTick, meta)
-				ctx.State.SetActiveTaskPushedToPDA(true)
-			}
-			if taskRoutine != "" && fsm.currentRoutine != taskRoutine {
-				prevR := fsm.currentRoutine
-				fsm.previousRoutine = prevR
-				fsm.currentRoutine = taskRoutine
-				fsm.routineEnteredTick = worldTick
-				routineTransitioned = true
-				if fsm.onRoutineTransition != nil {
-					fsm.onRoutineTransition(prevR, taskRoutine, "task subroutine active: "+taskKind)
-				}
-				ctx.State.SetStageAndRoutine(fsm.currentStage, fsm.currentRoutine)
-			}
-		} else if topHasTaskFrame {
-			if popped, ok := fsm.popLocked(); ok {
-				restoredR := popped.Routine
-				if restoredR == "" || restoredR == RoutineHarvestTree || restoredR == RoutineCollectItems ||
-					restoredR == RoutineEmergency || restoredR == RoutineDead {
-					restoredR = computeStageCircadianRoutine(fsm.currentStage, tod, weather, ctx.Config, ctx.State, ctx)
-				}
-				if restoredR != fsm.currentRoutine {
-					prevR := fsm.currentRoutine
-					fsm.previousRoutine = prevR
-					fsm.currentRoutine = restoredR
-					fsm.routineEnteredTick = worldTick
-					routineTransitioned = true
-					if fsm.onRoutineTransition != nil {
-						fsm.onRoutineTransition(prevR, restoredR, "task subroutine completed/popped")
+		var reg *EngineRegistry
+		var skillCtx *SkillContext
+		switch fsm.currentStage {
+		case StageBootstrap, StageSettlement, StageColonize:
+			if ctx.Frame != nil && ctx.Frame.Status != nil {
+				reg = resolveContextRegistry(ctx)
+				ensureFSMFacts(ctx, reg)
+				skillCtx = buildSkillContext(ctx, reg)
+				intents = wrapStageIntents(executeStageBiologicalNeeds(skillCtx, ctx.Facts, reg), false)
+				intents = append(intents, wrapStageIntents(executeStageRoadPaving(skillCtx, ctx.Facts, reg, fsm.currentStage != StageBootstrap), false)...)
+				for _, fi := range intents {
+					if nav := fi.Intent.GetNavigate(); nav != nil && nav.Target != nil {
+						fsm.orphanNav, fsm.hasOrphanNav = [3]float64{nav.Target.X, nav.Target.Y, nav.Target.Z}, true
 					}
 				}
-				ctx.State.SetStageAndRoutine(fsm.currentStage, fsm.currentRoutine)
 			}
+		}
+		intents = append(intents, fsm.tickActivitiesLocked(ctx, reg, skillCtx)...)
+	}
+
+	// 5b. Routine is derived from the stack: a committed task's routine while one is active,
+	// the circadian routine once it has ended.
+	if ctx != nil && ctx.State != nil && fsm.currentStage != StageEmergency && fsm.currentStage != StageDead {
+		active, taskKind, _, taskRoutine := ctx.State.ActiveTaskInfo()
+		want := fsm.currentRoutine
+		reason := ""
+		if active && taskRoutine != "" {
+			want, reason = taskRoutine, "task subroutine active: "+taskKind
+		} else if !active && (fsm.currentRoutine == RoutineHarvestTree || fsm.currentRoutine == RoutineCollectItems) {
+			want, reason = computeStageCircadianRoutine(fsm.currentStage, tod, weather, ctx.Config, ctx.State, ctx), "task subroutine ended"
+		}
+		if want != "" && want != fsm.currentRoutine {
+			prevR := fsm.currentRoutine
+			fsm.previousRoutine = prevR
+			fsm.currentRoutine = want
+			fsm.routineEnteredTick = worldTick
+			routineTransitioned = true
+			if fsm.onRoutineTransition != nil {
+				fsm.onRoutineTransition(prevR, want, reason)
+			}
+			ctx.State.SetStageAndRoutine(fsm.currentStage, fsm.currentRoutine)
 		}
 	}
 

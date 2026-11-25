@@ -487,7 +487,7 @@ func TestFSM_ConcurrentSafety(t *testing.T) {
 func TestFSM_RestDoesNotTransitionToShelterWhenComplete(t *testing.T) {
 	fsm := NewAgentFSM(StageSettlement, nil)
 	state := NewAgentState()
-	state.SetShelterBlocksPlaced(blueprints.CabinTotalBlocks)
+	state.SetCabinBuilt(blueprints.CabinTotalBlocks)
 
 	ctx := &FSMContext{
 		AgentID: "rest_agent",
@@ -735,10 +735,10 @@ func TestFSM_TreeHarvestPDAPushEmergencyPreemptAndResume(t *testing.T) {
 	if res0.Routine != RoutineHarvestTree {
 		t.Fatalf("expected Routine=%s when tree harvest commits, got %s", RoutineHarvestTree, res0.Routine)
 	}
-	if fsm.StackDepth() != 1 {
-		t.Fatalf("expected PDA StackDepth=1 while HarvestTree subroutine active, got %d", fsm.StackDepth())
+	if fsm.ActiveActivityKind() != activityKindBootstrap {
+		t.Fatalf("expected bootstrap frame to commit the harvest task inline, got top=%q", fsm.ActiveActivityKind())
 	}
-	if locked, tx, tz, _ := state.GetTargetTree(); !locked || tx != 3 || tz != 0 {
+	if locked, tx, tz := treeOf(fsmTask(fsm)); !locked || tx != 3 || tz != 0 {
 		t.Fatalf("expected locked trunk (3,0), got locked=%v (%d,%d)", locked, tx, tz)
 	}
 
@@ -757,9 +757,9 @@ func TestFSM_TreeHarvestPDAPushEmergencyPreemptAndResume(t *testing.T) {
 	// Tick 2 (WorldTick 105, mid-cooldown while (3,64,0) is still breaking): must stay committed without wandering
 	ctx.Frame.WorldTick = 105
 	res1 := fsm.Tick(ctx)
-	if res1.Routine != RoutineHarvestTree || fsm.StackDepth() != 1 {
-		t.Fatalf("expected Routine=%s and StackDepth=1 during harvest cooldown, got routine=%s depth=%d",
-			RoutineHarvestTree, res1.Routine, fsm.StackDepth())
+	if res1.Routine != RoutineHarvestTree || fsm.ActiveActivityKind() != activityKindTaskSubroutine {
+		t.Fatalf("expected Routine=%s with the task frame on top during harvest cooldown, got routine=%s top=%q",
+			RoutineHarvestTree, res1.Routine, fsm.ActiveActivityKind())
 	}
 	if len(res1.Intents) != 0 {
 		t.Fatalf("expected no wander/explore intents during harvest cooldown, got %+v", res1.Intents)
@@ -776,8 +776,8 @@ func TestFSM_TreeHarvestPDAPushEmergencyPreemptAndResume(t *testing.T) {
 		{Pos: &civquestv1.BlockPosProto{X: 1, Y: 64, Z: 1}, BlockId: "minecraft:birch_log"},
 	}
 	res2 := fsm.Tick(ctx)
-	if res2.Routine != RoutineHarvestTree || fsm.StackDepth() != 1 {
-		t.Fatalf("expected continued RoutineHarvestTree and StackDepth=1, got routine=%s depth=%d", res2.Routine, fsm.StackDepth())
+	if res2.Routine != RoutineHarvestTree || fsm.ActiveActivityKind() != activityKindTaskSubroutine {
+		t.Fatalf("expected continued RoutineHarvestTree on the task frame, got routine=%s top=%q", res2.Routine, fsm.ActiveActivityKind())
 	}
 	foundBreak65 := false
 	for _, it := range res2.Intents {
@@ -806,8 +806,8 @@ func TestFSM_TreeHarvestPDAPushEmergencyPreemptAndResume(t *testing.T) {
 	if resEmg.Stage != StageEmergency || resEmg.Routine != RoutineEmergency {
 		t.Fatalf("expected (StageEmergency, RoutineEmergency) on threat, got (%s, %s)", resEmg.Stage, resEmg.Routine)
 	}
-	if fsm.StackDepth() != 2 {
-		t.Fatalf("expected PDA StackDepth=2 (parent routine + interrupted HarvestTree), got %d", fsm.StackDepth())
+	if fsm.ActiveActivityKind() != activityKindEmergency || fsm.ActivityDepth() != 3 {
+		t.Fatalf("expected emergency frame over [bootstrap, task], got top=%q depth=%d", fsm.ActiveActivityKind(), fsm.ActivityDepth())
 	}
 
 	// Remain in Emergency for 200 ticks (>150-tick progress timeout!) to prove emergency duration doesn't cause false timeout
@@ -825,10 +825,10 @@ func TestFSM_TreeHarvestPDAPushEmergencyPreemptAndResume(t *testing.T) {
 	if resResume.Stage != StageBootstrap || resResume.Routine != RoutineHarvestTree {
 		t.Fatalf("expected restoration to (StageBootstrap, RoutineHarvestTree), got (%s, %s)", resResume.Stage, resResume.Routine)
 	}
-	if fsm.StackDepth() != 1 {
-		t.Fatalf("expected PDA StackDepth=1 after popping emergency back to HarvestTree, got %d", fsm.StackDepth())
+	if fsm.ActiveActivityKind() != activityKindTaskSubroutine || fsm.ActivityDepth() != 2 {
+		t.Fatalf("expected emergency popped back to the task frame, got top=%q depth=%d", fsm.ActiveActivityKind(), fsm.ActivityDepth())
 	}
-	if locked, tx, tz, _ := state.GetTargetTree(); !locked || tx != 3 || tz != 0 {
+	if locked, tx, tz := treeOf(fsmTask(fsm)); !locked || tx != 3 || tz != 0 {
 		t.Fatalf("expected resumed tree lock on (3,0), got locked=%v (%d,%d)", locked, tx, tz)
 	}
 	foundResumedBreak := false
@@ -851,8 +851,8 @@ func TestFSM_TreeHarvestPDAPushEmergencyPreemptAndResume(t *testing.T) {
 		{Pos: &civquestv1.BlockPosProto{X: 1, Y: 64, Z: 1}, BlockId: "minecraft:birch_log"},
 	}
 	resDone := fsm.Tick(ctx)
-	if fsm.StackDepth() != 0 {
-		t.Fatalf("expected PDA StackDepth=0 once HarvestTree completed, got %d", fsm.StackDepth())
+	if fsm.ActiveActivityKind() == activityKindTaskSubroutine {
+		t.Fatalf("expected task frame popped once HarvestTree completed; stack=%v intents=%v", fsm.ActivityFrames(), resDone.Intents)
 	}
 	if resDone.Routine != RoutinePrimaryDuty {
 		t.Fatalf("expected restored Routine=%s after task pop, got %s", RoutinePrimaryDuty, resDone.Routine)
@@ -867,7 +867,7 @@ func TestFSM_NonPreemptibleTaskClearedOnEmergency(t *testing.T) {
 	state := NewAgentState()
 
 	// Install non-preemptible task
-	state.StartTask(NewTaskFSM(TaskDescriptor{
+	fsm.StartTask(state, NewTaskFSM(TaskDescriptor{
 		ID:          "non_preemptible_op",
 		Kind:        "non_preemptible",
 		Stage:       StageSettlement,
@@ -900,9 +900,9 @@ func TestFSM_NonPreemptibleTaskClearedOnEmergency(t *testing.T) {
 	}
 
 	res0 := fsm.Tick(ctx)
-	if res0.Routine != RoutineSecondaryHobby || fsm.StackDepth() != 1 {
-		t.Fatalf("expected active non-preemptible task routine=%s stack=1, got routine=%s stack=%d",
-			RoutineSecondaryHobby, res0.Routine, fsm.StackDepth())
+	if res0.Routine != RoutineSecondaryHobby || fsm.ActiveActivityKind() != activityKindTaskSubroutine {
+		t.Fatalf("expected active non-preemptible task routine=%s on the task frame, got routine=%s top=%q",
+			RoutineSecondaryHobby, res0.Routine, fsm.ActiveActivityKind())
 	}
 
 	// Emergency hits -> non-preemptible task must be cleared so it does not resume
@@ -922,8 +922,8 @@ func TestFSM_NonPreemptibleTaskClearedOnEmergency(t *testing.T) {
 	ctx.Frame.WorldTick = 115
 	ctx.Frame.VisibleEntities = nil
 	resClear := fsm.Tick(ctx)
-	if resClear.Stage != StageSettlement || fsm.StackDepth() != 0 {
-		t.Fatalf("expected clean unwind to StageSettlement stack=0, got stage=%s stack=%d", resClear.Stage, fsm.StackDepth())
+	if resClear.Stage != StageSettlement || fsm.ActiveActivityKind() == activityKindTaskSubroutine || state.HasActiveTask() {
+		t.Fatalf("expected clean unwind to StageSettlement without the task frame, got stage=%s top=%q", resClear.Stage, fsm.ActiveActivityKind())
 	}
 }
 
@@ -1297,8 +1297,7 @@ func TestFSM_BootstrapNightWithLogsBuildsShelterAndGatesCircadianOnceComplete(t 
 	t.Run("IsShelterComplete unlocks normal circadian TavernSocial and Sleep routines in BOOTSTRAP", func(t *testing.T) {
 		fsm := NewAgentFSM(StageBootstrap, nil)
 		state := NewAgentState()
-		state.SetShelterBlocksPlaced(blueprints.CabinTotalBlocks)
-		state.ShelterBuildIndex = blueprints.CabinTotalBlocks
+		state.SetCabinBuilt(blueprints.CabinTotalBlocks)
 		cfg := xdg.DefaultAgentIdentityConfig("earl")
 		cfg.Profession = "EXPLORER"
 
@@ -1388,7 +1387,7 @@ func TestFSM_BootstrapFreshSystem2DirectivePreemptsHarvestTree(t *testing.T) {
 	cfg.Profession = "EXPLORER"
 
 	// Active harvest_tree started at tick 100
-	state.StartTask(NewHarvestTreeTask(-46, 86, -8, StageBootstrap, 100))
+	fsm.StartTask(state, NewHarvestTreeTask(-46, 86, -8, StageBootstrap, 100))
 	// Fresh SCOUT_FRONTIER directive issued at tick 200 (after task start)
 	state.SetStrategicDirective(DirectiveActionScoutFrontier, "eastern forest", "SCOUT_FRONTIER: Pivot from obstructed timber", 200, 6200)
 

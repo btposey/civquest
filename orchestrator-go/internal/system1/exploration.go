@@ -316,7 +316,7 @@ func EvaluateGoals(frame *civquestv1.TelemetryFrame, cfg *xdg.AgentIdentityConfi
 			immediate = "SLEEPING: Resting safely until dawn"
 		} else if state != nil && state.GetAssignedBed() != nil {
 			immediate = "SEEK_BED_SHELTER: Return to assigned bed and sleep through the night"
-		} else if inv.buildingBlockCount > 0 && (state == nil || state.GetShelterBuildIndex() < len(blueprints.FrontierCabinBlueprint())) {
+		} else if inv.buildingBlockCount > 0 && (state == nil || state.GetCabinBuilt() < len(blueprints.FrontierCabinBlueprint())) {
 			immediate = "BUILD_SHELTER: Construct protective night shelter and light source from carried blocks"
 		} else {
 			immediate = "ESTABLISH_OUTPOST: Secure and light forward outpost shelter for the night"
@@ -363,7 +363,8 @@ func EvaluateGoals(frame *civquestv1.TelemetryFrame, cfg *xdg.AgentIdentityConfi
 // EvaluateExploration computes autonomous frontier scouting waypoints, bootstrap timber/tool gathering,
 // dusk/night forward outpost shelter reflexes, and terrain-unsticking detour maneuvers in <1ms without token costs.
 // It serves as a unified coordinator and backward-compatible entry point for System 1 exploration.
-func EvaluateExploration(agentID string, frame *civquestv1.TelemetryFrame, cfg *xdg.AgentIdentityConfig, state *AgentState) *civquestv1.AgentIntent {
+func EvaluateExploration(agentID string, frame *civquestv1.TelemetryFrame, cfg *xdg.AgentIdentityConfig, state *AgentState, walk *walkLocal) *civquestv1.AgentIntent {
+	walk = orFreshWalk(walk)
 	if frame == nil || frame.Status == nil || frame.Status.Position == nil || state == nil {
 		return nil
 	}
@@ -376,7 +377,7 @@ func EvaluateExploration(agentID string, frame *civquestv1.TelemetryFrame, cfg *
 	state.mu.Lock()
 	defer state.mu.Unlock()
 
-	state.telemetryFramesSeen++
+	state.mem.telemetryFramesSeen++
 	if state.homeOrigin == nil {
 		originCopy := &civquestv1.Vec3{X: pos.X, Y: pos.Y, Z: pos.Z}
 		state.homeOrigin = originCopy
@@ -387,9 +388,6 @@ func EvaluateExploration(agentID string, frame *civquestv1.TelemetryFrame, cfg *
 	}
 	if state.currentOutpost == nil {
 		state.currentOutpost = &civquestv1.Vec3{X: state.homeOrigin.X, Y: state.homeOrigin.Y, Z: state.homeOrigin.Z}
-	}
-	if state.lastExploreTick == 0 {
-		state.lastExploreTick = frame.WorldTick
 	}
 
 	if state.companionActive {
@@ -406,42 +404,29 @@ func EvaluateExploration(agentID string, frame *civquestv1.TelemetryFrame, cfg *
 	isDuskOrNight := tod >= 11500 && tod < 23500
 	isThunder := frame.Weather == civquestv1.Weather_WEATHER_THUNDER
 	if !isDuskOrNight && !isThunder {
-		state.shelterBlocksPlaced = 0
-		state.ShelterBuildPhase = 0
-		state.ShelterBuildIndex = 0
+		state.CabinBuilt = 0
 	}
 
-	// 1. If an active expedition is encountering a terrain barrier, let Horizon Explorer record the hazard & re-survey/flank first.
+	// 1. Terrain barriers met by an active expedition are handled by its Navigate frame (flank / re-survey).
 	if navState == civquestv1.NavigationState_NAVIGATION_STATE_STUCK || frame.Status.GetNavigationEnclosed() {
-		if state.IsExpeditionActiveLocked() && !state.HasActiveTaskLocked() {
-			if expIntent := EvaluateHorizonExplorerLocked(frame, state, cfg, agentID); expIntent != nil {
-				return expIntent
-			}
-		}
-		if unstuckIntent := EvaluateUnstuck(agentID, frame, pos, state); unstuckIntent != nil {
-			return unstuckIntent
-		}
-		if locked, _, _, _, _, _ := state.GetUnstuckLockLocked(); locked {
-			return nil // Waiting on excavation sequence, do NOT rotate heading
-		}
 		if (isDuskOrNight || isThunder) && state.AssignedBed == nil {
-			if shelterIntent := evaluateDuskNightOutpostShelterLocked(agentID, frame, pos, navState, state); shelterIntent != nil {
+			if shelterIntent := evaluateDuskNightOutpostShelterLocked(agentID, frame, pos, navState, state, nil, walk); shelterIntent != nil {
 				return shelterIntent
 			}
 		}
-		if frame.WorldTick >= state.lastExploreTick && frame.WorldTick-state.lastExploreTick < 20 {
+		if frame.WorldTick >= walk.lastExploreTick && frame.WorldTick-walk.lastExploreTick < 20 {
 			return nil
 		}
-		state.exploreStepIndex++
+		walk.exploreStepIndex++
 		// Rotate ~126 degrees away from blocked heading to contour around steep hills or cliffs
-		state.lastHeadingRad += 2.2
-		state.lastHeadingRad = math.Atan2(math.Sin(state.lastHeadingRad), math.Cos(state.lastHeadingRad))
-		state.frontierAzimuthRad = state.lastHeadingRad
-		state.frontierRadialLeg = 0
+		walk.lastHeadingRad += 2.2
+		walk.lastHeadingRad = math.Atan2(math.Sin(walk.lastHeadingRad), math.Cos(walk.lastHeadingRad))
+		walk.frontierAzimuthRad = walk.lastHeadingRad
+		walk.frontierRadialLeg = 0
 		detourDist := 10.0
-		targetX := pos.X + math.Cos(state.lastHeadingRad)*detourDist
-		targetZ := pos.Z + math.Sin(state.lastHeadingRad)*detourDist
-		state.lastExploreTick = frame.WorldTick
+		targetX := pos.X + math.Cos(walk.lastHeadingRad)*detourDist
+		targetZ := pos.Z + math.Sin(walk.lastHeadingRad)*detourDist
+		walk.lastExploreTick = frame.WorldTick
 
 		return &civquestv1.AgentIntent{
 			AgentId: agentID,
@@ -460,7 +445,7 @@ func EvaluateExploration(agentID string, frame *civquestv1.TelemetryFrame, cfg *
 	}
 
 	// Require at least 2 observed frames so single-frame unit tests are never polluted
-	if state.telemetryFramesSeen < 2 {
+	if state.mem.telemetryFramesSeen < 2 {
 		return nil
 	}
 
@@ -471,12 +456,12 @@ func EvaluateExploration(agentID string, frame *civquestv1.TelemetryFrame, cfg *
 			return nil
 		}
 		if state.lastShelterTimeoutTick > 0 && (frame.WorldTick-state.lastShelterTimeoutTick) < 600 {
-			if bootstrapIntent := evaluateBootstrapGoalsLocked(agentID, frame, pos, navState, state, cfg); bootstrapIntent != nil {
+			if bootstrapIntent := evaluateBootstrapGoalsLocked(agentID, frame, pos, navState, state, cfg, walk); bootstrapIntent != nil {
 				return bootstrapIntent
 			}
 			return nil
 		}
-		return evaluateDuskNightOutpostShelterLocked(agentID, frame, pos, navState, state)
+		return evaluateDuskNightOutpostShelterLocked(agentID, frame, pos, navState, state, nil, walk)
 	}
 
 	routine := state.routineLocked()
@@ -488,46 +473,29 @@ func EvaluateExploration(agentID string, frame *civquestv1.TelemetryFrame, cfg *
 	}
 
 	// 3. Daytime Bootstrap Survival Goals (Gather Timber & Craft Basic Tools)
-	if bootstrapIntent := evaluateBootstrapGoalsLocked(agentID, frame, pos, navState, state, cfg); bootstrapIntent != nil {
+	if bootstrapIntent := evaluateBootstrapGoalsLocked(agentID, frame, pos, navState, state, cfg, walk); bootstrapIntent != nil {
 		return bootstrapIntent
 	}
-	if state.HasActiveTaskLocked() || state.navigatingToPOI {
+	if state.HasActiveTaskLocked() || walk.navigatingToPOI {
 		// Suppress terrain and frontier exploration while a committed TaskSubroutine or POI recall navigation is active
 		return nil
 	}
 
 	// 4. Terrain-Aware Exploration Strategies (Valleys, Ridges, Fords, Rims, Flatlands, Canopy Trailblazing)
-	if state.currentExploreTarget == nil || navState == civquestv1.NavigationState_NAVIGATION_STATE_ARRIVED ||
-		math.Hypot(pos.X-state.currentExploreTarget.X, pos.Z-state.currentExploreTarget.Z) <= 2.0 {
-		if terrainIntent := EvaluateTerrainExploration(agentID, frame, pos, state, cfg); terrainIntent != nil {
+	if walk.currentExploreTarget == nil || navState == civquestv1.NavigationState_NAVIGATION_STATE_ARRIVED ||
+		math.Hypot(pos.X-walk.currentExploreTarget.X, pos.Z-walk.currentExploreTarget.Z) <= 2.0 {
+		if terrainIntent := EvaluateTerrainExploration(agentID, frame, pos, state, cfg, walk); terrainIntent != nil {
 			if nav := terrainIntent.GetNavigate(); nav != nil && nav.Target != nil {
-				state.currentExploreTarget = nav.Target
-				state.lastExploreProgressDist = math.Hypot(pos.X-nav.Target.X, pos.Z-nav.Target.Z)
-				state.lastExploreProgressTick = frame.WorldTick
+				walk.currentExploreTarget = nav.Target
+				walk.lastExploreProgressDist = math.Hypot(pos.X-nav.Target.X, pos.Z-nav.Target.Z)
+				walk.lastExploreProgressTick = frame.WorldTick
 			}
 			return terrainIntent
 		}
 	}
 
 	// 5. Sector-locked radial frontier scouting or patrol
-	return evaluateGeneralExplorationLocked(agentID, frame, pos, state, cfg)
-}
-
-// EvaluateGeneralExploration computes sector-locked radial frontier scouting or settlement perimeter patrol.
-// Thin backward-compatible wrapper dispatching to scouting or patrol depending on agent profession.
-func EvaluateGeneralExploration(
-	agentID string,
-	frame *civquestv1.TelemetryFrame,
-	pos *civquestv1.Vec3,
-	state *AgentState,
-	cfg *xdg.AgentIdentityConfig,
-) *civquestv1.AgentIntent {
-	if frame == nil || pos == nil || state == nil {
-		return nil
-	}
-	state.mu.Lock()
-	defer state.mu.Unlock()
-	return evaluateGeneralExplorationLocked(agentID, frame, pos, state, cfg)
+	return evaluateGeneralExplorationLocked(agentID, frame, pos, state, cfg, walk)
 }
 
 func evaluateGeneralExplorationLocked(
@@ -536,24 +504,28 @@ func evaluateGeneralExplorationLocked(
 	pos *civquestv1.Vec3,
 	state *AgentState,
 	cfg *xdg.AgentIdentityConfig,
+	walk *walkLocal,
 ) *civquestv1.AgentIntent {
+	walk = orFreshWalk(walk)
 	prof := "UNASSIGNED"
 	if cfg != nil {
 		prof = strings.ToUpper(strings.TrimSpace(cfg.Profession))
 	}
 	isExplorer := prof == "EXPLORER" || prof == "TRAILBLAZER" || prof == "SCOUT"
 	if isExplorer {
-		if state.telemetryFramesSeen < 2 {
+		if state.mem.telemetryFramesSeen < 2 {
 			return nil
 		}
-		if state.ExpeditionPhase == ExpeditionIdle &&
+		if !state.IsExpeditionActiveLocked() &&
 			(frame.Status.NavigationState == civquestv1.NavigationState_NAVIGATION_STATE_PATHING ||
-				(state.lastExploreTick > 0 && frame.WorldTick >= state.lastExploreTick && frame.WorldTick-state.lastExploreTick < 40)) {
+				(walk.lastExploreTick > 0 && frame.WorldTick >= walk.lastExploreTick && frame.WorldTick-walk.lastExploreTick < 40)) {
 			return nil
 		}
-		return EvaluateHorizonExplorerLocked(frame, state, cfg, agentID)
+		// The expedition runs as a frame pushed over the running activity (no intent here).
+		walk.wantExpedition = true
+		return nil
 	}
-	return evaluatePatrolLocked(agentID, frame, pos, state, cfg)
+	return evaluatePatrolLocked(agentID, frame, pos, state, cfg, walk)
 }
 
 func fnv1aString(s string) uint32 {

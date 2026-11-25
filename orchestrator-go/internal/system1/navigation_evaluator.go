@@ -2,7 +2,6 @@ package system1
 
 import (
 	"fmt"
-	"math"
 	"strings"
 
 	civquestv1 "github.com/btposey/civquest/orchestrator-go/internal/proto/v1"
@@ -84,9 +83,6 @@ func evaluatePatrolFacts(ctx *EvaluatorContext, graph *FactGraph) {
 				waypointCount = len(outposts)
 			}
 			waypointIndex = ctx.State.GetPatrolWaypointIndex()
-			if waypointIndex == 0 {
-				waypointIndex = ctx.State.GetExploreStepIndex()
-			}
 		} else if len(ctx.SafeNodes) > 0 {
 			waypointCount = len(ctx.SafeNodes)
 		}
@@ -116,22 +112,7 @@ func evaluateScoutingFacts(ctx *EvaluatorContext, graph *FactGraph) {
 
 	scoutingActive := isExplorer || isColonize || isPrimaryDuty
 
-	radialLeg := 0
-	azimuthDeg := 0.0
-	azimuthRad := 0.0
-	if ctx != nil && ctx.State != nil {
-		radialLeg = ctx.State.GetFrontierRadialLeg()
-		rad, set := ctx.State.GetFrontierAzimuth()
-		if set {
-			azimuthRad = rad
-			azimuthDeg = rad * (180.0 / math.Pi)
-		}
-	}
-
 	graph.SetBool("scouting.active", "navigation", scoutingActive, fmt.Sprintf("Frontier scouting active: %t", scoutingActive))
-	graph.SetInt("scouting.radial_leg", "navigation", radialLeg, fmt.Sprintf("Frontier radial leg: %d", radialLeg))
-	graph.SetFloat("scouting.azimuth_deg", "navigation", azimuthDeg, fmt.Sprintf("Frontier azimuth degrees: %.2f", azimuthDeg))
-	graph.SetFloat("scouting.azimuth_rad", "navigation", azimuthRad, fmt.Sprintf("Frontier azimuth radians: %.2f", azimuthRad))
 }
 
 func evaluatePavingFacts(ctx *EvaluatorContext, graph *FactGraph) {

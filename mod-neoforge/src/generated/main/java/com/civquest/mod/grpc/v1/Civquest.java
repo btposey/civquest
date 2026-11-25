@@ -146,6 +146,11 @@ public final class Civquest {
     com.google.protobuf.GeneratedMessage.FieldAccessorTable
       internal_static_civquest_v1_IntentReceipt_fieldAccessorTable;
   static final com.google.protobuf.Descriptors.Descriptor
+    internal_static_civquest_v1_MotorFacts_descriptor;
+  static final 
+    com.google.protobuf.GeneratedMessage.FieldAccessorTable
+      internal_static_civquest_v1_MotorFacts_fieldAccessorTable;
+  static final com.google.protobuf.Descriptors.Descriptor
     internal_static_civquest_v1_HorizonSector_descriptor;
   static final 
     com.google.protobuf.GeneratedMessage.FieldAccessorTable
@@ -331,36 +336,45 @@ public final class Civquest {
       "\t\022\030\n\020killer_entity_id\030\005 \001(\005\022\023\n\013killer_uu" +
       "id\030\006 \001(\t\022\033\n\023killer_display_name\030\007 \001(\t\0221\n" +
       "\014dropped_loot\030\010 \003(\0132\033.civquest.v1.ItemSt" +
-      "ackProto\"\353\001\n\014ReflexNotice\0229\n\013reflex_type" +
+      "ackProto\"\334\002\n\014ReflexNotice\0229\n\013reflex_type" +
       "\030\001 \001(\0162$.civquest.v1.ReflexNotice.Reflex" +
-      "Type\022\014\n\004tick\030\002 \001(\003\022\017\n\007details\030\003 \001(\t\"\200\001\n\n" +
-      "ReflexType\022\033\n\027REFLEX_TYPE_UNSPECIFIED\020\000\022" +
-      "\036\n\032REFLEX_TYPE_SHIELD_DEFENSE\020\001\022\030\n\024REFLE" +
-      "X_TYPE_AUTO_EAT\020\002\022\033\n\027REFLEX_TYPE_ITEM_VA" +
-      "CUUM\020\003\"\214\003\n\rIntentReceipt\022\020\n\010batch_id\030\001 \001" +
-      "(\003\022\024\n\014active_index\030\002 \001(\005\0228\n\006status\030\003 \001(\016" +
-      "2(.civquest.v1.IntentReceipt.ReceiptStat" +
-      "us\022\026\n\016failure_reason\030\004 \001(\t\022\031\n\021motor_stac" +
-      "k_depth\030\005 \001(\005\"\345\001\n\rReceiptStatus\022\036\n\032RECEI" +
-      "PT_STATUS_UNSPECIFIED\020\000\022\031\n\025RECEIPT_STATU" +
-      "S_QUEUED\020\001\022\034\n\030RECEIPT_STATUS_EXECUTING\020\002" +
-      "\022\034\n\030RECEIPT_STATUS_COMPLETED\020\003\022&\n\"RECEIP" +
-      "T_STATUS_PREEMPTED_BY_REFLEX\020\004\022\031\n\025RECEIP" +
-      "T_STATUS_FAILED\020\005\022\032\n\026RECEIPT_STATUS_ABOR" +
-      "TED\020\006\"\352\001\n\rHorizonSector\022\024\n\014sector_index\030" +
-      "\001 \001(\005\022\023\n\013bearing_deg\030\002 \001(\002\022\024\n\014hit_distan" +
-      "ce\030\003 \001(\002\022\024\n\014feature_type\030\004 \001(\t\022\024\n\014hit_bl" +
-      "ock_id\030\005 \001(\t\022\r\n\005hit_x\030\006 \001(\001\022\r\n\005hit_y\030\007 \001" +
-      "(\001\022\r\n\005hit_z\030\010 \001(\001\022\027\n\017elevation_delta\030\t \001" +
-      "(\002\022\020\n\010occluded\030\n \001(\010\022\024\n\014open_horizon\030\013 \001" +
-      "(\010\"\243\001\n\023HorizonSurveyReport\022\020\n\010origin_x\030\001" +
-      " \001(\001\022\020\n\010origin_y\030\002 \001(\001\022\020\n\010origin_z\030\003 \001(\001" +
-      "\022\026\n\016completed_tick\030\004 \001(\003\022\021\n\tmax_range\030\005 " +
-      "\001(\002\022+\n\007sectors\030\006 \003(\0132\032.civquest.v1.Horiz" +
-      "onSector\"\214\001\n\013IntentBatch\022\020\n\010agent_id\030\001 \001" +
-      "(\t\022\020\n\010batch_id\030\002 \001(\003\022\027\n\017flush_periphery\030" +
-      "\003 \001(\010\022)\n\007intents\030\004 \003(\0132\030.civquest.v1.Age" +
-      "ntIntent\022\025\n\rtimeout_ticks\030\005 \001(\003\"\202\006\n\013Agen" +
+      "Type\022\014\n\004tick\030\002 \001(\003\022\017\n\007details\030\003 \001(\t\022\032\n\022p" +
+      "reempted_frame_id\030\004 \001(\004\022\016\n\006popped\030\005 \001(\010\"" +
+      "\305\001\n\nReflexType\022\033\n\027REFLEX_TYPE_UNSPECIFIE" +
+      "D\020\000\022\036\n\032REFLEX_TYPE_SHIELD_DEFENSE\020\001\022\030\n\024R" +
+      "EFLEX_TYPE_AUTO_EAT\020\002\022\033\n\027REFLEX_TYPE_ITE" +
+      "M_VACUUM\020\003\022\025\n\021REFLEX_TYPE_DODGE\020\004\022\024\n\020REF" +
+      "LEX_TYPE_FLEE\020\005\022\026\n\022REFLEX_TYPE_COMBAT\020\006\"" +
+      "\342\003\n\rIntentReceipt\022\020\n\010batch_id\030\001 \001(\003\022\024\n\014a" +
+      "ctive_index\030\002 \001(\005\0228\n\006status\030\003 \001(\0162(.civq" +
+      "uest.v1.IntentReceipt.ReceiptStatus\022\026\n\016f" +
+      "ailure_reason\030\004 \001(\t\022\031\n\021motor_stack_depth" +
+      "\030\005 \001(\005\022\020\n\010frame_id\030\006 \001(\004\022&\n\005facts\030\007 \001(\0132" +
+      "\027.civquest.v1.MotorFacts\"\201\002\n\rReceiptStat" +
+      "us\022\036\n\032RECEIPT_STATUS_UNSPECIFIED\020\000\022\031\n\025RE" +
+      "CEIPT_STATUS_QUEUED\020\001\022\034\n\030RECEIPT_STATUS_" +
+      "EXECUTING\020\002\022\034\n\030RECEIPT_STATUS_COMPLETED\020" +
+      "\003\022&\n\"RECEIPT_STATUS_PREEMPTED_BY_REFLEX\020" +
+      "\004\022\031\n\025RECEIPT_STATUS_FAILED\020\005\022\032\n\026RECEIPT_" +
+      "STATUS_ABORTED\020\006\022\032\n\026RECEIPT_STATUS_TIMEO" +
+      "UT\020\007\"\214\001\n\nMotorFacts\022\r\n\005stuck\030\001 \001(\010\022\020\n\010en" +
+      "closed\030\002 \001(\010\022\033\n\023blocked_bearing_deg\030\003 \001(" +
+      "\002\022\023\n\013stuck_ticks\030\004 \001(\005\022\020\n\010progress\030\005 \001(\001" +
+      "\022\031\n\021blocked_by_entity\030\006 \001(\010\"\352\001\n\rHorizonS" +
+      "ector\022\024\n\014sector_index\030\001 \001(\005\022\023\n\013bearing_d" +
+      "eg\030\002 \001(\002\022\024\n\014hit_distance\030\003 \001(\002\022\024\n\014featur" +
+      "e_type\030\004 \001(\t\022\024\n\014hit_block_id\030\005 \001(\t\022\r\n\005hi" +
+      "t_x\030\006 \001(\001\022\r\n\005hit_y\030\007 \001(\001\022\r\n\005hit_z\030\010 \001(\001\022" +
+      "\027\n\017elevation_delta\030\t \001(\002\022\020\n\010occluded\030\n \001" +
+      "(\010\022\024\n\014open_horizon\030\013 \001(\010\"\243\001\n\023HorizonSurv" +
+      "eyReport\022\020\n\010origin_x\030\001 \001(\001\022\020\n\010origin_y\030\002" +
+      " \001(\001\022\020\n\010origin_z\030\003 \001(\001\022\026\n\016completed_tick" +
+      "\030\004 \001(\003\022\021\n\tmax_range\030\005 \001(\002\022+\n\007sectors\030\006 \003" +
+      "(\0132\032.civquest.v1.HorizonSector\"\236\001\n\013Inten" +
+      "tBatch\022\020\n\010agent_id\030\001 \001(\t\022\020\n\010batch_id\030\002 \001" +
+      "(\003\022\027\n\017flush_periphery\030\003 \001(\010\022)\n\007intents\030\004" +
+      " \003(\0132\030.civquest.v1.AgentIntent\022\025\n\rtimeou" +
+      "t_ticks\030\005 \001(\003\022\020\n\010frame_id\030\006 \001(\004\"\202\006\n\013Agen" +
       "tIntent\022\020\n\010agent_id\030\001 \001(\t\022\023\n\013sequence_id" +
       "\030\002 \001(\003\022/\n\010navigate\030\003 \001(\0132\033.civquest.v1.N" +
       "avigateIntentH\000\022+\n\006attack\030\004 \001(\0132\031.civque" +
@@ -607,111 +621,117 @@ public final class Civquest {
     internal_static_civquest_v1_ReflexNotice_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_civquest_v1_ReflexNotice_descriptor,
-        new java.lang.String[] { "ReflexType", "Tick", "Details", });
+        new java.lang.String[] { "ReflexType", "Tick", "Details", "PreemptedFrameId", "Popped", });
     internal_static_civquest_v1_IntentReceipt_descriptor =
       getDescriptor().getMessageTypes().get(23);
     internal_static_civquest_v1_IntentReceipt_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_civquest_v1_IntentReceipt_descriptor,
-        new java.lang.String[] { "BatchId", "ActiveIndex", "Status", "FailureReason", "MotorStackDepth", });
-    internal_static_civquest_v1_HorizonSector_descriptor =
+        new java.lang.String[] { "BatchId", "ActiveIndex", "Status", "FailureReason", "MotorStackDepth", "FrameId", "Facts", });
+    internal_static_civquest_v1_MotorFacts_descriptor =
       getDescriptor().getMessageTypes().get(24);
+    internal_static_civquest_v1_MotorFacts_fieldAccessorTable = new
+      com.google.protobuf.GeneratedMessage.FieldAccessorTable(
+        internal_static_civquest_v1_MotorFacts_descriptor,
+        new java.lang.String[] { "Stuck", "Enclosed", "BlockedBearingDeg", "StuckTicks", "Progress", "BlockedByEntity", });
+    internal_static_civquest_v1_HorizonSector_descriptor =
+      getDescriptor().getMessageTypes().get(25);
     internal_static_civquest_v1_HorizonSector_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_civquest_v1_HorizonSector_descriptor,
         new java.lang.String[] { "SectorIndex", "BearingDeg", "HitDistance", "FeatureType", "HitBlockId", "HitX", "HitY", "HitZ", "ElevationDelta", "Occluded", "OpenHorizon", });
     internal_static_civquest_v1_HorizonSurveyReport_descriptor =
-      getDescriptor().getMessageTypes().get(25);
+      getDescriptor().getMessageTypes().get(26);
     internal_static_civquest_v1_HorizonSurveyReport_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_civquest_v1_HorizonSurveyReport_descriptor,
         new java.lang.String[] { "OriginX", "OriginY", "OriginZ", "CompletedTick", "MaxRange", "Sectors", });
     internal_static_civquest_v1_IntentBatch_descriptor =
-      getDescriptor().getMessageTypes().get(26);
+      getDescriptor().getMessageTypes().get(27);
     internal_static_civquest_v1_IntentBatch_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_civquest_v1_IntentBatch_descriptor,
-        new java.lang.String[] { "AgentId", "BatchId", "FlushPeriphery", "Intents", "TimeoutTicks", });
+        new java.lang.String[] { "AgentId", "BatchId", "FlushPeriphery", "Intents", "TimeoutTicks", "FrameId", });
     internal_static_civquest_v1_AgentIntent_descriptor =
-      getDescriptor().getMessageTypes().get(27);
+      getDescriptor().getMessageTypes().get(28);
     internal_static_civquest_v1_AgentIntent_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_civquest_v1_AgentIntent_descriptor,
         new java.lang.String[] { "AgentId", "SequenceId", "Navigate", "Attack", "InteractBlock", "UseItem", "CraftItem", "Chat", "TradeResponse", "Caravan", "BuildBlock", "CreateBook", "PlaceSignpost", "TransferContainer", "SurveyHorizon", "Action", });
     internal_static_civquest_v1_NavigateIntent_descriptor =
-      getDescriptor().getMessageTypes().get(28);
+      getDescriptor().getMessageTypes().get(29);
     internal_static_civquest_v1_NavigateIntent_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_civquest_v1_NavigateIntent_descriptor,
         new java.lang.String[] { "Target", "SpeedMultiplier", "Sprint", "AllowBreakBlocks", "AllowPlaceScaffolding", "ArrivalTolerance", });
     internal_static_civquest_v1_AttackIntent_descriptor =
-      getDescriptor().getMessageTypes().get(29);
+      getDescriptor().getMessageTypes().get(30);
     internal_static_civquest_v1_AttackIntent_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_civquest_v1_AttackIntent_descriptor,
         new java.lang.String[] { "TargetEntityId", "RaiseShield", "KeepDistanceKite", "FleeImmediately", });
     internal_static_civquest_v1_InteractBlockIntent_descriptor =
-      getDescriptor().getMessageTypes().get(30);
+      getDescriptor().getMessageTypes().get(31);
     internal_static_civquest_v1_InteractBlockIntent_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_civquest_v1_InteractBlockIntent_descriptor,
         new java.lang.String[] { "Pos", "InteractionType", "BlockOrItemId", });
     internal_static_civquest_v1_UseItemIntent_descriptor =
-      getDescriptor().getMessageTypes().get(31);
+      getDescriptor().getMessageTypes().get(32);
     internal_static_civquest_v1_UseItemIntent_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_civquest_v1_UseItemIntent_descriptor,
         new java.lang.String[] { "InventorySlot", "IsEatingOrDrinking", "EquipArmorOrOffhand", });
     internal_static_civquest_v1_CraftItemIntent_descriptor =
-      getDescriptor().getMessageTypes().get(32);
+      getDescriptor().getMessageTypes().get(33);
     internal_static_civquest_v1_CraftItemIntent_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_civquest_v1_CraftItemIntent_descriptor,
         new java.lang.String[] { "RecipeId", "WorkstationPos", "BatchCount", });
     internal_static_civquest_v1_SendChatIntent_descriptor =
-      getDescriptor().getMessageTypes().get(33);
+      getDescriptor().getMessageTypes().get(34);
     internal_static_civquest_v1_SendChatIntent_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_civquest_v1_SendChatIntent_descriptor,
         new java.lang.String[] { "Message", "TargetChannel", });
     internal_static_civquest_v1_RespondTradeIntent_descriptor =
-      getDescriptor().getMessageTypes().get(34);
+      getDescriptor().getMessageTypes().get(35);
     internal_static_civquest_v1_RespondTradeIntent_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_civquest_v1_RespondTradeIntent_descriptor,
         new java.lang.String[] { "PlayerEntityId", "AcceptDeal", "AgentCounterOffer", "DemandedFromPlayer", "SpokenResponse", });
     internal_static_civquest_v1_CaravanIntent_descriptor =
-      getDescriptor().getMessageTypes().get(35);
+      getDescriptor().getMessageTypes().get(36);
     internal_static_civquest_v1_CaravanIntent_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_civquest_v1_CaravanIntent_descriptor,
         new java.lang.String[] { "Action", "BeastEntityId", "FencePos", "CargoItems", });
     internal_static_civquest_v1_BuildBlockIntent_descriptor =
-      getDescriptor().getMessageTypes().get(36);
+      getDescriptor().getMessageTypes().get(37);
     internal_static_civquest_v1_BuildBlockIntent_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_civquest_v1_BuildBlockIntent_descriptor,
         new java.lang.String[] { "TargetVoxel", "BlockStateString", "IsTemporaryScaffold", });
     internal_static_civquest_v1_CreateWrittenBookIntent_descriptor =
-      getDescriptor().getMessageTypes().get(37);
+      getDescriptor().getMessageTypes().get(38);
     internal_static_civquest_v1_CreateWrittenBookIntent_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_civquest_v1_CreateWrittenBookIntent_descriptor,
         new java.lang.String[] { "Title", "Author", "Pages", "TargetLecternOrShelf", "BookshelfSlot", });
     internal_static_civquest_v1_PlaceSignpostIntent_descriptor =
-      getDescriptor().getMessageTypes().get(38);
+      getDescriptor().getMessageTypes().get(39);
     internal_static_civquest_v1_PlaceSignpostIntent_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_civquest_v1_PlaceSignpostIntent_descriptor,
         new java.lang.String[] { "Pos", "IsHangingSign", "Line1", "Line2", "Line3", "Line4", });
     internal_static_civquest_v1_TransferContainerIntent_descriptor =
-      getDescriptor().getMessageTypes().get(39);
+      getDescriptor().getMessageTypes().get(40);
     internal_static_civquest_v1_TransferContainerIntent_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_civquest_v1_TransferContainerIntent_descriptor,
         new java.lang.String[] { "ContainerPos", "DepositIntoContainer", "Items", });
     internal_static_civquest_v1_SurveyHorizonIntent_descriptor =
-      getDescriptor().getMessageTypes().get(40);
+      getDescriptor().getMessageTypes().get(41);
     internal_static_civquest_v1_SurveyHorizonIntent_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_civquest_v1_SurveyHorizonIntent_descriptor,

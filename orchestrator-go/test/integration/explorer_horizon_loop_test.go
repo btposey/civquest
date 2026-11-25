@@ -478,6 +478,7 @@ type simAgent struct {
 	pendingReport      *civquestv1.HorizonSurveyReport
 	lastReceipt        *civquestv1.IntentReceipt
 	nextBatchID        int64
+	navFrame           uint64 // top activity frame when the in-flight Navigate was drained (receipt frame_id)
 
 	// Telemetry & diagnostic counters for RED assertions
 	surveyEmissions         []surveyEmitRecord
@@ -501,7 +502,7 @@ type simAgent struct {
 	chatEmissions     []chatEmitRecord
 	harvestedLogs     int
 	craftedItems      []string
-	observedPhases    []system1.ExpeditionPhase
+	observedPhases    []string
 
 	lastDamageTaken   *civquestv1.DamageEvent
 	attackEmissions   []attackEmitRecord
@@ -784,16 +785,11 @@ func (a *simAgent) stepPhysics(worldTick, dt int64) {
 		if a.navStallTarget {
 			a.navStallTicks += dt
 			if a.navStallTicks >= 16 {
+				a.lastReceipt = a.stuckReceipt("Navigation stuck", false)
 				a.navState = civquestv1.NavigationState_NAVIGATION_STATE_STUCK
 				a.navTarget = nil
 				a.navStallTicks = 0
 				a.navStallTarget = false
-				a.nextBatchID++
-				a.lastReceipt = &civquestv1.IntentReceipt{
-					BatchId:       a.nextBatchID,
-					Status:        civquestv1.IntentReceipt_RECEIPT_STATUS_FAILED,
-					FailureReason: "navigation_stuck_unreachable_target",
-				}
 				a.trapStuckCount++
 				if len(a.navHistory) > 0 {
 					a.navHistory[len(a.navHistory)-1].Stuck = true
@@ -865,7 +861,28 @@ func (a *simAgent) stepPhysics(worldTick, dt int64) {
 	}
 }
 
+// stuckReceipt mirrors the NeoForge mod after cq-2sr.14: a stuck or enclosed Move fails
+// immediately with a FAILED receipt ("Navigation stuck") that carries MotorFacts and the
+// frame_id of the frame that issued it (Go's Recover decides what to do about it).
+func (a *simAgent) stuckReceipt(reason string, enclosed bool) *civquestv1.IntentReceipt {
+	a.nextBatchID++
+	facts := &civquestv1.MotorFacts{Stuck: true, Enclosed: enclosed, StuckTicks: 16}
+	if a.navTarget != nil {
+		dx, dz := a.navTarget.X-a.pos.X, a.navTarget.Z-a.pos.Z
+		facts.BlockedBearingDeg = float32(math.Mod(math.Atan2(-dx, dz)*180.0/math.Pi+360.0, 360.0))
+		facts.Progress = math.Hypot(dx, dz)
+	}
+	return &civquestv1.IntentReceipt{
+		BatchId:       a.nextBatchID,
+		FrameId:       a.navFrame,
+		Status:        civquestv1.IntentReceipt_RECEIPT_STATUS_FAILED,
+		FailureReason: reason,
+		Facts:         facts,
+	}
+}
+
 func (a *simAgent) handleRavineRimHit(worldTick int64) {
+	a.lastReceipt = a.stuckReceipt("Navigation stuck", false)
 	a.navState = civquestv1.NavigationState_NAVIGATION_STATE_STUCK
 	a.navTarget = nil
 	a.navStallTicks = 0
@@ -874,18 +891,13 @@ func (a *simAgent) handleRavineRimHit(worldTick int64) {
 	if a.ravineFirstStuckTick == 0 {
 		a.ravineFirstStuckTick = worldTick
 	}
-	a.nextBatchID++
-	a.lastReceipt = &civquestv1.IntentReceipt{
-		BatchId:       a.nextBatchID,
-		Status:        civquestv1.IntentReceipt_RECEIPT_STATUS_FAILED,
-		FailureReason: "navigation_stuck_ravine_rim",
-	}
 	if len(a.navHistory) > 0 {
 		a.navHistory[len(a.navHistory)-1].Stuck = true
 	}
 }
 
 func (a *simAgent) handleCustomBarrierHit(worldTick int64, reason string) {
+	a.lastReceipt = a.stuckReceipt("Navigation stuck", false)
 	a.navState = civquestv1.NavigationState_NAVIGATION_STATE_STUCK
 	a.navTarget = nil
 	a.navStallTicks = 0
@@ -893,15 +905,6 @@ func (a *simAgent) handleCustomBarrierHit(worldTick int64, reason string) {
 	a.barrierStuckCount++
 	if a.barrierRimPos == nil {
 		a.barrierRimPos = &civquestv1.Vec3{X: a.pos.X, Y: a.pos.Y, Z: a.pos.Z}
-	}
-	if reason == "" {
-		reason = "navigation_stuck_terrain_barrier"
-	}
-	a.nextBatchID++
-	a.lastReceipt = &civquestv1.IntentReceipt{
-		BatchId:       a.nextBatchID,
-		Status:        civquestv1.IntentReceipt_RECEIPT_STATUS_FAILED,
-		FailureReason: reason,
 	}
 	if len(a.navHistory) > 0 {
 		a.navHistory[len(a.navHistory)-1].Stuck = true
@@ -991,6 +994,34 @@ func (a *simAgent) applyIntents(intents []*civquestv1.AgentIntent, worldTick int
 			a.navState = civquestv1.NavigationState_NAVIGATION_STATE_PATHING
 			a.navStallTicks = 0
 			a.navStallTarget = isTrap
+			if a.runtime != nil {
+				if fr := a.runtime.AgentFSM().ActivityFrames(); len(fr) > 0 {
+					a.navFrame = fr[len(fr)-1].ID
+				}
+			}
+			// Enclosed in a pocket: the mod fails the Move immediately (it no longer digs out).
+			enclosed := false
+			if a.world.isEnclosed != nil {
+				a.world.mu.Lock()
+				enclosed = a.world.isEnclosed(a.pos, a.world.blocks)
+				a.world.mu.Unlock()
+			}
+			if enclosed && a.world.isBlocked != nil {
+				// The mod only fails the Move when its first step is walled in; once the
+				// way out is dug the Move proceeds even though the pocket is not yet left.
+				dx, dz := tgt.X-a.pos.X, tgt.Z-a.pos.Z
+				if d := math.Hypot(dx, dz); d > 0 {
+					step := math.Min(1.0, d)
+					if blocked, _ := a.world.isBlocked(a.pos.X+dx/d*step, a.pos.Y, a.pos.Z+dz/d*step); !blocked {
+						enclosed = false
+					}
+				}
+			}
+			if enclosed {
+				a.lastReceipt = a.stuckReceipt("Navigation stuck", true)
+				a.navState = civquestv1.NavigationState_NAVIGATION_STATE_STUCK
+				a.navTarget = nil
+			}
 
 		case *civquestv1.AgentIntent_InteractBlock:
 			ib := act.InteractBlock
@@ -1331,7 +1362,7 @@ func TestIntegration_SixNightExplorers_SurveyDisperseBlacklistAndRendezvous(t *t
 			sa.stepPhysics(worldTick, tickDelta)
 			frame := sa.buildFrame(worldTick, tod)
 			sa.runtime.HandleTelemetryFrame(frame)
-			sa.observedPhases = append(sa.observedPhases, sa.runtime.System1State().GetExpeditionPhase())
+			sa.observedPhases = append(sa.observedPhases, sa.runtime.AgentFSM().ActiveActivityKind())
 			intents := sa.runtime.DrainIntents()
 			sa.applyIntents(intents, worldTick)
 		}
@@ -1372,7 +1403,7 @@ func TestIntegration_SixNightExplorers_SurveyDisperseBlacklistAndRendezvous(t *t
 			sa.runtime.System1State().GetClanSize(),
 			sa.runtime.FSMState(),
 			sa.runtime.Routine(),
-			sa.runtime.System1State().GetExpeditionPhase(),
+			sa.runtime.AgentFSM().ActiveActivityKind(),
 			len(sa.surveyEmissions),
 			sa.surveysCompleted,
 			sa.surveyWhileInFlight,
@@ -1535,7 +1566,7 @@ func TestIntegration_ExplorerRavineRim_PauseResurveyAndFlank(t *testing.T) {
 
 	t.Logf("[RED-DIAG] ravine scout: stuckCount=%d hazards=%d rimResurveyed=%v surveys=%d postRimBearings=%v escaped=%v finalPos=(%.1f,%.1f) phase=%s",
 		sa.ravineStuckCount, len(hazards), sa.ravineRimResurveyed, len(sa.surveyEmissions),
-		sa.ravinePostRimBearings, sa.ravineEscaped, sa.pos.X, sa.pos.Z, sa.runtime.System1State().GetExpeditionPhase())
+		sa.ravinePostRimBearings, sa.ravineEscaped, sa.pos.X, sa.pos.Z, sa.runtime.AgentFSM().ActiveActivityKind())
 
 	if sa.ravineStuckCount == 0 {
 		t.Fatalf("Test setup error: scout never hit the ravine rim (finalPos=(%.1f,%.1f))", sa.pos.X, sa.pos.Z)
@@ -1575,16 +1606,17 @@ func TestIntegration_SoloExplorer_NeverReturnsToSpawnAndClaimsHomestead(t *testi
 		sa.stepPhysics(worldTick, tickDelta)
 		frame := sa.buildFrame(worldTick, tod)
 		sa.runtime.HandleTelemetryFrame(frame)
-		sa.observedPhases = append(sa.observedPhases, sa.runtime.System1State().GetExpeditionPhase())
+		sa.observedPhases = append(sa.observedPhases, sa.runtime.AgentFSM().ActiveActivityKind())
 		intents := sa.runtime.DrainIntents()
 		sa.applyIntents(intents, worldTick)
 	}
 
 	st := sa.runtime.System1State()
+	_, hops, _, _ := sa.runtime.AgentFSM().ExpeditionStatus()
 	distHomestead := math.Hypot(st.HomesteadPos[0]-(-30.0), st.HomesteadPos[2]-0.0)
 	t.Logf("[RED-DIAG] solo nomad: clanSize=%d surveys=%d/%d hops=%d phase=%s homesteadClaimed=%v homesteadPos=(%.1f,%.1f) distFromSpawn=%.1fm maxDist=%.1fm returnedNearSpawn=%v finalPos=(%.1f,%.1f)",
-		st.GetClanSize(), len(sa.surveyEmissions), sa.surveysCompleted, st.ExpeditionHops,
-		st.GetExpeditionPhase(), st.HomesteadClaimed, st.HomesteadPos[0], st.HomesteadPos[2],
+		st.GetClanSize(), len(sa.surveyEmissions), sa.surveysCompleted, hops,
+		sa.runtime.AgentFSM().ActiveActivityKind(), st.HomesteadClaimed, st.HomesteadPos[0], st.HomesteadPos[2],
 		distHomestead, sa.maxDistFromSpawn, sa.returnedNearSpawn, sa.pos.X, sa.pos.Z)
 
 	if sa.surveysCompleted < 2 {

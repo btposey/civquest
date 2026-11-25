@@ -37,4 +37,24 @@ public interface ReflexNoticeOrBuilder extends
    */
   com.google.protobuf.ByteString
       getDetailsBytes();
+
+  /**
+   * <pre>
+   * ADR-036 s5: Go Frame.ID preempted by the reflex (0 = unknown)
+   * </pre>
+   *
+   * <code>uint64 preempted_frame_id = 4;</code>
+   * @return The preemptedFrameId.
+   */
+  long getPreemptedFrameId();
+
+  /**
+   * <pre>
+   * false = pushed, true = popped (Go may resume)
+   * </pre>
+   *
+   * <code>bool popped = 5;</code>
+   * @return The popped.
+   */
+  boolean getPopped();
 }

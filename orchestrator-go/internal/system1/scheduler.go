@@ -181,7 +181,7 @@ func ComputeCircadianRoutine(
 	timeOfDay int64,
 	weather civquestv1.Weather,
 	agentCfg *xdg.AgentIdentityConfig,
-	state *AgentState,
+	state StateView,
 ) Routine {
 	tod := ((timeOfDay % 24000) + 24000) % 24000
 
@@ -268,20 +268,19 @@ func ComputeCircadianRoutine(
 }
 
 // isStateShelterOrBedSatisfied returns true if state records a completed cabin shelter or assigned bed.
-func isStateShelterOrBedSatisfied(state *AgentState) bool {
+func isStateShelterOrBedSatisfied(state StateView) bool {
 	if state == nil {
 		return false
 	}
 	if state.GetAssignedBed() != nil {
 		return true
 	}
-	return state.GetShelterBuildIndex() >= blueprints.CabinTotalBlocks ||
-		state.GetShelterBlocksPlaced() >= blueprints.CabinTotalBlocks
+	return state.GetCabinBuilt() >= blueprints.CabinTotalBlocks
 }
 
 // gateBootstrapCircadianRoutine suppresses passive evening social and sleep idling while in BOOTSTRAP
 // until basic shelter or an assigned bed has been secured (ADR-032 §4).
-func gateBootstrapCircadianRoutine(stage Stage, routine Routine, state *AgentState, shelterOrBedSatisfied bool) Routine {
+func gateBootstrapCircadianRoutine(stage Stage, routine Routine, state StateView, shelterOrBedSatisfied bool) Routine {
 	if stage != StageBootstrap || shelterOrBedSatisfied {
 		return routine
 	}

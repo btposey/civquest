@@ -439,7 +439,7 @@ func TestEvaluateSleep_RecallsBedFromSpatialIndex(t *testing.T) {
 	}
 }
 
-func TestEvaluateSleep_BlacklistsUnreachableAssignedBedAfterTwoStucks(t *testing.T) {
+func TestEvaluateSleep_TelemetryStuckDoesNotBlacklistAssignedBed(t *testing.T) {
 	state := NewAgentState()
 	state.SpatialIndex().UpsertPOI(db.AgentPOI{
 		POIID:          FormatPOIID(POICategoryHabitation, -46, 79, 17),
@@ -455,41 +455,22 @@ func TestEvaluateSleep_BlacklistsUnreachableAssignedBedAfterTwoStucks(t *testing
 		Reliability:    1.0,
 		IsActive:       true,
 	})
-
-	// First STUCK failure -> still retries once (failures = 1)
-	f1 := &civquestv1.TelemetryFrame{
-		WorldTick: 20,
-		TimeOfDay: 19000,
-		Status: &civquestv1.AgentStatus{
-			Position:        &civquestv1.Vec3{X: -30, Y: 86, Z: 0},
-			NavigationState: civquestv1.NavigationState_NAVIGATION_STATE_STUCK,
-		},
+	// Blacklisting is the Recover frame's job (ADR-037); ambient telemetry STUCK, however often
+	// repeated, neither blacklists the bed nor clears the assignment.
+	for i, tick := range []int64{20, 36, 52} {
+		f := &civquestv1.TelemetryFrame{
+			WorldTick: tick,
+			TimeOfDay: 19000 + tick,
+			Status: &civquestv1.AgentStatus{
+				Position:        &civquestv1.Vec3{X: -30, Y: 86, Z: 0},
+				NavigationState: civquestv1.NavigationState_NAVIGATION_STATE_STUCK,
+			},
+		}
+		if intent := EvaluateSleep("agent1", f, state); intent == nil || intent.GetNavigate() == nil {
+			t.Fatalf("stuck telemetry %d must keep navigating to the bed, got %+v", i, intent)
+		}
 	}
-	intent1 := EvaluateSleep("agent1", f1, state)
-	if intent1 == nil || intent1.GetNavigate() == nil {
-		t.Fatalf("expected first stuck attempt to still navigate to bed, got %+v", intent1)
-	}
-
-	// Second STUCK failure -> blacklists for 2400 ticks and clears AssignedBed
-	f2 := &civquestv1.TelemetryFrame{
-		WorldTick: 36,
-		TimeOfDay: 19016,
-		Status: &civquestv1.AgentStatus{
-			Position:        &civquestv1.Vec3{X: -30, Y: 86, Z: 0},
-			NavigationState: civquestv1.NavigationState_NAVIGATION_STATE_STUCK,
-		},
-	}
-	intent2 := EvaluateSleep("agent1", f2, state)
-	if intent2 != nil {
-		t.Fatalf("expected nil after 2 stuck failures blacklisted bed, got %+v", intent2)
-	}
-	if state.GetAssignedBed() != nil {
-		t.Fatalf("expected AssignedBed cleared after blacklisting, got %+v", state.GetAssignedBed())
-	}
-	if !state.IsTargetUnreachable(-45.5, 79.0, 16.5, 100) {
-		t.Fatal("expected bed access coordinate to remain blacklisted at tick 100")
-	}
-	if state.IsTargetUnreachable(-45.5, 79.0, 16.5, 36+DefaultUnreachableTargetTTL) {
-		t.Fatal("expected bed blacklist TTL to expire after 2400 ticks")
+	if state.IsTargetUnreachable(-45.5, 79.0, 16.5, 60) {
+		t.Fatal("telemetry stuck must not blacklist the bed access target")
 	}
 }

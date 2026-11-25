@@ -423,8 +423,8 @@ func TestRuntime_CompanionFollowNavigationAndCampingOverride(t *testing.T) {
 	}
 	runtime.HandleTelemetryFrame(frameNightCamp)
 
-	if runtime.CurrentRoutine() != system1.RoutineCamp {
-		t.Errorf("expected RoutineCamp during night, got %s", runtime.CurrentRoutine())
+	if runtime.Routine() != system1.RoutineCamp {
+		t.Errorf("expected RoutineCamp during night, got %s", runtime.Routine())
 	}
 
 	// Ensure NO bed navigate intent was emitted (village bed is at 100, 64, 100)

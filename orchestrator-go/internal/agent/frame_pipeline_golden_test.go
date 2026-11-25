@@ -203,7 +203,7 @@ func TestHandleTelemetryFrame_PipelineGoldenSequence(t *testing.T) {
 			},
 		},
 		{
-			Name: "03_navigation_stuck_decays_poi_waits_cooldown",
+			Name: "03_navigation_stuck_telemetry_waits_cooldown",
 			Frame: &civquestv1.TelemetryFrame{
 				WorldTick:         140,
 				TimeOfDay:         1400,
@@ -227,9 +227,7 @@ func TestHandleTelemetryFrame_PipelineGoldenSequence(t *testing.T) {
 				if !hasTask || kind != "harvest_tree" {
 					t.Fatalf("expected active harvest_tree task during stuck cooldown, got hasTask=%v kind=%q", hasTask, kind)
 				}
-				if got := rt.NavTargetPOIID(); got != "" {
-					t.Fatalf("expected NavTargetPOIID cleared on NAVIGATION_STATE_STUCK, got %q", got)
-				}
+				// Telemetry stuck is no longer a recovery input (ADR-037): the POI target stays.
 			},
 		},
 		{
@@ -500,8 +498,8 @@ func TestHandleTelemetryFrame_PipelineGoldenSequence(t *testing.T) {
 			}
 			for j := range gotIntents {
 				if gotIntents[j] != step.WantIntents[j] {
-					t.Fatalf("frame %d (%s): intent[%d] = %q, want %q (all=%v)",
-						i+1, step.Name, j, gotIntents[j], step.WantIntents[j], gotIntents)
+					t.Fatalf("frame %d (%s): intent[%d] = %q, want %q (all=%v) stack=%+v",
+						i+1, step.Name, j, gotIntents[j], step.WantIntents[j], gotIntents, rt.AgentFSM().ActivityFrames())
 				}
 			}
 

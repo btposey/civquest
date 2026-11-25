@@ -1,6 +1,7 @@
 package system1
 
 import (
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -28,8 +29,9 @@ type Fact struct {
 
 // FactGraph provides a thread-safe blackboard of verified environmental facts.
 type FactGraph struct {
-	mu    sync.RWMutex
-	facts map[string]Fact
+	mu     sync.RWMutex
+	facts  map[string]Fact
+	frozen bool
 }
 
 // NewFactGraph initializes an empty FactGraph.
@@ -46,7 +48,35 @@ func (g *FactGraph) Set(fact Fact) {
 	}
 	g.mu.Lock()
 	defer g.mu.Unlock()
+	if g.frozen {
+		panic(ErrFactGraphFrozen)
+	}
 	g.facts[fact.Key] = fact
+}
+
+// ErrFactGraphFrozen is the panic value raised when a Set* is attempted on a frozen FactGraph.
+// The world view is read-only once EvaluateAll has returned; skills must derive new facts
+// via Evaluators on the next tick instead of writing back.
+var ErrFactGraphFrozen = errors.New("system1: write to frozen FactGraph (world view is read-only after EvaluateAll)")
+
+// Freeze makes the graph immutable: any subsequent Set* panics with ErrFactGraphFrozen.
+func (g *FactGraph) Freeze() {
+	if g == nil {
+		return
+	}
+	g.mu.Lock()
+	g.frozen = true
+	g.mu.Unlock()
+}
+
+// Frozen reports whether the graph has been frozen.
+func (g *FactGraph) Frozen() bool {
+	if g == nil {
+		return false
+	}
+	g.mu.RLock()
+	defer g.mu.RUnlock()
+	return g.frozen
 }
 
 // SetBool stores a boolean fact with 1.0 confidence.

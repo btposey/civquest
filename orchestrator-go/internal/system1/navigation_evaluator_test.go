@@ -1,7 +1,6 @@
 package system1
 
 import (
-	"math"
 	"testing"
 	"time"
 
@@ -130,8 +129,6 @@ func TestNavigationEvaluator_ScoutingFacts(t *testing.T) {
 		Profession: "EXPLORER",
 	}
 	state := NewAgentState()
-	state.SetFrontierRadialLeg(2)
-	state.SetFrontierAzimuth(math.Pi / 2) // 90 degrees (East/South)
 
 	ctx := &EvaluatorContext{
 		AgentID: "explorer-1",
@@ -145,14 +142,6 @@ func TestNavigationEvaluator_ScoutingFacts(t *testing.T) {
 
 	if !graph.GetBool("scouting.active") {
 		t.Errorf("expected scouting.active true for EXPLORER")
-	}
-	leg, _ := graph.GetInt("scouting.radial_leg")
-	if leg != 2 {
-		t.Errorf("expected scouting.radial_leg 2, got %d", leg)
-	}
-	azDeg, _ := graph.GetFloat("scouting.azimuth_deg")
-	if math.Abs(azDeg-90.0) > 0.01 {
-		t.Errorf("expected scouting.azimuth_deg ~90.0, got %f", azDeg)
 	}
 
 	// 2. StageColonize sets scouting.active = true even for Farmer
@@ -335,8 +324,6 @@ func TestNavigationEvaluator_NilSafety(t *testing.T) {
 func TestNavigationEvaluator_Sub5msBenchmark(t *testing.T) {
 	eval := NewNavigationEvaluator()
 	state := NewAgentState()
-	state.SetFrontierRadialLeg(3)
-	state.SetFrontierAzimuth(1.23)
 	state.SetCivicPatrolActive(true)
 
 	tracker := state.GetPavingTracker()

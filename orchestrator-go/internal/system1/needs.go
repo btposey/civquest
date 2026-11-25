@@ -426,14 +426,6 @@ func EvaluateSleep(agentID string, frame *civquestv1.TelemetryFrame, state *Agen
 				state.ClearAssignedBed()
 				return nil
 			}
-			if frame.Status.NavigationState == civquestv1.NavigationState_NAVIGATION_STATE_STUCK {
-				blacklisted, _ := state.RecordTargetNavigationStuck(target.X, target.Y, target.Z, frame.WorldTick, DefaultUnreachableTargetTTL)
-				if blacklisted {
-					state.MarkTargetUnreachable(float64(bedPos.X)+0.5, float64(bedPos.Y), float64(bedPos.Z)+0.5, frame.WorldTick, DefaultUnreachableTargetTTL)
-					state.ClearAssignedBed()
-					return nil
-				}
-			}
 		}
 		return &civquestv1.AgentIntent{
 			AgentId: agentID,

@@ -86,10 +86,6 @@ public class AgentWatchdogFSM {
         return streamRegistered;
     }
 
-    public void setStreamRegistered(boolean streamRegistered) {
-        this.streamRegistered = streamRegistered;
-    }
-
     public boolean isDefensiveLockActive() {
         return defensiveLockActive;
     }
@@ -104,14 +100,6 @@ public class AgentWatchdogFSM {
 
     public void setEatCooldownTicks(int eatCooldownTicks) {
         this.eatCooldownTicks = eatCooldownTicks;
-    }
-
-    public int getThreatScanCooldownTicks() {
-        return threatScanCooldownTicks;
-    }
-
-    public void setThreatScanCooldownTicks(int threatScanCooldownTicks) {
-        this.threatScanCooldownTicks = threatScanCooldownTicks;
     }
 
     public boolean isCachedHostileThreat() {
@@ -264,7 +252,7 @@ public class AgentWatchdogFSM {
             if (!streamRegistered) {
                 transitionTo(WatchdogState.DISCONNECTED_SAFE_MODE, "stream_unregistered");
             } else if (isAutonomousPeripheryLivenessActive()) {
-                // Active autonomous periphery execution (SURVEYING / SLEEPING) represents healthy
+                // Active autonomous periphery execution (Sweep / SLEEPING) represents healthy
                 // liveness without requiring redundant no-op intents from Go; refresh lastIntentTick
                 // so the idle timeout window starts cleanly once the agent returns to IDLE.
                 lastIntentTick = currentTick;
@@ -290,7 +278,7 @@ public class AgentWatchdogFSM {
 
     /**
      * Returns true when the agent is executing (or temporarily preempted by a reflex from) a legitimate
-     * multi-tick autonomous periphery state ({@link MotorState#SURVEYING} or {@link MotorState#SLEEPING}
+     * multi-tick autonomous periphery state (a horizon Sweep or Sleep frame
      * / {@code agent.isSleeping()}) that should not trigger false intent-starvation timeouts while the
      * gRPC stream is connected.
      */
@@ -305,16 +293,8 @@ public class AgentWatchdogFSM {
         if (motorFSM == null) {
             return false;
         }
-        MotorState state = motorFSM.getState();
-        if (state == MotorState.SURVEYING || state == MotorState.SLEEPING) {
+        if (motorFSM.isSleeping() || motorFSM.hasSweepFrame()) {
             return true;
-        }
-        if (motorFSM.getStackDepth() > 0) {
-            for (MotorStackFrame frame : motorFSM.getStackSnapshot()) {
-                if (frame != null && (frame.getState() == MotorState.SURVEYING || frame.getState() == MotorState.SLEEPING)) {
-                    return true;
-                }
-            }
         }
         return false;
     }

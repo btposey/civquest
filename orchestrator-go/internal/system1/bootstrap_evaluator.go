@@ -125,18 +125,16 @@ func (e *ShelterEvaluator) Evaluate(ctx *EvaluatorContext, graph *FactGraph) err
 	}
 
 	blocksPlaced := 0
-	buildIndex := 0
 	onCooldown := false
 	if ctx != nil && ctx.State != nil {
-		blocksPlaced = ctx.State.GetShelterBlocksPlaced()
-		buildIndex = ctx.State.GetShelterBuildIndex()
+		blocksPlaced = ctx.State.GetCabinBuilt()
 		if ctx.Frame != nil {
 			onCooldown = ctx.State.IsShelterOnCooldown(ctx.Frame.WorldTick)
 		}
 	}
 
 	totalBlocks := blueprints.CabinTotalBlocks
-	complete := (blocksPlaced >= totalBlocks || buildIndex >= totalBlocks)
+	complete := blocksPlaced >= totalBlocks
 
 	hasCampfire := false
 	if ctx != nil && ctx.Frame != nil {

@@ -105,13 +105,13 @@ func stageReceiptIngest(r *AgentRuntime, ctx *FrameContext) {
 	r.system1State.IngestReceipt(receipt)
 
 	if receipt.Status == civquestv1.IntentReceipt_RECEIPT_STATUS_COMPLETED {
-		if hpos := r.system1State.TakeLastHarvestPos(); hpos != nil {
+		if hpos := r.lastHarvestPos.Swap(nil); hpos != nil {
 			r.PruneHarvestedBlockPos(hpos.X, hpos.Y, hpos.Z)
 		}
 	}
 }
 
-// stageSpatialAndSurvey handles stuck navigation recovery, sensory POI ingestion,
+// stageSpatialAndSurvey handles sensory POI ingestion,
 // close-range POI verification, habit trails, and 360-degree horizon survey processing.
 func stageSpatialAndSurvey(r *AgentRuntime, ctx *FrameContext) {
 	if r == nil || ctx == nil || ctx.Frame == nil || r.IsDead() {
@@ -119,10 +119,6 @@ func stageSpatialAndSurvey(r *AgentRuntime, ctx *FrameContext) {
 	}
 
 	frame := ctx.Frame
-	if frame.Status != nil && frame.Status.NavigationState == civquestv1.NavigationState_NAVIGATION_STATE_STUCK {
-		r.handleNavigationStuck()
-	}
-
 	r.ingestSpatialPOIs(frame)
 	r.updateHabitTrails(frame)
 	r.processHorizonSurveyAndRendezvous(frame)
@@ -145,6 +141,7 @@ func stageFactGraphAndSystem1(r *AgentRuntime, ctx *FrameContext) {
 	}
 
 	r.syncPendingRendezvous(frame)
+	r.applyRecoverGiveUps()
 }
 
 // stageIdleAndGoalLogging updates idle dwell tracking and logs goal hierarchy transitions.
@@ -239,6 +236,7 @@ func (r *AgentRuntime) dispatchFSMIntents(frame *civquestv1.TelemetryFrame, resu
 		if fsmIntent.Intent == nil {
 			continue
 		}
+		r.frameSeam.noteEmit(fsmIntent.Frame)
 		if fsmIntent.Priority {
 			if r.shouldDeduplicateFleeNav(frame.WorldTick, fsmIntent.Intent) {
 				continue

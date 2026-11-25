@@ -157,6 +157,21 @@ private static final long serialVersionUID = 0L;
     return timeoutTicks_;
   }
 
+  public static final int FRAME_ID_FIELD_NUMBER = 6;
+  private long frameId_ = 0L;
+  /**
+   * <pre>
+   * Go Frame.ID that emitted the batch (ADR-036 s5; 0 = legacy)
+   * </pre>
+   *
+   * <code>uint64 frame_id = 6;</code>
+   * @return The frameId.
+   */
+  @java.lang.Override
+  public long getFrameId() {
+    return frameId_;
+  }
+
   private byte memoizedIsInitialized = -1;
   @java.lang.Override
   public final boolean isInitialized() {
@@ -186,6 +201,9 @@ private static final long serialVersionUID = 0L;
     if (timeoutTicks_ != 0L) {
       output.writeInt64(5, timeoutTicks_);
     }
+    if (frameId_ != 0L) {
+      output.writeUInt64(6, frameId_);
+    }
     getUnknownFields().writeTo(output);
   }
 
@@ -214,6 +232,10 @@ private static final long serialVersionUID = 0L;
       size += com.google.protobuf.CodedOutputStream
         .computeInt64Size(5, timeoutTicks_);
     }
+    if (frameId_ != 0L) {
+      size += com.google.protobuf.CodedOutputStream
+        .computeUInt64Size(6, frameId_);
+    }
     size += getUnknownFields().getSerializedSize();
     memoizedSize = size;
     return size;
@@ -239,6 +261,8 @@ private static final long serialVersionUID = 0L;
         .equals(other.getIntentsList())) return false;
     if (getTimeoutTicks()
         != other.getTimeoutTicks()) return false;
+    if (getFrameId()
+        != other.getFrameId()) return false;
     if (!getUnknownFields().equals(other.getUnknownFields())) return false;
     return true;
   }
@@ -265,6 +289,9 @@ private static final long serialVersionUID = 0L;
     hash = (37 * hash) + TIMEOUT_TICKS_FIELD_NUMBER;
     hash = (53 * hash) + com.google.protobuf.Internal.hashLong(
         getTimeoutTicks());
+    hash = (37 * hash) + FRAME_ID_FIELD_NUMBER;
+    hash = (53 * hash) + com.google.protobuf.Internal.hashLong(
+        getFrameId());
     hash = (29 * hash) + getUnknownFields().hashCode();
     memoizedHashCode = hash;
     return hash;
@@ -407,6 +434,7 @@ private static final long serialVersionUID = 0L;
       }
       bitField0_ = (bitField0_ & ~0x00000008);
       timeoutTicks_ = 0L;
+      frameId_ = 0L;
       return this;
     }
 
@@ -465,6 +493,9 @@ private static final long serialVersionUID = 0L;
       if (((from_bitField0_ & 0x00000010) != 0)) {
         result.timeoutTicks_ = timeoutTicks_;
       }
+      if (((from_bitField0_ & 0x00000020) != 0)) {
+        result.frameId_ = frameId_;
+      }
     }
 
     @java.lang.Override
@@ -518,6 +549,9 @@ private static final long serialVersionUID = 0L;
       }
       if (other.getTimeoutTicks() != 0L) {
         setTimeoutTicks(other.getTimeoutTicks());
+      }
+      if (other.getFrameId() != 0L) {
+        setFrameId(other.getFrameId());
       }
       this.mergeUnknownFields(other.getUnknownFields());
       onChanged();
@@ -578,6 +612,11 @@ private static final long serialVersionUID = 0L;
               bitField0_ |= 0x00000010;
               break;
             } // case 40
+            case 48: {
+              frameId_ = input.readUInt64();
+              bitField0_ |= 0x00000020;
+              break;
+            } // case 48
             default: {
               if (!super.parseUnknownField(input, extensionRegistry, tag)) {
                 done = true; // was an endgroup tag
@@ -999,6 +1038,50 @@ private static final long serialVersionUID = 0L;
     public Builder clearTimeoutTicks() {
       bitField0_ = (bitField0_ & ~0x00000010);
       timeoutTicks_ = 0L;
+      onChanged();
+      return this;
+    }
+
+    private long frameId_ ;
+    /**
+     * <pre>
+     * Go Frame.ID that emitted the batch (ADR-036 s5; 0 = legacy)
+     * </pre>
+     *
+     * <code>uint64 frame_id = 6;</code>
+     * @return The frameId.
+     */
+    @java.lang.Override
+    public long getFrameId() {
+      return frameId_;
+    }
+    /**
+     * <pre>
+     * Go Frame.ID that emitted the batch (ADR-036 s5; 0 = legacy)
+     * </pre>
+     *
+     * <code>uint64 frame_id = 6;</code>
+     * @param value The frameId to set.
+     * @return This builder for chaining.
+     */
+    public Builder setFrameId(long value) {
+
+      frameId_ = value;
+      bitField0_ |= 0x00000020;
+      onChanged();
+      return this;
+    }
+    /**
+     * <pre>
+     * Go Frame.ID that emitted the batch (ADR-036 s5; 0 = legacy)
+     * </pre>
+     *
+     * <code>uint64 frame_id = 6;</code>
+     * @return This builder for chaining.
+     */
+    public Builder clearFrameId() {
+      bitField0_ = (bitField0_ & ~0x00000020);
+      frameId_ = 0L;
       onChanged();
       return this;
     }

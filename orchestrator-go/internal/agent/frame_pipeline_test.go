@@ -171,7 +171,7 @@ func TestFramePipeline_StageReceiptIngest(t *testing.T) {
 		Reliability: 1.0,
 		IsActive:    true,
 	})
-	rt.system1State.SetLastHarvestPos(&civquestv1.BlockPosProto{X: 10, Y: 64, Z: 0})
+	rt.lastHarvestPos.Store(&civquestv1.BlockPosProto{X: 10, Y: 64, Z: 0})
 
 	ctx := &FrameContext{
 		Frame: &civquestv1.TelemetryFrame{
@@ -198,7 +198,7 @@ func TestFramePipeline_StageReceiptIngest(t *testing.T) {
 	if gotRec == nil || gotRec.Status != civquestv1.IntentReceipt_RECEIPT_STATUS_COMPLETED {
 		t.Fatalf("expected system1State lastReceipt COMPLETED, got %+v", gotRec)
 	}
-	if hpos := rt.system1State.LastHarvestPos(); hpos != nil {
+	if hpos := rt.lastHarvestPos.Load(); hpos != nil {
 		t.Fatalf("expected lastHarvestPos cleared after COMPLETED receipt, got %+v", hpos)
 	}
 	if _, ok := si.GetPOI("poi_resource_10_64_0"); ok {
@@ -260,12 +260,13 @@ func TestFramePipeline_StageSpatialAndSurvey(t *testing.T) {
 	stageSpatialAndSurvey(rt, ctx)
 	rt.AwaitPOIPersistence()
 
-	if rt.NavTargetPOIID() != "" {
-		t.Fatalf("expected NavTargetPOIID cleared on stuck navigation, got %q", rt.NavTargetPOIID())
+	// Telemetry navigation_state STUCK is not a recovery input (ADR-037): no decay, no clear.
+	if rt.NavTargetPOIID() != "poi_resource_5_64_5" {
+		t.Fatalf("telemetry stuck must not clear NavTargetPOIID, got %q", rt.NavTargetPOIID())
 	}
 	stuckPOI, ok := si.GetPOI("poi_resource_5_64_5")
-	if !ok || stuckPOI.Reliability >= 1.0 {
-		t.Fatalf("expected stuck POI reliability decayed below 1.0, got ok=%v poi=%+v", ok, stuckPOI)
+	if !ok || stuckPOI.Reliability < 1.0 {
+		t.Fatalf("telemetry stuck must not decay POI reliability, got ok=%v poi=%+v", ok, stuckPOI)
 	}
 	if _, ok := si.GetPOI("poi_resource_20_64_0"); !ok {
 		t.Fatalf("expected visible block poi_resource_20_64_0 ingested into SpatialIndex")
@@ -277,8 +278,7 @@ func TestFramePipeline_StageSpatialAndSurvey(t *testing.T) {
 
 func TestFramePipeline_StageFactGraphAndSystem1(t *testing.T) {
 	rt, _, _ := newPipelineTestRuntime(t, "pipe_s1")
-	rt.system1State.PendingRendezvousSync = true
-	rt.system1State.PendingRendezvousSummary = "Explored 36 sectors."
+	rt.AgentFSM().QueueRendezvousReport("Explored 36 sectors.")
 
 	ctx := &FrameContext{
 		Frame: &civquestv1.TelemetryFrame{
@@ -313,8 +313,8 @@ func TestFramePipeline_StageFactGraphAndSystem1(t *testing.T) {
 	if ctx.FSMResult.Stage != system1.StageEmergency {
 		t.Fatalf("expected StageEmergency with nearby zombie, got %q", ctx.FSMResult.Stage)
 	}
-	if synced, _ := rt.system1State.ConsumePendingRendezvousSync(); synced {
-		t.Fatalf("expected PendingRendezvousSync to be consumed during stageFactGraphAndSystem1")
+	if left := rt.AgentFSM().DrainRendezvousReports(); len(left) != 0 {
+		t.Fatalf("expected rendezvous reports to be consumed during stageFactGraphAndSystem1, left %v", left)
 	}
 	intents := rt.DrainIntents()
 	if len(intents) != 1 || intents[0].GetChat() == nil {

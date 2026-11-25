@@ -240,20 +240,19 @@ func TestShelterEvaluator_IncompleteAndComplete(t *testing.T) {
 	}
 
 	// Complete via blocks placed
-	state.SetShelterBlocksPlaced(blueprints.CabinTotalBlocks)
+	state.SetCabinBuilt(blueprints.CabinTotalBlocks)
 	graphComplete := NewFactGraph()
 	_ = eval.Evaluate(ctx, graphComplete)
 	if !graphComplete.GetBool("shelter.complete") {
 		t.Errorf("expected shelter.complete true when blocks placed reaches total")
 	}
 
-	// Complete via build index
-	state.SetShelterBlocksPlaced(0)
-	state.SetShelterBuildIndex(blueprints.CabinTotalBlocks)
+	// Incomplete again once the banked count drops below total
+	state.SetCabinBuilt(blueprints.CabinTotalBlocks - 1)
 	graphCompleteIndex := NewFactGraph()
 	_ = eval.Evaluate(ctx, graphCompleteIndex)
-	if !graphCompleteIndex.GetBool("shelter.complete") {
-		t.Errorf("expected shelter.complete true when build index reaches total")
+	if graphCompleteIndex.GetBool("shelter.complete") {
+		t.Errorf("expected shelter.complete false below total")
 	}
 }
 

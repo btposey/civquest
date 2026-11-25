@@ -203,7 +203,7 @@ public class AgentWatchdogFSMTest {
     }
 
     @Test
-    @DisplayName("WatchdogFSM stays CONNECTED_ACTIVE during SURVEYING and SLEEPING, detects idle timeout after and explicit disconnect during")
+    @DisplayName("WatchdogFSM stays CONNECTED_ACTIVE during Sweep and SLEEPING, detects idle timeout after and explicit disconnect during")
     void testAutonomousPeripheryLivenessExemptionsAndTrueDisconnects() {
         AgentEntity agent = mock(AgentEntity.class);
         AgentMotorFSM motorFSM = mock(AgentMotorFSM.class);
@@ -212,7 +212,7 @@ public class AgentWatchdogFSMTest {
         when(agent.isRemoved()).thenReturn(false);
         when(agent.getMotorFSM()).thenReturn(motorFSM);
         when(agent.isSleeping()).thenReturn(false);
-        when(motorFSM.getState()).thenReturn(MotorState.SURVEYING);
+        when(motorFSM.hasSweepFrame()).thenReturn(true);
 
         AgentWatchdogFSM fsm = new AgentWatchdogFSM(agent);
         fsm.onConnected();
@@ -226,7 +226,7 @@ public class AgentWatchdogFSMTest {
         }
 
         // Transition to SLEEPING for 120 ticks -> remains CONNECTED_ACTIVE
-        when(motorFSM.getState()).thenReturn(MotorState.SLEEPING);
+        when(motorFSM.isSleeping()).thenReturn(true);
         when(agent.isSleeping()).thenReturn(true);
         for (int t = 81; t <= 200; t++) {
             agent.tickCount = t;
@@ -236,7 +236,8 @@ public class AgentWatchdogFSMTest {
 
         // Return to IDLE -> timeout window starts fresh from tick 200
         when(agent.isSleeping()).thenReturn(false);
-        when(motorFSM.getState()).thenReturn(MotorState.IDLE);
+        when(motorFSM.isSleeping()).thenReturn(false);
+        when(motorFSM.hasSweepFrame()).thenReturn(false);
         for (int t = 201; t <= 240; t++) {
             agent.tickCount = t;
             fsm.tick();
@@ -246,8 +247,8 @@ public class AgentWatchdogFSMTest {
         fsm.tick();
         assertEquals(WatchdogState.STREAM_DEGRADED, fsm.getState());
 
-        // Reconnect during SURVEYING, then verify explicit onDisconnected() still triggers DISCONNECTED_SAFE_MODE
-        when(motorFSM.getState()).thenReturn(MotorState.SURVEYING);
+        // Reconnect during Sweep, then verify explicit onDisconnected() still triggers DISCONNECTED_SAFE_MODE
+        when(motorFSM.hasSweepFrame()).thenReturn(true);
         fsm.onConnected();
         assertEquals(WatchdogState.CONNECTED_ACTIVE, fsm.getState());
         fsm.onDisconnected();

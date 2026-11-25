@@ -1,0 +1,14 @@
+{
+  "batchId": "7",
+  "status": "RECEIPT_STATUS_FAILED",
+  "failureReason": "Navigation stuck",
+  "frameId": "70",
+  "facts": {
+    "stuck": true,
+    "enclosed": false,
+    "blockedBearingDeg": 315.0,
+    "stuckTicks": 16,
+    "progress": 70.57097206439273,
+    "blockedByEntity": false
+  }
+}

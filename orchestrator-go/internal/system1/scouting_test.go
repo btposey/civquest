@@ -9,47 +9,9 @@ import (
 	"github.com/btposey/civquest/orchestrator-go/internal/xdg"
 )
 
-func TestStuckAgentEmitsHarvestBreakOnAdjacentObstruction(t *testing.T) {
-	state := NewAgentState()
-	cfg := xdg.DefaultAgentIdentityConfig("Able")
-	cfg.Profession = "EXPLORER"
-
-	stuckWithObstruction := &civquestv1.TelemetryFrame{
-		WorldTick: 300,
-		TimeOfDay: 3000,
-		Status: &civquestv1.AgentStatus{
-			Position:        &civquestv1.Vec3{X: 10.5, Y: 62, Z: 10.5},
-			Health:          20,
-			FoodLevel:       20,
-			NavigationState: civquestv1.NavigationState_NAVIGATION_STATE_STUCK,
-		},
-		InterestingBlocks: []*civquestv1.VisibleBlock{
-			{
-				Pos:     &civquestv1.BlockPosProto{X: 11, Y: 62, Z: 10},
-				BlockId: "minecraft:dirt",
-			},
-			{
-				Pos:     &civquestv1.BlockPosProto{X: 11, Y: 63, Z: 10},
-				BlockId: "minecraft:dirt",
-			},
-		},
-	}
-
-	intent := EvaluateScouting("Able", stuckWithObstruction, cfg, state)
-	if intent == nil || intent.GetInteractBlock() == nil {
-		t.Fatalf("expected InteractBlockIntent when STUCK next to dirt wall, got %+v", intent)
-	}
-	ib := intent.GetInteractBlock()
-	if ib.InteractionType != civquestv1.InteractBlockIntent_HARVEST_BREAK {
-		t.Fatalf("expected HARVEST_BREAK on obstructing block, got %v", ib.InteractionType)
-	}
-	if ib.Pos.GetY() != 63 {
-		t.Fatalf("expected head-height block (Y=63) to be broken first to form a 1-block step-up, got Y=%d", ib.Pos.GetY())
-	}
-}
-
 func TestSectorLockedRadialFrontierScouting_NoOscillationAndChainedOutward(t *testing.T) {
 	state := NewAgentState()
+	walk := &walkLocal{}
 	cfg := xdg.DefaultAgentIdentityConfig("Able")
 	cfg.Profession = "EXPLORER"
 
@@ -69,7 +31,7 @@ func TestSectorLockedRadialFrontierScouting_NoOscillationAndChainedOutward(t *te
 			},
 		},
 	}
-	_ = EvaluateScouting("Able", frame1, cfg, state)
+	_ = EvaluateScouting("Able", frame1, cfg, state, walk)
 
 	// Frame 2: Start exploration at tick 1000 at origin (0, 64, 0)
 	frame2 := &civquestv1.TelemetryFrame{
@@ -88,7 +50,7 @@ func TestSectorLockedRadialFrontierScouting_NoOscillationAndChainedOutward(t *te
 		},
 	}
 
-	intent0 := EvaluateScouting("Able", frame2, cfg, state)
+	intent0 := EvaluateScouting("Able", frame2, cfg, state, walk)
 	if intent0 == nil || intent0.GetNavigate() == nil {
 		t.Fatalf("expected initial NavigateIntent, got %+v", intent0)
 	}
@@ -124,11 +86,11 @@ func TestSectorLockedRadialFrontierScouting_NoOscillationAndChainedOutward(t *te
 				},
 			},
 		}
-		midIntent := EvaluateScouting("Able", pathingFrame, cfg, state)
+		midIntent := EvaluateScouting("Able", pathingFrame, cfg, state, walk)
 		if midIntent != nil {
 			t.Fatalf("expected nil intent while actively pathing at tick %d (eliminated 3-second oscillation), got %+v", tick, midIntent)
 		}
-		curAz, _ := state.GetFrontierAzimuth()
+		curAz, _ := walk.frontierAzimuth()
 		if math.Abs(math.Atan2(math.Sin(curAz-azimuth0), math.Cos(curAz-azimuth0))) > 0.001 {
 			t.Fatalf("azimuth changed during pathing: was %.4f, now %.4f", azimuth0, curAz)
 		}
@@ -155,7 +117,7 @@ func TestSectorLockedRadialFrontierScouting_NoOscillationAndChainedOutward(t *te
 			},
 		},
 	}
-	intent1 := EvaluateScouting("Able", arriveFrame0, cfg, state)
+	intent1 := EvaluateScouting("Able", arriveFrame0, cfg, state, walk)
 	if intent1 == nil || intent1.GetNavigate() == nil {
 		t.Fatalf("expected NavigateIntent for Leg 1 upon arrival, got %+v", intent1)
 	}
@@ -190,7 +152,7 @@ func TestSectorLockedRadialFrontierScouting_NoOscillationAndChainedOutward(t *te
 			},
 		},
 	}
-	intent2 := EvaluateScouting("Able", arriveFrame1, cfg, state)
+	intent2 := EvaluateScouting("Able", arriveFrame1, cfg, state, walk)
 	if intent2 == nil || intent2.GetNavigate() == nil {
 		t.Fatalf("expected NavigateIntent for Leg 2 upon arrival, got %+v", intent2)
 	}
@@ -225,7 +187,7 @@ func TestSectorLockedRadialFrontierScouting_NoOscillationAndChainedOutward(t *te
 			},
 		},
 	}
-	intent3 := EvaluateScouting("Able", arriveFrame2, cfg, state)
+	intent3 := EvaluateScouting("Able", arriveFrame2, cfg, state, walk)
 	if intent3 == nil || intent3.GetNavigate() == nil {
 		t.Fatalf("expected NavigateIntent for Leg 3 upon arrival, got %+v", intent3)
 	}
@@ -242,6 +204,7 @@ func TestSectorLockedRadialFrontierScouting_NoOscillationAndChainedOutward(t *te
 
 func TestSectorLockedRadialFrontierScouting_TimeoutPivotsSector(t *testing.T) {
 	state := NewAgentState()
+	walk := &walkLocal{}
 	cfg := xdg.DefaultAgentIdentityConfig("Able")
 	cfg.Profession = "EXPLORER"
 
@@ -260,7 +223,7 @@ func TestSectorLockedRadialFrontierScouting_TimeoutPivotsSector(t *testing.T) {
 			},
 		},
 	}
-	_ = EvaluateScouting("Able", frame1, cfg, state)
+	_ = EvaluateScouting("Able", frame1, cfg, state, walk)
 
 	// Initial start at tick 1000
 	frame2 := &civquestv1.TelemetryFrame{
@@ -278,11 +241,11 @@ func TestSectorLockedRadialFrontierScouting_TimeoutPivotsSector(t *testing.T) {
 			},
 		},
 	}
-	intent0 := EvaluateScouting("Able", frame2, cfg, state)
+	intent0 := EvaluateScouting("Able", frame2, cfg, state, walk)
 	if intent0 == nil {
 		t.Fatal("expected initial intent")
 	}
-	initialAz, _ := state.GetFrontierAzimuth()
+	initialAz, _ := walk.frontierAzimuth()
 
 	// Zero progress for 30s (600 ticks, at tick 1650)
 	stalledFrame := &civquestv1.TelemetryFrame{
@@ -300,16 +263,16 @@ func TestSectorLockedRadialFrontierScouting_TimeoutPivotsSector(t *testing.T) {
 			},
 		},
 	}
-	pivotIntent := EvaluateScouting("Able", stalledFrame, cfg, state)
+	pivotIntent := EvaluateScouting("Able", stalledFrame, cfg, state, walk)
 	if pivotIntent == nil || pivotIntent.GetNavigate() == nil {
 		t.Fatalf("expected new NavigateIntent upon leg timeout, got %+v", pivotIntent)
 	}
-	newAz, _ := state.GetFrontierAzimuth()
+	newAz, _ := walk.frontierAzimuth()
 	if math.Abs(math.Atan2(math.Sin(newAz-initialAz), math.Cos(newAz-initialAz))) < 0.1 {
 		t.Fatalf("expected sector azimuth to pivot after 30s zero-progress timeout, but azimuth stayed %.4f", initialAz)
 	}
-	if state.GetFrontierRadialLeg() != 0 {
-		t.Fatalf("expected radial leg to reset to 0 in new sector, got %d", state.GetFrontierRadialLeg())
+	if walk.frontierRadialLeg != 0 {
+		t.Fatalf("expected radial leg to reset to 0 in new sector, got %d", walk.frontierRadialLeg)
 	}
 }
 
@@ -328,7 +291,7 @@ func TestEvaluateScoutingDirect(t *testing.T) {
 	pos := &civquestv1.Vec3{X: 0, Y: 64, Z: 0}
 
 	start := time.Now()
-	_ = EvaluateScoutingDirect("Able", frame, pos, state, cfg)
+	_ = EvaluateScoutingDirect("Able", frame, pos, state, cfg, nil)
 	duration := time.Since(start)
 
 	// Invariant: Sub-5ms execution budget

@@ -211,8 +211,7 @@ func RunDuskShelterConstructionScenario(baseCfg TimeWarpConfig) (*TimeWarpSimula
 		if s1 == nil {
 			return false
 		}
-		return s1.GetShelterBuildIndex() >= blueprints.CabinTotalBlocks ||
-			s1.GetShelterBlocksPlaced() >= blueprints.CabinTotalBlocks
+		return s1.GetCabinBuilt() >= blueprints.CabinTotalBlocks
 	}, 3000)
 
 	if err != nil {
@@ -222,7 +221,7 @@ func RunDuskShelterConstructionScenario(baseCfg TimeWarpConfig) (*TimeWarpSimula
 		s1 := sim.runtime.System1State()
 		var idx int
 		if s1 != nil {
-			idx = s1.GetShelterBuildIndex()
+			idx = s1.GetCabinBuilt()
 		}
 		return sim, fmt.Errorf("shelter construction did not complete within allotted ticks (index=%d/%d, placed=%d)",
 			idx, blueprints.CabinTotalBlocks, sim.BlueprintDetector.Count())

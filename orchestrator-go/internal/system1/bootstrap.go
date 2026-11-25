@@ -144,7 +144,9 @@ func EvaluateBootstrapGoals(
 	frame *civquestv1.TelemetryFrame,
 	cfg *xdg.AgentIdentityConfig,
 	state *AgentState,
+	walk *walkLocal,
 ) *civquestv1.AgentIntent {
+	walk = orFreshWalk(walk)
 	if frame == nil || frame.Status == nil || frame.Status.Position == nil || state == nil {
 		return nil
 	}
@@ -156,7 +158,7 @@ func EvaluateBootstrapGoals(
 	state.mu.Lock()
 	defer state.mu.Unlock()
 
-	state.telemetryFramesSeen++
+	state.mem.telemetryFramesSeen++
 	if state.homeOrigin == nil {
 		originCopy := &civquestv1.Vec3{X: pos.X, Y: pos.Y, Z: pos.Z}
 		state.homeOrigin = originCopy
@@ -168,40 +170,24 @@ func EvaluateBootstrapGoals(
 	if state.currentOutpost == nil {
 		state.currentOutpost = &civquestv1.Vec3{X: state.homeOrigin.X, Y: state.homeOrigin.Y, Z: state.homeOrigin.Z}
 	}
-	if state.lastExploreTick == 0 {
-		state.lastExploreTick = frame.WorldTick
+	if walk.lastExploreTick == 0 {
+		walk.lastExploreTick = frame.WorldTick
 	}
 
 	navState := frame.Status.NavigationState
 
-	// 1. If an active expedition is encountering a terrain barrier (and no harvest/collect task is active),
-	// let Horizon Explorer handle NAVIGATION_STATE_STUCK first (record hazard POI, pause at rim, re-survey/flank).
-	if (navState == civquestv1.NavigationState_NAVIGATION_STATE_STUCK || frame.Status.GetNavigationEnclosed()) &&
-		state.IsExpeditionActiveLocked() && !state.HasActiveTaskLocked() {
-		if expIntent := EvaluateHorizonExplorerLocked(frame, state, cfg, agentID); expIntent != nil {
-			return expIntent
-		}
-	}
-
-	// 1b. Unsticking if STUCK or ENCLOSED
-	if navState == civquestv1.NavigationState_NAVIGATION_STATE_STUCK || frame.Status.GetNavigationEnclosed() {
-		if unstuckIntent := EvaluateUnstuck(agentID, frame, pos, state); unstuckIntent != nil {
-			return unstuckIntent
-		}
-	}
-
 	// 2. Direct bootstrap timber gathering & tool crafting (with strict TaskSubroutine commitment)
-	if bootstrapIntent := evaluateBootstrapGoalsLocked(agentID, frame, pos, navState, state, cfg); bootstrapIntent != nil {
+	if bootstrapIntent := evaluateBootstrapGoalsLocked(agentID, frame, pos, navState, state, cfg, walk); bootstrapIntent != nil {
 		return bootstrapIntent
 	}
-	if state.HasActiveTaskLocked() || state.navigatingToPOI || state.isExpeditionSurveyingLocked(frame.WorldTick) {
+	if walk.hasTask() || walk.navigatingToPOI || state.isExpeditionSurveyingLocked(frame.WorldTick) {
 		// Committed task subroutine, POI recall navigation, or active 360-degree horizon survey:
 		// suppress exploration/wandering until complete, failed, or preempted.
 		return nil
 	}
 
 	// 3. If no immediate trees or crafting table in frustum, scout locally for timber stands
-	return evaluateGeneralExplorationLocked(agentID, frame, pos, state, cfg)
+	return evaluateGeneralExplorationLocked(agentID, frame, pos, state, cfg, walk)
 }
 
 // EvaluateBootstrapGoalsDirect evaluates bootstrap goals directly given explicit pos and navState.
@@ -211,13 +197,15 @@ func EvaluateBootstrapGoalsDirect(
 	pos *civquestv1.Vec3,
 	navState civquestv1.NavigationState,
 	state *AgentState,
+	walk *walkLocal,
 ) *civquestv1.AgentIntent {
+	walk = orFreshWalk(walk)
 	if frame == nil || pos == nil || state == nil {
 		return nil
 	}
 	state.mu.Lock()
 	defer state.mu.Unlock()
-	return evaluateBootstrapGoalsLocked(agentID, frame, pos, navState, state, nil)
+	return evaluateBootstrapGoalsLocked(agentID, frame, pos, navState, state, nil, walk)
 }
 
 func evaluateBootstrapGoalsLocked(
@@ -227,32 +215,34 @@ func evaluateBootstrapGoalsLocked(
 	navState civquestv1.NavigationState,
 	state *AgentState,
 	cfg *xdg.AgentIdentityConfig,
+	walk *walkLocal,
 ) *civquestv1.AgentIntent {
+	walk = orFreshWalk(walk)
 	if frame == nil || frame.Status == nil || pos == nil || state == nil {
 		return nil
 	}
-	state.navigatingToPOI = false
+	walk.navigatingToPOI = false
 
 	// 0. Execute any committed TaskSubroutine (e.g. harvest_tree, collect_items) before evaluating other goals.
 	// While committed, the agent MUST NOT switch tasks, craft prematurely, re-target another tree, or wander away,
 	// EXCEPT when already carrying enough timber/materials to immediately craft missing survival tools.
 	justFinishedHarvest := false
-	if state.activeTask != nil {
-		taskKind := state.activeTask.Spec.Kind
+	if walk.hasTask() {
+		taskKind := walk.task.Spec.Kind
 		preemptForCraft := false
 		if taskKind == "harvest_tree" {
 			invCheck := inspectBootstrapInventory(frame.Status.Inventory)
 			hasTimberForKit := invCheck.logCount >= 6 ||
 				(!invCheck.hasAxe && (invCheck.planksCount >= 3 || invCheck.stickCount >= 2 || invCheck.hasCraftingTable)) ||
-				(state.activeTask.Phase == TaskPhaseApproach && (invCheck.logCount >= 1 || invCheck.planksCount >= 1 || invCheck.stickCount >= 1) && (!invCheck.hasAxe || !invCheck.hasSword))
+				(walk.task.Phase == TaskPhaseApproach && (invCheck.logCount >= 1 || invCheck.planksCount >= 1 || invCheck.stickCount >= 1) && (!invCheck.hasAxe || !invCheck.hasSword))
 			if hasTimberForKit && canExecuteImmediateBootstrapCraftLocked(frame, state) {
 				preemptForCraft = true
-				state.ClearActiveTaskLocked()
+				walk.clearTask(state)
 			}
 		}
 		if !preemptForCraft {
-			targetPos := cloneBlockPos(state.activeTask.Spec.Target.BlockPos)
-			stepRes := state.StepActiveTaskLocked(agentID, frame)
+			targetPos := cloneBlockPos(walk.task.Spec.Target.BlockPos)
+			stepRes := walk.stepTaskLocked(agentID, state, frame)
 			if stepRes.Active {
 				return stepRes.Intent
 			}
@@ -262,8 +252,8 @@ func evaluateBootstrapGoalsLocked(
 				if targetPos != nil {
 					if drop := findNearestDroppedWoodItem(frame, targetPos.X, targetPos.Z); drop != nil {
 						collectTask := NewCollectItemsTask(targetPos.X, targetPos.Y, targetPos.Z, state.stage, frame.WorldTick)
-						state.StartTaskLocked(collectTask)
-						collectRes := state.StepActiveTaskLocked(agentID, frame)
+						walk.startTaskLocked(state, collectTask)
+						collectRes := walk.stepTaskLocked(agentID, state, frame)
 						if collectRes.Active {
 							return collectRes.Intent
 						}
@@ -271,35 +261,14 @@ func evaluateBootstrapGoalsLocked(
 				}
 			}
 		}
-	} else if treeLocked, tx, tz, startTick := state.GetTargetTreeLocked(); treeLocked {
-		// Upgrade legacy targetTreeLocked into a formal TaskSubroutine if set directly
-		var anchorY int32
-		found := false
-		for _, b := range frame.InterestingBlocks {
-			if b != nil && b.Pos != nil && isLogBlockID(b.BlockId) && b.Pos.X == tx && b.Pos.Z == tz {
-				anchorY = b.Pos.Y
-				found = true
-				break
-			}
-		}
-		if found {
-			treeTask := NewHarvestTreeTask(tx, anchorY, tz, state.stage, startTick)
-			state.StartTaskLocked(treeTask)
-			stepRes := state.StepActiveTaskLocked(agentID, frame)
-			if stepRes.Active {
-				return stepRes.Intent
-			}
-		} else {
-			state.ClearTargetTreeLocked()
-		}
 	}
 
 	inv := inspectBootstrapInventory(frame.Status.Inventory)
 	invMap := crafting.InventoryMapFromProtos(frame.Status.Inventory)
 	recipeGraph := state.RecipeGraphLocked()
 
-	canCraft := state.lastCraftTick == 0 || frame.WorldTick < state.lastCraftTick || frame.WorldTick-state.lastCraftTick >= 20
-	canPlace := state.lastShelterPlaceTick == 0 || frame.WorldTick < state.lastShelterPlaceTick || frame.WorldTick-state.lastShelterPlaceTick >= 20
+	canCraft := state.mem.lastCraftTick == 0 || frame.WorldTick < state.mem.lastCraftTick || frame.WorldTick-state.mem.lastCraftTick >= 20
+	canPlace := state.mem.lastShelterPlaceTick == 0 || frame.WorldTick < state.mem.lastShelterPlaceTick || frame.WorldTick-state.mem.lastShelterPlaceTick >= 20
 
 	var nearestCraftingTable *civquestv1.VisibleBlock
 	var recalledTablePOI *db.AgentPOI
@@ -329,7 +298,7 @@ func evaluateBootstrapGoalsLocked(
 				if !canCraft {
 					return nil
 				}
-				state.lastCraftTick = frame.WorldTick
+				state.mem.lastCraftTick = frame.WorldTick
 				craftIntent := &civquestv1.CraftItemIntent{
 					RecipeId:   step.RecipeID,
 					BatchCount: 1,
@@ -353,10 +322,10 @@ func evaluateBootstrapGoalsLocked(
 						}
 						return nil
 					}
-					state.navigatingToPOI = true
+					walk.navigatingToPOI = true
 					if navState != civquestv1.NavigationState_NAVIGATION_STATE_PATHING {
-						if state.lastBootstrapNavTick == 0 || frame.WorldTick < state.lastBootstrapNavTick || frame.WorldTick-state.lastBootstrapNavTick >= 40 {
-							state.lastBootstrapNavTick = frame.WorldTick
+						if walk.lastBootstrapNavTick == 0 || frame.WorldTick < walk.lastBootstrapNavTick || frame.WorldTick-walk.lastBootstrapNavTick >= 40 {
+							walk.lastBootstrapNavTick = frame.WorldTick
 							return &civquestv1.AgentIntent{
 								AgentId: agentID,
 								Action: &civquestv1.AgentIntent_Navigate{
@@ -374,7 +343,7 @@ func evaluateBootstrapGoalsLocked(
 					// Self-placement: when carrying a crafting table and none is within reach,
 					// place it immediately in front of the agent instead of trekking to a distant visible table.
 					if canPlace {
-						state.lastShelterPlaceTick = frame.WorldTick
+						state.mem.lastShelterPlaceTick = frame.WorldTick
 						placePos := selectAdjacentCraftingTablePos(frame, pos)
 						return &civquestv1.AgentIntent{
 							AgentId: agentID,
@@ -395,8 +364,8 @@ func evaluateBootstrapGoalsLocked(
 						return nil
 					}
 					if navState != civquestv1.NavigationState_NAVIGATION_STATE_PATHING {
-						if state.lastExploreTick == 0 || frame.WorldTick < state.lastExploreTick || frame.WorldTick-state.lastExploreTick >= 40 {
-							state.lastExploreTick = frame.WorldTick
+						if walk.lastExploreTick == 0 || frame.WorldTick < walk.lastExploreTick || frame.WorldTick-walk.lastExploreTick >= 40 {
+							walk.lastExploreTick = frame.WorldTick
 							return &civquestv1.AgentIntent{
 								AgentId: agentID,
 								Action: &civquestv1.AgentIntent_Navigate{
@@ -418,7 +387,7 @@ func evaluateBootstrapGoalsLocked(
 					// Autonomous self-reliance: craft our own table in 2x2 pocket crafting
 					// if no reachable crafting table exists.
 					if canCraft {
-						state.lastCraftTick = frame.WorldTick
+						state.mem.lastCraftTick = frame.WorldTick
 						return &civquestv1.AgentIntent{
 							AgentId: agentID,
 							Action: &civquestv1.AgentIntent_CraftItem{
@@ -446,26 +415,20 @@ func evaluateBootstrapGoalsLocked(
 	// If a harvest_tree task just completed on this tick, allow the HFSM PDA stack to pop cleanly
 	// before starting another harvest_tree task on the next tick.
 	// When returning to clan rendezvous, complete the return leg instead of stopping to chop trees.
-	needsTimber := (!inv.hasAxe || !inv.hasSword || inv.logCount < 6) && state.ExpeditionPhase != ExpeditionReturning
+	needsTimber := !inv.hasAxe || !inv.hasSword || inv.logCount < 6
 	if needsTimber && !justFinishedHarvest {
 		targetLog, recalledTreePOI := findNearestTreeTrunk(agentID, frame, pos, state)
 		if targetLog != nil {
-			if state.ExpeditionPhase == ExpeditionSurveying {
-				state.ExpeditionPhase = ExpeditionIdle
-				state.expeditionSurveyStartTick = 0
-			}
 			treeTask := NewHarvestTreeTask(targetLog.Pos.X, targetLog.Pos.Y, targetLog.Pos.Z, state.stage, frame.WorldTick)
-			state.StartTaskLocked(treeTask)
-			stepRes := state.StepActiveTaskLocked(agentID, frame)
+			walk.startTaskLocked(state, treeTask)
+			stepRes := walk.stepTaskLocked(agentID, state, frame)
 			if stepRes.Active {
 				return stepRes.Intent
 			}
-		} else if state.isExpeditionSurveyingLocked(frame.WorldTick) {
-			return nil
 		} else if recalledTreePOI != nil &&
 			(!isLeavesBlockID(recalledTreePOI.BlockID) || recalledTreePOI.Reliability >= 0.9 || cfg == nil || !isExplorerProfession(cfg.Profession)) &&
 			!state.IsExpeditionActiveLocked() {
-			if navIntent, handled := navigateToRecalledTreePOILocked(agentID, frame, pos, navState, state, recalledTreePOI); handled {
+			if navIntent, handled := navigateToRecalledTreePOILocked(agentID, frame, pos, navState, state, recalledTreePOI, walk); handled {
 				return navIntent
 			}
 			return nil
@@ -474,14 +437,12 @@ func evaluateBootstrapGoalsLocked(
 			// run the 360-degree horizon survey explorer loop to locate distant forests (ADR-032).
 			// Require >=2 observed frames and non-pathing/cooldown clearance on initial idle entry
 			// so single-frame unit tests and brief pathing segments are not prematurely interrupted.
-			canInitiateSurvey := state.ExpeditionPhase != ExpeditionIdle ||
-				(state.telemetryFramesSeen >= 2 &&
-					navState != civquestv1.NavigationState_NAVIGATION_STATE_PATHING &&
-					(state.lastExploreTick == 0 || frame.WorldTick < state.lastExploreTick || frame.WorldTick-state.lastExploreTick >= 40))
+			canInitiateSurvey := state.mem.telemetryFramesSeen >= 2 &&
+				navState != civquestv1.NavigationState_NAVIGATION_STATE_PATHING &&
+				(walk.lastExploreTick == 0 || frame.WorldTick < walk.lastExploreTick || frame.WorldTick-walk.lastExploreTick >= 40)
 			if canInitiateSurvey {
-				if surveyIntent := EvaluateHorizonExplorerLocked(frame, state, cfg, agentID); surveyIntent != nil {
-					return surveyIntent
-				}
+				// The expedition runs as a frame pushed over the bootstrap activity.
+				walk.wantExpedition = true
 			}
 		}
 	}
@@ -498,7 +459,9 @@ func navigateToRecalledTreePOILocked(
 	navState civquestv1.NavigationState,
 	state *AgentState,
 	recalledTreePOI *db.AgentPOI,
+	walk *walkLocal,
 ) (*civquestv1.AgentIntent, bool) {
+	walk = orFreshWalk(walk)
 	if frame == nil || pos == nil || state == nil || recalledTreePOI == nil {
 		return nil, false
 	}
@@ -520,7 +483,7 @@ func navigateToRecalledTreePOILocked(
 		}
 		return nil, false
 	}
-	state.navigatingToPOI = true
+	walk.navigatingToPOI = true
 	if navState != civquestv1.NavigationState_NAVIGATION_STATE_PATHING {
 		// ADR-026: Hierarchical Trail-Intersection Pathfinding:
 		// If a corridor exists connecting the origin/trail to the destination POI,
@@ -545,8 +508,8 @@ func navigateToRecalledTreePOILocked(
 			}
 		}
 
-		if state.lastBootstrapNavTick == 0 || frame.WorldTick < state.lastBootstrapNavTick || frame.WorldTick-state.lastBootstrapNavTick >= 40 {
-			state.lastBootstrapNavTick = frame.WorldTick
+		if walk.lastBootstrapNavTick == 0 || frame.WorldTick < walk.lastBootstrapNavTick || frame.WorldTick-walk.lastBootstrapNavTick >= 40 {
+			walk.lastBootstrapNavTick = frame.WorldTick
 			return &civquestv1.AgentIntent{
 				AgentId: agentID,
 				Action: &civquestv1.AgentIntent_Navigate{
@@ -681,7 +644,7 @@ func craftLightSourceIntentLocked(
 	tableInReach := isCraftingTableWithinReach(nearestCraftingTable, bestTableDistSq, pos)
 	if tableInReach {
 		if step, ok := recipeGraph.PlanNextStep("minecraft:campfire", invMap, true); ok && step.CanExecuteNow {
-			state.lastCraftTick = worldTick
+			state.mem.lastCraftTick = worldTick
 			craftIntent := &civquestv1.CraftItemIntent{
 				RecipeId:   step.RecipeID,
 				BatchCount: 1,
@@ -699,7 +662,7 @@ func craftLightSourceIntentLocked(
 	}
 
 	if step, ok := recipeGraph.PlanNextStep("minecraft:torch", invMap, tableInReach); ok && step.CanExecuteNow {
-		state.lastCraftTick = worldTick
+		state.mem.lastCraftTick = worldTick
 		craftIntent := &civquestv1.CraftItemIntent{
 			RecipeId:   step.RecipeID,
 			BatchCount: 1,

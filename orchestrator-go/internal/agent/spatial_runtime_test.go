@@ -482,8 +482,18 @@ func TestRuntime_NavigationStuckDecayAndInvalidation(t *testing.T) {
 		},
 	}
 	rt.HandleTelemetryFrame(stuckFrame)
+	if p, ok := si.GetPOI(stuckPOI.POIID); !ok || p.Reliability < 1.0 {
+		t.Fatalf("telemetry stuck alone must not decay a POI (ADR-037), got ok=%v %+v", ok, p)
+	}
 
-	// First stuck decay: 1.0 -> 0.75
+	// A terrain Recover give-up on the POI's access target is the decay input.
+	giveUp := func() {
+		rt.AgentFSM().QueueRecoverGiveUp(system1.RecoverGiveUp{Target: [3]float64{29.5, 64.0, 30.5}, Cause: system1.CauseTerrain, Tick: 120})
+		rt.HandleTelemetryFrame(stuckFrame)
+	}
+	giveUp()
+
+	// First give-up decay: 1.0 -> 0.75
 	p, ok := si.GetPOI(stuckPOI.POIID)
 	if !ok {
 		t.Fatalf("expected POI still present in SpatialIndex after first decay")
@@ -503,24 +513,21 @@ func TestRuntime_NavigationStuckDecayAndInvalidation(t *testing.T) {
 
 	// 3. Repeat navigation and stuck decay until reliability <= 0.1
 	// Next attempt: 0.75 -> 0.50
-	rt.SetNavTargetPOIID(stuckPOI.POIID)
-	rt.HandleTelemetryFrame(stuckFrame)
+	giveUp()
 	p, _ = si.GetPOI(stuckPOI.POIID)
 	if p.Reliability < 0.49 || p.Reliability > 0.51 {
 		t.Fatalf("expected reliability ~0.50, got %f", p.Reliability)
 	}
 
 	// Next attempt: 0.50 -> 0.25
-	rt.SetNavTargetPOIID(stuckPOI.POIID)
-	rt.HandleTelemetryFrame(stuckFrame)
+	giveUp()
 	p, _ = si.GetPOI(stuckPOI.POIID)
 	if p.Reliability < 0.24 || p.Reliability > 0.26 {
 		t.Fatalf("expected reliability ~0.25, got %f", p.Reliability)
 	}
 
 	// Final attempt: 0.25 -> 0.00 <= 0.1 threshold -> POI invalidated & pruned!
-	rt.SetNavTargetPOIID(stuckPOI.POIID)
-	rt.HandleTelemetryFrame(stuckFrame)
+	giveUp()
 
 	// Should be removed from SpatialIndex
 	if _, ok := si.GetPOI(stuckPOI.POIID); ok {

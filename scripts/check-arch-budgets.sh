@@ -24,19 +24,19 @@ done
 
 # Format: "relative_path|baseline_max_lines"
 FILE_BUDGETS=(
-  "orchestrator-go/internal/agent/runtime.go|4582"
-  "orchestrator-go/internal/system1/fsm.go|2267"
-  "orchestrator-go/internal/system1/bootstrap.go|940"
-  "orchestrator-go/internal/system1/state.go|1823"
-  "mod-neoforge/src/main/java/com/civquest/mod/actuator/IntentActuator.java|1999"
+  "orchestrator-go/internal/agent/runtime.go|3875"
+  "orchestrator-go/internal/system1/fsm.go|852"
+  "orchestrator-go/internal/system1/bootstrap.go|903"
+  "orchestrator-go/internal/system1/state.go|1288"
+  "mod-neoforge/src/main/java/com/civquest/mod/actuator/IntentActuator.java|413"
   "mod-neoforge/src/main/java/com/civquest/mod/actuator/AgentNavigator.java|1434"
   "mod-neoforge/src/main/java/com/civquest/mod/AgentEntity.java|1003"
 )
 
 # Format: "relative_path|struct_name|baseline_max_total_fields"
 STRUCT_BUDGETS=(
-  "orchestrator-go/internal/system1/state.go|AgentState|102"
-  "orchestrator-go/internal/agent/runtime.go|AgentRuntime|98"
+  "orchestrator-go/internal/system1/state.go|AgentState|44"
+  "orchestrator-go/internal/agent/runtime.go|AgentRuntime|59"
 )
 
 count_go_struct_fields() {

@@ -43,68 +43,46 @@ public class AgentMotorFSMTest {
         actuator = new IntentActuator();
     }
 
+    private static final Lease NO_LEASE = Lease.none(0);
+
+    /** Pushes {@code motor} as the single frame of batch {@code batchId} / frame {@code frameId} (index 0). */
+    private static void pushBatch(AgentMotorFSM fsm, long batchId, long frameId, Motor motor) {
+        assertTrue(fsm.pushBatch(List.of(new Frame(batchId, frameId, 0, motor, NO_LEASE)), 1));
+    }
+
+    private static AgentEntity agentWithFsmHook(AgentEntity agent, AgentMotorFSM fsm) {
+        when(agent.getMotorFSM()).thenReturn(fsm);
+        return agent;
+    }
+
     @Test
-    @DisplayName("MotorFSM initializes in IDLE state with 0 ticks")
+    @DisplayName("MotorFSM starts with an empty motor stack, no receipt and no MotorState enum")
     void testInitialState() {
-        assertEquals(MotorState.IDLE, motorFSM.getState());
-        assertEquals(MotorState.IDLE, motorFSM.getPreviousState());
-        assertEquals(0L, motorFSM.getTicksInState());
-        assertNull(motorFSM.getLastNavTarget());
+        assertTrue(motorFSM.isMotorIdle());
+        assertTrue(motorFSM.topMotor().isEmpty());
+        assertEquals(0, motorFSM.getStackDepth());
+        assertEquals(IntentReceipt.ReceiptStatus.RECEIPT_STATUS_UNSPECIFIED, motorFSM.getCurrentReceipt().getStatus());
+        assertThrows(ClassNotFoundException.class,
+                () -> Class.forName("com.civquest.mod.actuator.motor.MotorState"));
+        assertThrows(ClassNotFoundException.class,
+                () -> Class.forName("com.civquest.mod.actuator.motor.Recover"));
     }
 
     @Test
-    @DisplayName("MotorFSM supports transitions across all MotorState values")
-    void testAllStateTransitions() {
-        for (MotorState state : MotorState.values()) {
-            boolean transitioned = motorFSM.transitionTo(state, "test_transition_" + state.name());
-            if (state == MotorState.IDLE) {
-                // If it was already IDLE
-                assertFalse(transitioned);
-            } else {
-                assertTrue(transitioned);
-                assertEquals(state, motorFSM.getState());
-                assertEquals(0L, motorFSM.getTicksInState());
-            }
-        }
-    }
-
-    @Test
-    @DisplayName("MotorFSM rejects transition to the identical active state or null")
-    void testIdenticalOrNullTransitions() {
-        motorFSM.transitionTo(MotorState.MOVING, "start_moving");
-        assertEquals(MotorState.MOVING, motorFSM.getState());
-
-        assertFalse(motorFSM.transitionTo(MotorState.MOVING, "duplicate_moving"));
-        assertFalse(motorFSM.transitionTo(null, "null_state"));
-        assertEquals(MotorState.MOVING, motorFSM.getState());
-    }
-
-    @Test
-    @DisplayName("MotorFSM entry and exit hooks reset counters and clear targets")
-    void testEntryAndExitHooks() {
-        motorFSM.setLastNavTarget(Vec3.newBuilder().setX(10).setY(64).setZ(10).build());
-        motorFSM.setCombatTicks(25);
-        motorFSM.setStuckRecoveryTicks(15);
-
-        // Transition to COMBAT_ENGAGED resets combatTicks to 0
-        motorFSM.transitionTo(MotorState.COMBAT_ENGAGED, "enter_combat");
-        assertEquals(0, motorFSM.getCombatTicks());
-
-        // Transition to STUCK_RECOVERY resets stuckRecoveryTicks to 0
-        motorFSM.setStuckRecoveryTicks(10);
-        motorFSM.transitionTo(MotorState.STUCK_RECOVERY, "enter_stuck_recovery");
-        assertEquals(0, motorFSM.getStuckRecoveryTicks());
-
-        // Transition to IDLE clears lastNavTarget
-        motorFSM.setLastNavTarget(Vec3.newBuilder().setX(5).setY(64).setZ(5).build());
-        motorFSM.transitionTo(MotorState.IDLE, "return_idle");
-        assertNull(motorFSM.getLastNavTarget());
+    @DisplayName("The motor state is the top frame: pushing a frame changes it, popping restores the one below")
+    void testStateIsTopOfStack() {
+        assertTrue(motorFSM.pushDirect(new Mine(null, 0, 0.0)));
+        assertInstanceOf(Mine.class, motorFSM.topMotor().orElseThrow());
+        assertTrue(motorFSM.pushDirect(new Sleep(null, 0)));
+        assertInstanceOf(Sleep.class, motorFSM.topMotor().orElseThrow());
+        assertTrue(motorFSM.isSleeping());
+        assertEquals(2, motorFSM.getMotorStack().depth());
     }
 
     @Test
     @DisplayName("MotorFSM preemption matrix protects SLEEPING state from routine navigation and actions")
     void testSleepingPreemptionMatrix() {
-        motorFSM.transitionTo(MotorState.SLEEPING, "agent_asleep");
+        assertTrue(motorFSM.pushDirect(new Sleep(null, 0)));
 
         // Routine sprint navigation should NOT preempt sleep
         AgentIntent routineSprint = AgentIntent.newBuilder()
@@ -148,9 +126,9 @@ public class AgentMotorFSMTest {
     }
 
     @Test
-    @DisplayName("MotorFSM preemption matrix protects COMBAT_ENGAGED state from routine intents")
+    @DisplayName("MotorFSM preemption matrix protects an active Combat reflex frame from routine intents")
     void testCombatPreemptionMatrix() {
-        motorFSM.transitionTo(MotorState.COMBAT_ENGAGED, "in_combat");
+        assertTrue(motorFSM.pushReflex(new Combat(0, 0), "in_combat"));
 
         // Routine sprint navigation should NOT preempt active combat
         AgentIntent routineSprint = AgentIntent.newBuilder()
@@ -183,76 +161,145 @@ public class AgentMotorFSMTest {
     }
 
     @Test
-    @DisplayName("MotorFSM prevents duplicate navigation intents from resetting STUCK_RECOVERY")
-    void testStuckRecoveryOscillationPrevention() {
-        Vec3 target = Vec3.newBuilder().setX(100.0).setY(64.0).setZ(200.0).build();
-
-        // Agent begins moving to target
-        AgentIntent navIntent = AgentIntent.newBuilder()
-                .setNavigate(NavigateIntent.newBuilder().setTarget(target).build())
-                .build();
-        motorFSM.handleIntent(navIntent, actuator);
-        assertEquals(MotorState.MOVING, motorFSM.getState());
-        assertEquals(target, motorFSM.getLastNavTarget());
-
-        // Agent gets stuck and enters STUCK_RECOVERY
-        motorFSM.transitionTo(MotorState.STUCK_RECOVERY, "navigation_stuck");
-        assertEquals(MotorState.STUCK_RECOVERY, motorFSM.getState());
-
-        // Repeated identical navigation intent to same target is rejected from preempting STUCK_RECOVERY
-        assertFalse(motorFSM.canPreempt(navIntent));
-
-        // Different navigation destination is allowed to redirect and preempt STUCK_RECOVERY
-        Vec3 altTarget = Vec3.newBuilder().setX(150.0).setY(64.0).setZ(250.0).build();
-        AgentIntent altNavIntent = AgentIntent.newBuilder()
-                .setNavigate(NavigateIntent.newBuilder().setTarget(altTarget).build())
-                .build();
-        assertTrue(motorFSM.canPreempt(altNavIntent));
-
-        // Emergency attack is allowed to preempt STUCK_RECOVERY
-        AgentIntent attack = AgentIntent.newBuilder()
-                .setAttack(AttackIntent.newBuilder().setTargetEntityId(12).build())
-                .build();
-        assertTrue(motorFSM.canPreempt(attack));
+    @DisplayName("ADR-037: there is no STUCK_RECOVERY state; a stuck Move ends FAILED with facts and the stack drains")
+    void testNoStuckRecoveryState() {
+        for (java.lang.reflect.Field f : AgentMotorFSM.class.getDeclaredFields()) {
+            assertFalse(f.getName().toLowerCase().contains("stuckrecovery"), "field " + f.getName());
+        }
     }
 
     @Test
-    @DisplayName("MotorFSM tick advances combatTicks and disengages to IDLE after COMBAT_TIMEOUT_TICKS")
+    @DisplayName("Combat reflex frame pops after COMBAT_TIMEOUT_TICKS (60) and emits pushed/popped ReflexNotices")
     void testCombatDisengagementTimeout() {
-        motorFSM.transitionTo(MotorState.COMBAT_ENGAGED, "start_combat");
-        assertEquals(0, motorFSM.getCombatTicks());
+        assertEquals(60, AgentMotorFSM.COMBAT_TIMEOUT_TICKS);
+        assertTrue(motorFSM.pushReflex(new Combat(0, 0), "start_combat"));
+        assertEquals(1, motorFSM.getStackDepth());
+        assertInstanceOf(Combat.class, motorFSM.activeReflex().orElseThrow());
 
         for (int i = 0; i < AgentMotorFSM.COMBAT_TIMEOUT_TICKS; i++) {
             motorFSM.tick();
-            assertEquals(MotorState.COMBAT_ENGAGED, motorFSM.getState());
+            assertEquals(1, motorFSM.getStackDepth(), "still engaged at tick " + (i + 1));
         }
 
-        // Ticking past COMBAT_TIMEOUT_TICKS transitions to IDLE
+        // Ticking past COMBAT_TIMEOUT_TICKS pops the frame
         motorFSM.tick();
-        assertEquals(MotorState.IDLE, motorFSM.getState());
+        assertEquals(0, motorFSM.getStackDepth());
+        assertTrue(motorFSM.activeReflex().isEmpty());
+        assertTrue(motorFSM.isMotorIdle());
     }
 
     @Test
-    @DisplayName("MotorFSM tick advances stuckRecoveryTicks and times out to IDLE after STUCK_RECOVERY_MAX_TICKS")
-    void testStuckRecoveryTimeout() {
-        motorFSM.transitionTo(MotorState.STUCK_RECOVERY, "start_stuck_recovery");
-        assertEquals(0, motorFSM.getStuckRecoveryTicks());
+    @DisplayName("Reflex push/pop emit ReflexNotice with preempted_frame_id and popped flag")
+    void testReflexNoticesCarryPreemptedFrameAndPoppedFlag() {
+        AgentEntity mockAgent = mock(AgentEntity.class);
+        when(mockAgent.getAgentId()).thenReturn("notice-agent");
+        when(mockAgent.isAlive()).thenReturn(true);
+        mockAgent.tickCount = 7;
+        AgentMotorFSM fsm = new AgentMotorFSM(mockAgent);
+        pushBatch(fsm, 1L, 4242L, new Mine(null, 0, 0.0));
 
-        for (int i = 0; i < AgentMotorFSM.STUCK_RECOVERY_MAX_TICKS; i++) {
-            motorFSM.tick();
-            assertEquals(MotorState.STUCK_RECOVERY, motorFSM.getState());
+        assertTrue(fsm.pushReflex(new Combat(0, 0), "test_push"));
+        long reflexFrameId = fsm.getMotorStack().peek().orElseThrow().frameId();
+        assertTrue(reflexFrameId >= AgentMotorFSM.LOCAL_FRAME_ID_BASE, "reflex frames carry real (non-zero) ids");
+        for (int i = 0; i <= AgentMotorFSM.COMBAT_TIMEOUT_TICKS; i++) {
+            fsm.tick();
         }
 
-        // Ticking past STUCK_RECOVERY_MAX_TICKS transitions to IDLE
-        motorFSM.tick();
-        assertEquals(MotorState.IDLE, motorFSM.getState());
+        org.mockito.ArgumentCaptor<com.civquest.mod.grpc.v1.ReflexNotice> cap =
+                org.mockito.ArgumentCaptor.forClass(com.civquest.mod.grpc.v1.ReflexNotice.class);
+        verify(mockAgent, times(2)).recordReflexNotice(cap.capture());
+        var pushed = cap.getAllValues().get(0);
+        var popped = cap.getAllValues().get(1);
+        assertEquals(com.civquest.mod.grpc.v1.ReflexNotice.ReflexType.REFLEX_TYPE_COMBAT, pushed.getReflexType());
+        assertEquals(4242L, pushed.getPreemptedFrameId());
+        assertFalse(pushed.getPopped());
+        assertEquals(4242L, popped.getPreemptedFrameId());
+        assertTrue(popped.getPopped());
+    }
+
+    @Test
+    @DisplayName("Dodge and Flee frames are real reflex frames that time out and resume the interrupted frame")
+    void testDodgeAndFleeFramesExpire() {
+        assertTrue(motorFSM.pushDirect(new Mine(null, 0, 0.0)));
+        assertTrue(motorFSM.pushReflex(new Dodge(Dodge.DEFAULT_TICKS), "dodge"));
+        assertTrue(motorFSM.preemptWithFleeReflex(Vec3.getDefaultInstance(), "flee"));
+        assertEquals(2, motorFSM.getStackDepth());
+        assertInstanceOf(Flee.class, motorFSM.activeReflex().orElseThrow());
+        for (int i = 0; i < Flee.DEFAULT_TICKS + Dodge.DEFAULT_TICKS && motorFSM.getStackDepth() > 0; i++) {
+            motorFSM.tick();
+        }
+        assertEquals(0, motorFSM.getStackDepth());
+        assertInstanceOf(Mine.class, motorFSM.topMotor().orElseThrow(), "interrupted frame is untouched while reflexes run");
+    }
+
+    private AgentMotorFSM stuckFsm(AgentNavigator nav) {
+        AgentEntity agent = mock(AgentEntity.class);
+        when(agent.getNavigator()).thenReturn(nav);
+        when(nav.isPathing()).thenReturn(true);
+        AgentMotorFSM fsm = new AgentMotorFSM(agent);
+        pushBatch(fsm, 9L, 90L, new Move(Vec3.newBuilder().setX(5).setY(64).setZ(5).build(), 1f, false, false, false, 1));
+        return fsm;
+    }
+
+    @Test
+    @DisplayName("ADR-037: navigator stuck ends the Move immediately as a failure carrying terrain facts")
+    void testStuckEndsMoveWithTerrainFacts() {
+        AgentNavigator nav = mock(AgentNavigator.class);
+        com.civquest.mod.grpc.v1.MotorFacts facts = com.civquest.mod.grpc.v1.MotorFacts.newBuilder()
+                .setStuck(true).setStuckTicks(16).setBlockedBearingDeg(90.0f).setProgress(7.5).build();
+        when(nav.isStuck()).thenReturn(true);
+        when(nav.snapshotFacts()).thenReturn(facts);
+        AgentMotorFSM fsm = stuckFsm(nav);
+
+        fsm.tick();
+
+        assertTrue(fsm.isMotorIdle(), "no recovery delay state: Java reports and drains the stack");
+        IntentReceipt receipt = fsm.getCurrentReceipt();
+        assertEquals(IntentReceipt.ReceiptStatus.RECEIPT_STATUS_FAILED, receipt.getStatus());
+        assertEquals("Navigation stuck", receipt.getFailureReason());
+        assertEquals(9L, receipt.getBatchId());
+        assertEquals(90L, receipt.getFrameId(), "receipts carry the batch frame id");
+        assertEquals(facts, receipt.getFacts());
+    }
+
+    @Test
+    @DisplayName("ADR-037: entity congestion (ADR-033 yield) is reported as blocked_by_entity, distinct from terrain")
+    void testStuckEndsMoveWithCongestionFacts() {
+        AgentNavigator nav = mock(AgentNavigator.class);
+        com.civquest.mod.grpc.v1.MotorFacts facts = com.civquest.mod.grpc.v1.MotorFacts.newBuilder()
+                .setStuck(true).setStuckTicks(16).setBlockedByEntity(true).build();
+        when(nav.isStuck()).thenReturn(true);
+        when(nav.snapshotFacts()).thenReturn(facts);
+        AgentMotorFSM fsm = stuckFsm(nav);
+
+        fsm.tick();
+
+        com.civquest.mod.grpc.v1.MotorFacts taken = fsm.getCurrentReceipt().getFacts();
+        assertNotNull(taken);
+        assertTrue(taken.getBlockedByEntity());
+        assertTrue(taken.getStuck());
+    }
+
+    @Test
+    @DisplayName("ADR-037: an identical NavigateIntent is no longer rejected after a stuck failure (Go decides retries)")
+    void testNavigateAcceptedAfterStuck() {
+        AgentNavigator nav = mock(AgentNavigator.class);
+        when(nav.isStuck()).thenReturn(true);
+        AgentMotorFSM fsm = stuckFsm(nav);
+        Vec3 target = Vec3.newBuilder().setX(100.0).setY(64.0).setZ(200.0).build();
+        AgentIntent navIntent = AgentIntent.newBuilder()
+                .setNavigate(NavigateIntent.newBuilder().setTarget(target).build())
+                .build();
+        fsm.tick();
+        assertTrue(fsm.canPreempt(navIntent));
     }
 
     @Test
     @DisplayName("MotorFSM isSameNavigationTarget checks coordinate proximity correctly")
     void testIsSameNavigationTarget() {
         Vec3 base = Vec3.newBuilder().setX(10.0).setY(64.0).setZ(10.0).build();
-        motorFSM.setLastNavTarget(base);
+        assertTrue(motorFSM.isSameNavigationTarget(NavigateIntent.getDefaultInstance()), "no Move frame: no-target is same");
+        assertTrue(motorFSM.pushDirect(new Move(base, 1f, false, false, false, 1)));
 
         NavigateIntent exact = NavigateIntent.newBuilder().setTarget(base).build();
         assertTrue(motorFSM.isSameNavigationTarget(exact));
@@ -270,50 +317,44 @@ public class AgentMotorFSMTest {
         NavigateIntent noTarget = NavigateIntent.newBuilder().build();
         assertFalse(motorFSM.isSameNavigationTarget(noTarget));
 
-        motorFSM.setLastNavTarget(null);
+        motorFSM.flush();
         assertTrue(motorFSM.isSameNavigationTarget(noTarget));
     }
 
     @Test
-    @DisplayName("MotorPDA bounded LIFO stack enforces MAX_STACK_DEPTH = 4 and restores LIFO order")
-    void testBoundedLifoStackDepthLimit() {
-        motorFSM.transitionTo(MotorState.MINING, "start_mining");
+    @DisplayName("Reflex nesting is bounded at MAX_STACK_DEPTH = 4 and unwinds LIFO back to the interrupted state")
+    void testBoundedReflexNestingLimit() {
+        assertTrue(motorFSM.pushDirect(new Mine(null, 0, 0.0)));
 
-        assertTrue(motorFSM.pushState(MotorState.MOVING, "push_1"));
-        assertTrue(motorFSM.pushState(MotorState.BUILDING, "push_2"));
-        assertTrue(motorFSM.pushState(MotorState.USING_ITEM, "push_3"));
-        assertTrue(motorFSM.pushState(MotorState.COMBAT_ENGAGED, "push_4"));
+        assertTrue(motorFSM.pushReflex(new Dodge(500), "push_1"));
+        assertTrue(motorFSM.pushReflex(new Flee(Vec3.getDefaultInstance(), 500), "push_2"));
+        assertTrue(motorFSM.pushReflex(new UseItem("slot:0", 0), "push_3"));
+        assertTrue(motorFSM.pushReflex(new Combat(0, 0), "push_4"));
         assertEquals(AgentMotorFSM.MAX_STACK_DEPTH, motorFSM.getStackDepth());
-        assertEquals(MotorState.COMBAT_ENGAGED, motorFSM.getState());
 
-        // 5th push must be rejected cleanly without overflowing stack
-        assertFalse(motorFSM.pushState(MotorState.STUCK_RECOVERY, "push_overflow"));
+        // 5th push must be rejected cleanly without overflowing the stack
+        assertFalse(motorFSM.pushReflex(new Combat(0, 0), "push_overflow"));
         assertEquals(AgentMotorFSM.MAX_STACK_DEPTH, motorFSM.getStackDepth());
-        assertEquals(MotorState.COMBAT_ENGAGED, motorFSM.getState());
 
-        // LIFO pop order verification
-        assertTrue(motorFSM.popState());
-        assertEquals(MotorState.USING_ITEM, motorFSM.getState());
+        // LIFO order on the typed stack (top first)
+        var frames = motorFSM.getMotorStack().snapshot();
+        assertInstanceOf(Combat.class, frames.get(0).motor());
+        assertInstanceOf(UseItem.class, frames.get(1).motor());
+        assertInstanceOf(Flee.class, frames.get(2).motor());
+        assertInstanceOf(Dodge.class, frames.get(3).motor());
+
+        // Combat times out, then the detached UseItem (not using an item) pops, leaving Flee over Dodge
+        for (int i = 0; i <= AgentMotorFSM.COMBAT_TIMEOUT_TICKS; i++) {
+            motorFSM.tick();
+        }
         assertEquals(3, motorFSM.getStackDepth());
-
-        assertTrue(motorFSM.popState());
-        assertEquals(MotorState.BUILDING, motorFSM.getState());
+        motorFSM.tick();
         assertEquals(2, motorFSM.getStackDepth());
-
-        assertTrue(motorFSM.popState());
-        assertEquals(MotorState.MOVING, motorFSM.getState());
-        assertEquals(1, motorFSM.getStackDepth());
-
-        assertTrue(motorFSM.popState());
-        assertEquals(MotorState.MINING, motorFSM.getState());
-        assertEquals(0, motorFSM.getStackDepth());
-
-        // Popping an empty stack returns false cleanly
-        assertFalse(motorFSM.popState());
+        assertInstanceOf(Flee.class, motorFSM.activeReflex().orElseThrow());
     }
 
     @Test
-    @DisplayName("MotorPDA pushState/popState preserves and resumes BlockBreaker and AgentNavigator with zero amnesia")
+    @DisplayName("MotorPDA reflex push/pop preserves and resumes BlockBreaker and AgentNavigator with zero amnesia")
     void testPushPopResumesMiningAndNavigation() {
         AgentEntity mockAgent = mock(AgentEntity.class);
         BlockBreaker mockBreaker = mock(BlockBreaker.class);
@@ -333,20 +374,14 @@ public class AgentMotorFSMTest {
         when(mockBreaker.getTicks()).thenReturn(13);
         when(mockBreaker.resume(minePos, 0.65f, 13)).thenReturn(true);
 
-        fsm.transitionTo(MotorState.MINING, "start_mine");
-        assertTrue(fsm.pushState(MotorState.COMBAT_ENGAGED, "reflex_interrupt"));
-        assertEquals(MotorState.COMBAT_ENGAGED, fsm.getState());
+        assertTrue(fsm.pushDirect(new Mine(minePos, 0, 0.0)));
+        assertTrue(fsm.pushReflex(new Combat(0, 0), "reflex_interrupt"));
+        assertInstanceOf(Mine.class, fsm.getMotorStack().snapshot().get(1).motor());
         assertEquals(1, fsm.getStackDepth());
+        verify(mockBreaker).cancel();
 
-        MotorStackFrame suspendedFrame = fsm.getStackSnapshot().peek();
-        assertNotNull(suspendedFrame);
-        assertEquals(MotorState.MINING, suspendedFrame.getState());
-        assertEquals(13, suspendedFrame.getProgressTicks());
-        assertEquals(0.65, suspendedFrame.getLastProgressValue(), 1e-4);
-        assertEquals(minePos, suspendedFrame.getContextValue("breakPos"));
-
-        assertTrue(fsm.popState());
-        assertEquals(MotorState.MINING, fsm.getState());
+        tickOutCombat(fsm);
+        assertInstanceOf(Mine.class, fsm.topMotor().orElseThrow());
         assertEquals(0, fsm.getStackDepth());
         verify(mockBreaker).resume(minePos, 0.65f, 13);
 
@@ -361,20 +396,31 @@ public class AgentMotorFSMTest {
         when(mockNavigator.getArrivalTolerance()).thenReturn(2);
 
         Vec3 protoTarget = Vec3.newBuilder().setX(50.5).setY(64.0).setZ(-25.5).build();
-        fsm.setLastNavTarget(protoTarget);
-        fsm.transitionTo(MotorState.MOVING, "start_move");
-        assertTrue(fsm.pushState(MotorState.COMBAT_ENGAGED, "reflex_move_interrupt"));
-        assertEquals(MotorState.COMBAT_ENGAGED, fsm.getState());
+        when(mockNavigator.isPathing()).thenReturn(true);
+        fsm.flush();
+        clearInvocations(mockNavigator);
+        assertTrue(fsm.pushDirect(new Move(protoTarget, 1.2f, true, true, false, 2)));
+        assertTrue(fsm.pushReflex(new Dodge(5), "reflex_move_interrupt"));
+        assertInstanceOf(Move.class, fsm.getMotorStack().snapshot().get(1).motor());
         assertEquals(1, fsm.getStackDepth());
+        verify(mockNavigator).stop();
 
-        assertTrue(fsm.popState());
-        assertEquals(MotorState.MOVING, fsm.getState());
-        assertEquals(protoTarget, fsm.getLastNavTarget());
-        verify(mockNavigator).navigate(50.5, 64.0, -25.5, 1.2f, true, true, false, 2);
+        for (int i = 0; i < 6; i++) {
+            fsm.tick();
+        }
+        assertEquals(0, fsm.getStackDepth());
+        assertEquals(protoTarget, ((Move) fsm.topMotor().orElseThrow()).target());
+        verify(mockNavigator, times(2)).navigate(50.5, 64.0, -25.5, 1.2f, true, true, false, 2); // enter + resume
+    }
+
+    private static void tickOutCombat(AgentMotorFSM fsm) {
+        for (int i = 0; i <= AgentMotorFSM.COMBAT_TIMEOUT_TICKS; i++) {
+            fsm.tick();
+        }
     }
 
     @Test
-    @DisplayName("MotorPDA handleIntent(ATTACK) during MINING preempts via stack and auto-pops after timeout")
+    @DisplayName("ATTACK intent during MINING pushes a Strike frame over Mine and resumes the dig after the combat window")
     void testAttackIntentPreemptsAndAutoPops() {
         AgentEntity mockAgent = mock(AgentEntity.class);
         BlockBreaker mockBreaker = mock(BlockBreaker.class);
@@ -392,33 +438,33 @@ public class AgentMotorFSMTest {
         when(mockBreaker.resume(minePos, 0.4f, 8)).thenReturn(true);
 
         AgentMotorFSM fsm = new AgentMotorFSM(mockAgent);
-        fsm.updateReceiptState(77L, 0, IntentReceipt.ReceiptStatus.RECEIPT_STATUS_EXECUTING, "");
-        fsm.transitionTo(MotorState.MINING, "mining_ore");
+        agentWithFsmHook(mockAgent, fsm);
+        pushBatch(fsm, 77L, 770L, new Mine(minePos, 0, 0.0));
 
         AgentIntent atk = AgentIntent.newBuilder()
                 .setAgentId("pda-attack-preempt")
                 .setAttack(AttackIntent.newBuilder().setRaiseShield(false).build())
                 .build();
-        assertTrue(fsm.handleIntent(atk, actuator));
-        assertEquals(MotorState.COMBAT_ENGAGED, fsm.getState());
-        assertEquals(1, fsm.getStackDepth());
+        assertTrue(actuator.actuateWithResult(mockAgent, atk));
+        assertInstanceOf(Strike.class, fsm.topMotor().orElseThrow());
+        assertInstanceOf(Mine.class, fsm.getMotorStack().snapshot().get(1).motor(), "interrupted Mine stays suspended underneath");
+        verify(mockBreaker, never()).tick();
+        verify(mockBreaker).cancel();
 
-        IntentReceipt preemptedReceipt = fsm.getCurrentReceipt();
-        assertEquals(77L, preemptedReceipt.getBatchId());
-        assertEquals(IntentReceipt.ReceiptStatus.RECEIPT_STATUS_PREEMPTED_BY_REFLEX, preemptedReceipt.getStatus());
-        assertEquals(1, preemptedReceipt.getMotorStackDepth());
+        IntentReceipt inFlight = fsm.getCurrentReceipt();
+        assertEquals(77L, inFlight.getBatchId());
+        assertEquals(770L, inFlight.getFrameId());
+        assertEquals(IntentReceipt.ReceiptStatus.RECEIPT_STATUS_EXECUTING, inFlight.getStatus());
 
-        // Tick past COMBAT_TIMEOUT_TICKS -> automatically pops back to MINING and calls resume()
-        for (int i = 0; i <= AgentMotorFSM.COMBAT_TIMEOUT_TICKS; i++) {
-            fsm.tick();
-        }
-        assertEquals(MotorState.MINING, fsm.getState());
+        // Tick past COMBAT_TIMEOUT_TICKS -> Strike completes and the Mine resumes via resume()
+        tickOutCombat(fsm);
+        assertInstanceOf(Mine.class, fsm.topMotor().orElseThrow());
         assertEquals(0, fsm.getStackDepth());
         verify(mockBreaker).resume(minePos, 0.4f, 8);
     }
 
     @Test
-    @DisplayName("MotorPDA tick detects incoming projectile trajectory and preempts MINING into COMBAT_ENGAGED")
+    @DisplayName("MotorPDA tick detects incoming projectile trajectory (6-block threat radius) and preempts MINING with a Dodge frame")
     void testProjectileTrajectoryPreemption() {
         AgentEntity mockAgent = mock(AgentEntity.class);
         ServerLevel mockLevel = mock(ServerLevel.class);
@@ -448,12 +494,44 @@ public class AgentMotorFSMTest {
                 .thenReturn(List.of(incomingArrow));
 
         AgentMotorFSM fsm = new AgentMotorFSM(mockAgent);
-        fsm.transitionTo(MotorState.MINING, "mining_block");
+        pushBatch(fsm, 5L, 50L, new Mine(minePos, 0, 0.0));
 
         fsm.tick();
-        assertEquals(MotorState.COMBAT_ENGAGED, fsm.getState());
+        assertInstanceOf(Mine.class, fsm.getMotorStack().snapshot().get(1).motor());
+        assertInstanceOf(Dodge.class, fsm.activeReflex().orElseThrow());
         assertEquals(1, fsm.getStackDepth());
         assertEquals(IntentReceipt.ReceiptStatus.RECEIPT_STATUS_PREEMPTED_BY_REFLEX, fsm.getCurrentReceipt().getStatus());
+    }
+
+    @Test
+    @DisplayName("Projectile outside the 6-block threat radius or flying away does not trigger a Dodge")
+    void testProjectileOutsideThreatRadiusIgnored() {
+        AgentEntity mockAgent = mock(AgentEntity.class);
+        ServerLevel mockLevel = mock(ServerLevel.class);
+        when(mockAgent.getAgentId()).thenReturn("pda-arrow-far");
+        when(mockAgent.isAlive()).thenReturn(true);
+        when(mockAgent.level()).thenReturn(mockLevel);
+        when(mockAgent.getX()).thenReturn(0.0);
+        when(mockAgent.getY()).thenReturn(64.0);
+        when(mockAgent.getZ()).thenReturn(0.0);
+        when(mockAgent.getBoundingBox()).thenReturn(new AABB(-0.3, 64.0, -0.3, 0.3, 65.8, 0.3));
+
+        Arrow awayArrow = mock(Arrow.class);
+        when(awayArrow.isAlive()).thenReturn(true);
+        when(awayArrow.position()).thenReturn(new net.minecraft.world.phys.Vec3(4.0, 65.0, 0.0));
+        when(awayArrow.getDeltaMovement()).thenReturn(new net.minecraft.world.phys.Vec3(1.5, 0.0, 0.0));
+        // The level query is bounded by getBoundingBox().inflate(PROJECTILE_THREAT_RADIUS): an arrow beyond it is never returned.
+        when(mockLevel.getEntitiesOfClass(eq(net.minecraft.world.entity.projectile.Projectile.class), any(AABB.class), any()))
+                .thenReturn(List.of(awayArrow));
+
+        AgentMotorFSM fsm = new AgentMotorFSM(mockAgent);
+        assertTrue(fsm.pushDirect(new Mine(null, 0, 0.0)));
+        fsm.tick();
+        assertEquals(0, fsm.getStackDepth(), "arrow moving away must not preempt");
+
+        org.mockito.ArgumentCaptor<AABB> box = org.mockito.ArgumentCaptor.forClass(AABB.class);
+        verify(mockLevel).getEntitiesOfClass(eq(net.minecraft.world.entity.projectile.Projectile.class), box.capture(), any());
+        assertEquals(0.6 + 12.0, box.getValue().getXsize(), 1e-6, "threat box is the agent box inflated by 6 blocks per side");
     }
 
     @Test
@@ -468,14 +546,14 @@ public class AgentMotorFSMTest {
         when(mockAgent.getNavigator()).thenReturn(mockNavigator);
 
         AgentMotorFSM fsm = new AgentMotorFSM(mockAgent);
-        fsm.transitionTo(MotorState.MINING, "mining");
-        fsm.pushState(MotorState.COMBAT_ENGAGED, "combat");
+        pushBatch(fsm, 3L, 30L, new Mine(null, 0, 0.0));
+        fsm.pushReflex(new Combat(0, 0), "combat");
         assertEquals(1, fsm.getStackDepth());
 
         fsm.flush();
         assertEquals(0, fsm.getStackDepth());
-        assertEquals(MotorState.IDLE, fsm.getState());
-        assertNull(fsm.getCurrentIntent());
+        assertTrue(fsm.isMotorIdle());
+        assertEquals(IntentReceipt.ReceiptStatus.RECEIPT_STATUS_UNSPECIFIED, fsm.getCurrentReceipt().getStatus());
         verify(mockBreaker, atLeastOnce()).cancel();
         verify(mockNavigator, atLeastOnce()).stop();
     }
@@ -507,6 +585,7 @@ public class AgentMotorFSMTest {
         });
 
         AgentMotorFSM fsm = new AgentMotorFSM(mockAgent);
+        agentWithFsmHook(mockAgent, fsm);
         AgentIntent surveyIntent = AgentIntent.newBuilder()
                 .setAgentId("survey-agent")
                 .setSequenceId(321L)
@@ -517,15 +596,16 @@ public class AgentMotorFSMTest {
                         .build())
                 .build();
 
-        assertTrue(fsm.handleIntent(surveyIntent, actuator));
-        assertEquals(MotorState.SURVEYING, fsm.getState());
+        assertTrue(actuator.actuateWithResult(mockAgent, surveyIntent));
+        assertTrue(fsm.isSweeping());
+        assertEquals(321L, fsm.getLastProcessedSequenceId());
         verify(mockNavigator, atLeastOnce()).stop();
 
         for (int t = 0; t < 72; t++) {
             fsm.tick();
         }
 
-        assertEquals(MotorState.IDLE, fsm.getState());
+        assertTrue(fsm.isMotorIdle());
 
         org.mockito.ArgumentCaptor<Float> yawCaptor = org.mockito.ArgumentCaptor.forClass(Float.class);
         verify(mockAgent, times(36)).faceBearingAndSync(yawCaptor.capture());
@@ -549,7 +629,7 @@ public class AgentMotorFSMTest {
     }
 
     @Test
-    @DisplayName("Incoming combat threat mid-survey immediately preempts SURVEYING with COMBAT_ENGAGED")
+    @DisplayName("Incoming combat threat mid-survey immediately preempts the Sweep frame with a Combat reflex frame")
     void testCombatThreatPreemptsSurveying() {
         AgentEntity mockAgent = mock(AgentEntity.class);
         ServerLevel mockLevel = mock(ServerLevel.class);
@@ -568,6 +648,7 @@ public class AgentMotorFSMTest {
         });
 
         AgentMotorFSM fsm = new AgentMotorFSM(mockAgent);
+        agentWithFsmHook(mockAgent, fsm);
         AgentIntent surveyIntent = AgentIntent.newBuilder()
                 .setAgentId("survey-preempt-agent")
                 .setSurveyHorizon(com.civquest.mod.grpc.v1.SurveyHorizonIntent.newBuilder()
@@ -577,26 +658,29 @@ public class AgentMotorFSMTest {
                         .build())
                 .build();
 
-        assertTrue(fsm.handleIntent(surveyIntent, actuator));
-        assertEquals(MotorState.SURVEYING, fsm.getState());
+        assertTrue(actuator.actuateWithResult(mockAgent, surveyIntent));
+        assertTrue(fsm.isSweeping());
         fsm.tick(); // Sector 0 scanned
 
-        // Direct combat reflex preemption (e.g., hurt by mob) immediately pushes COMBAT_ENGAGED
+        // Direct combat reflex preemption (e.g., hurt by mob) immediately pushes a Combat frame
         assertTrue(fsm.preemptWithCombatReflex("damage_reflex_mob"));
-        assertEquals(MotorState.COMBAT_ENGAGED, fsm.getState());
+        assertInstanceOf(Combat.class, fsm.activeReflex().orElseThrow());
         assertEquals(1, fsm.getStackDepth());
+        assertTrue(fsm.hasSweepFrame(), "sweep frame is suspended beneath the reflex, locals intact");
+        assertFalse(fsm.isSweeping());
         verify(mockAgent, never()).queueHorizonSurveyReport(any());
 
         // Also verify AttackIntent mid-survey preempts cleanly
         fsm.flush();
-        assertTrue(fsm.handleIntent(surveyIntent, actuator));
-        assertEquals(MotorState.SURVEYING, fsm.getState());
+        assertTrue(actuator.actuateWithResult(mockAgent, surveyIntent));
+        assertTrue(fsm.isSweeping());
         AgentIntent atk = AgentIntent.newBuilder()
                 .setAgentId("survey-preempt-agent")
                 .setAttack(AttackIntent.newBuilder().setTargetEntityId(77).build())
                 .build();
-        assertTrue(fsm.handleIntent(atk, actuator));
-        assertEquals(MotorState.COMBAT_ENGAGED, fsm.getState());
-        assertEquals(1, fsm.getStackDepth());
+        assertTrue(actuator.actuateWithResult(mockAgent, atk));
+        assertInstanceOf(Strike.class, fsm.topMotor().orElseThrow());
+        assertTrue(fsm.hasSweepFrame(), "sweep stays suspended beneath the attack frame");
+        assertFalse(fsm.isSweeping());
     }
 }

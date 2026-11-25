@@ -107,7 +107,6 @@ type TaskSubroutine struct {
 	LastProgressTick    int64
 	LastActionTick      int64
 	LastNavigateTick    int64
-	PausedAtTick        int64
 	ActiveSubTarget     *civquestv1.BlockPosProto
 	ActiveTargetID      string
 	ActiveApproachPos   *civquestv1.Vec3
@@ -116,11 +115,7 @@ type TaskSubroutine struct {
 	LastActionTargetID  string
 	BaselineCount       int32
 	ActionsEmitted      int
-	PushedToPDA         bool
-	LastReceiptBatchID  int64
 	LastReceiptStatus   civquestv1.IntentReceipt_ReceiptStatus
-	StartReceiptBatchID int64
-	IssuedBatchCount    int
 	ConsecutiveFailures int
 	FailureReason       string
 	Metadata            map[string]string
@@ -151,62 +146,45 @@ func NewTaskFSM(spec TaskDescriptor, startTick int64) *TaskFSM {
 	return NewTaskSubroutine(spec, startTick)
 }
 
-// Pause records the tick at which the task was suspended (e.g. by EMERGENCY preemption).
-func (t *TaskSubroutine) Pause(tick int64) {
-	if t == nil || t.PausedAtTick != 0 {
+// CompensateSuspension shifts progress/navigation timers forward by the number of ticks the
+// owning frame spent suspended (preempted on the activity stack) so time spent under a
+// preemptor never counts toward the progress timeout.
+func (t *TaskSubroutine) CompensateSuspension(delta int64) {
+	if t == nil || delta <= 0 {
 		return
 	}
-	t.PausedAtTick = tick
+	t.LastProgressTick += delta
+	if t.LastNavigateTick > 0 {
+		t.LastNavigateTick += delta
+	}
 }
 
-// Resume adjusts timeout tracking after suspension so emergency duration does not trigger false timeouts.
-func (t *TaskSubroutine) Resume(tick int64) {
-	if t == nil || t.PausedAtTick == 0 {
-		return
-	}
-	if tick > t.PausedAtTick {
-		delta := tick - t.PausedAtTick
-		t.LastProgressTick += delta
-		if t.LastNavigateTick > 0 {
-			t.LastNavigateTick += delta
-		}
-	}
-	t.PausedAtTick = 0
-}
-
-// MetadataSnapshot returns a defensive copy of task metadata suitable for StateStackFrame storage.
-func (t *TaskSubroutine) MetadataSnapshot() map[string]string {
+// Clone returns a copy of the task whose mutable containers (Metadata) are not shared,
+// so a frame step works on its own copy of the frame local.
+func (t *TaskSubroutine) Clone() *TaskSubroutine {
 	if t == nil {
 		return nil
 	}
-	out := map[string]string{
-		"task_frame": "true",
-		"task_id":    t.Spec.ID,
-		"task_kind":  t.Spec.Kind,
-		"task_phase": string(t.Phase),
+	cp := *t
+	if t.Metadata != nil {
+		cp.Metadata = make(map[string]string, len(t.Metadata))
+		for k, v := range t.Metadata {
+			cp.Metadata[k] = v
+		}
 	}
-	if t.Spec.Target.BlockPos != nil {
-		out["target_x"] = fmt.Sprintf("%d", t.Spec.Target.BlockPos.X)
-		out["target_y"] = fmt.Sprintf("%d", t.Spec.Target.BlockPos.Y)
-		out["target_z"] = fmt.Sprintf("%d", t.Spec.Target.BlockPos.Z)
-	}
-	for k, v := range t.Metadata {
-		out[k] = v
-	}
-	return out
+	return &cp
 }
 
-// Tick advances the TaskSubroutine by one sensory frame.
+// Tick advances the TaskSubroutine by one sensory frame without a receipt. Receipts reach a
+// task only through its activity frame (the kernel routes them by frame ID); a
+// TelemetryFrame's receipt field is never read here.
 func (t *TaskSubroutine) Tick(agentID string, state *AgentState, frame *civquestv1.TelemetryFrame) TaskStepResult {
-	var receipt *civquestv1.IntentReceipt
-	if frame != nil {
-		receipt = frame.GetReceipt()
-	}
-	return t.TickWithReceipt(agentID, state, frame, receipt)
+	return t.TickWithReceipt(agentID, state, frame, nil)
 }
 
-// TickWithReceipt advances the TaskSubroutine by one sensory frame while processing
-// an IntentReceipt from the motor periphery for immediate advancement or recovery.
+// TickWithReceipt advances the TaskSubroutine by one sensory frame while processing an
+// IntentReceipt routed to this task's frame (already validated as fresh and addressed to
+// it by the frame-ID seam) for immediate advancement or recovery.
 func (t *TaskSubroutine) TickWithReceipt(agentID string, state *AgentState, frame *civquestv1.TelemetryFrame, receipt *civquestv1.IntentReceipt) TaskStepResult {
 	if t == nil {
 		return TaskStepResult{}
@@ -219,9 +197,6 @@ func (t *TaskSubroutine) TickWithReceipt(agentID string, state *AgentState, fram
 			Reason: t.FailureReason,
 		}
 	}
-	if receipt == nil && frame != nil {
-		receipt = frame.GetReceipt()
-	}
 	if frame == nil || frame.Status == nil || frame.Status.Position == nil {
 		return TaskStepResult{Phase: t.Phase, Active: true}
 	}
@@ -233,104 +208,89 @@ func (t *TaskSubroutine) TickWithReceipt(agentID string, state *AgentState, fram
 		t.LastProgressTick = frame.WorldTick
 	}
 
-	// 0. Process IntentReceipt from periphery for immediate step progression or failure recovery.
-	// Ignore any pre-existing receipt carried over from before this task emitted its first intent.
+	// 0. Process the IntentReceipt routed to this task's frame. Staleness and duplicates are
+	// rejected upstream (frame-ID routing + monotonic batch guard), not by per-task counters.
 	if receipt != nil {
-		if t.IssuedBatchCount == 0 {
-			if receipt.BatchId > t.StartReceiptBatchID {
-				t.StartReceiptBatchID = receipt.BatchId
-			}
-		} else {
-			isStalePreTask := t.StartReceiptBatchID > 0 && receipt.BatchId > 0 && receipt.BatchId <= t.StartReceiptBatchID
-			alreadyProcessed := receipt.BatchId > 0 &&
-				receipt.BatchId == t.LastReceiptBatchID &&
-				receipt.Status == t.LastReceiptStatus
-			if !isStalePreTask && !alreadyProcessed {
-				if receipt.BatchId > 0 {
-					t.LastReceiptBatchID = receipt.BatchId
+		t.LastReceiptStatus = receipt.Status
+
+		switch receipt.Status {
+		case civquestv1.IntentReceipt_RECEIPT_STATUS_COMPLETED:
+			prevPhase := t.Phase
+			prevLastNavTick := t.LastNavigateTick
+			if prevPhase == TaskPhaseApproach {
+				reach := t.Spec.ReachRadius
+				if reach <= 0 {
+					reach = 4.5
 				}
-				t.LastReceiptStatus = receipt.Status
-
-				switch receipt.Status {
-				case civquestv1.IntentReceipt_RECEIPT_STATUS_COMPLETED:
-					prevPhase := t.Phase
-					prevLastNavTick := t.LastNavigateTick
-					if prevPhase == TaskPhaseApproach {
-						reach := t.Spec.ReachRadius
-						if reach <= 0 {
-							reach = 4.5
-						}
-						tol := t.Spec.ArrivalTolerance
-						if tol <= 0 {
-							tol = 2
-						}
-						distSq := distanceSqToSubTarget(frame.Status.Position, t.ActiveApproachPos, t.ActiveSubTarget)
-						maxArrival := reach + float64(tol) + 1.0
-						withinArrival := (t.ActiveApproachPos == nil && t.ActiveSubTarget == nil) || distSq <= maxArrival*maxArrival
-						movedCloser := t.ApproachBestDistSq > 0 && distSq <= t.ApproachBestDistSq-1.0
-						if prevLastNavTick > 0 && (withinArrival || movedCloser) {
-							t.ConsecutiveFailures = 0
-							t.LastProgressTick = frame.WorldTick
-							t.LastActionTick = 0
-							t.LastNavigateTick = 0
-							if distSq < t.ApproachBestDistSq || t.ApproachBestDistSq == 0 {
-								t.ApproachBestDistSq = distSq
-							}
-							if frame.Status.NavigationState != civquestv1.NavigationState_NAVIGATION_STATE_PATHING && withinArrival {
-								t.Phase = TaskPhasePrepare
-							}
-						}
-					} else {
-						t.ConsecutiveFailures = 0
-						t.LastProgressTick = frame.WorldTick
-						t.LastActionTick = 0
-						t.LastNavigateTick = 0
-					}
-
-				case civquestv1.IntentReceipt_RECEIPT_STATUS_FAILED:
-					t.LastActionTick = 0
-					t.LastNavigateTick = 0
-					t.ConsecutiveFailures++
-					if t.Metadata == nil {
-						t.Metadata = make(map[string]string)
-					}
-					reason := strings.TrimSpace(receipt.FailureReason)
-					if reason == "" {
-						reason = "intent execution failed"
-					}
-					t.Metadata["last_failure_reason"] = reason
-					t.Metadata["recovery_attempts"] = fmt.Sprintf("%d", t.ConsecutiveFailures)
-
-					maxFailures := t.Spec.MaxReceiptFailures
-					if maxFailures <= 0 {
-						maxFailures = 2
-					}
-					if t.ConsecutiveFailures >= maxFailures {
-						t.Phase = TaskPhaseFailed
-						t.FailureReason = fmt.Sprintf("intent failed (%d attempts): %s", t.ConsecutiveFailures, reason)
-						if t.Spec.OnFail != nil {
-							t.Spec.OnFail(state, frame, t, t.FailureReason)
-						}
-						return TaskStepResult{
-							Phase:  TaskPhaseFailed,
-							Active: false,
-							Done:   true,
-							Reason: t.FailureReason,
-						}
-					}
-					// Recover by re-evaluating / re-approaching sub-target immediately
-					t.Phase = TaskPhaseEvaluate
-					t.ActiveApproachPos = nil
-
-				case civquestv1.IntentReceipt_RECEIPT_STATUS_PREEMPTED_BY_REFLEX,
-					civquestv1.IntentReceipt_RECEIPT_STATUS_ABORTED:
+				tol := t.Spec.ArrivalTolerance
+				if tol <= 0 {
+					tol = 2
+				}
+				distSq := distanceSqToSubTarget(frame.Status.Position, t.ActiveApproachPos, t.ActiveSubTarget)
+				maxArrival := reach + float64(tol) + 1.0
+				withinArrival := (t.ActiveApproachPos == nil && t.ActiveSubTarget == nil) || distSq <= maxArrival*maxArrival
+				movedCloser := t.ApproachBestDistSq > 0 && distSq <= t.ApproachBestDistSq-1.0
+				if prevLastNavTick > 0 && (withinArrival || movedCloser) {
+					t.ConsecutiveFailures = 0
 					t.LastProgressTick = frame.WorldTick
 					t.LastActionTick = 0
 					t.LastNavigateTick = 0
-					t.Phase = TaskPhaseEvaluate
-					t.ActiveApproachPos = nil
+					if distSq < t.ApproachBestDistSq || t.ApproachBestDistSq == 0 {
+						t.ApproachBestDistSq = distSq
+					}
+					if frame.Status.NavigationState != civquestv1.NavigationState_NAVIGATION_STATE_PATHING && withinArrival {
+						t.Phase = TaskPhasePrepare
+					}
+				}
+			} else {
+				t.ConsecutiveFailures = 0
+				t.LastProgressTick = frame.WorldTick
+				t.LastActionTick = 0
+				t.LastNavigateTick = 0
+			}
+
+		case civquestv1.IntentReceipt_RECEIPT_STATUS_FAILED:
+			t.LastActionTick = 0
+			t.LastNavigateTick = 0
+			t.ConsecutiveFailures++
+			if t.Metadata == nil {
+				t.Metadata = make(map[string]string)
+			}
+			reason := strings.TrimSpace(receipt.FailureReason)
+			if reason == "" {
+				reason = "intent execution failed"
+			}
+			t.Metadata["last_failure_reason"] = reason
+			t.Metadata["recovery_attempts"] = fmt.Sprintf("%d", t.ConsecutiveFailures)
+
+			maxFailures := t.Spec.MaxReceiptFailures
+			if maxFailures <= 0 {
+				maxFailures = 2
+			}
+			if t.ConsecutiveFailures >= maxFailures {
+				t.Phase = TaskPhaseFailed
+				t.FailureReason = fmt.Sprintf("intent failed (%d attempts): %s", t.ConsecutiveFailures, reason)
+				if t.Spec.OnFail != nil {
+					t.Spec.OnFail(state, frame, t, t.FailureReason)
+				}
+				return TaskStepResult{
+					Phase:  TaskPhaseFailed,
+					Active: false,
+					Done:   true,
+					Reason: t.FailureReason,
 				}
 			}
+			// Recover by re-evaluating / re-approaching sub-target immediately
+			t.Phase = TaskPhaseEvaluate
+			t.ActiveApproachPos = nil
+
+		case civquestv1.IntentReceipt_RECEIPT_STATUS_PREEMPTED_BY_REFLEX,
+			civquestv1.IntentReceipt_RECEIPT_STATUS_ABORTED:
+			t.LastProgressTick = frame.WorldTick
+			t.LastActionTick = 0
+			t.LastNavigateTick = 0
+			t.Phase = TaskPhaseEvaluate
+			t.ActiveApproachPos = nil
 		}
 	}
 
@@ -512,7 +472,6 @@ func (t *TaskSubroutine) TickWithReceipt(agentID string, state *AgentState, fram
 					},
 				},
 			}
-			t.IssuedBatchCount++
 			return TaskStepResult{Phase: TaskPhaseApproach, Intent: navIntent, Active: true}
 		}
 		return TaskStepResult{Phase: TaskPhaseApproach, Active: true}
@@ -535,7 +494,6 @@ func (t *TaskSubroutine) TickWithReceipt(agentID string, state *AgentState, fram
 		if !actExecutingForCurrentTarget && t.Spec.PrepareIntent != nil {
 			if prepIntent := t.Spec.PrepareIntent(agentID, state, frame, t); prepIntent != nil {
 				t.Phase = TaskPhaseAct
-				t.IssuedBatchCount++
 				return TaskStepResult{Phase: TaskPhasePrepare, Intent: prepIntent, Active: true}
 			}
 		}
@@ -559,7 +517,6 @@ func (t *TaskSubroutine) TickWithReceipt(agentID string, state *AgentState, fram
 			t.LastActionSubTarget = cloneBlockPos(t.ActiveSubTarget)
 			t.LastActionTargetID = t.ActiveTargetID
 			t.ActionsEmitted++
-			t.IssuedBatchCount++
 			t.Phase = TaskPhaseEvaluate
 			return TaskStepResult{Phase: TaskPhaseAct, Intent: actIntent, Active: true}
 		}
@@ -700,17 +657,6 @@ func canPlantSaplingAt(frame *civquestv1.TelemetryFrame, tx, ty, tz int32) bool 
 	return isAirOrPassableAt(frame, tx, ty, tz)
 }
 
-func treeColumnRange(anchorY int32, tx, tz int32, pos *civquestv1.Vec3) (minY, maxY int32) {
-	refY := anchorY
-	if pos != nil {
-		horizDist := math.Hypot(float64(tx)+0.5-pos.X, float64(tz)+0.5-pos.Z)
-		if horizDist <= 4.5 {
-			refY = int32(math.Floor(pos.Y))
-		}
-	}
-	return refY - 1, refY + 5
-}
-
 // scanTreeClusterLogs detects contiguous trunk and branch logs within horizontal distance |dx| <= 2, |dz| <= 2
 // around the anchor (tx, tz), across elevation [anchorY-1 ... anchorY+16] per ADR-025.
 func scanTreeClusterLogs(
@@ -797,15 +743,6 @@ func scanTreeClusterLogs(
 	}
 
 	return totalInCluster, reachableLogs, nearestLog, isTall, apexLog
-}
-
-func scanTreeColumnLogs(
-	frame *civquestv1.TelemetryFrame,
-	tx, anchorY, tz int32,
-	reachRadius float64,
-) (totalInColumn int, reachableLogs []*civquestv1.VisibleBlock, nearestLog *civquestv1.VisibleBlock) {
-	total, reachable, nearest, _, _ := scanTreeClusterLogs(frame, tx, anchorY, tz, reachRadius, "")
-	return total, reachable, nearest
 }
 
 // NewHarvestTreeTask creates a generic TaskSubroutine locked onto a specific tree cluster around (tx, tz).
@@ -989,7 +926,7 @@ func NewHarvestTreeTask(tx, ty, tz int32, stage Stage, startTick int64) *TaskSub
 				return nil
 			}
 			if state != nil && frame != nil {
-				state.lastHarvestTick = frame.WorldTick
+				state.mem.lastHarvestTick = frame.WorldTick
 			}
 
 			// Check for autonomous sapling replanting action
@@ -1054,14 +991,8 @@ func NewHarvestTreeTask(tx, ty, tz int32, stage Stage, startTick int64) *TaskSub
 			}
 			return state.IsTargetUnreachableLocked(float64(tx)+0.5, float64(ty), float64(tz)+0.5, frame.WorldTick)
 		},
-		OnComplete: func(state *AgentState, frame *civquestv1.TelemetryFrame, current *TaskSubroutine) {
-			if state != nil {
-				state.ClearTargetTreeLocked()
-			}
-		},
 		OnFail: func(state *AgentState, frame *civquestv1.TelemetryFrame, current *TaskSubroutine, reason string) {
 			if state != nil {
-				state.ClearTargetTreeLocked()
 				if frame != nil {
 					state.MarkTreeFailedLocked(tx, tz, frame.WorldTick)
 					state.MarkTargetUnreachableLocked(float64(tx)+0.5, float64(ty), float64(tz)+0.5, frame.WorldTick, DefaultUnreachableTargetTTL)

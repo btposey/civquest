@@ -45,8 +45,37 @@ public interface IntentReceiptOrBuilder extends
       getFailureReasonBytes();
 
   /**
+   * <pre>
+   * diagnostics only (ADR-036 s5)
+   * </pre>
+   *
    * <code>int32 motor_stack_depth = 5;</code>
    * @return The motorStackDepth.
    */
   int getMotorStackDepth();
+
+  /**
+   * <pre>
+   * echoed from IntentBatch.frame_id (0 = legacy mod)
+   * </pre>
+   *
+   * <code>uint64 frame_id = 6;</code>
+   * @return The frameId.
+   */
+  long getFrameId();
+
+  /**
+   * <code>.civquest.v1.MotorFacts facts = 7;</code>
+   * @return Whether the facts field is set.
+   */
+  boolean hasFacts();
+  /**
+   * <code>.civquest.v1.MotorFacts facts = 7;</code>
+   * @return The facts.
+   */
+  com.civquest.mod.grpc.v1.MotorFacts getFacts();
+  /**
+   * <code>.civquest.v1.MotorFacts facts = 7;</code>
+   */
+  com.civquest.mod.grpc.v1.MotorFactsOrBuilder getFactsOrBuilder();
 }
