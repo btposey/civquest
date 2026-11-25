@@ -522,6 +522,7 @@ public class IntentActuatorTest {
     void testPlaceBlockRejectsCollisionWithAgentAABB() {
         BlockState solidBlockState = mock(BlockState.class);
         when(solidBlockState.blocksMotion()).thenReturn(true);
+        when(solidBlockState.canSurvive(any(), any())).thenReturn(true);
         when(solidBlockState.getCollisionShape(any(), any())).thenReturn(Shapes.block());
 
         IntentActuator testActuator = new IntentActuator() {
@@ -562,6 +563,7 @@ public class IntentActuatorTest {
     void testPlaceBlockRejectsCollisionWithOtherPlayerAABB() {
         BlockState solidBlockState = mock(BlockState.class);
         when(solidBlockState.blocksMotion()).thenReturn(true);
+        when(solidBlockState.canSurvive(any(), any())).thenReturn(true);
         when(solidBlockState.getCollisionShape(any(), any())).thenReturn(Shapes.block());
 
         IntentActuator testActuator = new IntentActuator() {
@@ -611,6 +613,7 @@ public class IntentActuatorTest {
     void testPlaceBlockSucceedsWhenNoCollision() {
         BlockState solidBlockState = mock(BlockState.class);
         when(solidBlockState.blocksMotion()).thenReturn(true);
+        when(solidBlockState.canSurvive(any(), any())).thenReturn(true);
         when(solidBlockState.getCollisionShape(any(), any())).thenReturn(Shapes.block());
 
         IntentActuator testActuator = new IntentActuator() {

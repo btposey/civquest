@@ -102,6 +102,12 @@ public class InteractHandler implements IntentHandler {
                     return false;
                 }
 
+                // Never place an unsupported block (a floating ladder, torch, etc.): the state's own
+                // survival rule (ladder: solid face behind FACING) must hold at the target cell.
+                if (!blockState.canSurvive(level, pos)) {
+                    return false;
+                }
+
                 int slot = -1;
                 if (!agent.isCreative()) {
                     slot = findMatchingBlockItemSlot(agent, blockState, intent.getBlockOrItemId());
@@ -168,6 +174,38 @@ public class InteractHandler implements IntentHandler {
         }
     }
 
+    /**
+     * Human-readable reason a PLACE_BLOCK at the intent's cell just failed (re-derives the checks; the world is
+     * unchanged by a failed placement). Blank when no specific cause is identified.
+     */
+    public String placementFailureReason(AgentEntity agent, InteractBlockIntent intent) {
+        if (agent == null || intent == null) {
+            return "";
+        }
+        Level level = agent.level();
+        BlockPos pos = new BlockPos(intent.getPos().getX(), intent.getPos().getY(), intent.getPos().getZ());
+        if (level == null || !level.hasChunkAt(pos)) {
+            return "place target chunk not loaded";
+        }
+        if (agent.distanceToSqr(pos.getX() + 0.5, pos.getY() + 0.5, pos.getZ() + 0.5) > INTERACT_REACH_SQ) {
+            return "place target out of reach";
+        }
+        if (!level.getBlockState(pos).canBeReplaced()) {
+            return "place target cell is occupied";
+        }
+        BlockState state = resolver.apply(agent, intent.getBlockOrItemId());
+        if (state == null) {
+            return "unknown block state " + intent.getBlockOrItemId();
+        }
+        if (!state.canSurvive(level, pos)) {
+            return "no solid support for " + intent.getBlockOrItemId() + " at target (attach face is not solid)";
+        }
+        if (!agent.isCreative() && findMatchingBlockItemSlot(agent, state, intent.getBlockOrItemId()) < 0) {
+            return "no matching block item in inventory for " + intent.getBlockOrItemId();
+        }
+        return "";
+    }
+
     int findMatchingBlockItemSlot(AgentEntity agent, BlockState targetState, String requestedId) {
         var inv = agent.getInventory();
         if (inv == null) {
@@ -197,6 +235,16 @@ public class InteractHandler implements IntentHandler {
                     }
                 }
             }
+        }
+        // 0b. Ladders are placed exactly or not at all: never substitute another block for a ladder.
+        if (targetState != null && targetState.is(Blocks.LADDER)) {
+            for (int i = 0; i < inv.getContainerSize(); i++) {
+                ItemStack item = inv.getItem(i);
+                if (!item.isEmpty() && item.getItem() instanceof BlockItem bi && bi.getBlock() == Blocks.LADDER) {
+                    return i;
+                }
+            }
+            return -1;
         }
         // 1. Exact block match
         if (targetState != null) {
@@ -335,7 +383,8 @@ public class InteractHandler implements IntentHandler {
             case HARVEST_BREAK -> isAlreadyBroken(agent, interact, pos) ? null
                     : new Mine(pos, 0, 0.0, a -> actuateInteractBlock(a, interact));
             case SLEEP_IN_BED -> sleep.create(agent, intent);
-            case PLACE_BLOCK, PAVE_ROAD_PATH -> new Place("INTERACT_BLOCK", a -> actuateInteractBlock(a, interact));
+            case PLACE_BLOCK, PAVE_ROAD_PATH -> new Place("INTERACT_BLOCK", a -> actuateInteractBlock(a, interact),
+                    a -> placementFailureReason(a, interact));
             default -> new Act("INTERACT_BLOCK", a -> actuateInteractBlock(a, interact));
         };
     }

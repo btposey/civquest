@@ -572,3 +572,9 @@ Other `AgentRuntime` fields (IDs, DB handles, services, sockets, wait groups, li
 3. **No `pendingPush`.** Bootstrap/exploration walks request an expedition as a step result (`walkLocal.wantExpedition` -> `OpPush`); `RequestExpeditionStart`/`takePendingPush` are deleted. The dead Stage*Skill waterfalls (bootstrap/settlement/colonize) are deleted.
 4. **Hold vs pop.** A base frame with nothing to emit now stays (cursor preserved, foraging no longer dead-ends); a frame pushed over another still yields.
 5. **Still on AgentState:** `lastCraftTick`, `lastShelterPlaceTick`, `lastHarvestTick`, `telemetryFramesSeen`, `lastMapNodeID/Pos`, target-tree/failedTrees (cq-2sr.21).
+
+### cq-3a0.4 — Ladder placement (Java mod)
+1. **No proto change.** `BuildBlockIntent.block_state_string` already carries block-state properties, so ladder facing is expressed as `minecraft:ladder[facing=<dir>]` (`facing` points away from the support block; the support is the neighbour at `facing.opposite`). No `facing`/`attach_face` field was added; Go still builds unchanged.
+2. **Support check.** `InteractHandler` PLACE_BLOCK now rejects any state whose own `canSurvive` fails at the target (a floating ladder/torch is never placed, nothing is consumed). `Place` takes an optional failure-reason function; BUILD_BLOCK and INTERACT_BLOCK(PLACE_BLOCK) report concrete reasons (`no solid support for ...`, `no matching block item ...`, `place target cell is occupied`, ...) instead of a blank reason.
+3. **Ladders never substitute.** `findMatchingBlockItemSlot` matches only the ladder item for a ladder request (no family/solid-block fallback), so a ladder request can never place cobblestone/planks.
+4. **Pick-up.** Breaking a ladder (HARVEST_BREAK) drops the ladder item via the normal loot drop; the ItemEntity has a pickup delay and is collected by the agent's periodic `tryPickupNearbyItems()` (within 2.5 blocks) a few ticks later, not on the break tick.

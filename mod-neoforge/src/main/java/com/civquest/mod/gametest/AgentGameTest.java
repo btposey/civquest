@@ -1383,4 +1383,55 @@ public class AgentGameTest {
         manager.despawnAgent(server, "agent-gt-shelter").join();
         helper.succeed();
     }
+
+    /** cq-3a0.4: place a ladder with FACING on a solid face, break it, and have the agent collect the item. */
+    @GameTest(template = "empty3x3x3", timeoutTicks = 200)
+    public static void testPlaceAndPickUpLadder(GameTestHelper helper) {
+        ServerLevel level = helper.getLevel();
+        MinecraftServer server = level.getServer();
+        AgentEntityManager manager = new AgentEntityManager();
+        BlockPos spawnPos = helper.absolutePos(new BlockPos(1, 1, 1));
+        AgentEntity agent = manager.spawnAgent(server, level, SpawnAgentRequest.newBuilder()
+                .setAgentId("agent-gt-ladder")
+                .setDisplayName("LadderAgent")
+                .setClanId("clan-ironwood")
+                .setSpawnCoords(Vec3.newBuilder().setX(spawnPos.getX() + 0.5).setY(spawnPos.getY()).setZ(spawnPos.getZ() + 0.5).build())
+                .build()).join();
+        helper.assertTrue(agent != null, "Agent must spawn");
+        agent.getInventory().add(new ItemStack(Items.LADDER, 2));
+
+        BlockPos wall = new BlockPos(2, 1, 2);
+        BlockPos rung = new BlockPos(1, 1, 2);
+        helper.setBlock(wall, Blocks.STONE);
+        BlockPos absRung = helper.absolutePos(rung);
+        manager.handleIntent(server, AgentIntent.newBuilder()
+                .setAgentId("agent-gt-ladder")
+                .setBuildBlock(com.civquest.mod.grpc.v1.BuildBlockIntent.newBuilder()
+                        .setTargetVoxel(BlockPosProto.newBuilder().setX(absRung.getX()).setY(absRung.getY()).setZ(absRung.getZ()).build())
+                        .setBlockStateString("minecraft:ladder[facing=west]")
+                        .build())
+                .build()).join();
+        helper.assertBlockState(rung, s -> s.is(Blocks.LADDER)
+                && s.getValue(net.minecraft.world.level.block.LadderBlock.FACING) == net.minecraft.core.Direction.WEST,
+                () -> "ladder must be placed facing west against the stone wall");
+
+        manager.handleIntent(server, AgentIntent.newBuilder()
+                .setAgentId("agent-gt-ladder")
+                .setInteractBlock(InteractBlockIntent.newBuilder()
+                        .setPos(BlockPosProto.newBuilder().setX(absRung.getX()).setY(absRung.getY()).setZ(absRung.getZ()).build())
+                        .setInteractionType(InteractBlockIntent.InteractionType.HARVEST_BREAK)
+                        .build())
+                .build()).join();
+        // The drop spawns with a pickup delay; the agent's periodic pickup collects it once the delay elapses.
+        helper.succeedWhen(() -> {
+            helper.assertBlockNotPresent(Blocks.LADDER, rung);
+            int n = 0;
+            for (int i = 0; i < agent.getInventory().getContainerSize(); i++) {
+                ItemStack st = agent.getInventory().getItem(i);
+                if (st.is(Items.LADDER)) n += st.getCount();
+            }
+            helper.assertTrue(n == 2, "ladder item must return to the agent inventory, had " + n);
+            manager.despawnAgent(server, "agent-gt-ladder").join();
+        });
+    }
 }
