@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"math"
 	"strings"
-	"sync"
 
 	civquestv1 "github.com/btposey/civquest/orchestrator-go/internal/proto/v1"
 )
@@ -31,24 +30,19 @@ type forageAgentMemory struct {
 	visitedContainerPOIs map[string]int64
 }
 
-var (
-	forageMu       sync.Mutex
-	forageMemories = make(map[string]*forageAgentMemory)
-)
+func newForageAgentMemory() *forageAgentMemory {
+	return &forageAgentMemory{
+		visitedContainerPOIs: make(map[string]int64),
+	}
+}
 
-func getForageMemory(agentID string) *forageAgentMemory {
-	key := agentID
-	if key == "" {
-		key = "_default"
+func (s *AgentState) ensureForageMemoryLocked() *forageAgentMemory {
+	if s.forageMemory == nil {
+		s.forageMemory = newForageAgentMemory()
+	} else if s.forageMemory.visitedContainerPOIs == nil {
+		s.forageMemory.visitedContainerPOIs = make(map[string]int64)
 	}
-	m, ok := forageMemories[key]
-	if !ok {
-		m = &forageAgentMemory{
-			visitedContainerPOIs: make(map[string]int64),
-		}
-		forageMemories[key] = m
-	}
-	return m
+	return s.forageMemory
 }
 
 // ForagingSkill implements deterministic, zero-token food gathering and hunting
@@ -277,6 +271,17 @@ func evaluateForagingInternal(agentID string, frame *civquestv1.TelemetryFrame, 
 
 	setForagingGoal(state)
 
+	if state == nil {
+		return evaluateForagingWithMemory(agentID, frame, nil, force, newForageAgentMemory())
+	}
+
+	state.mu.Lock()
+	defer state.mu.Unlock()
+	mem := state.ensureForageMemoryLocked()
+	return evaluateForagingWithMemory(agentID, frame, state, force, mem)
+}
+
+func evaluateForagingWithMemory(agentID string, frame *civquestv1.TelemetryFrame, state *AgentState, force bool, mem *forageAgentMemory) *civquestv1.AgentIntent {
 	pos := frame.Status.Position
 	navState := frame.Status.NavigationState
 	canSprint := frame.Status.FoodLevel > 6
@@ -284,10 +289,6 @@ func evaluateForagingInternal(agentID string, frame *civquestv1.TelemetryFrame, 
 	if frame.Status.FoodLevel <= 6 {
 		speedMult = float32(1.15)
 	}
-
-	forageMu.Lock()
-	mem := getForageMemory(agentID)
-	defer forageMu.Unlock()
 
 	// 0. Pick up nearby dropped food items (e.g. raw meat or berries from recent kills/harvests).
 	var bestDrop *civquestv1.VisibleEntity
@@ -340,7 +341,7 @@ func evaluateForagingInternal(agentID string, frame *civquestv1.TelemetryFrame, 
 		if float64(b.Pos.Y)-pos.Y > 4.0 {
 			continue
 		}
-		if state != nil && state.IsTargetUnreachable(float64(b.Pos.X)+0.5, float64(b.Pos.Y), float64(b.Pos.Z)+0.5, frame.WorldTick) {
+		if state != nil && state.IsTargetUnreachableLocked(float64(b.Pos.X)+0.5, float64(b.Pos.Y), float64(b.Pos.Z)+0.5, frame.WorldTick) {
 			continue
 		}
 		d := blockDistance(pos, b)
@@ -495,14 +496,14 @@ func evaluateForagingInternal(agentID string, frame *civquestv1.TelemetryFrame, 
 
 	// 3. Check SpatialIndex for known CROP or CONTAINER/GRANARY POIs when nothing edible is in frustum.
 	if state != nil {
-		if si := state.SpatialIndex(); si != nil {
+		if si := state.SpatialIndexLocked(); si != nil {
 			for _, cropPOI := range si.FindPOIsInRadius(pos, POICategoryCrop, 48.0) {
 				if cropPOI == nil || isSaplingItemID(cropPOI.BlockID) {
 					continue
 				}
 				acc := poiAccessTarget(cropPOI)
-				if state.IsTargetUnreachable(cropPOI.X, cropPOI.Y, cropPOI.Z, frame.WorldTick) ||
-					(acc != nil && state.IsTargetUnreachable(acc.X, acc.Y, acc.Z, frame.WorldTick)) {
+				if state.IsTargetUnreachableLocked(cropPOI.X, cropPOI.Y, cropPOI.Z, frame.WorldTick) ||
+					(acc != nil && state.IsTargetUnreachableLocked(acc.X, acc.Y, acc.Z, frame.WorldTick)) {
 					continue
 				}
 				d := math.Hypot(cropPOI.X-pos.X, cropPOI.Z-pos.Z)
@@ -526,7 +527,7 @@ func evaluateForagingInternal(agentID string, frame *civquestv1.TelemetryFrame, 
 				}
 			}
 			skipContainers := force && frame.Status.FoodLevel > forageHungerThreshold &&
-				(state.GetLatestSurvey() == nil || state.IsExpeditionActive())
+				(state.LatestSurvey == nil || state.IsExpeditionActiveLocked())
 			for _, contPOI := range si.FindPOIsInRadius(pos, POICategoryContainer, 48.0) {
 				if skipContainers {
 					break
@@ -535,8 +536,8 @@ func evaluateForagingInternal(agentID string, frame *civquestv1.TelemetryFrame, 
 					continue
 				}
 				acc := poiAccessTarget(contPOI)
-				if state.IsTargetUnreachable(contPOI.X, contPOI.Y, contPOI.Z, frame.WorldTick) ||
-					(acc != nil && state.IsTargetUnreachable(acc.X, acc.Y, acc.Z, frame.WorldTick)) {
+				if state.IsTargetUnreachableLocked(contPOI.X, contPOI.Y, contPOI.Z, frame.WorldTick) ||
+					(acc != nil && state.IsTargetUnreachableLocked(acc.X, acc.Y, acc.Z, frame.WorldTick)) {
 					continue
 				}
 				lastVisit := mem.visitedContainerPOIs[contPOI.POIID]

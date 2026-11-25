@@ -2,7 +2,6 @@ package agent
 
 import (
 	"fmt"
-	"math"
 
 	civquestv1 "github.com/btposey/civquest/orchestrator-go/internal/proto/v1"
 	"github.com/btposey/civquest/orchestrator-go/internal/system1"
@@ -103,17 +102,10 @@ func stageReceiptIngest(r *AgentRuntime, ctx *FrameContext) {
 		return
 	}
 	ctx.Receipt = receipt
-	r.SetLastReceipt(receipt)
+	r.system1State.IngestReceipt(receipt)
 
-	if r.system1State != nil {
-		r.system1State.IngestReceipt(receipt)
-	}
 	if receipt.Status == civquestv1.IntentReceipt_RECEIPT_STATUS_COMPLETED {
-		r.mu.Lock()
-		hpos := r.lastHarvestPos
-		r.lastHarvestPos = nil
-		r.mu.Unlock()
-		if hpos != nil {
+		if hpos := r.system1State.TakeLastHarvestPos(); hpos != nil {
 			r.PruneHarvestedBlockPos(hpos.X, hpos.Y, hpos.Z)
 		}
 	}
@@ -193,9 +185,6 @@ func stageSystem2Dispatchers(r *AgentRuntime, ctx *FrameContext) {
 }
 
 func (r *AgentRuntime) ingestSpatialPOIs(frame *civquestv1.TelemetryFrame) {
-	if r.system1State == nil {
-		return
-	}
 	si := r.system1State.SpatialIndex()
 	if si == nil {
 		return
@@ -220,15 +209,14 @@ func (r *AgentRuntime) logGoalTransition(frame *civquestv1.TelemetryFrame, resul
 		return
 	}
 
-	r.mu.Lock()
-	if result.GoalHierarchy.ImmediateGoal == r.lastLoggedGoal {
-		r.mu.Unlock()
+	oldGoal, changed := r.system1State.CompareAndSwapLoggedGoal(result.GoalHierarchy.ImmediateGoal)
+	if !changed {
 		return
 	}
-	oldGoal := r.lastLoggedGoal
-	r.lastLoggedGoal = result.GoalHierarchy.ImmediateGoal
+
+	r.mu.RLock()
 	debugLog := r.debugLogger
-	r.mu.Unlock()
+	r.mu.RUnlock()
 
 	if debugLog != nil {
 		debugLog.Emit(frame.WorldTick, "GOAL_TRANSITION", fmt.Sprintf("Goal: %s", result.GoalHierarchy.ImmediateGoal), map[string]any{
@@ -258,12 +246,7 @@ func (r *AgentRuntime) dispatchFSMIntents(frame *civquestv1.TelemetryFrame, resu
 
 			err := r.QueuePriorityIntent(fsmIntent.Intent)
 			if err == nil && fsmIntent.Intent.GetUseItem() != nil && fsmIntent.Intent.GetUseItem().IsEatingOrDrinking {
-				r.mu.Lock()
-				r.lastEatingTick = frame.WorldTick
-				r.mu.Unlock()
-				if r.system1State != nil {
-					r.system1State.SetLastEatingTick(frame.WorldTick)
-				}
+				r.system1State.SetLastEatingTick(frame.WorldTick)
 			}
 		} else {
 			_ = r.QueueIntent(fsmIntent.Intent)
@@ -276,10 +259,7 @@ func (r *AgentRuntime) dispatchFSMIntents(frame *civquestv1.TelemetryFrame, resu
 
 	// Reset flee target if not in emergency.
 	if result.State != system1.StateEmergency {
-		r.mu.Lock()
-		r.lastFleeTarget = nil
-		r.lastFleeTick = 0
-		r.mu.Unlock()
+		r.system1State.ClearFleeTarget()
 	}
 }
 
@@ -288,26 +268,5 @@ func (r *AgentRuntime) shouldDeduplicateFleeNav(worldTick int64, intent *civques
 	if nav == nil || nav.Target == nil {
 		return false
 	}
-
-	r.mu.Lock()
-	defer r.mu.Unlock()
-
-	if r.lastFleeTarget != nil {
-		dx := nav.Target.X - r.lastFleeTarget.X
-		dy := nav.Target.Y - r.lastFleeTarget.Y
-		dz := nav.Target.Z - r.lastFleeTarget.Z
-		dist := math.Sqrt(dx*dx + dy*dy + dz*dz)
-		ticksElapsed := worldTick - r.lastFleeTick
-		if dist < 2.0 && ticksElapsed <= 10 && ticksElapsed >= 0 {
-			return true
-		}
-	}
-
-	r.lastFleeTarget = &civquestv1.Vec3{
-		X: nav.Target.X,
-		Y: nav.Target.Y,
-		Z: nav.Target.Z,
-	}
-	r.lastFleeTick = worldTick
-	return false
+	return r.system1State.ShouldDeduplicateFleeNav(worldTick, nav.Target)
 }

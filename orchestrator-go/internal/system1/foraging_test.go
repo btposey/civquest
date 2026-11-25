@@ -1,6 +1,7 @@
 package system1
 
 import (
+	"sync"
 	"testing"
 	"time"
 
@@ -303,5 +304,110 @@ func BenchmarkForagingSkill_Sub5ms(b *testing.B) {
 	elapsed := time.Since(start)
 	if b.N > 0 && elapsed/time.Duration(b.N) > 5*time.Millisecond {
 		b.Fatalf("ForagingSkill exceeded 5ms budget: %v/op", elapsed/time.Duration(b.N))
+	}
+}
+
+func TestForaging_PerAgentStateIsolation(t *testing.T) {
+	const sharedAgentID = "duplicate-agent-id"
+
+	stateA := NewAgentState()
+	stateB := NewAgentState()
+
+	// Seed identical bush harvest frame at tick 100 for stateA only -> stateA enters cooldown on tick 102,
+	// while stateB (sharing the same agentID string) must still harvest independently.
+	harvestFrame100 := &civquestv1.TelemetryFrame{
+		WorldTick: 100,
+		Status: &civquestv1.AgentStatus{
+			AgentId:         sharedAgentID,
+			Health:          20,
+			MaxHealth:       20,
+			FoodLevel:       6,
+			Position:        &civquestv1.Vec3{X: 0, Y: 64, Z: 0},
+			NavigationState: civquestv1.NavigationState_NAVIGATION_STATE_IDLE,
+		},
+		InterestingBlocks: []*civquestv1.VisibleBlock{
+			{Pos: &civquestv1.BlockPosProto{X: 2, Y: 64, Z: 0}, BlockId: "minecraft:sweet_berry_bush"},
+		},
+	}
+	if intent := EvaluateForaging(sharedAgentID, harvestFrame100, stateA); intent == nil || intent.GetInteractBlock() == nil {
+		t.Fatalf("expected stateA harvest intent at tick 100, got %+v", intent)
+	}
+
+	var wg sync.WaitGroup
+	var intentA, intentB *civquestv1.AgentIntent
+	var exploreTargetsA, exploreTargetsB []*civquestv1.Vec3
+
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		// Tick 102 on stateA is within forageActionCooldownTicks (10) -> must be suppressed
+		f102 := &civquestv1.TelemetryFrame{
+			WorldTick:         102,
+			Status:            harvestFrame100.Status,
+			InterestingBlocks: harvestFrame100.InterestingBlocks,
+		}
+		intentA = EvaluateForaging(sharedAgentID, f102, stateA)
+
+		// Exercise independent explore heading mutations in parallel
+		for step := int64(0); step < 5; step++ {
+			ef := &civquestv1.TelemetryFrame{
+				WorldTick: 200 + step*25,
+				Status: &civquestv1.AgentStatus{
+					AgentId:         sharedAgentID,
+					Health:          20,
+					MaxHealth:       20,
+					FoodLevel:       6,
+					Position:        &civquestv1.Vec3{X: float64(step) * 30, Y: 64, Z: 0},
+					NavigationState: civquestv1.NavigationState_NAVIGATION_STATE_IDLE,
+				},
+			}
+			if out := EvaluateForaging(sharedAgentID, ef, stateA); out != nil && out.GetNavigate() != nil {
+				exploreTargetsA = append(exploreTargetsA, out.GetNavigate().Target)
+			}
+		}
+	}()
+
+	go func() {
+		defer wg.Done()
+		// Tick 102 on stateB has no prior cooldown despite identical agentID -> must harvest
+		f102 := &civquestv1.TelemetryFrame{
+			WorldTick:         102,
+			Status:            harvestFrame100.Status,
+			InterestingBlocks: harvestFrame100.InterestingBlocks,
+		}
+		intentB = EvaluateForaging(sharedAgentID, f102, stateB)
+
+		// Exercise independent explore heading mutations in parallel (with STUCK steps)
+		for step := int64(0); step < 5; step++ {
+			ef := &civquestv1.TelemetryFrame{
+				WorldTick: 200 + step*25,
+				Status: &civquestv1.AgentStatus{
+					AgentId:         sharedAgentID,
+					Health:          20,
+					MaxHealth:       20,
+					FoodLevel:       6,
+					Position:        &civquestv1.Vec3{X: float64(step) * 30, Y: 64, Z: 0},
+					NavigationState: civquestv1.NavigationState_NAVIGATION_STATE_STUCK,
+				},
+			}
+			if out := EvaluateForaging(sharedAgentID, ef, stateB); out != nil && out.GetNavigate() != nil {
+				exploreTargetsB = append(exploreTargetsB, out.GetNavigate().Target)
+			}
+		}
+	}()
+	wg.Wait()
+
+	if intentA != nil {
+		t.Fatalf("expected stateA harvest suppressed by per-state cooldown at tick 102, got %+v", intentA)
+	}
+	if intentB == nil || intentB.GetInteractBlock() == nil {
+		t.Fatalf("expected stateB harvest intent unaffected by stateA cooldown, got %+v", intentB)
+	}
+	if len(exploreTargetsA) != 5 || len(exploreTargetsB) != 5 {
+		t.Fatalf("expected 5 explore targets each, got A=%d B=%d", len(exploreTargetsA), len(exploreTargetsB))
+	}
+	// IDLE (+0.9 rad) vs STUCK (+2.2 rad) headings must diverge cleanly
+	if exploreTargetsA[0].X == exploreTargetsB[0].X && exploreTargetsA[0].Z == exploreTargetsB[0].Z {
+		t.Fatalf("expected independent explore targets for stateA vs stateB, both got (%v, %v)", exploreTargetsA[0].X, exploreTargetsA[0].Z)
 	}
 }

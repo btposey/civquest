@@ -13,7 +13,7 @@ import (
 // syncRecipeGraph fetches the runtime crafting catalog from the NeoForge server via ExportRecipeGraph
 // and installs the resulting dynamic RecipeGraph into r.system1State (ADR-029 §4).
 func (r *AgentRuntime) syncRecipeGraph(ctx context.Context, client *bridge.Client) error {
-	if r == nil || client == nil || r.system1State == nil {
+	if r == nil || client == nil {
 		return nil
 	}
 

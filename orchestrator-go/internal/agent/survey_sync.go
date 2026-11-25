@@ -99,21 +99,17 @@ func (r *AgentRuntime) resolveClanSize() int {
 // into System 1 and map_graph.db, and executes clan rendezvous sync, collective site
 // scoring, and local chat reporting upon expedition return (ADR-032).
 func (r *AgentRuntime) processHorizonSurveyAndRendezvous(frame *civquestv1.TelemetryFrame) {
-	if r == nil || frame == nil || r.system1State == nil || r.IsDead() {
+	if r == nil || frame == nil || r.IsDead() {
 		return
 	}
 
 	// Lazily resolve and periodically refresh clan size.
-	r.mu.Lock()
-	shouldResolve := !r.clanSizeResolved || (frame.WorldTick >= r.lastClanSizeTick && frame.WorldTick-r.lastClanSizeTick >= clanSizeRefreshIntervalTicks)
-	if shouldResolve {
-		r.clanSizeResolved = true
-		r.lastClanSizeTick = frame.WorldTick
-	}
+	shouldResolve := r.system1State.TryClaimClanSizeRefresh(frame.WorldTick, clanSizeRefreshIntervalTicks)
+	r.mu.RLock()
 	agentID := r.agentID
 	agentDB := r.agentDB
 	debugLog := r.debugLogger
-	r.mu.Unlock()
+	r.mu.RUnlock()
 
 	if shouldResolve {
 		r.system1State.SetResolvedClanSize(r.resolveClanSize())
@@ -159,7 +155,7 @@ func (r *AgentRuntime) processHorizonSurveyAndRendezvous(frame *civquestv1.Telem
 }
 
 func (r *AgentRuntime) syncPendingRendezvous(frame *civquestv1.TelemetryFrame) {
-	if r == nil || frame == nil || r.system1State == nil || r.IsDead() {
+	if r == nil || frame == nil || r.IsDead() {
 		return
 	}
 	synced, summary := r.system1State.ConsumePendingRendezvousSync()
@@ -201,8 +197,10 @@ func (r *AgentRuntime) syncPendingRendezvous(frame *civquestv1.TelemetryFrame) {
 				sectorsToMerge = recent
 			}
 		}
-		if len(sectorsToMerge) == 0 && r.system1State.LatestSurvey != nil {
-			sectorsToMerge = protoSectorsToDB(r.system1State.LatestSurvey, frame.WorldTick)
+		if len(sectorsToMerge) == 0 {
+			if latest := r.system1State.GetLatestSurvey(); latest != nil {
+				sectorsToMerge = protoSectorsToDB(latest, frame.WorldTick)
+			}
 		}
 
 		if len(sectorsToMerge) > 0 {

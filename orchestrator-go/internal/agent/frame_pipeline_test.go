@@ -2,10 +2,12 @@ package agent
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -169,9 +171,7 @@ func TestFramePipeline_StageReceiptIngest(t *testing.T) {
 		Reliability: 1.0,
 		IsActive:    true,
 	})
-	rt.mu.Lock()
-	rt.lastHarvestPos = &civquestv1.BlockPosProto{X: 10, Y: 64, Z: 0}
-	rt.mu.Unlock()
+	rt.system1State.SetLastHarvestPos(&civquestv1.BlockPosProto{X: 10, Y: 64, Z: 0})
 
 	ctx := &FrameContext{
 		Frame: &civquestv1.TelemetryFrame{
@@ -198,10 +198,7 @@ func TestFramePipeline_StageReceiptIngest(t *testing.T) {
 	if gotRec == nil || gotRec.Status != civquestv1.IntentReceipt_RECEIPT_STATUS_COMPLETED {
 		t.Fatalf("expected system1State lastReceipt COMPLETED, got %+v", gotRec)
 	}
-	rt.mu.RLock()
-	hpos := rt.lastHarvestPos
-	rt.mu.RUnlock()
-	if hpos != nil {
+	if hpos := rt.system1State.LastHarvestPos(); hpos != nil {
 		t.Fatalf("expected lastHarvestPos cleared after COMPLETED receipt, got %+v", hpos)
 	}
 	if _, ok := si.GetPOI("poi_resource_10_64_0"); ok {
@@ -225,10 +222,8 @@ func TestFramePipeline_StageSpatialAndSurvey(t *testing.T) {
 		Reliability: 1.0,
 		IsActive:    true,
 	})
-	rt.mu.Lock()
-	rt.navTargetPOIID = "poi_resource_5_64_5"
-	rt.navDestination = &SocketPosition{X: 5, Y: 64, Z: 5}
-	rt.mu.Unlock()
+	rt.SetNavTargetPOIID("poi_resource_5_64_5")
+	rt.SetNavigationDestination(&SocketPosition{X: 5, Y: 64, Z: 5})
 
 	survey := &civquestv1.HorizonSurveyReport{
 		OriginX:       0,
@@ -334,12 +329,9 @@ func TestFramePipeline_StageIdleAndGoalLogging(t *testing.T) {
 	stageIdleAndGoalLogging(rt, &FrameContext{
 		Frame: &civquestv1.TelemetryFrame{WorldTick: 10},
 	})
-	rt.mu.RLock()
-	if rt.hasIdleStartTick || rt.lastLoggedGoal != "" {
-		rt.mu.RUnlock()
+	if _, hasIdle, _, _, _ := rt.System1State().IdleState(); hasIdle || rt.System1State().LastLoggedGoal() != "" {
 		t.Fatalf("expected no-op when HasFSMResult is false")
 	}
-	rt.mu.RUnlock()
 
 	ctx := &FrameContext{
 		Frame: &civquestv1.TelemetryFrame{
@@ -363,11 +355,8 @@ func TestFramePipeline_StageIdleAndGoalLogging(t *testing.T) {
 
 	stageIdleAndGoalLogging(rt, ctx)
 
-	rt.mu.RLock()
-	hasIdle := rt.hasIdleStartTick
-	idleTick := rt.idleStartTick
-	loggedGoal := rt.lastLoggedGoal
-	rt.mu.RUnlock()
+	idleTick, hasIdle, _, _, _ := rt.System1State().IdleState()
+	loggedGoal := rt.System1State().LastLoggedGoal()
 
 	if !hasIdle || idleTick != 250 {
 		t.Fatalf("expected idleStartTick=250 (hasIdle=%v), got %d", hasIdle, idleTick)
@@ -439,10 +428,8 @@ func TestFramePipeline_StageIntentDispatch(t *testing.T) {
 	if !rt.slotQueue.ConsumeFlushPeriphery() {
 		t.Fatalf("expected FlushPeriphery to be marked on slotQueue")
 	}
-	rt.mu.RLock()
-	eatingTick := rt.lastEatingTick
-	fleeTarget := rt.lastFleeTarget
-	rt.mu.RUnlock()
+	eatingTick := rt.System1State().LastEatingTick()
+	fleeTarget := rt.System1State().LastFleeTarget()
 	if eatingTick != 300 {
 		t.Fatalf("expected lastEatingTick=300, got %d", eatingTick)
 	}
@@ -474,10 +461,7 @@ func TestFramePipeline_StageIntentDispatch(t *testing.T) {
 	if got := rt.DrainIntents(); len(got) != 0 {
 		t.Fatalf("expected duplicate flee navigate to be deduplicated, got %+v", got)
 	}
-	rt.mu.RLock()
-	clearedFlee := rt.lastFleeTarget
-	rt.mu.RUnlock()
-	if clearedFlee != nil {
+	if clearedFlee := rt.System1State().LastFleeTarget(); clearedFlee != nil {
 		t.Fatalf("expected lastFleeTarget cleared outside StateEmergency, got %+v", clearedFlee)
 	}
 }
@@ -533,5 +517,102 @@ func TestFramePipeline_StageSystem2Dispatchers(t *testing.T) {
 	}
 	if got := rt.CompanionService().GetState(); got != system2.CompanionStateFollow {
 		t.Fatalf("expected CompanionStateFollow after stageSystem2Dispatchers, got %s", got)
+	}
+}
+
+func TestAgentRuntime_ConcurrentStateAccessRace(t *testing.T) {
+	rt, _, _ := newPipelineTestRuntime(t, "pipe_concurrent_race")
+	rt.mu.Lock()
+	rt.status = "RUNNING"
+	rt.mu.Unlock()
+
+	const workers = 4
+	const iters = 60
+
+	var wg sync.WaitGroup
+
+	// Writer goroutines: HandleTelemetryFrame (updating latestFrame, receiptSlot, lastEatingTick, lastLoggedGoal, navDestination)
+	for w := 0; w < workers; w++ {
+		w := w
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for i := 0; i < iters; i++ {
+				tick := int64(w*iters + i + 1)
+				food := int32(4)
+				if i%2 == 0 {
+					food = 18
+				}
+				frame := &civquestv1.TelemetryFrame{
+					WorldTick:               tick,
+					TimeOfDay:               1500 + (tick % 10000),
+					LastProcessedSequenceId: tick,
+					Receipt: &civquestv1.IntentReceipt{
+						BatchId: tick,
+						Status:  civquestv1.IntentReceipt_RECEIPT_STATUS_COMPLETED,
+					},
+					Status: &civquestv1.AgentStatus{
+						AgentId:         "pipe_concurrent_race",
+						Health:          18,
+						MaxHealth:       20,
+						FoodLevel:       food,
+						Position:        &civquestv1.Vec3{X: float64(i), Y: 64, Z: float64(w)},
+						NavigationState: civquestv1.NavigationState_NAVIGATION_STATE_IDLE,
+						Inventory: []*civquestv1.ItemStackProto{
+							{Slot: 0, ItemId: "minecraft:bread", Count: 8},
+						},
+					},
+				}
+				rt.HandleTelemetryFrame(frame)
+				rt.RecordThought(fmt.Sprintf("thought-%d-%d", w, i))
+				rt.RecordDialogue(fmt.Sprintf("dialogue-%d-%d", w, i))
+				rt.RecordChronicle(fmt.Sprintf("chronicle-%d-%d", w, i))
+				rt.SetNavigationDestination(&SocketPosition{X: float64(i), Y: 64, Z: float64(w)})
+				if i%5 == 0 {
+					rt.UpdateGoals(
+						fmt.Sprintf("IMM-%d-%d", w, i),
+						fmt.Sprintf("ST-%d", w),
+						"LT-SETTLEMENT",
+					)
+				}
+			}
+		}()
+	}
+
+	// Reader goroutines: Snapshot(), LastReceipt(), Goals(), NavigationDestination(), LatestFrame()
+	for r := 0; r < workers; r++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for i := 0; i < iters*2; i++ {
+				snap := rt.Snapshot()
+				_ = snap.WorldTick
+				_ = snap.Reflections
+				_ = snap.Goals
+				_ = snap.NavigationDestination
+
+				if rec := rt.LastReceipt(); rec != nil {
+					rec.BatchId = -1 // mutate caller copy to ensure defensive cloning
+				}
+				_, _, _ = rt.Goals()
+				if dest := rt.NavigationDestination(); dest != nil {
+					dest.X = -999 // mutate caller copy to ensure defensive copy
+				}
+				if lf := rt.LatestFrame(); lf != nil {
+					lf.WorldTick = -1
+				}
+				_ = rt.System1State().LastEatingTick()
+				_ = rt.System1State().LastLoggedGoal()
+			}
+		}()
+	}
+
+	wg.Wait()
+
+	if rt.LatestFrame() == nil {
+		t.Fatalf("expected non-nil LatestFrame after concurrent frame handling")
+	}
+	if rt.LastReceipt() == nil {
+		t.Fatalf("expected non-nil LastReceipt after concurrent frame handling")
 	}
 }

@@ -8,17 +8,11 @@ import (
 	"time"
 
 	civquestv1 "github.com/btposey/civquest/orchestrator-go/internal/proto/v1"
+	"github.com/btposey/civquest/orchestrator-go/internal/system1"
 )
 
 // CachedItem represents an individual inventory item slot snapshot.
-type CachedItem struct {
-	Slot          int32  `json:"slot"`
-	ItemID        string `json:"item_id"`
-	Count         int32  `json:"count"`
-	Durability    int32  `json:"durability,omitempty"`
-	MaxDurability int32  `json:"max_durability,omitempty"`
-	CustomName    string `json:"custom_name,omitempty"`
-}
+type CachedItem = system1.CachedItem
 
 // InventoryCache encapsulates the full inventory cache file format
 // stored at $XDG_DATA_HOME/civquest/agents/{agent_id}/inventory_cache.json.

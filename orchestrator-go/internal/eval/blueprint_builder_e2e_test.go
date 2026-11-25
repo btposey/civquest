@@ -128,6 +128,7 @@ func TestBlueprintBuilder_E2E_AutonomousConstruction(t *testing.T) {
 	// 4. Drive autonomous construction step-by-step
 	fg := system1.NewFactGraph()
 	fg.SetBool("construction.active", "construction", true, "active build project")
+	builderState := system1.NewAgentState()
 
 	placedCount := 0
 	excavatedCount := 0
@@ -138,6 +139,7 @@ func TestBlueprintBuilder_E2E_AutonomousConstruction(t *testing.T) {
 		skillCtx := &system1.SkillContext{
 			AgentID: "alder",
 			Frame:   frame,
+			State:   builderState,
 			CivicDB: civicDB,
 		}
 

@@ -126,6 +126,11 @@ type StrategicDirectiveState struct {
 	ExpiresTick   int64  `json:"expires_tick"`
 }
 
+type receiptSlot struct {
+	last    *civquestv1.IntentReceipt
+	pending bool
+}
+
 // AgentState tracks volatile in-memory System 1 agent routine, needs, and paving state.
 type AgentState struct {
 	mu                        sync.RWMutex
@@ -133,15 +138,12 @@ type AgentState struct {
 	ShelterPos                *civquestv1.BlockPosProto
 	stage                     Stage
 	routine                   Routine
-	CurrentRoutine            RoutineState
-	FSMState                  State
 	PrimaryDutyBlocked        bool
 	armoryMaintenanceNeeded   bool
 	companionActive           bool
 	civicPatrolActive         bool
 	patrolWaypoints           []*civquestv1.Vec3
 	patrolWaypointIndex       int
-	lastEatingTick            int64
 	lastSleepAttemptTick      int64
 	lastShelterPlaceTick      int64
 	lastShelterTimeoutTick    int64
@@ -198,8 +200,16 @@ type AgentState struct {
 	goals                   GoalHierarchy
 
 	// Intent execution receipt tracking from the motor periphery
-	lastReceipt    *civquestv1.IntentReceipt
-	pendingReceipt *civquestv1.IntentReceipt
+	receipt receiptSlot
+
+	// Per-agent foraging memory (eliminates package-global foraging state)
+	forageMemory *forageAgentMemory
+
+	// Per-agent blueprint construction progress index
+	constructionProgress int
+
+	// Consolidated per-agent runtime state owned by AgentState
+	runtimeState RuntimeTracking
 
 	// In-memory 16x16x16 spatial grid index for persistent POIs (ADR-022)
 	spatialIndex *SpatialIndex
@@ -255,14 +265,18 @@ func NewAgentState() *AgentState {
 	return &AgentState{
 		stage:                   StageBootstrap,
 		routine:                 RoutineDawnPrep,
-		CurrentRoutine:          RoutineDawnPrep,
-		FSMState:                StageBootstrap,
 		armoryMaintenanceNeeded: true,
 		PavingTracker:           NewRoadPavingTracker(DefaultPavingCapacity, DefaultPavingThreshold),
 		spatialIndex:            NewSpatialIndex(),
 		habitTrailTracker:       NewHabitTrailTracker(DefaultBreadcrumbDisplacement, DefaultArrivalThreshold, DefaultFinalTransitionDist),
-		ExpeditionPhase:         ExpeditionIdle,
-		ClanSize:                1,
+		forageMemory:            newForageAgentMemory(),
+		runtimeState: RuntimeTracking{
+			Idle: RuntimeIdleTracking{
+				LastContemplatedDay: -1,
+			},
+		},
+		ExpeditionPhase: ExpeditionIdle,
+		ClanSize:        1,
 		goals: GoalHierarchy{
 			ImmediateGoal: "GATHER_TIMBER: Gather 4 logs and craft basic wooden tools",
 			ShortTermGoal: "ESTABLISH_OUTPOST_CHAIN: Advance frontier and establish safe day-night outposts with tools & light",
@@ -406,6 +420,20 @@ func (s *AgentState) IsArmoryMaintenanceNeeded() bool {
 	return s.armoryMaintenanceNeeded
 }
 
+func (s *AgentState) stageLocked() Stage {
+	if s == nil || s.stage == "" {
+		return StageBootstrap
+	}
+	return s.stage
+}
+
+func (s *AgentState) routineLocked() Routine {
+	if s == nil || s.routine == "" {
+		return RoutineDawnPrep
+	}
+	return s.routine
+}
+
 // Stage returns the currently active Tier 1 macro strategic stage.
 func (s *AgentState) Stage() Stage {
 	if s == nil {
@@ -413,13 +441,7 @@ func (s *AgentState) Stage() Stage {
 	}
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	if s.stage == "" {
-		if s.FSMState != "" {
-			return s.FSMState
-		}
-		return StageBootstrap
-	}
-	return s.stage
+	return s.stageLocked()
 }
 
 // SetStage updates the active Tier 1 macro strategic stage.
@@ -430,7 +452,6 @@ func (s *AgentState) SetStage(st Stage) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.stage = st
-	s.FSMState = st
 }
 
 // Routine returns the currently active Tier 2 circadian operational routine.
@@ -440,13 +461,7 @@ func (s *AgentState) Routine() Routine {
 	}
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	if s.routine == "" {
-		if s.CurrentRoutine != "" {
-			return s.CurrentRoutine
-		}
-		return RoutineDawnPrep
-	}
-	return s.routine
+	return s.routineLocked()
 }
 
 // SetRoutine updates the active Tier 2 circadian operational routine.
@@ -457,7 +472,6 @@ func (s *AgentState) SetRoutine(r Routine) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.routine = r
-	s.CurrentRoutine = r
 }
 
 // SetStageAndRoutine updates both Tier 1 stage and Tier 2 routine atomically under a single lock,
@@ -469,9 +483,7 @@ func (s *AgentState) SetStageAndRoutine(st Stage, r Routine) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.stage = st
-	s.FSMState = st
 	s.routine = r
-	s.CurrentRoutine = r
 }
 
 // Tuple returns the unified (Stage, Routine) state tuple.
@@ -481,21 +493,7 @@ func (s *AgentState) Tuple() StateTuple {
 	}
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	st := s.stage
-	if st == "" {
-		st = s.FSMState
-		if st == "" {
-			st = StageBootstrap
-		}
-	}
-	r := s.routine
-	if r == "" {
-		r = s.CurrentRoutine
-		if r == "" {
-			r = RoutineDawnPrep
-		}
-	}
-	return StateTuple{Stage: st, Routine: r}
+	return StateTuple{Stage: s.stageLocked(), Routine: s.routineLocked()}
 }
 
 // GetCurrentRoutine returns the currently active routine state (backward compatibility).
@@ -516,26 +514,6 @@ func (s *AgentState) GetFSMState() State {
 // SetFSMState updates the active formal System 1 HFSM state (backward compatibility).
 func (s *AgentState) SetFSMState(st State) {
 	s.SetStage(st)
-}
-
-// GetLastEatingTick safely returns the world tick of the last consumption event.
-func (s *AgentState) GetLastEatingTick() int64 {
-	if s == nil {
-		return 0
-	}
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	return s.lastEatingTick
-}
-
-// SetLastEatingTick safely records the world tick of an item consumption event.
-func (s *AgentState) SetLastEatingTick(tick int64) {
-	if s == nil {
-		return
-	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.lastEatingTick = tick
 }
 
 // GetLastSleepAttemptTick safely returns the world tick of the last bed interaction attempt.
@@ -1415,8 +1393,28 @@ func (s *AgentState) IngestReceipt(receipt *civquestv1.IntentReceipt) {
 	cloned := proto.Clone(receipt).(*civquestv1.IntentReceipt)
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.lastReceipt = cloned
-	s.pendingReceipt = proto.Clone(cloned).(*civquestv1.IntentReceipt)
+	s.receipt = receiptSlot{
+		last:    cloned,
+		pending: true,
+	}
+}
+
+// SetLastReceipt stores a defensive copy of the most recent IntentReceipt without marking it pending.
+func (s *AgentState) SetLastReceipt(receipt *civquestv1.IntentReceipt) {
+	if s == nil {
+		return
+	}
+	var cloned *civquestv1.IntentReceipt
+	if receipt != nil {
+		cloned = proto.Clone(receipt).(*civquestv1.IntentReceipt)
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if cloned == nil {
+		s.receipt = receiptSlot{}
+		return
+	}
+	s.receipt.last = cloned
 }
 
 // GetLastReceipt returns a defensive copy of the most recently ingested IntentReceipt.
@@ -1426,10 +1424,10 @@ func (s *AgentState) GetLastReceipt() *civquestv1.IntentReceipt {
 	}
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	if s.lastReceipt == nil {
+	if s.receipt.last == nil {
 		return nil
 	}
-	return proto.Clone(s.lastReceipt).(*civquestv1.IntentReceipt)
+	return proto.Clone(s.receipt.last).(*civquestv1.IntentReceipt)
 }
 
 // StepActiveTask advances the active TaskSubroutine by one tick, clearing it upon completion or failure.
@@ -1446,18 +1444,19 @@ func (s *AgentState) StepActiveTask(agentID string, frame *civquestv1.TelemetryF
 func (s *AgentState) StepActiveTaskLocked(agentID string, frame *civquestv1.TelemetryFrame) TaskStepResult {
 	if s == nil || s.activeTask == nil {
 		if s != nil {
-			s.pendingReceipt = nil
+			s.receipt.pending = false
 		}
 		return TaskStepResult{}
 	}
 	var receipt *civquestv1.IntentReceipt
 	if frame != nil && frame.GetReceipt() != nil {
-		receipt = frame.GetReceipt()
-		s.lastReceipt = proto.Clone(receipt).(*civquestv1.IntentReceipt)
-	} else if s.pendingReceipt != nil {
-		receipt = s.pendingReceipt
+		cloned := proto.Clone(frame.GetReceipt()).(*civquestv1.IntentReceipt)
+		s.receipt.last = cloned
+		receipt = cloned
+	} else if s.receipt.pending && s.receipt.last != nil {
+		receipt = s.receipt.last
 	}
-	s.pendingReceipt = nil
+	s.receipt.pending = false
 
 	res := s.activeTask.TickWithReceipt(agentID, s, frame, receipt)
 	if res.Done {

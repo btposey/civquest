@@ -3,6 +3,7 @@ package system1
 import (
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/btposey/civquest/orchestrator-go/internal/blueprints"
@@ -93,6 +94,7 @@ func TestConstructionSkill_QuadrantExecutionAndSubterraneanExcavation(t *testing
 
 	skill := NewConstructionSkill(coord)
 	fg := NewFactGraph()
+	state := NewAgentState()
 
 	// 1. Far away from build site -> should emit NavigateIntent
 	farFrame := &civquestv1.TelemetryFrame{
@@ -104,6 +106,7 @@ func TestConstructionSkill_QuadrantExecutionAndSubterraneanExcavation(t *testing
 	ctxFar := &SkillContext{
 		AgentID: "builder-1",
 		Frame:   farFrame,
+		State:   state,
 		CivicDB: civicDB,
 	}
 
@@ -135,6 +138,7 @@ func TestConstructionSkill_QuadrantExecutionAndSubterraneanExcavation(t *testing
 	ctxNear := &SkillContext{
 		AgentID: "builder-1",
 		Frame:   nearFrame,
+		State:   state,
 		CivicDB: civicDB,
 	}
 
@@ -167,6 +171,7 @@ func TestConstructionSkill_QuadrantExecutionAndSubterraneanExcavation(t *testing
 	ctxCleared := &SkillContext{
 		AgentID: "builder-1",
 		Frame:   clearedFrame,
+		State:   state,
 		CivicDB: civicDB,
 	}
 
@@ -186,8 +191,8 @@ func TestConstructionSkill_QuadrantExecutionAndSubterraneanExcavation(t *testing
 	}
 
 	// Verify progress advanced
-	if skill.GetAgentProgress("builder-1") != 1 {
-		t.Errorf("expected progress = 1, got %d", skill.GetAgentProgress("builder-1"))
+	if state.ConstructionProgress() != 1 {
+		t.Errorf("expected progress = 1, got %d", state.ConstructionProgress())
 	}
 }
 
@@ -241,6 +246,7 @@ func TestConstructionSkill_MultiBuilderCollaborationAndCompletion(t *testing.T) 
 	// 4 builder agents should claim 4 distinct quadrants: NW, NE, SW, SE
 	builders := []string{"builder-NW", "builder-NE", "builder-SW", "builder-SE"}
 	for _, b := range builders {
+		bState := NewAgentState()
 		frame := &civquestv1.TelemetryFrame{
 			WorldTick: 200,
 			Status: &civquestv1.AgentStatus{
@@ -253,6 +259,7 @@ func TestConstructionSkill_MultiBuilderCollaborationAndCompletion(t *testing.T) 
 		ctx := &SkillContext{
 			AgentID: b,
 			Frame:   frame,
+			State:   bState,
 			CivicDB: civicDB,
 		}
 
@@ -286,5 +293,122 @@ func TestConstructionSkill_MultiBuilderCollaborationAndCompletion(t *testing.T) 
 	}
 	if len(zones) == 0 {
 		t.Errorf("expected functional zone registered in CivicDB upon completion")
+	}
+}
+
+func TestConstructionSkill_PerAgentStateIsolation(t *testing.T) {
+	bp := &blueprints.Blueprint{
+		ID:      "isolated_platform",
+		Name:    "Isolated Platform",
+		Purpose: blueprints.PurposeShelter,
+		Dimensions: blueprints.Dimensions{
+			Width:  2,
+			Height: 2,
+			Length: 2,
+			MinY:   0,
+		},
+		Palette: map[int]string{
+			1: "minecraft:cobblestone",
+		},
+		Layers: []blueprints.Layer{
+			{
+				Y: 0,
+				Matrix: [][]int{
+					{1, 1},
+					{1, 1},
+				},
+			},
+			{
+				Y: 1,
+				Matrix: [][]int{
+					{1, 1},
+					{1, 1},
+				},
+			},
+		},
+	}
+
+	coord, err := blueprints.NewConstructionCoordinator(blueprints.CoordinatorConfig{
+		ProjectID: "proj-isolation",
+		Blueprint: bp,
+		AnchorX:   0,
+		AnchorY:   64,
+		AnchorZ:   0,
+	})
+	if err != nil {
+		t.Fatalf("NewConstructionCoordinator failed: %v", err)
+	}
+
+	// Single shared ConstructionSkill instance across concurrent agents with distinct AgentState instances.
+	skill := NewConstructionSkill(coord)
+	fg := NewFactGraph()
+
+	stateA := NewAgentState()
+	stateB := NewAgentState()
+	// Seed pre-existing non-zero progress to confirm quadrant assignment resets each agent's own state independently.
+	stateA.SetConstructionProgress(99)
+	stateB.SetConstructionProgress(42)
+
+	makeCtx := func(agentID string, st *AgentState) *SkillContext {
+		return &SkillContext{
+			AgentID: agentID,
+			State:   st,
+			Frame: &civquestv1.TelemetryFrame{
+				WorldTick: 300,
+				Status: &civquestv1.AgentStatus{
+					Position: &civquestv1.Vec3{X: 1.0, Y: 64.0, Z: 1.0},
+					Inventory: []*civquestv1.ItemStackProto{
+						{ItemId: "minecraft:cobblestone", Count: 64},
+					},
+				},
+			},
+		}
+	}
+
+	var wg sync.WaitGroup
+	var firstStepWg sync.WaitGroup
+	firstStepWg.Add(2)
+	var placedA, placedB int
+	runBuilder := func(agentID string, st *AgentState, placed *int) {
+		defer wg.Done()
+		ctx := makeCtx(agentID, st)
+		for i := 0; i < 16 && !coord.IsComplete(); i++ {
+			intents, execErr := skill.Execute(ctx, fg)
+			if execErr != nil {
+				t.Errorf("%s Execute error: %v", agentID, execErr)
+				if i == 0 {
+					firstStepWg.Done()
+				}
+				return
+			}
+			for _, in := range intents {
+				if in.GetInteractBlock() != nil && in.GetInteractBlock().InteractionType == civquestv1.InteractBlockIntent_PLACE_BLOCK {
+					*placed++
+				}
+			}
+			if i == 0 {
+				firstStepWg.Done()
+				firstStepWg.Wait()
+			}
+		}
+	}
+
+	wg.Add(2)
+	go runBuilder("builder-A", stateA, &placedA)
+	go runBuilder("builder-B", stateB, &placedB)
+	wg.Wait()
+
+	if !coord.IsComplete() {
+		t.Fatalf("expected coordinator to complete across concurrent builders")
+	}
+	if placedA+placedB != 8 {
+		t.Fatalf("expected 8 total placed blocks (placedA=%d, placedB=%d)", placedA, placedB)
+	}
+	if placedA == 0 || placedB == 0 {
+		t.Fatalf("expected both builders to place blocks independently (placedA=%d, placedB=%d)", placedA, placedB)
+	}
+	if stateA.ConstructionProgress() == 99 || stateB.ConstructionProgress() == 42 {
+		t.Fatalf("expected seeded progress reset on quadrant assignment (A=%d, B=%d)",
+			stateA.ConstructionProgress(), stateB.ConstructionProgress())
 	}
 }

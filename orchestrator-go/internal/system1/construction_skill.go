@@ -15,16 +15,13 @@ import (
 // Supports subterranean excavation (Y < AnchorY), in-situ material taxonomy substitution, and
 // directional property preservation without builder collisions or entrapment.
 type ConstructionSkill struct {
-	mu            sync.RWMutex
-	coordinator   *blueprints.ConstructionCoordinator
-	agentProgress map[string]int // agentID -> current intent index in assigned quadrant
+	mu          sync.RWMutex
+	coordinator *blueprints.ConstructionCoordinator
 }
 
 // NewConstructionSkill creates a new ConstructionSkill instance.
 func NewConstructionSkill(coord ...*blueprints.ConstructionCoordinator) *ConstructionSkill {
-	skill := &ConstructionSkill{
-		agentProgress: make(map[string]int),
-	}
+	skill := &ConstructionSkill{}
 	if len(coord) > 0 && coord[0] != nil {
 		skill.coordinator = coord[0]
 	}
@@ -43,20 +40,6 @@ func (s *ConstructionSkill) GetCoordinator() *blueprints.ConstructionCoordinator
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return s.coordinator
-}
-
-// GetAgentProgress returns the block index progress for an agent.
-func (s *ConstructionSkill) GetAgentProgress(agentID string) int {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	return s.agentProgress[agentID]
-}
-
-// SetAgentProgress overrides the block index progress for an agent.
-func (s *ConstructionSkill) SetAgentProgress(agentID string, idx int) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.agentProgress[agentID] = idx
 }
 
 // Name returns the unique skill identifier.
@@ -128,9 +111,9 @@ func (s *ConstructionSkill) Execute(ctx *SkillContext, facts *FactGraph) ([]*civ
 				if err := coord.AssignAgent(q, agentID); err == nil {
 					quadrant = q
 					assigned = true
-					s.mu.Lock()
-					s.agentProgress[agentID] = 0
-					s.mu.Unlock()
+					if ctx.State != nil {
+						ctx.State.SetConstructionProgress(0)
+					}
 					break
 				}
 			}
@@ -150,9 +133,10 @@ func (s *ConstructionSkill) Execute(ctx *SkillContext, facts *FactGraph) ([]*civ
 		return nil, nil
 	}
 
-	s.mu.Lock()
-	idx := s.agentProgress[agentID]
-	s.mu.Unlock()
+	idx := 0
+	if ctx.State != nil {
+		idx = ctx.State.ConstructionProgress()
+	}
 
 	if idx >= len(intents) {
 		coord.MarkQuadrantComplete(quadrant)
@@ -164,7 +148,9 @@ func (s *ConstructionSkill) Execute(ctx *SkillContext, facts *FactGraph) ([]*civ
 	targetWork := intents[idx]
 	targetVoxel := targetWork.TargetVoxel
 	if targetVoxel == nil {
-		s.advanceProgress(agentID)
+		if ctx.State != nil {
+			ctx.State.AdvanceConstructionProgress()
+		}
 		return nil, nil
 	}
 
@@ -269,15 +255,11 @@ func (s *ConstructionSkill) Execute(ctx *SkillContext, facts *FactGraph) ([]*civ
 	}
 
 	// Advance progress to next block in quadrant
-	s.advanceProgress(agentID)
+	if ctx.State != nil {
+		ctx.State.AdvanceConstructionProgress()
+	}
 
 	return []*civquestv1.AgentIntent{placeIntent}, nil
-}
-
-func (s *ConstructionSkill) advanceProgress(agentID string) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.agentProgress[agentID]++
 }
 
 // OnComplete is called when a quadrant or entire construction project finishes.

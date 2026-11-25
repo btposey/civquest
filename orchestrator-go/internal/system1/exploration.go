@@ -479,7 +479,7 @@ func EvaluateExploration(agentID string, frame *civquestv1.TelemetryFrame, cfg *
 		return evaluateDuskNightOutpostShelterLocked(agentID, frame, pos, navState, state)
 	}
 
-	routine := state.CurrentRoutine
+	routine := state.routineLocked()
 	if !state.HasActiveTaskLocked() &&
 		routine != RoutinePrimaryDuty && routine != RoutineSecondaryHobby &&
 		routine != RoutineDawnAwakening && routine != RoutineTavernSocial &&
