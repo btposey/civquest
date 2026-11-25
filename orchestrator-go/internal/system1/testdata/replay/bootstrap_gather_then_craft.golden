@@ -4,4 +4,6 @@ t=150 stage=BOOTSTRAP routine=PRIMARY_DUTY stack=[bootstrap/1] intents=[Craft(mi
 t=175 stage=BOOTSTRAP routine=PRIMARY_DUTY stack=[bootstrap/1] intents=[Craft(minecraft:stick x1)]  // planks: next craft step
 t=200 stage=BOOTSTRAP routine=PRIMARY_DUTY stack=[bootstrap/1] intents=[Craft(minecraft:crafting_table x1)]  // planks+sticks: tool craft or table
 t=225 stage=BOOTSTRAP routine=PRIMARY_DUTY stack=[bootstrap/1] intents=[Craft(minecraft:crafting_table x1)]  // axe in hand: sword step
-t=250 stage=SETTLEMENT routine=PRIMARY_DUTY stack=[exploration/1] intents=[]  // kit complete
+t=250 stage=SETTLEMENT routine=PRIMARY_DUTY stack=[exploration/1] intents=[Navigate(x=-46.1 z=-11.1)]  // kit complete: exploration's first leg is issued at once (baseline Navigate(-46.1,-11.1))
+t=260 stage=SETTLEMENT routine=PRIMARY_DUTY stack=[exploration/1] intents=[]  // leg in flight: no duplicate
+t=295 stage=SETTLEMENT routine=PRIMARY_DUTY stack=[exploration/1] intents=[Navigate(x=-46.1 z=-11.1)]  // still idle after the 40-tick re-issue window: the leg is re-issued

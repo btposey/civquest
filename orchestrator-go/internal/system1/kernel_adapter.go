@@ -251,6 +251,10 @@ func (fsm *AgentFSM) applyMemoryLocked(w *fsmWorld, writes []htpda.MemoryWrite) 
 		return
 	}
 	for _, wr := range writes {
+		if b, ok := wr.(surveyBackoff); ok {
+			fsm.surveyBackoffUntil = b.Until
+			continue
+		}
 		if l, ok := wr.(recoverEscapeLock); ok {
 			if l.Clear {
 				fsm.escapeLock = nil

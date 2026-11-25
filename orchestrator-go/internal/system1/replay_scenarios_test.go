@@ -38,6 +38,8 @@ func replayScenarios() []replayScenario {
 		scenarioDeathClearsEverything(),
 		scenarioTerrainStuckBlacklistsControl(),
 		scenarioEmergencyPreemptsRecover(),
+		scenarioDirectiveSurveyReportProceeds(),
+		scenarioDirectiveSurveyWithoutReportIsBounded(),
 		scenarioScoutingStuckDigsThrough(),
 		scenarioSleepBedUnreachableBlacklists(),
 	}
@@ -249,10 +251,20 @@ func scenarioDirectivePreference() replayScenario {
 				Probe:     func(st *AgentState) string { return fmt.Sprintf("hasTask=%t", st.HasActiveTask()) }, Annotation: "fresh scout directive preempts older task"},
 			{Frame: rf(210, 4000, withPos(-40.5, 86, -7.5), withBlocks(blk(-46, 86, -8, "minecraft:oak_log"))),
 				Probe: func(st *AgentState) string { return fmt.Sprintf("hasTask=%t", st.HasActiveTask()) }, Annotation: "directive continues"},
+			// cq-aik.31: the survey holds silently while Java sweeps (36 sectors x 2 ticks); it is
+			// bounded by its 120-tick lease and ends in a report (next scenario) or a re-survey.
+			{Frame: rf(250, 4000, withPos(-40.5, 86, -7.5), withBlocks(blk(-46, 86, -8, "minecraft:oak_log"))), Annotation: "sweep in progress: holding, lease not expired"},
+			{Frame: rf(325, 4000, withPos(-40.5, 86, -7.5), withBlocks(blk(-46, 86, -8, "minecraft:oak_log"))), Annotation: "lease (120) expired without a report: bounded re-survey, not idle"},
 		},
 		Check: func(t *testing.T, tr []replayRecord) {
 			if !hasIntentPrefix(tr[1], "Survey(") {
 				t.Fatalf("expected directive survey intent: %s", tr[1])
+			}
+			if len(tr[3].Intents) != 0 || tr[3].Top != activityKindSurvey {
+				t.Fatalf("survey must hold inside its lease: %s", tr[3])
+			}
+			if !hasIntentPrefix(tr[4], "Survey(") {
+				t.Fatalf("an expired survey lease must re-survey (bounded wait): %s", tr[4])
 			}
 		},
 	}
@@ -283,11 +295,19 @@ func scenarioBootstrapGatherCraft() replayScenario {
 			{Frame: rf(175, 3000, withInv(item(0, "minecraft:oak_planks", 12))), Annotation: "planks: next craft step"},
 			{Frame: rf(200, 3000, withInv(item(0, "minecraft:oak_planks", 8), item(1, "minecraft:stick", 4))), Annotation: "planks+sticks: tool craft or table"},
 			{Frame: rf(225, 3000, withInv(item(0, "minecraft:wooden_axe", 1), item(1, "minecraft:oak_planks", 4), item(2, "minecraft:stick", 2))), Annotation: "axe in hand: sword step"},
-			{Frame: rf(250, 3000, withInv(survivalKit()...)), Annotation: "kit complete"},
+			{Frame: rf(250, 3000, withInv(survivalKit()...)), Annotation: "kit complete: exploration's first leg is issued at once (baseline Navigate(-46.1,-11.1))"},
+			{Frame: rf(260, 3000, withInv(survivalKit()...)), Annotation: "leg in flight: no duplicate"},
+			{Frame: rf(295, 3000, withInv(survivalKit()...)), Annotation: "still idle after the 40-tick re-issue window: the leg is re-issued"},
 		},
 		Check: func(t *testing.T, tr []replayRecord) {
 			if !hasIntentPrefix(tr[0], "Interact(HARVEST_BREAK") {
 				t.Fatalf("expected gather first: %s", tr[0])
+			}
+			if !hasIntentPrefix(tr[6], "Navigate(") || tr[6].Top != activityKindExploration {
+				t.Fatalf("after the kit completes exploration must navigate on its first tick: %s", tr[6])
+			}
+			if len(tr[7].Intents) != 0 || !hasIntentPrefix(tr[8], "Navigate(") {
+				t.Fatalf("expected a hold then a re-issue, got %s / %s", tr[7], tr[8])
 			}
 			crafted := false
 			for _, r := range tr[2:] {
@@ -364,6 +384,57 @@ func scenarioEmergencyPreemptsRecover() replayScenario {
 			}
 			if tr[4].Top == activityKindRecover {
 				t.Fatalf("an expired Recover must pop: %s", tr[4])
+			}
+		},
+	}
+}
+
+// 14 (cq-aik.31): a survey that reports ends the wait at once and the expedition navigates.
+func scenarioDirectiveSurveyReportProceeds() replayScenario {
+	pos, tree := withPos(-40.5, 86, -7.5), withBlocks(blk(-46, 86, -8, "minecraft:oak_log"))
+	return replayScenario{
+		Name: "directive_survey_report_proceeds", Stage: StageBootstrap, Profession: "EXPLORER",
+		Steps: []replayStep{
+			{Frame: rf(204, 4000, pos, tree),
+				Directive:  &replayDirective{Action: DirectiveActionScoutFrontier, Target: "eastern forest", Goal: "SCOUT_FRONTIER", IssuedTick: 200, ExpiresAt: 6200},
+				Annotation: "scout directive: survey starts"},
+			{Frame: rf(250, 4000, pos, tree), Annotation: "sweep in progress"},
+			{Frame: rf(280, 4000, pos, tree, withSurvey(uniformSurvey(-40.5, -7.5, 279))), Annotation: "report arrives: the wait ends and the expedition navigates"},
+		},
+		Check: func(t *testing.T, tr []replayRecord) {
+			if !hasIntentPrefix(tr[0], "Survey(") || len(tr[1].Intents) != 0 {
+				t.Fatalf("expected a survey then a silent hold: %s / %s", tr[0], tr[1])
+			}
+			if !hasIntentPrefix(tr[2], "Navigate(") {
+				t.Fatalf("the report must end the wait with a Navigate: %s", tr[2])
+			}
+		},
+	}
+}
+
+// 15 (cq-aik.31): a survey whose report never arrives is bounded: two lease expiries, then the
+// expedition gives up and backs off, and the agent resumes productive work (harvest).
+func scenarioDirectiveSurveyWithoutReportIsBounded() replayScenario {
+	pos, tree := withPos(-40.5, 86, -7.5), withBlocks(blk(-46, 86, -8, "minecraft:oak_log"))
+	return replayScenario{
+		Name: "directive_survey_without_report_is_bounded", Stage: StageBootstrap, Profession: "EXPLORER",
+		Steps: []replayStep{
+			{Frame: rf(204, 4000, pos, tree),
+				Directive:  &replayDirective{Action: DirectiveActionScoutFrontier, Target: "eastern forest", Goal: "SCOUT_FRONTIER", IssuedTick: 200, ExpiresAt: 6200},
+				Annotation: "scout directive: survey 1"},
+			{Frame: rf(325, 4000, pos, tree), Annotation: "no report, lease expired: survey 2"},
+			{Frame: rf(446, 4000, pos, tree), Annotation: "no report again: expedition gives up (backoff), nothing held"},
+			{Frame: rf(475, 4000, pos, tree), Annotation: "agent is working again (harvest) while the directive stays active"},
+		},
+		Check: func(t *testing.T, tr []replayRecord) {
+			if !hasIntentPrefix(tr[1], "Survey(") {
+				t.Fatalf("second survey expected: %s", tr[1])
+			}
+			if tr[2].Top == activityKindSurvey || tr[2].Top == activityKindExpedition {
+				t.Fatalf("expedition must give up after repeated report-less surveys: %s", tr[2])
+			}
+			if !hasIntentPrefix(tr[3], "Navigate(") && !hasIntentPrefix(tr[3], "Interact(") {
+				t.Fatalf("agent idle after the survey gave up: %s", tr[3])
 			}
 		},
 	}

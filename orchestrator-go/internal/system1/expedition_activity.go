@@ -107,6 +107,11 @@ type expeditionLocal struct {
 	EmitTick   int64 // duplicate-survey guard
 	EmitOrigin [3]float64
 	HasEmit    bool
+
+	// SurveyTimeouts counts consecutive surveys that ended on their lease without a report
+	// (the sweep never completed); a report resets it. At expeditionMaxSurveyTimeouts the
+	// expedition gives up and backs off (cq-aik.31: the survey wait is bounded).
+	SurveyTimeouts int
 }
 
 // FlankCount is len(Blocked) (ADR-036: FlankCount == len(Blocked)).
@@ -228,8 +233,41 @@ func (w *fsmWorld) pos() *civquestv1.Vec3 {
 
 // ---- eligibility and preemption ----
 
+// surveyBackoff is the Memory write of an expedition that gave up after repeated survey
+// timeouts: no expedition starts until Until.
+type surveyBackoff struct {
+	Until    int64
+	Timeouts int
+}
+
+const (
+	// expeditionMaxSurveyTimeouts consecutive report-less survey leases end an expedition.
+	expeditionMaxSurveyTimeouts = 2
+	// expeditionSurveyBackoffTicks is how long expeditions stay suppressed afterwards (30 s).
+	expeditionSurveyBackoffTicks int64 = 600
+)
+
+// surveyBackedOff reports whether expeditions are suppressed after repeated survey timeouts.
+func (w *fsmWorld) surveyBackedOff() bool {
+	return w.fsm != nil && w.fsm.surveyBackoffUntil > 0 && w.Tick() < w.fsm.surveyBackoffUntil
+}
+
+// SurveyBackoffUntil is the tick until which expeditions are suppressed because surveys kept
+// timing out without a report (0: not backing off). It makes the give-up observable.
+func (fsm *AgentFSM) SurveyBackoffUntil() int64 {
+	if fsm == nil {
+		return 0
+	}
+	fsm.mu.RLock()
+	defer fsm.mu.RUnlock()
+	return fsm.surveyBackoffUntil
+}
+
 // expeditionEligible reports whether an expedition started by origin may keep running.
 func (w *fsmWorld) expeditionEligible(origin string) bool {
+	if w.surveyBackedOff() {
+		return false
+	}
 	ctx := w.ctx
 	if ctx == nil || ctx.State == nil || ctx.Frame == nil || ctx.Frame.Status == nil {
 		return false
@@ -400,7 +438,22 @@ func (a expeditionActivity) onChild(lw *fsmWorld, loc expeditionLocal, result an
 		return htpda.Step{Op: htpda.OpStay, Next: loc}
 	}
 	switch r := result.(type) {
+	case htpda.Timeout:
+		if r.Kind == activityKindSurvey {
+			loc.SurveyTimeouts++
+			if loc.SurveyTimeouts >= expeditionMaxSurveyTimeouts {
+				// No report after repeated sweeps: stop holding the motor for surveys that
+				// never complete. The expedition ends and its origin (or the activities
+				// below) carry on; surveying resumes after the backoff.
+				st := a.done(lw)
+				st.Memory = []htpda.MemoryWrite{surveyBackoff{Until: lw.Tick() + expeditionSurveyBackoffTicks, Timeouts: loc.SurveyTimeouts}}
+				return st
+			}
+		}
+		loc.Leg = false
+		return a.decide(lw, loc)
 	case SurveyReport:
+		loc.SurveyTimeouts = 0
 		if loc.HasLastOrigin {
 			loc.PrevOrigin, loc.HasPrevOrigin = loc.LastOrigin, true
 		}
@@ -1192,7 +1245,7 @@ func (w *fsmWorld) expeditionStart(origin string) (expeditionArgs, bool) {
 
 // directiveExpeditionBid is the Expedition bid of an active SCOUT_FRONTIER directive.
 func (w *fsmWorld) directiveExpeditionBid() (float64, bool) {
-	if w.skipped[activityKindExpedition] || w.ctx == nil || w.ctx.State == nil || w.ctx.State.IsExpeditionActive() {
+	if w.skipped[activityKindExpedition] || w.ctx == nil || w.ctx.State == nil || w.ctx.State.IsExpeditionActive() || w.surveyBackedOff() {
 		return 0, false
 	}
 	return directiveExpeditionUtility(w.fsm.currentStage, w.fsm.currentRoutine, w.ctx)

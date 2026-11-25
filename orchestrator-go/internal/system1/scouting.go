@@ -29,6 +29,7 @@ func EvaluateScouting(
 	defer state.mu.Unlock()
 
 	state.mem.telemetryFramesSeen++
+	firstEver := state.homeOrigin == nil // the agent's very first evaluation: spawn warm-up applies
 	if state.homeOrigin == nil {
 		originCopy := &civquestv1.Vec3{X: pos.X, Y: pos.Y, Z: pos.Z}
 		state.homeOrigin = originCopy
@@ -40,7 +41,11 @@ func EvaluateScouting(
 	if state.currentOutpost == nil {
 		state.currentOutpost = &civquestv1.Vec3{X: state.homeOrigin.X, Y: state.homeOrigin.Y, Z: state.homeOrigin.Z}
 	}
-	if walk.lastExploreTick == 0 {
+	// Only the agent's very first evaluation waits out the spawn warm-up cooldown. A fresh
+	// walk of a newly pushed exploration frame has no previous leg, so no cooldown is
+	// pending: lastExploreTick stays 0 ("never") and the first leg is issued at once instead
+	// of idling a cooldown on every frame entry (cq-aik.31).
+	if walk.lastExploreTick == 0 && firstEver {
 		walk.lastExploreTick = frame.WorldTick
 	}
 

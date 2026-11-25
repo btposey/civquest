@@ -1,3 +1,5 @@
 t=100 stage=BOOTSTRAP routine=HARVEST_TREE stack=[task_subroutine/1] intents=[Navigate(x=-45.5 z=-7.5)]  // harvest_tree committed, no directive
 t=204 stage=BOOTSTRAP routine=PRIMARY_DUTY stack=[survey/2] intents=[Survey(sectors=36)] probe={hasTask=false}  // fresh scout directive preempts older task
 t=210 stage=BOOTSTRAP routine=PRIMARY_DUTY stack=[survey/2] intents=[] probe={hasTask=false}  // directive continues
+t=250 stage=BOOTSTRAP routine=PRIMARY_DUTY stack=[survey/2] intents=[]  // sweep in progress: holding, lease not expired
+t=325 stage=BOOTSTRAP routine=PRIMARY_DUTY stack=[survey/2] intents=[Survey(sectors=36)]  // lease (120) expired without a report: bounded re-survey, not idle

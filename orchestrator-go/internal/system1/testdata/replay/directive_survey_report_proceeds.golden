@@ -1,0 +1,3 @@
+t=204 stage=BOOTSTRAP routine=PRIMARY_DUTY stack=[survey/2] intents=[Survey(sectors=36)]  // scout directive: survey starts
+t=250 stage=BOOTSTRAP routine=PRIMARY_DUTY stack=[survey/2] intents=[]  // sweep in progress
+t=280 stage=BOOTSTRAP routine=PRIMARY_DUTY stack=[navigate/2] intents=[Navigate(x=4.6 z=-23.9)]  // report arrives: the wait ends and the expedition navigates
