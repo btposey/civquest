@@ -182,21 +182,21 @@ func TestFSM_EmergencyToSleepBlockedMidCombat(t *testing.T) {
 		t.Fatalf("VIOLATION: FSM transitioned to %s while hostile was present; must stay in %s", res.State, StateEmergency)
 	}
 
-	// Attempt forced transition to REST - Guard must block it
-	allowed := fsm.TransitionTo(StateRest, "test forced transition", ctx)
+	// Attempt forced transition to StageSettlement - emergency guard must block it
+	allowed := fsm.TransitionTo(StageSettlement, "test forced transition", ctx)
 	if allowed {
-		t.Fatalf("VIOLATION: TransitionTo(StateRest) succeeded while hostiles were present")
+		t.Fatalf("VIOLATION: TransitionTo(StageSettlement) succeeded while hostiles were present")
 	}
-	if fsm.CurrentState() != StateEmergency {
-		t.Fatalf("expected state to remain %s, got %s", StateEmergency, fsm.CurrentState())
+	if fsm.CurrentState() != StageEmergency {
+		t.Fatalf("expected state to remain %s, got %s", StageEmergency, fsm.CurrentState())
 	}
 }
 
 func TestFSM_StuckStateFallback(t *testing.T) {
-	fsm := NewAgentFSM(StateShelter, nil)
+	fsm := NewAgentFSM(StageSettlement, nil)
 	state := NewAgentState()
 
-	// Agent stuck in SHELTER state beyond timeout (600 ticks)
+	// Agent stuck in StageSettlement beyond threshold (600 ticks)
 	ctx := &FSMContext{
 		AgentID: "stuck_agent",
 		State:   state,
@@ -214,18 +214,34 @@ func TestFSM_StuckStateFallback(t *testing.T) {
 	}
 
 	// Tick repeatedly with identical position to accumulate stuck ticks
-	var transitionedToExplore bool
 	for i := int64(0); i < 605; i++ {
 		ctx.Frame.WorldTick = 1000 + i
-		res := fsm.Tick(ctx)
-		if res.State == StateExplore && res.Transitioned {
-			transitionedToExplore = true
-			break
-		}
+		_ = fsm.Tick(ctx)
 	}
 
-	if !transitionedToExplore {
-		t.Fatalf("expected stuck shelter state to fallback to %s, got %s", StateExplore, fsm.CurrentState())
+	if !ctx.IsStuckInState(600) {
+		t.Fatalf("expected IsStuckInState(600) to be true after 605 stationary ticks (stuck=%d, timeInState=%d)",
+			ctx.StuckTicks, ctx.TimeInState)
+	}
+
+	// Recording shelter timeout suppresses further shelter build intents during cooldown even with planks available
+	state.SetLastShelterTimeoutTick(ctx.Frame.WorldTick)
+	ctx.Frame.Status.Inventory = []*civquestv1.ItemStackProto{
+		{ItemId: "minecraft:oak_planks", Count: 32},
+	}
+	ctx.Frame.WorldTick++
+	res := fsm.Tick(ctx)
+	if !ctx.IsShelterOnCooldown() {
+		t.Fatalf("expected IsShelterOnCooldown() to be true after recording shelter timeout")
+	}
+	if res.Stage != StageSettlement {
+		t.Fatalf("expected stage %s during shelter cooldown fallback, got %s", StageSettlement, res.Stage)
+	}
+	for _, it := range res.Intents {
+		if it.Intent != nil && it.Intent.GetInteractBlock() != nil &&
+			it.Intent.GetInteractBlock().InteractionType == civquestv1.InteractBlockIntent_PLACE_BLOCK {
+			t.Fatalf("expected shelter PLACE_BLOCK intent suppressed during cooldown fallback, got %+v", it.Intent)
+		}
 	}
 }
 
@@ -331,7 +347,7 @@ func TestFSM_SteadyStateExploreUtilitySynchronization(t *testing.T) {
 }
 
 func TestFSM_ShelterTimeoutCooldownPreventsImmediateReentry(t *testing.T) {
-	fsm := NewAgentFSM(StateShelter, nil)
+	fsm := NewAgentFSM(StageSettlement, nil)
 	state := NewAgentState()
 
 	ctx := &FSMContext{
@@ -346,30 +362,53 @@ func TestFSM_ShelterTimeoutCooldownPreventsImmediateReentry(t *testing.T) {
 				MaxHealth: 20.0,
 				FoodLevel: 20,
 				Position:  &civquestv1.Vec3{X: 100, Y: 64, Z: 100},
+				Inventory: []*civquestv1.ItemStackProto{
+					{ItemId: "minecraft:wooden_axe", Count: 1},
+					{ItemId: "minecraft:wooden_sword", Count: 1},
+					{ItemId: "minecraft:torch", Count: 4},
+					{ItemId: "minecraft:oak_planks", Count: 32},
+				},
 			},
 		},
 	}
 
-	// Tick 601 times until stuck shelter times out to EXPLORE
-	for i := int64(0); i <= 601; i++ {
-		ctx.Frame.WorldTick = 1000 + i
-		fsm.Tick(ctx)
+	// Record shelter timeout cooldown at tick 1000 (600-tick cooldown window)
+	state.SetLastShelterTimeoutTick(1000)
+
+	// During cooldown (tick 1100): dusk/night shelter PlaceBlock build intents must be suppressed on StageSettlement
+	ctx.Frame.WorldTick = 1100
+	resCooldown := fsm.Tick(ctx)
+	if resCooldown.Stage != StageSettlement {
+		t.Fatalf("expected stage %s during shelter cooldown, got %s", StageSettlement, resCooldown.Stage)
+	}
+	for _, it := range resCooldown.Intents {
+		if it.Intent != nil && it.Intent.GetInteractBlock() != nil &&
+			it.Intent.GetInteractBlock().InteractionType == civquestv1.InteractBlockIntent_PLACE_BLOCK {
+			t.Fatalf("VIOLATION: emitted shelter PLACE_BLOCK intent despite timeout cooldown at tick 1100: %+v", it.Intent)
+		}
 	}
 
-	if fsm.CurrentState() != StateExplore {
-		t.Fatalf("expected state %s after shelter timeout, got %s", StateExplore, fsm.CurrentState())
-	}
-
-	// Next tick (tick 1602): Still night, but shelter is on cooldown -> must STAY in EXPLORE
+	// After cooldown expires (tick 1602): StageSettlement resumes dusk/night shelter construction
 	ctx.Frame.WorldTick = 1602
-	res := fsm.Tick(ctx)
-	if res.State != StateExplore {
-		t.Fatalf("VIOLATION: FSM immediately re-entered %s despite timeout cooldown at tick 1602", res.State)
+	resAfter := fsm.Tick(ctx)
+	if resAfter.Stage != StageSettlement {
+		t.Fatalf("expected stage %s after cooldown expiry, got %s", StageSettlement, resAfter.Stage)
+	}
+	foundPlace := false
+	for _, it := range resAfter.Intents {
+		if it.Intent != nil && it.Intent.GetInteractBlock() != nil &&
+			it.Intent.GetInteractBlock().InteractionType == civquestv1.InteractBlockIntent_PLACE_BLOCK {
+			foundPlace = true
+			break
+		}
+	}
+	if !foundPlace {
+		t.Fatalf("expected shelter PLACE_BLOCK intent to resume once cooldown expired at tick 1602, got %+v", resAfter.Intents)
 	}
 }
 
 func TestFSM_CriticalHungerBlocksRestGuard(t *testing.T) {
-	fsm := NewAgentFSM(StateEmergency, nil)
+	fsm := NewAgentFSM(StageEmergency, nil)
 	state := NewAgentState()
 
 	// Critical hunger (foodLevel 4) with food in inventory
@@ -392,19 +431,20 @@ func TestFSM_CriticalHungerBlocksRestGuard(t *testing.T) {
 		},
 	}
 
-	// RestStateHandler.Guard must reject entry when critically hungry
-	handler := &RestStateHandler{}
-	if handler.Guard(ctx) {
-		t.Fatalf("VIOLATION: RestStateHandler.Guard returned true during critical hunger")
+	// Attempt forced transition to StageSettlement - must be rejected during critical hunger
+	allowed := fsm.TransitionTo(StageSettlement, "force settlement during critical hunger", ctx)
+	if allowed {
+		t.Fatalf("VIOLATION: TransitionTo(StageSettlement) succeeded during critical hunger")
+	}
+	if fsm.CurrentStage() != StageEmergency {
+		t.Fatalf("expected stage to remain %s, got %s", StageEmergency, fsm.CurrentStage())
 	}
 
-	// Attempt forced transition to REST - must be rejected
-	allowed := fsm.TransitionTo(StateRest, "force rest during critical hunger", ctx)
-	if allowed {
-		t.Fatalf("VIOLATION: TransitionTo(StateRest) succeeded during critical hunger")
-	}
-	if fsm.CurrentState() != StateEmergency {
-		t.Fatalf("expected state to remain %s, got %s", StateEmergency, fsm.CurrentState())
+	// Ticking at midnight must keep the agent in (StageEmergency, RoutineEmergency) instead of sleeping
+	res := fsm.Tick(ctx)
+	if res.Stage != StageEmergency || res.Routine != RoutineEmergency {
+		t.Fatalf("VIOLATION: expected (StageEmergency, RoutineEmergency) during critical hunger at midnight, got (%s, %s)",
+			res.Stage, res.Routine)
 	}
 }
 
@@ -445,7 +485,7 @@ func TestFSM_ConcurrentSafety(t *testing.T) {
 }
 
 func TestFSM_RestDoesNotTransitionToShelterWhenComplete(t *testing.T) {
-	fsm := NewAgentFSM(StateRest, nil)
+	fsm := NewAgentFSM(StageSettlement, nil)
 	state := NewAgentState()
 	state.SetShelterBlocksPlaced(blueprints.CabinTotalBlocks)
 
@@ -462,6 +502,9 @@ func TestFSM_RestDoesNotTransitionToShelterWhenComplete(t *testing.T) {
 				FoodLevel:  20,
 				Position:   &civquestv1.Vec3{X: 10, Y: 64, Z: 10},
 				IsSleeping: false, // Not sleeping, resting inside completed shelter
+				Inventory: []*civquestv1.ItemStackProto{
+					{ItemId: "minecraft:oak_planks", Count: 16},
+				},
 			},
 		},
 	}
@@ -469,14 +512,22 @@ func TestFSM_RestDoesNotTransitionToShelterWhenComplete(t *testing.T) {
 	for tick := int64(100); tick < 130; tick++ {
 		ctx.Frame.WorldTick = tick
 		res := fsm.Tick(ctx)
-		if res.State != StateRest {
-			t.Fatalf("VIOLATION: FSM transitioned from %s to %s at tick %d despite shelter being complete",
-				StateRest, res.State, tick)
+		if res.Stage != StageSettlement || res.Routine != RoutineSleep {
+			t.Fatalf("VIOLATION: expected (%s, %s) at tick %d despite shelter being complete, got (%s, %s)",
+				StageSettlement, RoutineSleep, tick, res.Stage, res.Routine)
+		}
+		for _, it := range res.Intents {
+			if it.Intent != nil && it.Intent.GetInteractBlock() != nil &&
+				it.Intent.GetInteractBlock().InteractionType == civquestv1.InteractBlockIntent_PLACE_BLOCK {
+				t.Fatalf("VIOLATION: emitted shelter construction PLACE_BLOCK intent when shelter complete at tick %d: %+v",
+					tick, it.Intent)
+			}
 		}
 	}
 
-	if fsm.CurrentState() != StateRest {
-		t.Fatalf("expected state to remain %s, got %s", StateRest, fsm.CurrentState())
+	if fsm.CurrentStage() != StageSettlement || fsm.CurrentRoutine() != RoutineSleep {
+		t.Fatalf("expected (%s, %s), got (%s, %s)",
+			StageSettlement, RoutineSleep, fsm.CurrentStage(), fsm.CurrentRoutine())
 	}
 }
 
@@ -624,25 +675,24 @@ func TestFSM_FactGraphPredicatesInTransitionRules(t *testing.T) {
 		}
 	}
 
-	// 4. Circadian Day/Night and Sleeping
+	// 4. Circadian Day/Night gating on StageSettlement -> StageBootstrap
 	facts.SetBool("circadian.is_dusk_or_night", "circadian", false, "daytime")
-	facts.SetBool("vitals.is_sleeping", "vitals", false, "awake")
-	facts.SetBool("bootstrap.has_kit", "bootstrap", true, "has kit")
+	facts.SetBool("bootstrap.has_kit", "bootstrap", false, "missing kit")
 
 	for _, r := range rules {
-		if r.FromStage == StateRest && r.ToStage == StageSettlement {
+		if r.FromStage == StageSettlement && r.ToStage == StageBootstrap {
 			if !r.Condition(ctx) {
-				t.Errorf("expected Rest -> Settlement on day awakening")
+				t.Errorf("expected Settlement -> Bootstrap during daytime when !bootstrap.has_kit")
 			}
 		}
 	}
 
-	// Sleeping blocks awakening
-	facts.SetBool("vitals.is_sleeping", "vitals", true, "asleep")
+	// Dusk/night blocks reverting from Settlement to Bootstrap
+	facts.SetBool("circadian.is_dusk_or_night", "circadian", true, "night")
 	for _, r := range rules {
-		if r.FromStage == StateRest && r.ToStage == StageSettlement {
+		if r.FromStage == StageSettlement && r.ToStage == StageBootstrap {
 			if r.Condition(ctx) {
-				t.Errorf("expected Rest -> Settlement to be false while sleeping")
+				t.Errorf("expected Settlement -> Bootstrap to be blocked during dusk/night")
 			}
 		}
 	}

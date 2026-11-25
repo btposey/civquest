@@ -36,4 +36,8 @@ func RegisterDefaultEvaluatorsAndSkills(reg *EngineRegistry) {
 	reg.RegisterSkill(NewFrontierScoutingSkill())
 	reg.RegisterSkill(NewConstructionSkill())
 	reg.RegisterSkill(NewForagingSkill())
+	reg.RegisterSkill(NewStageBootstrapSkill())
+	reg.RegisterSkill(NewStageSettlementSkill())
+	reg.RegisterSkill(NewStageColonizeSkill())
+	reg.RegisterSkill(NewStageEmergencySkill())
 }

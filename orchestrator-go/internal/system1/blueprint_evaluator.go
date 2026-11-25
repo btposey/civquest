@@ -162,9 +162,6 @@ func (e *BlueprintEvaluator) Evaluate(ctx *EvaluatorContext, graph *FactGraph) e
 	if !graph.GetBool("shelter.complete") || !graph.GetBool("shelter.has_bed") {
 		isUnhoused = true
 	}
-	if ctx != nil && ctx.State != nil && ctx.State.GetFSMState() == StateShelter {
-		isUnhoused = true
-	}
 
 	hasTavern := false
 	hasStorehouse := false

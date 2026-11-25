@@ -1,354 +1,11 @@
 package system1
 
 import (
-	"strings"
 	"sync"
 
-	"github.com/btposey/civquest/orchestrator-go/internal/blueprints"
-	"github.com/btposey/civquest/orchestrator-go/internal/db"
 	civquestv1 "github.com/btposey/civquest/orchestrator-go/internal/proto/v1"
 	"github.com/btposey/civquest/orchestrator-go/internal/xdg"
 )
-
-// FSMIntent encapsulates an emitted intent alongside its priority classification.
-type FSMIntent struct {
-	Intent   *civquestv1.AgentIntent
-	Priority bool
-}
-
-// FSMContext encapsulates sensory frames, agent configuration, spatial state, and vitals for evaluation.
-type FSMContext struct {
-	AgentID        string
-	Frame          *civquestv1.TelemetryFrame
-	State          *AgentState
-	Config         *xdg.AgentIdentityConfig
-	SafeNodes      []db.MapNode
-	CanEat         bool
-	LastEatingTick int64
-	PavingTracker  *RoadPavingTracker
-	StuckTicks     int64
-	TimeInState    int64
-	HasShield      bool
-	HasWeapon      bool
-	WeaponSlot     int32
-	CivicDB        *db.CivicRegistryDB
-	Facts          *FactGraph
-	Registry       *EngineRegistry
-}
-
-func resolveContextRegistry(ctx *FSMContext) *EngineRegistry {
-	if ctx != nil && ctx.Registry != nil {
-		return ctx.Registry
-	}
-	reg := NewDefaultEngineRegistry()
-	if ctx != nil {
-		ctx.Registry = reg
-	}
-	return reg
-}
-
-// HostilesPresent checks if any hostile mobs are within perception range.
-func (c *FSMContext) HostilesPresent() bool {
-	if c == nil {
-		return false
-	}
-	if c.Facts != nil {
-		return c.Facts.GetBool("threat.hostiles_present")
-	}
-	if c.Frame == nil {
-		return false
-	}
-	for _, e := range c.Frame.VisibleEntities {
-		if IsHostile(e) {
-			return true
-		}
-	}
-	return false
-}
-
-// DamageTaken checks if the agent took damage in the current frame.
-func (c *FSMContext) DamageTaken() bool {
-	if c == nil {
-		return false
-	}
-	if c.Facts != nil {
-		return c.Facts.GetBool("threat.damage_taken")
-	}
-	if c.Frame == nil || isDrowningDamage(c.Frame) {
-		return false
-	}
-	return c.Frame.LastDamageTaken != nil && !IsPassiveOrEnvironmentalDamage(c.Frame.LastDamageTaken)
-}
-
-// IsDrowning checks if the agent is experiencing a drowning emergency.
-func (c *FSMContext) IsDrowning() bool {
-	if c == nil {
-		return false
-	}
-	if c.Facts != nil {
-		return c.Facts.GetBool("threat.is_drowning") || c.Facts.GetString("threat.threatType") == "DROWNING"
-	}
-	return isDrowningDamage(c.Frame)
-}
-
-// IsHealthCritical checks if HP <= 35% max HP.
-func (c *FSMContext) IsHealthCritical() bool {
-	if c == nil {
-		return false
-	}
-	if c.Facts != nil {
-		return c.Facts.GetBool("vitals.is_health_critical")
-	}
-	if c.Frame == nil || c.Frame.Status == nil {
-		return false
-	}
-	maxHP := float64(c.Frame.Status.MaxHealth)
-	if maxHP <= 0 {
-		maxHP = 20.0
-	}
-	return float64(c.Frame.Status.Health) <= LowHPThresholdRatio*maxHP
-}
-
-// IsOnFire checks if the agent is burning.
-func (c *FSMContext) IsOnFire() bool {
-	if c == nil {
-		return false
-	}
-	if c.Facts != nil {
-		return c.Facts.GetBool("vitals.is_on_fire")
-	}
-	if c.Frame == nil || c.Frame.Status == nil {
-		return false
-	}
-	return c.Frame.Status.IsOnFire
-}
-
-// IsCriticalHunger checks if hunger <= 6 and edible food exists.
-func (c *FSMContext) IsCriticalHunger() bool {
-	if c == nil {
-		return false
-	}
-	if c.Facts != nil {
-		return c.Facts.GetBool("vitals.is_critical_hunger")
-	}
-	if c.Frame == nil || c.Frame.Status == nil {
-		return false
-	}
-	if c.Frame.Status.FoodLevel <= 6 {
-		if _, _, hasFood := FindOptimalFood(c.Frame.Status.Inventory); hasFood {
-			return true
-		}
-	}
-	return false
-}
-
-// ShouldPanic checks if combat panic rules trigger.
-func (c *FSMContext) ShouldPanic() bool {
-	if c == nil {
-		return false
-	}
-	if c.Facts != nil {
-		return c.Facts.GetBool("threat.should_panic")
-	}
-	if c.Frame == nil || c.Frame.Status == nil {
-		return false
-	}
-	bravery := 0.5
-	if c.Config != nil {
-		bravery = c.Config.Traits.Bravery
-	}
-	_, conf, hostiles := AssessImmediateThreats(c.Frame, bravery)
-	selfHP := float64(c.Frame.Status.Health)
-	maxHP := float64(c.Frame.Status.MaxHealth)
-	if maxHP <= 0 {
-		maxHP = 20.0
-	}
-	creeperNearby := false
-	for _, h := range hostiles {
-		if strings.Contains(strings.ToLower(h), "creeper") {
-			creeperNearby = true
-			break
-		}
-	}
-	return ShouldPanic(selfHP, maxHP, conf, len(hostiles) > 0 || c.DamageTaken(), creeperNearby)
-}
-
-// IsEmergency evaluates whether any high-priority emergency condition is active.
-func (c *FSMContext) IsEmergency() bool {
-	if c != nil && c.Facts != nil {
-		if _, exists := c.Facts.Get("threat.is_emergency"); exists {
-			return c.Facts.GetBool("threat.is_emergency")
-		}
-		if _, exists := c.Facts.Get("threat.threats_cleared"); exists {
-			return !c.Facts.GetBool("threat.threats_cleared")
-		}
-	}
-	if c == nil {
-		return false
-	}
-	return c.HostilesPresent() || c.DamageTaken() || c.IsOnFire() || c.IsCriticalHunger() || c.ShouldPanic() || c.IsDrowning()
-}
-
-// ThreatsCleared evaluates whether all hostiles, panic, fire, drowning, and critical hunger issues have cleared.
-func (c *FSMContext) ThreatsCleared() bool {
-	if c != nil && c.Facts != nil {
-		if _, exists := c.Facts.Get("threat.threats_cleared"); exists {
-			return c.Facts.GetBool("threat.threats_cleared")
-		}
-		if _, exists := c.Facts.Get("threat.is_emergency"); exists {
-			return !c.Facts.GetBool("threat.is_emergency")
-		}
-	}
-	if c == nil {
-		return true
-	}
-	return !c.HostilesPresent() && !c.DamageTaken() && !c.IsOnFire() && !c.IsCriticalHunger() && !c.ShouldPanic() && !c.IsDrowning()
-}
-
-// HasSurvivalKit returns true if the agent holds an axe, weapon/sword, and light source.
-func (c *FSMContext) HasSurvivalKit() bool {
-	if c != nil && c.Facts != nil {
-		if _, exists := c.Facts.Get("bootstrap.has_kit"); exists {
-			return c.Facts.GetBool("bootstrap.has_kit")
-		}
-	}
-	if c == nil || c.Frame == nil || c.Frame.Status == nil {
-		return false
-	}
-	return HasSurvivalKit(c.Frame.Status.Inventory)
-}
-
-// IsDuskOrNight returns true if current time is dusk, night, or thunderstorm.
-func (c *FSMContext) IsDuskOrNight() bool {
-	if c != nil && c.Facts != nil {
-		if _, exists := c.Facts.Get("circadian.is_dusk_or_night"); exists {
-			return c.Facts.GetBool("circadian.is_dusk_or_night")
-		}
-	}
-	if c == nil || c.Frame == nil {
-		return false
-	}
-	if c.Frame.Weather == civquestv1.Weather_WEATHER_THUNDER {
-		return true
-	}
-	tod := ((c.Frame.TimeOfDay % 24000) + 24000) % 24000
-	return tod >= 11000 && tod < 23500
-}
-
-// IsNight returns true if current time is deep night (13000-23500).
-func (c *FSMContext) IsNight() bool {
-	if c == nil || c.Frame == nil {
-		return false
-	}
-	tod := ((c.Frame.TimeOfDay % 24000) + 24000) % 24000
-	return tod >= 13000 && tod < 23500
-}
-
-// IsDawnOrDay returns true if daytime (23500 to 11000).
-func (c *FSMContext) IsDawnOrDay() bool {
-	return !c.IsDuskOrNight()
-}
-
-// HasAssignedBed returns true if state has an assigned bed.
-func (c *FSMContext) HasAssignedBed() bool {
-	if c != nil && c.Facts != nil {
-		if _, exists := c.Facts.Get("shelter.has_bed"); exists {
-			return c.Facts.GetBool("shelter.has_bed")
-		}
-	}
-	if c == nil || c.State == nil {
-		return false
-	}
-	return c.State.GetAssignedBed() != nil
-}
-
-// IsShelterComplete checks if all shelter walls have been placed or shelter pos secured.
-func (c *FSMContext) IsShelterComplete() bool {
-	if c != nil && c.Facts != nil {
-		if _, exists := c.Facts.Get("shelter.complete"); exists {
-			return c.Facts.GetBool("shelter.complete")
-		}
-	}
-	if c == nil || c.State == nil {
-		return false
-	}
-	return c.State.GetShelterBuildIndex() >= blueprints.CabinTotalBlocks ||
-		c.State.GetShelterBlocksPlaced() >= blueprints.CabinTotalBlocks
-}
-
-// IsShelterOnCooldown checks if shelter construction is on backoff cooldown after a stuck timeout.
-func (c *FSMContext) IsShelterOnCooldown() bool {
-	if c != nil && c.Facts != nil {
-		if _, exists := c.Facts.Get("shelter.on_cooldown"); exists {
-			return c.Facts.GetBool("shelter.on_cooldown")
-		}
-	}
-	if c == nil || c.State == nil || c.Frame == nil {
-		return false
-	}
-	return c.State.IsShelterOnCooldown(c.Frame.WorldTick)
-}
-
-// IsBootstrapOnCooldown checks if bootstrap retry is on backoff cooldown after a timeout.
-func (c *FSMContext) IsBootstrapOnCooldown() bool {
-	if c != nil && c.Facts != nil {
-		if _, exists := c.Facts.Get("bootstrap.on_cooldown"); exists {
-			return c.Facts.GetBool("bootstrap.on_cooldown")
-		}
-	}
-	if c == nil || c.State == nil || c.Frame == nil {
-		return false
-	}
-	return c.State.IsBootstrapOnCooldown(c.Frame.WorldTick)
-}
-
-// IsEstablishingNewSettlement returns true if the agent is founding a new settlement node.
-func (c *FSMContext) IsEstablishingNewSettlement() bool {
-	if c != nil && c.Facts != nil {
-		if _, exists := c.Facts.Get("colonize.is_establishing"); exists {
-			return c.Facts.GetBool("colonize.is_establishing")
-		}
-	}
-	if c == nil || c.State == nil {
-		return false
-	}
-	return c.State.IsEstablishingNewSettlement()
-}
-
-// IsSleeping checks if agent status reports sleeping.
-func (c *FSMContext) IsSleeping() bool {
-	if c == nil {
-		return false
-	}
-	if c.Facts != nil {
-		return c.Facts.GetBool("vitals.is_sleeping")
-	}
-	if c.Frame == nil || c.Frame.Status == nil {
-		return false
-	}
-	return c.Frame.Status.IsSleeping
-}
-
-// IsStuckInState returns true if time in state or stuck ticks exceeds threshold.
-func (c *FSMContext) IsStuckInState(maxTicks int64) bool {
-	if c == nil {
-		return false
-	}
-	// If active shelter construction, timber harvesting, or crafting is progressing, the agent is not stuck
-	if c.State != nil && c.Frame != nil {
-		wt := c.Frame.WorldTick
-		if lastPlace := c.State.GetLastShelterPlaceTick(); lastPlace > 0 && wt >= lastPlace && wt-lastPlace < 100 {
-			return false
-		}
-		if lastHarvest := c.State.GetLastHarvestTick(); lastHarvest > 0 && wt >= lastHarvest && wt-lastHarvest < 100 {
-			return false
-		}
-		if lastCraft := c.State.GetLastCraftTick(); lastCraft > 0 && wt >= lastCraft && wt-lastCraft < 100 {
-			return false
-		}
-	}
-	return c.StuckTicks >= maxTicks || (maxTicks > 0 && c.TimeInState >= maxTicks)
-}
 
 // StateHandler defines the interface for each HFSM state lifecycle hooks.
 type StateHandler interface {
@@ -366,9 +23,6 @@ type StageTransitionRule struct {
 	Condition   func(ctx *FSMContext) bool
 	Description string
 }
-
-// TransitionRule is an alias for StageTransitionRule, preserving backward compatibility.
-type TransitionRule = StageTransitionRule
 
 func defaultTransitionRules() []StageTransitionRule {
 	return []StageTransitionRule{
@@ -405,28 +59,6 @@ func defaultTransitionRules() []StageTransitionRule {
 				return c != nil && c.IsEmergency()
 			},
 			Description: "Hostile threat, damage, or critical vitals detected during colonization",
-		},
-		{
-			FromStage: StateShelter,
-			ToStage:   StageEmergency,
-			Condition: func(c *FSMContext) bool {
-				if c != nil && c.Facts != nil {
-					return c.Facts.GetBool("threat.is_emergency")
-				}
-				return c != nil && c.IsEmergency()
-			},
-			Description: "Hostile threat or damage detected; preempting shelter construction",
-		},
-		{
-			FromStage: StateRest,
-			ToStage:   StageEmergency,
-			Condition: func(c *FSMContext) bool {
-				if c != nil && c.Facts != nil {
-					return c.Facts.GetBool("threat.is_emergency")
-				}
-				return c != nil && c.IsEmergency()
-			},
-			Description: "Hostile threat or damage detected while resting; waking to defend or flee",
 		},
 
 		// Priority 2: Transitions OUT of EMERGENCY (Strictly guarded by ThreatsCleared)
@@ -546,881 +178,80 @@ func defaultTransitionRules() []StageTransitionRule {
 			},
 			Description: "Survival kit broken or missing; reverting to bootstrap",
 		},
-
-		// Priority 6: Legacy transitions from SHELTER and REST (backward compatibility)
-		{
-			FromStage: StateShelter,
-			ToStage:   StageSettlement,
-			Condition: func(c *FSMContext) bool {
-				if c != nil && c.Facts != nil {
-					return !c.Facts.GetBool("circadian.is_dusk_or_night") && c.Facts.GetBool("bootstrap.has_kit")
-				}
-				return c != nil && c.IsDawnOrDay() && c.HasSurvivalKit()
-			},
-			Description: "Dawn arrived; resuming settlement exploration and duties",
-		},
-		{
-			FromStage: StateShelter,
-			ToStage:   StageBootstrap,
-			Condition: func(c *FSMContext) bool {
-				if c != nil && c.Facts != nil {
-					return !c.Facts.GetBool("circadian.is_dusk_or_night") && !c.Facts.GetBool("bootstrap.has_kit")
-				}
-				return c != nil && c.IsDawnOrDay() && !c.HasSurvivalKit()
-			},
-			Description: "Dawn arrived; resuming bootstrap survival crafting",
-		},
-		{
-			FromStage:   StateShelter,
-			ToStage:     StageSettlement,
-			Condition:   func(c *FSMContext) bool { return c != nil && c.IsStuckInState(600) },
-			Description: "Shelter construction timed out/stuck; falling back to settlement",
-		},
-		{
-			FromStage: StateRest,
-			ToStage:   StageSettlement,
-			Condition: func(c *FSMContext) bool {
-				if c != nil && c.Facts != nil {
-					return !c.Facts.GetBool("circadian.is_dusk_or_night") && c.Facts.GetBool("bootstrap.has_kit") && !c.Facts.GetBool("vitals.is_sleeping")
-				}
-				return c != nil && c.IsDawnOrDay() && c.HasSurvivalKit() && !c.IsSleeping()
-			},
-			Description: "Dawn awakening; starting daily settlement duties",
-		},
-		{
-			FromStage: StateRest,
-			ToStage:   StageBootstrap,
-			Condition: func(c *FSMContext) bool {
-				if c != nil && c.Facts != nil {
-					return !c.Facts.GetBool("circadian.is_dusk_or_night") && !c.Facts.GetBool("bootstrap.has_kit") && !c.Facts.GetBool("vitals.is_sleeping")
-				}
-				return c != nil && c.IsDawnOrDay() && !c.HasSurvivalKit() && !c.IsSleeping()
-			},
-			Description: "Dawn awakening; starting survival kit bootstrap",
-		},
 	}
 }
 
-func tryForagingPreemption(ctx *FSMContext, skillCtx *SkillContext) ([]FSMIntent, bool) {
+func executeStageSkill(ctx *FSMContext, skillName string, fallback Skill, emergency bool) []FSMIntent {
 	if ctx == nil || ctx.Frame == nil || ctx.Frame.Status == nil {
-		return nil, false
-	}
-	if len(ctx.Frame.IncomingChats) > 0 || ctx.Frame.PendingTrade != nil || ctx.Frame.Status.IsSleeping {
-		return nil, false
-	}
-	if ctx.IsDuskOrNight() && ctx.Frame.Status.FoodLevel > 6 {
-		return nil, false
+		return nil
 	}
 	reg := resolveContextRegistry(ctx)
-	var fSkill Skill = NewForagingSkill()
-	if s, ok := reg.GetSkill("foraging"); ok && s != nil {
-		fSkill = s
+	ensureFSMFacts(ctx, reg)
+	skillCtx := buildSkillContext(ctx, reg)
+	skill := fallback
+	if s, ok := reg.GetSkill(skillName); ok && s != nil {
+		skill = s
 	}
-	if !fSkill.Preconditions(ctx.Facts) {
-		return nil, false
+	if skill == nil {
+		return nil
 	}
-	if ctx.State != nil {
-		ctx.State.ClearExpeditionSurveyingIfActive()
-		if ctx.State.HasActiveTask() {
-			ctx.State.PauseActiveTask(ctx.Frame.WorldTick)
-		}
-	}
-	si, err := fSkill.Execute(skillCtx, ctx.Facts)
+	raw, err := skill.Execute(skillCtx, ctx.Facts)
 	if err != nil {
-		return nil, true
+		return nil
 	}
-	var out []FSMIntent
-	for _, intent := range si {
-		if intent != nil {
-			out = append(out, FSMIntent{Intent: intent, Priority: false})
-		}
-	}
-	return out, true
+	return wrapStageIntents(raw, emergency)
 }
 
 // BootstrapStateHandler handles survival kit bootstrap goals.
 type BootstrapStateHandler struct{}
 
-func (h *BootstrapStateHandler) Name() State { return StageBootstrap }
-func (h *BootstrapStateHandler) Guard(ctx *FSMContext) bool {
-	return true
-}
-func (h *BootstrapStateHandler) OnEntry(ctx *FSMContext, from State) {}
-func (h *BootstrapStateHandler) OnExit(ctx *FSMContext, to State)    {}
+func (h *BootstrapStateHandler) Name() State                      { return StageBootstrap }
+func (h *BootstrapStateHandler) Guard(ctx *FSMContext) bool       { return true }
+func (h *BootstrapStateHandler) OnEntry(ctx *FSMContext, _ State) {}
+func (h *BootstrapStateHandler) OnExit(ctx *FSMContext, _ State)  {}
 func (h *BootstrapStateHandler) OnTick(ctx *FSMContext) []FSMIntent {
-	var intents []FSMIntent
-	if ctx == nil || ctx.Frame == nil || ctx.Frame.Status == nil {
-		return intents
-	}
-
-	reg := resolveContextRegistry(ctx)
-	if ctx.Facts == nil {
-		evalCtx := &EvaluatorContext{
-			AgentID:       ctx.AgentID,
-			Frame:         ctx.Frame,
-			Config:        ctx.Config,
-			State:         ctx.State,
-			CivicDB:       ctx.CivicDB,
-			SafeNodes:     ctx.SafeNodes,
-			PavingTracker: ctx.PavingTracker,
-		}
-		ctx.Facts = reg.EvaluateAll(evalCtx)
-	}
-
-	// Biological needs (eating, sleep, wake) evaluated via EngineRegistry / BiologicalNeedsSkill
-	skillCtx := &SkillContext{
-		AgentID:       ctx.AgentID,
-		Frame:         ctx.Frame,
-		Config:        ctx.Config,
-		State:         ctx.State,
-		CivicDB:       ctx.CivicDB,
-		SafeNodes:     ctx.SafeNodes,
-		PavingTracker: ctx.PavingTracker,
-	}
-	var hadAssignedBed bool
-	if ctx.State != nil {
-		hadAssignedBed = ctx.State.GetAssignedBed() != nil
-	}
-	var needsIntents []*civquestv1.AgentIntent
-	if skill, ok := reg.GetSkill("biological_needs"); ok && skill != nil {
-		if skill.Preconditions(ctx.Facts) {
-			if si, err := skill.Execute(skillCtx, ctx.Facts); err == nil {
-				needsIntents = si
-			}
-		}
-	} else {
-		bioSkill := NewBiologicalNeedsSkill()
-		if bioSkill.Preconditions(ctx.Facts) {
-			if si, err := bioSkill.Execute(skillCtx, ctx.Facts); err == nil {
-				needsIntents = si
-			}
-		} else {
-			needsIntents = EvaluateBiologicalNeeds(ctx.AgentID, ctx.Frame, ctx.State)
-		}
-	}
-	// If EvaluateSleep cleared an unreachable AssignedBed during this tick, refresh shelter.has_bed immediately.
-	if hadAssignedBed && ctx.State != nil && ctx.State.GetAssignedBed() == nil && ctx.Facts != nil && ctx.Facts.GetBool("shelter.has_bed") {
-		ctx.Facts.SetBool("shelter.has_bed", "shelter", false, "Assigned bed cleared as unreachable")
-	}
-	for _, ni := range needsIntents {
-		if ni.GetUseItem() != nil && ni.GetUseItem().IsEatingOrDrinking {
-			intents = append(intents, FSMIntent{Intent: ni, Priority: true})
-		} else {
-			intents = append(intents, FSMIntent{Intent: ni, Priority: false})
-		}
-	}
-
-	// Road paving (suppressed while 360-degree horizon survey is active)
-	if !ctx.Frame.Status.IsSleeping && ctx.PavingTracker != nil &&
-		(ctx.State == nil || !ctx.State.IsExpeditionSurveying(ctx.Frame.WorldTick)) &&
-		ctx.Frame.Status.NavigationState != civquestv1.NavigationState_NAVIGATION_STATE_STUCK &&
-		!ctx.Frame.Status.NavigationEnclosed {
-		if ctx.State != nil && ctx.PavingTracker.GetHomeOrigin() == nil {
-			if home := ctx.State.GetHomeOrigin(); home != nil {
-				ctx.PavingTracker.SetHomeOrigin(home)
-			}
-		}
-		if paveIntent := ctx.PavingTracker.EvaluatePaving(ctx.AgentID, ctx.Frame); paveIntent != nil {
-			intents = append(intents, FSMIntent{Intent: paveIntent, Priority: false})
-		}
-	}
-
-	// Hungry without food: preempt normal bootstrap/shelter to forage or hunt
-	if forageIntents, preempted := tryForagingPreemption(ctx, skillCtx); preempted {
-		intents = append(intents, forageIntents...)
-		return intents
-	}
-
-	// In dusk/night without shelter or bed (ADR-032 §4): try shelter construction first if buildable,
-	// otherwise fall through seamlessly to bootstrap gathering, crafting, directives, and exploration.
-	// Once shelter is complete or an assigned bed exists, normal circadian evening/sleep routines apply.
-	if len(ctx.Frame.IncomingChats) == 0 && ctx.Frame.PendingTrade == nil {
-		shelterSatisfied := ctx.HasAssignedBed() || ctx.IsShelterComplete()
-		isSleepRoutine := ctx.State != nil && ctx.State.Routine() == RoutineSleep
-		isTavernRoutine := ctx.State != nil && ctx.State.Routine() == RoutineTavernSocial
-
-		if !shelterSatisfied && ctx.IsDuskOrNight() && !ctx.IsShelterOnCooldown() {
-			deferShelterForActiveHarvest := false
-			if ctx.State != nil && ctx.State.HasActiveTask() {
-				_, kind, _, _ := ctx.State.ActiveTaskInfo()
-				if kind == "harvest_tree" || kind == "collect_items" {
-					inv := inspectBootstrapInventory(ctx.Frame.Status.Inventory)
-					if inv.buildingBlockCount == 0 && !inv.hasLight {
-						deferShelterForActiveHarvest = true
-					}
-				}
-			}
-
-			if !deferShelterForActiveHarvest {
-				var shelterIntents []FSMIntent
-				if skillIntents, _, ok := reg.SelectAndExecuteSkill(skillCtx, ctx.Facts, "shelter"); ok && len(skillIntents) > 0 {
-					for _, si := range skillIntents {
-						if si != nil {
-							shelterIntents = append(shelterIntents, FSMIntent{Intent: si, Priority: false})
-						}
-					}
-				} else if shelterIntent := EvaluateShelterGoals(ctx.AgentID, ctx.Frame, ctx.Config, ctx.State); shelterIntent != nil {
-					shelterIntents = append(shelterIntents, FSMIntent{Intent: shelterIntent, Priority: false})
-				}
-				if len(shelterIntents) > 0 {
-					intents = append(intents, shelterIntents...)
-					return intents
-				}
-			}
-		}
-
-		if !shelterSatisfied || (!ctx.IsDuskOrNight() && !isSleepRoutine && !isTavernRoutine) {
-			return runBootstrapActivity(ctx, skillCtx, intents)
-		}
-	}
-
-	return intents
-}
-
-func runBootstrapActivity(ctx *FSMContext, skillCtx *SkillContext, intents []FSMIntent) []FSMIntent {
-	if ctx.State != nil && ctx.State.HasActiveTask() {
-		ctx.State.ResumeActiveTask(ctx.Frame.WorldTick)
-		_, kind, _, _ := ctx.State.ActiveTaskInfo()
-		if kind != "harvest_tree" && kind != "collect_items" {
-			stepRes := ctx.State.StepActiveTask(ctx.AgentID, ctx.Frame)
-			if stepRes.Intent != nil {
-				intents = append(intents, FSMIntent{Intent: stepRes.Intent, Priority: false})
-			}
-			if stepRes.Active {
-				return intents
-			}
-		} else {
-			// Allow fresh or stuck-breaking non-GATHER_TIMBER System 2 directives to preempt harvest_tree.
-			if kind == "harvest_tree" && ctx.Facts != nil && ctx.Facts.GetBool("system2.directive_active") &&
-				(HasSurvivalKit(ctx.Frame.Status.Inventory) || !canExecuteImmediateBootstrapCraft(ctx.Frame, ctx.State)) {
-				dir, dirActive := ctx.State.ActiveStrategicDirective(ctx.Frame.WorldTick)
-				task := ctx.State.GetActiveTask()
-				if dirActive && task != nil && dir.Action != DirectiveActionGatherTimber &&
-					(dir.Action == DirectiveActionScoutFrontier ||
-						dir.Action == DirectiveActionMineStone ||
-						dir.Action == DirectiveActionSocialize ||
-						dir.Action == DirectiveActionBuildShelter ||
-						(dir.Action == DirectiveActionForageFood && NeedsForaging(ctx.Frame))) {
-					isStuckOrStalled := ctx.Frame.Status.NavigationState == civquestv1.NavigationState_NAVIGATION_STATE_STUCK ||
-						task.ConsecutiveFailures > 0 ||
-						(ctx.Frame.WorldTick >= task.LastProgressTick && ctx.Frame.WorldTick-task.LastProgressTick >= 40)
-					if dir.IssuedTick >= task.StartedTick || isStuckOrStalled {
-						if dirIntent := EvaluateStrategicDirectiveWithID(ctx.AgentID, ctx.Frame, ctx.State, ctx.Config); dirIntent != nil {
-							ctx.State.ClearActiveTask()
-							intents = append(intents, FSMIntent{Intent: dirIntent, Priority: false})
-							return intents
-						} else if dir.Action == DirectiveActionScoutFrontier && ctx.State.IsExpeditionActive() {
-							ctx.State.ClearActiveTask()
-							return intents
-						}
-					}
-				}
-			}
-			if bootstrapIntent := EvaluateBootstrapGoals(ctx.AgentID, ctx.Frame, ctx.Config, ctx.State); bootstrapIntent != nil {
-				intents = append(intents, FSMIntent{Intent: bootstrapIntent, Priority: false})
-			}
-			return intents
-		}
-	}
-	if ctx.Facts != nil && ctx.Facts.GetBool("system2.directive_active") &&
-		(HasSurvivalKit(ctx.Frame.Status.Inventory) || !canExecuteImmediateBootstrapCraft(ctx.Frame, ctx.State)) {
-		if dirIntent := EvaluateStrategicDirectiveWithID(ctx.AgentID, ctx.Frame, ctx.State, ctx.Config); dirIntent != nil {
-			intents = append(intents, FSMIntent{Intent: dirIntent, Priority: false})
-			return intents
-		}
-	}
-	reg := resolveContextRegistry(ctx)
-	if skillIntents, _, ok := reg.SelectAndExecuteSkill(skillCtx, ctx.Facts, "bootstrap"); ok && len(skillIntents) > 0 {
-		for _, si := range skillIntents {
-			if si != nil {
-				intents = append(intents, FSMIntent{Intent: si, Priority: false})
-			}
-		}
-	} else if ctx.State == nil || !ctx.State.HasActiveTask() {
-		if bootstrapIntent := EvaluateBootstrapGoals(ctx.AgentID, ctx.Frame, ctx.Config, ctx.State); bootstrapIntent != nil {
-			intents = append(intents, FSMIntent{Intent: bootstrapIntent, Priority: false})
-		}
-	}
-	return intents
+	return executeStageSkill(ctx, "stage_bootstrap", NewStageBootstrapSkill(), false)
 }
 
 // SettlementStateHandler handles established settlement living, vocational duties, hobbies, and social routines.
 type SettlementStateHandler struct{}
 
-func (h *SettlementStateHandler) Name() State { return StageSettlement }
-func (h *SettlementStateHandler) Guard(ctx *FSMContext) bool {
-	return true
-}
-func (h *SettlementStateHandler) OnEntry(ctx *FSMContext, from State) {}
+func (h *SettlementStateHandler) Name() State                      { return StageSettlement }
+func (h *SettlementStateHandler) Guard(ctx *FSMContext) bool       { return true }
+func (h *SettlementStateHandler) OnEntry(ctx *FSMContext, _ State) {}
 func (h *SettlementStateHandler) OnExit(ctx *FSMContext, to State) {
 	if ctx != nil && ctx.State != nil && ctx.Frame != nil && to == StageSettlement {
 		ctx.State.SetLastShelterTimeoutTick(ctx.Frame.WorldTick)
 	}
 }
 func (h *SettlementStateHandler) OnTick(ctx *FSMContext) []FSMIntent {
-	var intents []FSMIntent
-	if ctx == nil || ctx.Frame == nil || ctx.Frame.Status == nil {
-		return intents
-	}
-
-	reg := resolveContextRegistry(ctx)
-	if ctx.Facts == nil {
-		evalCtx := &EvaluatorContext{
-			AgentID:       ctx.AgentID,
-			Frame:         ctx.Frame,
-			Config:        ctx.Config,
-			State:         ctx.State,
-			CivicDB:       ctx.CivicDB,
-			SafeNodes:     ctx.SafeNodes,
-			PavingTracker: ctx.PavingTracker,
-		}
-		ctx.Facts = reg.EvaluateAll(evalCtx)
-	}
-
-	// Biological needs (eating, sleep, wake) evaluated via EngineRegistry / BiologicalNeedsSkill
-	skillCtx := &SkillContext{
-		AgentID:       ctx.AgentID,
-		Frame:         ctx.Frame,
-		Config:        ctx.Config,
-		State:         ctx.State,
-		CivicDB:       ctx.CivicDB,
-		SafeNodes:     ctx.SafeNodes,
-		PavingTracker: ctx.PavingTracker,
-	}
-	var hadAssignedBed bool
-	if ctx.State != nil {
-		hadAssignedBed = ctx.State.GetAssignedBed() != nil
-	}
-	var needsIntents []*civquestv1.AgentIntent
-	if skill, ok := reg.GetSkill("biological_needs"); ok && skill != nil {
-		if skill.Preconditions(ctx.Facts) {
-			if si, err := skill.Execute(skillCtx, ctx.Facts); err == nil {
-				needsIntents = si
-			}
-		}
-	} else {
-		bioSkill := NewBiologicalNeedsSkill()
-		if bioSkill.Preconditions(ctx.Facts) {
-			if si, err := bioSkill.Execute(skillCtx, ctx.Facts); err == nil {
-				needsIntents = si
-			}
-		} else {
-			needsIntents = EvaluateBiologicalNeeds(ctx.AgentID, ctx.Frame, ctx.State)
-		}
-	}
-	// If EvaluateSleep cleared an unreachable AssignedBed during this tick, refresh shelter.has_bed immediately.
-	if hadAssignedBed && ctx.State != nil && ctx.State.GetAssignedBed() == nil && ctx.Facts != nil && ctx.Facts.GetBool("shelter.has_bed") {
-		ctx.Facts.SetBool("shelter.has_bed", "shelter", false, "Assigned bed cleared as unreachable")
-	}
-	for _, ni := range needsIntents {
-		if ni.GetUseItem() != nil && ni.GetUseItem().IsEatingOrDrinking {
-			intents = append(intents, FSMIntent{Intent: ni, Priority: true})
-		} else {
-			intents = append(intents, FSMIntent{Intent: ni, Priority: false})
-		}
-	}
-
-	// Road paving (suppressed while 360-degree horizon survey is active)
-	if ctx.State == nil || !ctx.State.IsExpeditionSurveying(ctx.Frame.WorldTick) {
-		if skillIntents, _, ok := reg.SelectAndExecuteSkill(skillCtx, ctx.Facts, "infrastructure"); ok && len(skillIntents) > 0 {
-			for _, si := range skillIntents {
-				if si != nil {
-					intents = append(intents, FSMIntent{Intent: si, Priority: false})
-				}
-			}
-		} else if !ctx.Frame.Status.IsSleeping && ctx.PavingTracker != nil &&
-			ctx.Frame.Status.NavigationState != civquestv1.NavigationState_NAVIGATION_STATE_STUCK &&
-			!ctx.Frame.Status.NavigationEnclosed {
-			if ctx.State != nil && ctx.PavingTracker.GetHomeOrigin() == nil {
-				if home := ctx.State.GetHomeOrigin(); home != nil {
-					ctx.PavingTracker.SetHomeOrigin(home)
-				}
-			}
-			if paveIntent := ctx.PavingTracker.EvaluatePaving(ctx.AgentID, ctx.Frame); paveIntent != nil {
-				intents = append(intents, FSMIntent{Intent: paveIntent, Priority: false})
-			}
-		}
-	}
-
-	routine := RoutinePrimaryDuty
-	if ctx.State != nil {
-		routine = ctx.State.Routine()
-	}
-
-	// Hungry without food: preempt daily settlement duties (except in-inventory armory crafting) to forage/hunt
-	if routine != RoutineArmoryMaintenance {
-		if forageIntents, preempted := tryForagingPreemption(ctx, skillCtx); preempted {
-			intents = append(intents, forageIntents...)
-			return intents
-		}
-	}
-
-	// In dusk/night without an assigned bed: prioritize outpost shelter construction
-	if (ctx.IsDuskOrNight() || routine == RoutineSleep) && !ctx.HasAssignedBed() && !ctx.IsShelterComplete() && !ctx.IsShelterOnCooldown() {
-		if len(ctx.Frame.IncomingChats) == 0 && ctx.Frame.PendingTrade == nil {
-			if shelterIntent := EvaluateShelterGoals(ctx.AgentID, ctx.Frame, ctx.Config, ctx.State); shelterIntent != nil {
-				intents = append(intents, FSMIntent{Intent: shelterIntent, Priority: false})
-				return intents
-			}
-		}
-	}
-
-	// Execute any committed TaskSubroutine before falling back to circadian patrol/exploration
-	if ctx.State != nil && ctx.State.HasActiveTask() && len(ctx.Frame.IncomingChats) == 0 && ctx.Frame.PendingTrade == nil {
-		ctx.State.ResumeActiveTask(ctx.Frame.WorldTick)
-		stepRes := ctx.State.StepActiveTask(ctx.AgentID, ctx.Frame)
-		if stepRes.Intent != nil {
-			intents = append(intents, FSMIntent{Intent: stepRes.Intent, Priority: false})
-		}
-		if stepRes.Active {
-			return intents
-		}
-	}
-
-	// Execute active System 2 strategic directive during normal awake daytime settlement ticks (ADR-031)
-	if routine != RoutineSleep && routine != RoutineArmoryMaintenance &&
-		len(ctx.Frame.IncomingChats) == 0 && ctx.Frame.PendingTrade == nil && !ctx.IsDuskOrNight() {
-		if ctx.Facts != nil && ctx.Facts.GetBool("system2.directive_active") {
-			if dirIntent := EvaluateStrategicDirectiveWithID(ctx.AgentID, ctx.Frame, ctx.State, ctx.Config); dirIntent != nil {
-				intents = append(intents, FSMIntent{Intent: dirIntent, Priority: false})
-				return intents
-			}
-		}
-	}
-
-	// Hold steady while a 360-degree horizon survey is executing on the motor stack (ADR-032).
-	if routine != RoutineSleep && routine != RoutineArmoryMaintenance &&
-		ctx.State != nil && ctx.State.IsExpeditionSurveying(ctx.Frame.WorldTick) {
-		return intents
-	}
-
-	switch routine {
-	case RoutineSleep:
-		// Sleeping in bed or resting inside shelter handled by biological needs
-	case RoutinePrimaryDuty:
-		if len(ctx.Frame.IncomingChats) == 0 && ctx.Frame.PendingTrade == nil {
-			if ctx.State != nil && ctx.State.GetExpeditionPhase() != ExpeditionIdle {
-				if surveyIntent := EvaluateHorizonExplorer(ctx.AgentID, ctx.Frame, ctx.Config, ctx.State); surveyIntent != nil {
-					intents = append(intents, FSMIntent{Intent: surveyIntent, Priority: false})
-					return intents
-				}
-			}
-			if skillIntents, _, ok := reg.SelectAndExecuteSkill(skillCtx, ctx.Facts, "security", "exploration"); ok && len(skillIntents) > 0 {
-				for _, si := range skillIntents {
-					if si != nil {
-						intents = append(intents, FSMIntent{Intent: si, Priority: false})
-					}
-				}
-			} else {
-				prof := "UNASSIGNED"
-				if ctx.Config != nil {
-					prof = strings.ToUpper(strings.TrimSpace(ctx.Config.Profession))
-				}
-				var exploreIntent *civquestv1.AgentIntent
-				if prof == "EXPLORER" || prof == "TRAILBLAZER" || prof == "SCOUT" {
-					exploreIntent = EvaluateScouting(ctx.AgentID, ctx.Frame, ctx.Config, ctx.State)
-				} else {
-					exploreIntent = EvaluatePatrol(ctx.AgentID, ctx.Frame, ctx.Config, ctx.State)
-				}
-				if exploreIntent != nil {
-					intents = append(intents, FSMIntent{Intent: exploreIntent, Priority: false})
-				}
-			}
-		}
-	case RoutineCivicPatrol:
-		if len(ctx.Frame.IncomingChats) == 0 && ctx.Frame.PendingTrade == nil {
-			if skillIntents, _, ok := reg.SelectAndExecuteSkill(skillCtx, ctx.Facts, "security", "exploration"); ok && len(skillIntents) > 0 {
-				for _, si := range skillIntents {
-					if si != nil {
-						intents = append(intents, FSMIntent{Intent: si, Priority: false})
-					}
-				}
-			} else if patrolIntent := EvaluatePatrol(ctx.AgentID, ctx.Frame, ctx.Config, ctx.State); patrolIntent != nil {
-				intents = append(intents, FSMIntent{Intent: patrolIntent, Priority: false})
-			}
-		}
-	case RoutineArmoryMaintenance:
-		if len(ctx.Frame.IncomingChats) == 0 && ctx.Frame.PendingTrade == nil {
-			skillCtx := &SkillContext{
-				AgentID: ctx.AgentID,
-				Frame:   ctx.Frame,
-				Config:  ctx.Config,
-				State:   ctx.State,
-				CivicDB: ctx.CivicDB,
-			}
-			if skillIntents, _, ok := reg.SelectAndExecuteSkill(skillCtx, ctx.Facts, "Armory"); ok && len(skillIntents) > 0 {
-				for _, si := range skillIntents {
-					if si != nil {
-						intents = append(intents, FSMIntent{Intent: si, Priority: false})
-					}
-				}
-			} else if armoryIntent := EvaluateArmoryMaintenance(ctx.AgentID, ctx.Frame, ctx.Config, ctx.State, ctx.CivicDB); armoryIntent != nil {
-				intents = append(intents, FSMIntent{Intent: armoryIntent, Priority: false})
-			} else {
-				if ctx.State != nil {
-					ctx.State.SetArmoryMaintenanceNeeded(false)
-				}
-				if forageIntents, preempted := tryForagingPreemption(ctx, skillCtx); preempted {
-					intents = append(intents, forageIntents...)
-					return intents
-				}
-				if patrolIntent := EvaluatePatrol(ctx.AgentID, ctx.Frame, ctx.Config, ctx.State); patrolIntent != nil {
-					intents = append(intents, FSMIntent{Intent: patrolIntent, Priority: false})
-				}
-			}
-		}
-	case RoutineSecondaryHobby:
-		if len(ctx.Frame.IncomingChats) == 0 && ctx.Frame.PendingTrade == nil {
-			if ctx.Config != nil && ctx.Config.EffectiveShift() == xdg.ShiftThird && ctx.State != nil && ctx.State.IsArmoryMaintenanceNeeded() {
-				skillCtx := &SkillContext{
-					AgentID: ctx.AgentID,
-					Frame:   ctx.Frame,
-					Config:  ctx.Config,
-					State:   ctx.State,
-					CivicDB: ctx.CivicDB,
-				}
-				if skillIntents, _, ok := reg.SelectAndExecuteSkill(skillCtx, ctx.Facts, "Armory"); ok && len(skillIntents) > 0 {
-					for _, si := range skillIntents {
-						if si != nil {
-							intents = append(intents, FSMIntent{Intent: si, Priority: false})
-						}
-					}
-					return intents
-				}
-				if armoryIntent := EvaluateArmoryMaintenance(ctx.AgentID, ctx.Frame, ctx.Config, ctx.State, ctx.CivicDB); armoryIntent != nil {
-					intents = append(intents, FSMIntent{Intent: armoryIntent, Priority: false})
-					return intents
-				}
-			}
-			if patrolIntent := EvaluatePatrol(ctx.AgentID, ctx.Frame, ctx.Config, ctx.State); patrolIntent != nil {
-				intents = append(intents, FSMIntent{Intent: patrolIntent, Priority: false})
-			}
-		}
-	}
-
-	return intents
+	return executeStageSkill(ctx, "stage_settlement", NewStageSettlementSkill(), false)
 }
-
-// ExploreStateHandler is a backward-compatible alias for SettlementStateHandler.
-type ExploreStateHandler = SettlementStateHandler
 
 // ColonizeStateHandler handles establishing and building a new frontier settlement node.
 type ColonizeStateHandler struct{}
 
-func (h *ColonizeStateHandler) Name() State { return StageColonize }
-func (h *ColonizeStateHandler) Guard(ctx *FSMContext) bool {
-	return true
-}
-func (h *ColonizeStateHandler) OnEntry(ctx *FSMContext, from State) {}
-func (h *ColonizeStateHandler) OnExit(ctx *FSMContext, to State)    {}
+func (h *ColonizeStateHandler) Name() State                      { return StageColonize }
+func (h *ColonizeStateHandler) Guard(ctx *FSMContext) bool       { return true }
+func (h *ColonizeStateHandler) OnEntry(ctx *FSMContext, _ State) {}
+func (h *ColonizeStateHandler) OnExit(ctx *FSMContext, _ State)  {}
 func (h *ColonizeStateHandler) OnTick(ctx *FSMContext) []FSMIntent {
-	var intents []FSMIntent
-	if ctx == nil || ctx.Frame == nil || ctx.Frame.Status == nil {
-		return intents
-	}
-
-	reg := resolveContextRegistry(ctx)
-	if ctx.Facts == nil {
-		evalCtx := &EvaluatorContext{
-			AgentID:       ctx.AgentID,
-			Frame:         ctx.Frame,
-			Config:        ctx.Config,
-			State:         ctx.State,
-			CivicDB:       ctx.CivicDB,
-			SafeNodes:     ctx.SafeNodes,
-			PavingTracker: ctx.PavingTracker,
-		}
-		ctx.Facts = reg.EvaluateAll(evalCtx)
-	}
-
-	skillCtx := &SkillContext{
-		AgentID:       ctx.AgentID,
-		Frame:         ctx.Frame,
-		Config:        ctx.Config,
-		State:         ctx.State,
-		CivicDB:       ctx.CivicDB,
-		SafeNodes:     ctx.SafeNodes,
-		PavingTracker: ctx.PavingTracker,
-	}
-
-	// Biological needs (eating, sleep, wake)
-	needsIntents := EvaluateBiologicalNeeds(ctx.AgentID, ctx.Frame, ctx.State)
-	for _, ni := range needsIntents {
-		if ni.GetUseItem() != nil && ni.GetUseItem().IsEatingOrDrinking {
-			intents = append(intents, FSMIntent{Intent: ni, Priority: true})
-		} else {
-			intents = append(intents, FSMIntent{Intent: ni, Priority: false})
-		}
-	}
-
-	// Road paving (suppressed while 360-degree horizon survey is active)
-	if ctx.State == nil || !ctx.State.IsExpeditionSurveying(ctx.Frame.WorldTick) {
-		if skillIntents, _, ok := reg.SelectAndExecuteSkill(skillCtx, ctx.Facts, "infrastructure"); ok && len(skillIntents) > 0 {
-			for _, si := range skillIntents {
-				if si != nil {
-					intents = append(intents, FSMIntent{Intent: si, Priority: false})
-				}
-			}
-		} else if !ctx.Frame.Status.IsSleeping && ctx.PavingTracker != nil &&
-			ctx.Frame.Status.NavigationState != civquestv1.NavigationState_NAVIGATION_STATE_STUCK &&
-			!ctx.Frame.Status.NavigationEnclosed {
-			if ctx.State != nil && ctx.PavingTracker.GetHomeOrigin() == nil {
-				if home := ctx.State.GetHomeOrigin(); home != nil {
-					ctx.PavingTracker.SetHomeOrigin(home)
-				}
-			}
-			if paveIntent := ctx.PavingTracker.EvaluatePaving(ctx.AgentID, ctx.Frame); paveIntent != nil {
-				intents = append(intents, FSMIntent{Intent: paveIntent, Priority: false})
-			}
-		}
-	}
-
-	routine := RoutinePrimaryDuty
-	if ctx.State != nil {
-		routine = ctx.State.Routine()
-	}
-
-	if forageIntents, preempted := tryForagingPreemption(ctx, skillCtx); preempted {
-		intents = append(intents, forageIntents...)
-		return intents
-	}
-
-	if (ctx.IsDuskOrNight() || routine == RoutineSleep) && !ctx.HasAssignedBed() && !ctx.IsShelterComplete() && !ctx.IsShelterOnCooldown() {
-		if len(ctx.Frame.IncomingChats) == 0 && ctx.Frame.PendingTrade == nil {
-			if shelterIntent := EvaluateShelterGoals(ctx.AgentID, ctx.Frame, ctx.Config, ctx.State); shelterIntent != nil {
-				intents = append(intents, FSMIntent{Intent: shelterIntent, Priority: false})
-				return intents
-			}
-		}
-	} else if len(ctx.Frame.IncomingChats) == 0 && ctx.Frame.PendingTrade == nil {
-		if !ctx.IsDuskOrNight() && (ctx.State == nil || ctx.State.Routine() != RoutineSleep) {
-			if ctx.Facts != nil && ctx.Facts.GetBool("system2.directive_active") &&
-				(HasSurvivalKit(ctx.Frame.Status.Inventory) || !canExecuteImmediateBootstrapCraft(ctx.Frame, ctx.State)) {
-				if dirIntent := EvaluateStrategicDirectiveWithID(ctx.AgentID, ctx.Frame, ctx.State, ctx.Config); dirIntent != nil {
-					intents = append(intents, FSMIntent{Intent: dirIntent, Priority: false})
-					return intents
-				}
-			}
-		}
-		// Colonization duties: harvest timber, establish core starter shelter, scout perimeter
-		if ctx.State != nil && ctx.State.IsExpeditionSurveying(ctx.Frame.WorldTick) {
-			return intents
-		}
-		if bootstrapIntent := EvaluateBootstrapGoals(ctx.AgentID, ctx.Frame, ctx.Config, ctx.State); bootstrapIntent != nil {
-			intents = append(intents, FSMIntent{Intent: bootstrapIntent, Priority: false})
-		} else if ctx.State != nil && ctx.State.HasActiveTask() {
-			// Committed TaskSubroutine active (pathing/cooldown); suppress exploration
-			return intents
-		} else if surveyIntent := EvaluateHorizonExplorer(ctx.AgentID, ctx.Frame, ctx.Config, ctx.State); surveyIntent != nil {
-			intents = append(intents, FSMIntent{Intent: surveyIntent, Priority: false})
-		} else if skillIntents, _, ok := reg.SelectAndExecuteSkill(skillCtx, ctx.Facts, "exploration"); ok && len(skillIntents) > 0 {
-			for _, si := range skillIntents {
-				if si != nil {
-					intents = append(intents, FSMIntent{Intent: si, Priority: false})
-				}
-			}
-		} else if patrolIntent := EvaluatePatrol(ctx.AgentID, ctx.Frame, ctx.Config, ctx.State); patrolIntent != nil {
-			intents = append(intents, FSMIntent{Intent: patrolIntent, Priority: false})
-		}
-	}
-
-	return intents
-}
-
-// ShelterStateHandler handles dusk/night outpost shelter construction (legacy support).
-type ShelterStateHandler struct{}
-
-func (h *ShelterStateHandler) Name() State { return StateShelter }
-func (h *ShelterStateHandler) Guard(ctx *FSMContext) bool {
-	return true
-}
-func (h *ShelterStateHandler) OnEntry(ctx *FSMContext, from State) {}
-func (h *ShelterStateHandler) OnExit(ctx *FSMContext, to State) {
-	if ctx != nil && ctx.State != nil && ctx.Frame != nil && to == StageSettlement {
-		ctx.State.SetLastShelterTimeoutTick(ctx.Frame.WorldTick)
-	}
-}
-func (h *ShelterStateHandler) OnTick(ctx *FSMContext) []FSMIntent {
-	var intents []FSMIntent
-	if ctx == nil || ctx.Frame == nil || ctx.Frame.Status == nil {
-		return intents
-	}
-
-	reg := resolveContextRegistry(ctx)
-	if ctx.Facts == nil {
-		evalCtx := &EvaluatorContext{
-			AgentID:       ctx.AgentID,
-			Frame:         ctx.Frame,
-			Config:        ctx.Config,
-			State:         ctx.State,
-			CivicDB:       ctx.CivicDB,
-			SafeNodes:     ctx.SafeNodes,
-			PavingTracker: ctx.PavingTracker,
-		}
-		ctx.Facts = reg.EvaluateAll(evalCtx)
-	}
-
-	skillCtx := &SkillContext{
-		AgentID:       ctx.AgentID,
-		Frame:         ctx.Frame,
-		Config:        ctx.Config,
-		State:         ctx.State,
-		CivicDB:       ctx.CivicDB,
-		SafeNodes:     ctx.SafeNodes,
-		PavingTracker: ctx.PavingTracker,
-	}
-
-	// Biological needs (eating, sleep, wake) evaluated via EngineRegistry / BiologicalNeedsSkill
-	var needsIntents []*civquestv1.AgentIntent
-	if skill, ok := reg.GetSkill("biological_needs"); ok && skill != nil {
-		if skill.Preconditions(ctx.Facts) {
-			if si, err := skill.Execute(skillCtx, ctx.Facts); err == nil {
-				needsIntents = si
-			}
-		}
-	} else {
-		needsIntents = EvaluateBiologicalNeeds(ctx.AgentID, ctx.Frame, ctx.State)
-	}
-	for _, ni := range needsIntents {
-		if ni.GetUseItem() != nil && ni.GetUseItem().IsEatingOrDrinking {
-			intents = append(intents, FSMIntent{Intent: ni, Priority: true})
-		} else {
-			intents = append(intents, FSMIntent{Intent: ni, Priority: false})
-		}
-	}
-
-	// Shelter construction (only if not busy with chat/trade)
-	if len(ctx.Frame.IncomingChats) == 0 && ctx.Frame.PendingTrade == nil {
-		if skillIntents, _, ok := reg.SelectAndExecuteSkill(skillCtx, ctx.Facts, "shelter"); ok && len(skillIntents) > 0 {
-			for _, si := range skillIntents {
-				if si != nil {
-					intents = append(intents, FSMIntent{Intent: si, Priority: false})
-				}
-			}
-		} else if shelterIntent := EvaluateShelterGoals(ctx.AgentID, ctx.Frame, ctx.Config, ctx.State); shelterIntent != nil {
-			intents = append(intents, FSMIntent{Intent: shelterIntent, Priority: false})
-		}
-	}
-
-	return intents
+	return executeStageSkill(ctx, "stage_colonize", NewStageColonizeSkill(), false)
 }
 
 // EmergencyStateHandler handles reactive combat, fleeing, and survival reflexes.
 type EmergencyStateHandler struct{}
 
-func (h *EmergencyStateHandler) Name() State { return StageEmergency }
-func (h *EmergencyStateHandler) Guard(ctx *FSMContext) bool {
-	return true
-}
-func (h *EmergencyStateHandler) OnEntry(ctx *FSMContext, from State) {
+func (h *EmergencyStateHandler) Name() State                { return StageEmergency }
+func (h *EmergencyStateHandler) Guard(ctx *FSMContext) bool { return true }
+func (h *EmergencyStateHandler) OnEntry(ctx *FSMContext, _ State) {
 	if ctx != nil && ctx.State != nil {
 		ctx.State.ClearExpeditionSurveyingIfActive()
 	}
 }
-func (h *EmergencyStateHandler) OnExit(ctx *FSMContext, to State) {}
+func (h *EmergencyStateHandler) OnExit(ctx *FSMContext, _ State) {}
 func (h *EmergencyStateHandler) OnTick(ctx *FSMContext) []FSMIntent {
-	var intents []FSMIntent
-	if ctx == nil || ctx.Frame == nil || ctx.Frame.Status == nil {
-		return intents
-	}
-
-	reg := resolveContextRegistry(ctx)
-	if ctx.Facts == nil {
-		evalCtx := &EvaluatorContext{
-			AgentID:       ctx.AgentID,
-			Frame:         ctx.Frame,
-			Config:        ctx.Config,
-			State:         ctx.State,
-			CivicDB:       ctx.CivicDB,
-			SafeNodes:     ctx.SafeNodes,
-			PavingTracker: ctx.PavingTracker,
-		}
-		ctx.Facts = reg.EvaluateAll(evalCtx)
-	}
-
-	skillCtx := &SkillContext{
-		AgentID:       ctx.AgentID,
-		Frame:         ctx.Frame,
-		Config:        ctx.Config,
-		State:         ctx.State,
-		CivicDB:       ctx.CivicDB,
-		SafeNodes:     ctx.SafeNodes,
-		PavingTracker: ctx.PavingTracker,
-	}
-
-	var skillIntents []*civquestv1.AgentIntent
-	if skill, ok := reg.GetSkill("combat_defense"); ok && skill != nil {
-		if skill.Preconditions(ctx.Facts) {
-			si, err := skill.Execute(skillCtx, ctx.Facts)
-			if err == nil {
-				skillIntents = si
-			}
-		}
-	}
-
-	if len(skillIntents) == 0 {
-		combatSkill := NewCombatDefenseSkill()
-		if combatSkill.Preconditions(ctx.Facts) {
-			si, err := combatSkill.Execute(skillCtx, ctx.Facts)
-			if err == nil {
-				skillIntents = si
-			}
-		} else {
-			// Fallback direct execution
-			si, err := combatSkill.Execute(skillCtx, ctx.Facts)
-			if err == nil {
-				skillIntents = si
-			}
-		}
-	}
-
-	for _, intent := range skillIntents {
-		intents = append(intents, FSMIntent{
-			Intent:   intent,
-			Priority: true,
-		})
-	}
-
-	return intents
-}
-
-// RestStateHandler handles sleeping in bed or safe resting through the night (legacy support).
-type RestStateHandler struct{}
-
-func (h *RestStateHandler) Name() State { return StateRest }
-func (h *RestStateHandler) Guard(ctx *FSMContext) bool {
-	// Guard Invariant: REST is strictly blocked when hostiles are present, damage is taken, health is critical, or hunger is critical!
-	if ctx == nil {
-		return true
-	}
-	if ctx.HostilesPresent() || ctx.DamageTaken() || ctx.IsHealthCritical() || ctx.IsOnFire() || ctx.IsCriticalHunger() || ctx.ShouldPanic() || ctx.IsDrowning() {
-		return false
-	}
-	return true
-}
-func (h *RestStateHandler) OnEntry(ctx *FSMContext, from State) {
-	if ctx != nil && ctx.State != nil {
-		ctx.State.SetRoutine(RoutineSleep)
-	}
-}
-func (h *RestStateHandler) OnExit(ctx *FSMContext, to State) {}
-func (h *RestStateHandler) OnTick(ctx *FSMContext) []FSMIntent {
-	var intents []FSMIntent
-	if ctx == nil || ctx.Frame == nil || ctx.Frame.Status == nil {
-		return intents
-	}
-
-	// Biological needs (sleep / wake up intents)
-	needsIntents := EvaluateBiologicalNeeds(ctx.AgentID, ctx.Frame, ctx.State)
-	for _, ni := range needsIntents {
-		if ni.GetUseItem() != nil && ni.GetUseItem().IsEatingOrDrinking {
-			intents = append(intents, FSMIntent{Intent: ni, Priority: true})
-		} else {
-			intents = append(intents, FSMIntent{Intent: ni, Priority: false})
-		}
-	}
-
-	return intents
+	return executeStageSkill(ctx, "stage_emergency", NewStageEmergencySkill(), true)
 }
 
 // DeadStateHandler handles terminal permadeath state where all agent loops cease.
@@ -1430,9 +261,7 @@ func (h *DeadStateHandler) Name() State                         { return StageDe
 func (h *DeadStateHandler) Guard(ctx *FSMContext) bool          { return true }
 func (h *DeadStateHandler) OnEntry(ctx *FSMContext, from State) {}
 func (h *DeadStateHandler) OnExit(ctx *FSMContext, to State)    {}
-func (h *DeadStateHandler) OnTick(ctx *FSMContext) []FSMIntent {
-	return nil
-}
+func (h *DeadStateHandler) OnTick(ctx *FSMContext) []FSMIntent  { return nil }
 
 // StateStackFrame represents a snapshot of an interrupted state context in the HTPDA pushdown automata stack.
 type StateStackFrame struct {
@@ -1479,6 +308,8 @@ type AgentFSM struct {
 	onRoutineTransition func(from, to Routine, reason string)
 	stack               []StateStackFrame
 	maxStackDepth       int
+	activityStack       []Activity
+	activitySuspended   bool
 	lastFacts           *FactGraph
 	registry            *EngineRegistry
 }
@@ -1516,9 +347,6 @@ func (fsm *AgentFSM) LastFacts() *FactGraph {
 	return fsm.lastFacts
 }
 
-// AgentHFSM is an alias for AgentFSM representing the formal Two-Tier Hierarchical FSM.
-type AgentHFSM = AgentFSM
-
 // NewAgentFSM constructs an initialized AgentFSM with default state handlers, transition table,
 // and an isolated default EngineRegistry.
 func NewAgentFSM(initial State, onTransition func(from, to State, reason string)) *AgentFSM {
@@ -1555,8 +383,6 @@ func NewAgentFSMWithRegistry(initial State, onTransition func(from, to State, re
 	fsm.RegisterHandler(&SettlementStateHandler{})
 	fsm.RegisterHandler(&ColonizeStateHandler{})
 	fsm.RegisterHandler(&EmergencyStateHandler{})
-	fsm.RegisterHandler(&ShelterStateHandler{})
-	fsm.RegisterHandler(&RestStateHandler{})
 	fsm.RegisterHandler(&DeadStateHandler{})
 	return fsm
 }
@@ -1803,12 +629,13 @@ func (fsm *AgentFSM) TransitionTo(target State, reason string, ctx *FSMContext) 
 	fromStage := fsm.currentStage
 
 	// When transitioning into StageEmergency from any non-emergency stage,
-	// automatically push the current (currentStage, currentRoutine, reason, tick, metadata) onto the stack!
+	// suspend active Activity and push the current (currentStage, currentRoutine, reason, tick, metadata) onto the stack.
 	if target == StageEmergency && fromStage != StageEmergency && fromStage != StageDead {
 		tick := int64(0)
 		if ctx != nil && ctx.Frame != nil {
 			tick = ctx.Frame.WorldTick
 		}
+		fsm.suspendTopActivityLocked(ctx, reason)
 		var taskMeta map[string]string
 		if ctx != nil && ctx.State != nil && ctx.State.HasActiveTask() {
 			taskMeta = ctx.State.HandleEmergencyPreempt(tick)
@@ -1816,8 +643,9 @@ func (fsm *AgentFSM) TransitionTo(target State, reason string, ctx *FSMContext) 
 		fsm.pushLocked(fromStage, fsm.currentRoutine, reason, tick, taskMeta)
 	}
 
-	// Terminal dead state: clear stack and any active task
+	// Terminal dead state: clear stack, activities, and any active task
 	if target == StageDead {
+		fsm.clearActivitiesLocked(ctx)
 		fsm.clearStackLocked()
 		if ctx != nil && ctx.State != nil {
 			ctx.State.ClearActiveTask()
@@ -1859,6 +687,10 @@ func (fsm *AgentFSM) TransitionTo(target State, reason string, ctx *FSMContext) 
 
 	if ctx != nil && ctx.State != nil {
 		ctx.State.SetStageAndRoutine(target, fsm.currentRoutine)
+	}
+
+	if fromStage == StageEmergency && target != StageEmergency && target != StageDead {
+		fsm.resumeTopActivityLocked(ctx)
 	}
 
 	return true
@@ -1921,8 +753,8 @@ func (fsm *AgentFSM) Tick(ctx *FSMContext) FSMResult {
 
 	// 0. Terminal Dead State Check:
 	// When ctx.Frame.Status.Health <= 0 or death detected:
-	// - fsm.ClearStack()
-	// - Transition to StageDead / RoutineDead.
+	// - clear activities & stack
+	// - transition to StageDead / RoutineDead.
 	isDead := false
 	if fsm.currentStage == StageDead {
 		isDead = true
@@ -1933,6 +765,7 @@ func (fsm *AgentFSM) Tick(ctx *FSMContext) FSMResult {
 	}
 
 	if isDead {
+		fsm.clearActivitiesLocked(ctx)
 		fsm.clearStackLocked()
 		if ctx != nil && ctx.State != nil {
 			ctx.State.ClearActiveTask()
@@ -2005,7 +838,6 @@ func (fsm *AgentFSM) Tick(ctx *FSMContext) FSMResult {
 			dy := pos.Y - fsm.lastPos.Y
 			dz := pos.Z - fsm.lastPos.Z
 			if dx*dx+dy*dy+dz*dz < 0.04 || ctx.Frame.Status.NavigationState == civquestv1.NavigationState_NAVIGATION_STATE_STUCK {
-				// If actively placing blocks, harvesting, or crafting, agent is actively engaged and not stuck
 				activeProgress := false
 				if ctx.State != nil {
 					wt := ctx.Frame.WorldTick
@@ -2046,6 +878,7 @@ func (fsm *AgentFSM) Tick(ctx *FSMContext) FSMResult {
 	stageTransitioned := false
 	routineTransitioned := false
 	pdaRestored := false
+	emergencyPreempted := false
 	var transitionReason string
 
 	// Priority 1: EMERGENCY Preemption from any non-emergency stage (PDA pushdown)
@@ -2053,6 +886,9 @@ func (fsm *AgentFSM) Tick(ctx *FSMContext) FSMResult {
 		fromStage := fsm.currentStage
 		toStage := StageEmergency
 		ruleDesc := "Hostile threat, damage, or critical vitals detected; preempting to emergency"
+
+		fsm.suspendTopActivityLocked(ctx, ruleDesc)
+		emergencyPreempted = true
 
 		var taskMeta map[string]string
 		if ctx != nil && ctx.State != nil && ctx.State.HasActiveTask() {
@@ -2085,12 +921,7 @@ func (fsm *AgentFSM) Tick(ctx *FSMContext) FSMResult {
 		}
 	}
 
-	// Pushdown Automata check:
-	// In StageEmergency transition rules:
-	// When c.ThreatsCleared() is true:
-	// First check if frame, ok := fsm.Pop() succeeds. If ok, transition directly back to frame.Stage
-	// (and restore frame.Routine in state)!
-	// Only if the stack was empty does it fall back to the existing rules.
+	// Pushdown Automata check: pop back to interrupted frame once ThreatsCleared()
 	if !stageTransitioned && fsm.currentStage == StageEmergency && ctx != nil && ctx.ThreatsCleared() {
 		if frame, ok := fsm.popLocked(); ok {
 			fromStage := fsm.currentStage
@@ -2137,6 +968,7 @@ func (fsm *AgentFSM) Tick(ctx *FSMContext) FSMResult {
 				ctx.State.SetRoutine(frame.Routine)
 				ctx.State.SetStageAndRoutine(toStage, frame.Routine)
 			}
+			fsm.resumeTopActivityLocked(ctx)
 		}
 	}
 
@@ -2148,9 +980,9 @@ func (fsm *AgentFSM) Tick(ctx *FSMContext) FSMResult {
 					fromStage := fsm.currentStage
 					toStage := rule.ToStage
 
-					// PDA State Stack: When transitioning into StageEmergency from any non-emergency stage,
-					// automatically push the current (currentStage, currentRoutine, reason, tick, metadata) onto the stack!
 					if toStage == StageEmergency && fromStage != StageEmergency && fromStage != StageDead {
+						fsm.suspendTopActivityLocked(ctx, rule.Description)
+						emergencyPreempted = true
 						var taskMeta map[string]string
 						if ctx != nil && ctx.State != nil && ctx.State.HasActiveTask() {
 							taskMeta = ctx.State.HandleEmergencyPreempt(worldTick)
@@ -2230,12 +1062,25 @@ func (fsm *AgentFSM) Tick(ctx *FSMContext) FSMResult {
 	if ctx != nil && ctx.State != nil {
 		ctx.State.SetStageAndRoutine(fsm.currentStage, fsm.currentRoutine)
 	}
+	if stageTransitioned && !pdaRestored && fsm.previousStage == StageEmergency &&
+		fsm.currentStage != StageEmergency && fsm.currentStage != StageDead {
+		fsm.resumeTopActivityLocked(ctx)
+	}
 
 	preOnTickRoutine := fsm.currentRoutine
 
-	// 5. Execute OnTick for the active Stage handler
+	// 5. Execute Tier 1 top Activity if active & unsuspended; otherwise execute Stage handler
 	var intents []FSMIntent
-	if handler, exists := fsm.handlers[fsm.currentStage]; exists && ctx != nil {
+	if ctx != nil && fsm.currentStage != StageEmergency && fsm.currentStage != StageDead &&
+		len(fsm.activityStack) > 0 && !fsm.activitySuspended {
+		if act := fsm.activityStack[len(fsm.activityStack)-1]; act != nil {
+			var done bool
+			intents, done = act.OnTick(ctx)
+			if done {
+				fsm.popActivityLocked(ctx)
+			}
+		}
+	} else if handler, exists := fsm.handlers[fsm.currentStage]; exists && ctx != nil {
 		intents = handler.OnTick(ctx)
 	}
 
@@ -2311,7 +1156,7 @@ func (fsm *AgentFSM) Tick(ctx *FSMContext) FSMResult {
 		StageTransitioned:   stageTransitioned,
 		RoutineTransitioned: routineTransitioned,
 		Transitioned:        stageTransitioned,
-		FlushPeriphery:      routineTransitioned || stageTransitioned,
+		FlushPeriphery:      routineTransitioned || stageTransitioned || emergencyPreempted,
 		State:               fsm.currentStage,
 		PreviousState:       fsm.previousStage,
 		TransitionReason:    transitionReason,

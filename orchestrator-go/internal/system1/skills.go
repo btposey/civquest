@@ -35,6 +35,7 @@ type SkillContext struct {
 	CivicDB       *db.CivicRegistryDB
 	SafeNodes     []db.MapNode
 	PavingTracker *RoadPavingTracker
+	Registry      *EngineRegistry
 }
 
 // Skill defines a modular behavior skill activated by preconditions on the FactGraph.
