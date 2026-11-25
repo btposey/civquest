@@ -328,3 +328,183 @@ func BenchmarkEvaluateAndSelectSkill(b *testing.B) {
 		b.Fatalf("EvaluateAll + SelectAndExecuteSkill exceeded 5ms limit: %v per op", perOp)
 	}
 }
+
+type testIsolationEvaluator struct {
+	name    string
+	factKey string
+}
+
+func (e *testIsolationEvaluator) Name() string     { return e.name }
+func (e *testIsolationEvaluator) Category() string { return "test" }
+func (e *testIsolationEvaluator) Evaluate(_ *EvaluatorContext, graph *FactGraph) error {
+	if graph != nil {
+		graph.SetBool(e.factKey, "test", true, "isolated evaluator")
+	}
+	return nil
+}
+
+type testIsolationSkill struct {
+	name     string
+	category string
+	factKey  string
+	recipeID string
+}
+
+func (s *testIsolationSkill) Name() string        { return s.name }
+func (s *testIsolationSkill) Category() string    { return s.category }
+func (s *testIsolationSkill) Interruptible() bool { return true }
+func (s *testIsolationSkill) Preconditions(facts *FactGraph) bool {
+	return facts != nil && facts.GetBool(s.factKey)
+}
+func (s *testIsolationSkill) Execute(_ *SkillContext, _ *FactGraph) ([]*civquestv1.AgentIntent, error) {
+	return []*civquestv1.AgentIntent{
+		{
+			Action: &civquestv1.AgentIntent_CraftItem{
+				CraftItem: &civquestv1.CraftItemIntent{RecipeId: s.recipeID},
+			},
+		},
+	}, nil
+}
+func (s *testIsolationSkill) OnComplete(_ *SkillContext, _ *FactGraph) {}
+
+func TestNewDefaultEngineRegistry_IncludesBuiltinsAndForaging(t *testing.T) {
+	t.Parallel()
+	reg := NewDefaultEngineRegistry()
+	if _, ok := reg.GetSkill("foraging"); !ok {
+		t.Fatalf("expected 'foraging' skill registered in NewDefaultEngineRegistry()")
+	}
+	if _, ok := reg.GetEvaluator("blueprint"); !ok {
+		t.Fatalf("expected 'blueprint' evaluator registered in NewDefaultEngineRegistry()")
+	}
+	if _, ok := reg.GetSkill("combat_defense"); !ok {
+		t.Fatalf("expected 'combat_defense' skill registered in NewDefaultEngineRegistry()")
+	}
+}
+
+func TestEngineRegistry_AndAgentFSMWithRegistry_ParallelIsolation(t *testing.T) {
+	t.Parallel()
+
+	makeFrame := func(id string) *civquestv1.TelemetryFrame {
+		return &civquestv1.TelemetryFrame{
+			WorldTick: 100,
+			TimeOfDay: 2000,
+			Status: &civquestv1.AgentStatus{
+				AgentId:   id,
+				Health:    20,
+				MaxHealth: 20,
+				FoodLevel: 20,
+				Position:  &civquestv1.Vec3{X: 0, Y: 64, Z: 0},
+			},
+		}
+	}
+
+	t.Run("instance_A", func(t *testing.T) {
+		t.Parallel()
+		regA := NewDefaultEngineRegistry()
+		regA.RegisterEvaluator(&testIsolationEvaluator{name: "custom_eval_a", factKey: "custom.flag_a"})
+		regA.RegisterSkill(&testIsolationSkill{name: "custom_skill_a", category: "bootstrap", factKey: "custom.flag_a", recipeID: "custom:recipe_a"})
+
+		fsmA := NewAgentFSMWithRegistry(StageBootstrap, nil, regA)
+		if fsmA.Registry() != regA {
+			t.Fatalf("expected fsmA.Registry() == regA")
+		}
+
+		for i := 0; i < 20; i++ {
+			ctx := &FSMContext{
+				AgentID: "agent-a",
+				Frame:   makeFrame("agent-a"),
+				State:   NewAgentState(),
+				Config:  xdg.DefaultAgentIdentityConfig("agent-a"),
+			}
+			res := fsmA.Tick(ctx)
+			facts := fsmA.LastFacts()
+			if facts == nil || !facts.GetBool("custom.flag_a") {
+				t.Fatalf("expected custom.flag_a true in fsmA")
+			}
+			if facts.GetBool("custom.flag_b") {
+				t.Fatalf("unexpected custom.flag_b leakage into fsmA")
+			}
+			if _, ok := regA.GetEvaluator("custom_eval_b"); ok {
+				t.Fatalf("unexpected custom_eval_b leakage into regA")
+			}
+			foundIntent := false
+			for _, in := range res.Intents {
+				if in.Intent.GetCraftItem() != nil && in.Intent.GetCraftItem().RecipeId == "custom:recipe_a" {
+					foundIntent = true
+				}
+			}
+			if !foundIntent {
+				t.Fatalf("expected custom_skill_a intent in fsmA")
+			}
+		}
+	})
+
+	t.Run("instance_B", func(t *testing.T) {
+		t.Parallel()
+		regB := NewDefaultEngineRegistry()
+		regB.RegisterEvaluator(&testIsolationEvaluator{name: "custom_eval_b", factKey: "custom.flag_b"})
+		regB.RegisterSkill(&testIsolationSkill{name: "custom_skill_b", category: "bootstrap", factKey: "custom.flag_b", recipeID: "custom:recipe_b"})
+
+		fsmB := NewAgentFSMWithRegistry(StageBootstrap, nil, regB)
+		if fsmB.Registry() != regB {
+			t.Fatalf("expected fsmB.Registry() == regB")
+		}
+
+		for i := 0; i < 20; i++ {
+			ctx := &FSMContext{
+				AgentID: "agent-b",
+				Frame:   makeFrame("agent-b"),
+				State:   NewAgentState(),
+				Config:  xdg.DefaultAgentIdentityConfig("agent-b"),
+			}
+			res := fsmB.Tick(ctx)
+			facts := fsmB.LastFacts()
+			if facts == nil || !facts.GetBool("custom.flag_b") {
+				t.Fatalf("expected custom.flag_b true in fsmB")
+			}
+			if facts.GetBool("custom.flag_a") {
+				t.Fatalf("unexpected custom.flag_a leakage into fsmB")
+			}
+			if _, ok := regB.GetEvaluator("custom_eval_a"); ok {
+				t.Fatalf("unexpected custom_eval_a leakage into regB")
+			}
+			foundIntent := false
+			for _, in := range res.Intents {
+				if in.Intent.GetCraftItem() != nil && in.Intent.GetCraftItem().RecipeId == "custom:recipe_b" {
+					foundIntent = true
+				}
+			}
+			if !foundIntent {
+				t.Fatalf("expected custom_skill_b intent in fsmB")
+			}
+		}
+	})
+
+	t.Run("nil_fallback_and_set_registry", func(t *testing.T) {
+		t.Parallel()
+		fsm := NewAgentFSMWithRegistry(StageBootstrap, nil, nil)
+		if fsm.Registry() == nil {
+			t.Fatalf("expected non-nil default registry when nil passed to NewAgentFSMWithRegistry")
+		}
+
+		customReg := NewEngineRegistry()
+		customReg.RegisterEvaluator(&testIsolationEvaluator{name: "only_custom", factKey: "custom.only"})
+		fsm.SetRegistry(customReg)
+		if fsm.Registry() != customReg {
+			t.Fatalf("expected SetRegistry to update fsm.Registry()")
+		}
+
+		ctx := &FSMContext{
+			AgentID: "agent-c",
+			Frame:   makeFrame("agent-c"),
+			State:   NewAgentState(),
+		}
+		_ = fsm.Tick(ctx)
+		if ctx.Facts == nil || !ctx.Facts.GetBool("custom.only") {
+			t.Fatalf("expected custom.only fact from SetRegistry")
+		}
+		if ctx.Registry != nil {
+			t.Fatalf("expected Tick to leave caller's nil ctx.Registry unmodified")
+		}
+	})
+}

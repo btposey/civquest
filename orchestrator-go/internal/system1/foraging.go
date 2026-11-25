@@ -51,10 +51,6 @@ func getForageMemory(agentID string) *forageAgentMemory {
 	return m
 }
 
-func init() {
-	DefaultRegistry.RegisterSkill(NewForagingSkill())
-}
-
 // ForagingSkill implements deterministic, zero-token food gathering and hunting
 // when an agent is hungry (FoodLevel <= 12) and lacks edible food in inventory.
 type ForagingSkill struct{}

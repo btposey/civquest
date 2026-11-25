@@ -49,11 +49,13 @@ type Skill interface {
 
 // EngineRegistry manages modular evaluators and skills with thread-safe runtime registration.
 type EngineRegistry struct {
-	mu         sync.RWMutex
-	evaluators map[string]Evaluator
-	skills     map[string]Skill
-	evalOrder  []string
-	skillOrder []string
+	mu            sync.RWMutex
+	evaluators    map[string]Evaluator
+	skills        map[string]Skill
+	evalOrder     []string
+	skillOrder    []string
+	evalSnapshot  []Evaluator
+	skillSnapshot []Skill
 }
 
 // NewEngineRegistry creates an empty EngineRegistry.
@@ -64,12 +66,9 @@ func NewEngineRegistry() *EngineRegistry {
 	}
 }
 
-// DefaultRegistry is the global singleton EngineRegistry instance.
-var DefaultRegistry = NewEngineRegistry()
-
 // RegisterEvaluator registers an Evaluator into the registry.
 func (r *EngineRegistry) RegisterEvaluator(eval Evaluator) {
-	if eval == nil || eval.Name() == "" {
+	if r == nil || eval == nil || eval.Name() == "" {
 		return
 	}
 	r.mu.Lock()
@@ -79,11 +78,12 @@ func (r *EngineRegistry) RegisterEvaluator(eval Evaluator) {
 		r.evalOrder = append(r.evalOrder, name)
 	}
 	r.evaluators[name] = eval
+	r.rebuildEvalSnapshotLocked()
 }
 
 // RegisterSkill registers a Skill into the registry.
 func (r *EngineRegistry) RegisterSkill(skill Skill) {
-	if skill == nil || skill.Name() == "" {
+	if r == nil || skill == nil || skill.Name() == "" {
 		return
 	}
 	r.mu.Lock()
@@ -93,10 +93,34 @@ func (r *EngineRegistry) RegisterSkill(skill Skill) {
 		r.skillOrder = append(r.skillOrder, name)
 	}
 	r.skills[name] = skill
+	r.rebuildSkillSnapshotLocked()
+}
+
+func (r *EngineRegistry) rebuildEvalSnapshotLocked() {
+	snap := make([]Evaluator, 0, len(r.evalOrder))
+	for _, name := range r.evalOrder {
+		if e, ok := r.evaluators[name]; ok && e != nil {
+			snap = append(snap, e)
+		}
+	}
+	r.evalSnapshot = snap
+}
+
+func (r *EngineRegistry) rebuildSkillSnapshotLocked() {
+	snap := make([]Skill, 0, len(r.skillOrder))
+	for _, name := range r.skillOrder {
+		if s, ok := r.skills[name]; ok && s != nil {
+			snap = append(snap, s)
+		}
+	}
+	r.skillSnapshot = snap
 }
 
 // GetEvaluator retrieves a registered Evaluator by name.
 func (r *EngineRegistry) GetEvaluator(name string) (Evaluator, bool) {
+	if r == nil {
+		return nil, false
+	}
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	e, ok := r.evaluators[name]
@@ -105,6 +129,9 @@ func (r *EngineRegistry) GetEvaluator(name string) (Evaluator, bool) {
 
 // GetSkill retrieves a registered Skill by name.
 func (r *EngineRegistry) GetSkill(name string) (Skill, bool) {
+	if r == nil {
+		return nil, false
+	}
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	s, ok := r.skills[name]
@@ -119,20 +146,27 @@ func (r *EngineRegistry) EvaluateAll(ctx *EvaluatorContext) *FactGraph {
 	}
 
 	r.mu.RLock()
-	order := make([]string, len(r.evalOrder))
-	copy(order, r.evalOrder)
-	evals := make(map[string]Evaluator, len(r.evaluators))
-	for k, v := range r.evaluators {
-		evals[k] = v
-	}
+	evals := r.evalSnapshot
 	r.mu.RUnlock()
 
-	for _, name := range order {
-		if eval, ok := evals[name]; ok && eval != nil {
+	for _, eval := range evals {
+		if eval != nil {
 			_ = eval.Evaluate(ctx, graph)
 		}
 	}
 	return graph
+}
+
+func matchesCategory(skillCat string, categories []string) bool {
+	if len(categories) == 0 {
+		return true
+	}
+	for _, c := range categories {
+		if skillCat == c {
+			return true
+		}
+	}
+	return false
 }
 
 // SelectAndExecuteSkill inspects registered skills in registration order, checks preconditions,
@@ -144,25 +178,14 @@ func (r *EngineRegistry) SelectAndExecuteSkill(ctx *SkillContext, facts *FactGra
 	}
 
 	r.mu.RLock()
-	order := make([]string, len(r.skillOrder))
-	copy(order, r.skillOrder)
-	skills := make(map[string]Skill, len(r.skills))
-	for k, v := range r.skills {
-		skills[k] = v
-	}
+	skills := r.skillSnapshot
 	r.mu.RUnlock()
 
-	catFilter := make(map[string]bool, len(categories))
-	for _, c := range categories {
-		catFilter[c] = true
-	}
-
-	for _, name := range order {
-		skill, ok := skills[name]
-		if !ok || skill == nil {
+	for _, skill := range skills {
+		if skill == nil {
 			continue
 		}
-		if len(catFilter) > 0 && !catFilter[skill.Category()] {
+		if !matchesCategory(skill.Category(), categories) {
 			continue
 		}
 		if skill.Preconditions(facts) {
@@ -178,42 +201,15 @@ func (r *EngineRegistry) SelectAndExecuteSkill(ctx *SkillContext, facts *FactGra
 
 // Reset clears all registered evaluators and skills.
 func (r *EngineRegistry) Reset() {
+	if r == nil {
+		return
+	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.evaluators = make(map[string]Evaluator)
 	r.skills = make(map[string]Skill)
 	r.evalOrder = nil
 	r.skillOrder = nil
-}
-
-// Package-level delegations to DefaultRegistry.
-
-// RegisterEvaluator registers an evaluator on DefaultRegistry.
-func RegisterEvaluator(eval Evaluator) {
-	DefaultRegistry.RegisterEvaluator(eval)
-}
-
-// RegisterSkill registers a skill on DefaultRegistry.
-func RegisterSkill(skill Skill) {
-	DefaultRegistry.RegisterSkill(skill)
-}
-
-// EvaluateAll executes all registered evaluators on DefaultRegistry.
-func EvaluateAll(ctx *EvaluatorContext) *FactGraph {
-	return DefaultRegistry.EvaluateAll(ctx)
-}
-
-// SelectAndExecuteSkill evaluates skills on DefaultRegistry.
-func SelectAndExecuteSkill(ctx *SkillContext, facts *FactGraph, categories ...string) ([]*civquestv1.AgentIntent, string, bool) {
-	return DefaultRegistry.SelectAndExecuteSkill(ctx, facts, categories...)
-}
-
-// GetEvaluator retrieves an evaluator by name from DefaultRegistry.
-func GetEvaluator(name string) (Evaluator, bool) {
-	return DefaultRegistry.GetEvaluator(name)
-}
-
-// GetSkill retrieves a skill by name from DefaultRegistry.
-func GetSkill(name string) (Skill, bool) {
-	return DefaultRegistry.GetSkill(name)
+	r.evalSnapshot = nil
+	r.skillSnapshot = nil
 }

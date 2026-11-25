@@ -152,9 +152,10 @@ type AgentRuntime struct {
 	connector      StreamConnector
 
 	// Intent/batch sequence numbering and outbound queue
-	sequenceID  atomic.Int64
-	nextBatchID atomic.Int64
-	slotQueue   *SlotQueue
+	sequenceID    atomic.Int64
+	nextBatchID   atomic.Int64
+	slotQueue     *SlotQueue
+	framePipeline *FramePipeline
 
 	// Diagnostics & Socket
 	socketPath string
@@ -387,6 +388,7 @@ func NewRuntime(cfg Config) (*AgentRuntime, error) {
 		}(),
 		debugLogger:     debugLog,
 		slotQueue:       NewSlotQueue(),
+		framePipeline:   NewDefaultFramePipeline(),
 		socketPath:      sockPath,
 		pid:             os.Getpid(),
 		startTime:       time.Now().UTC(),
@@ -1504,20 +1506,34 @@ func (r *AgentRuntime) processFrame(frame *civquestv1.TelemetryFrame) {
 }
 
 // HandleTelemetryFrame processes an incoming sensory TelemetryFrame through
-// System 1 survival reflexes, daily utility scheduler, biological needs FSM,
-// road paving reflexes, and System 2 deliberative dialogue dispatch.
+// the ordered 6-stage telemetry pipeline while handling nil/dead short-circuits
+// and terminal permadeath teardown.
 func (r *AgentRuntime) HandleTelemetryFrame(frame *civquestv1.TelemetryFrame) {
-	if frame == nil {
+	if r == nil || frame == nil || r.IsDead() {
 		return
 	}
 
-	r.mu.RLock()
-	if r.isDead {
-		r.mu.RUnlock()
+	deathEv := r.ingestFrameHeader(frame)
+	if deathEv != nil {
+		if frame.Status != nil && frame.Status.NavigationState == civquestv1.NavigationState_NAVIGATION_STATE_STUCK {
+			r.handleNavigationStuck()
+		}
+		r.executePermadeath(deathEv)
 		return
 	}
-	r.mu.RUnlock()
 
+	ctx := &FrameContext{Frame: frame}
+	r.ensureFramePipeline().Run(r, ctx)
+}
+
+func (r *AgentRuntime) ensureFramePipeline() *FramePipeline {
+	if r.framePipeline != nil {
+		return r.framePipeline
+	}
+	return NewDefaultFramePipeline()
+}
+
+func (r *AgentRuntime) ingestFrameHeader(frame *civquestv1.TelemetryFrame) *civquestv1.DeathEvent {
 	var deathEv *civquestv1.DeathEvent
 
 	r.mu.Lock()
@@ -1530,7 +1546,6 @@ func (r *AgentRuntime) HandleTelemetryFrame(frame *civquestv1.TelemetryFrame) {
 		r.navDestination = nil
 		r.navTargetPOIID = ""
 	}
-
 	if frame.DeathEvent != nil {
 		r.isDead = true
 		r.deathEvent = frame.DeathEvent
@@ -1539,159 +1554,91 @@ func (r *AgentRuntime) HandleTelemetryFrame(frame *civquestv1.TelemetryFrame) {
 	}
 	r.mu.Unlock()
 
-	if frame.Status != nil && frame.Status.NavigationState == civquestv1.NavigationState_NAVIGATION_STATE_STUCK {
-		r.handleNavigationStuck()
+	return deathEv
+}
+
+func (r *AgentRuntime) executePermadeath(deathEv *civquestv1.DeathEvent) {
+	r.mu.Lock()
+	cancel := r.cancel
+	r.mu.Unlock()
+
+	// 1. Immediately cancel context to halt any in-flight workers
+	if cancel != nil {
+		cancel()
 	}
 
-	// If a terminal death event occurred, run permadeath teardown immediately
-	if deathEv != nil {
+	// 2. Await in-flight dialogue goroutines so no DB transactions remain active
+	r.tradeActive.Store(false)
+	r.chroniclerActive.Store(false)
+	r.toponymyActive.Store(false)
+	r.contemplationActive.Store(false)
+	r.dialogueWg.Wait()
+	r.poiWg.Wait()
+
+	// 3. Stop socket server and close dialogue service to prevent IPC queries
+	r.stopSocketServer()
+	if r.dialogueService != nil {
+		_ = r.dialogueService.Close()
+	}
+
+	// 4. Run permadeath teardown (checkpoint DB, archive to graveyard, write death certificate & epitaph)
+	ctx := r.ctx
+	if ctx == nil || ctx.Err() != nil {
+		ctx = context.Background()
+	}
+
+	res, err := ExecutePermadeath(ctx, PermadeathRequest{
+		AgentID:           r.agentID,
+		AgentUUID:         r.AgentUUID(),
+		ClanID:            r.clanID,
+		DeathEvent:        deathEv,
+		Resolver:          r.resolver,
+		AgentDB:           r.agentDB,
+		ReputationDB:      r.ReputationDB(),
+		ChroniclerService: r.chroniclerService,
+	})
+	if err != nil {
+		log.Printf("[ERROR] agent %s permadeath teardown failed: %v", r.agentID, err)
+	} else {
 		r.mu.Lock()
-		cancel := r.cancel
+		r.permadeathResult = res
 		r.mu.Unlock()
+	}
 
-		// 1. Immediately cancel context to halt any in-flight workers
-		if cancel != nil {
-			cancel()
-		}
+	// 5. Trigger permadeath terminal callback if configured
+	if r.onDeath != nil {
+		r.onDeath(deathEv)
+	}
 
-		// 2. Await in-flight dialogue goroutines so no DB transactions remain active
-		r.tradeActive.Store(false)
-		r.chroniclerActive.Store(false)
-		r.toponymyActive.Store(false)
-		r.contemplationActive.Store(false)
-		r.dialogueWg.Wait()
-		r.poiWg.Wait()
+	// 6. Signal runtime completion by closing r.done cleanly
+	r.stopOnce.Do(func() {
+		close(r.done)
+	})
+}
 
-		// 3. Stop socket server and close dialogue service to prevent IPC queries
-		r.stopSocketServer()
-		if r.dialogueService != nil {
-			_ = r.dialogueService.Close()
-		}
-
-		// 4. Run permadeath teardown (checkpoint DB, archive to graveyard, write death certificate & epitaph)
-		ctx := r.ctx
-		if ctx == nil || ctx.Err() != nil {
-			ctx = context.Background()
-		}
-
-		res, err := ExecutePermadeath(ctx, PermadeathRequest{
-			AgentID:           r.agentID,
-			AgentUUID:         r.AgentUUID(),
-			ClanID:            r.clanID,
-			DeathEvent:        deathEv,
-			Resolver:          r.resolver,
-			AgentDB:           r.agentDB,
-			ReputationDB:      r.ReputationDB(),
-			ChroniclerService: r.chroniclerService,
-		})
-		if err != nil {
-			log.Printf("[ERROR] agent %s permadeath teardown failed: %v", r.agentID, err)
-		} else {
-			r.mu.Lock()
-			r.permadeathResult = res
-			r.mu.Unlock()
-		}
-
-		// 5. Trigger permadeath terminal callback if configured
-		if r.onDeath != nil {
-			r.onDeath(deathEv)
-		}
-
-		// 6. Signal runtime completion by closing r.done cleanly
-		r.stopOnce.Do(func() {
-			close(r.done)
-		})
+func (r *AgentRuntime) updateInventoryCache(frame *civquestv1.TelemetryFrame) {
+	if frame.Status == nil || r.resolver == nil {
 		return
 	}
-
-	// Update inventory cache file atomically if inventory changed
-	if frame.Status != nil {
-		var inv []*civquestv1.ItemStackProto
-		if frame.Status.Inventory != nil {
-			inv = frame.Status.Inventory
-		}
-		newCache := NewInventoryCache(r.agentID, frame.WorldTick, inv)
-		r.mu.RLock()
-		cachedBefore := r.hasCachedInventory
-		itemsMatch := InventoryEqual(r.lastCachedItems, newCache.Items)
-		r.mu.RUnlock()
-
-		if !cachedBefore || !itemsMatch {
-			cachePath := r.resolver.AgentInventoryCachePath(r.agentID)
-			if err := WriteInventoryCache(cachePath, newCache); err == nil {
-				r.mu.Lock()
-				r.hasCachedInventory = true
-				r.lastCachedItems = newCache.Items
-				r.mu.Unlock()
-			}
-		}
+	var inv []*civquestv1.ItemStackProto
+	if frame.Status.Inventory != nil {
+		inv = frame.Status.Inventory
 	}
+	newCache := NewInventoryCache(r.agentID, frame.WorldTick, inv)
+	r.mu.RLock()
+	cachedBefore := r.hasCachedInventory
+	itemsMatch := InventoryEqual(r.lastCachedItems, newCache.Items)
+	r.mu.RUnlock()
 
-	// Evaluate System 2 companion tracking and sync companion state (<1 ms)
-	r.evaluateCompanion(frame)
-
-	// Ingest periphery execution receipt into System 1 before reflexes evaluate
-	if receipt := frame.GetReceipt(); receipt != nil {
-		if r.system1State != nil {
-			r.system1State.IngestReceipt(receipt)
-		}
-		if receipt.Status == civquestv1.IntentReceipt_RECEIPT_STATUS_COMPLETED {
+	if !cachedBefore || !itemsMatch {
+		cachePath := r.resolver.AgentInventoryCachePath(r.agentID)
+		if err := WriteInventoryCache(cachePath, newCache); err == nil {
 			r.mu.Lock()
-			hpos := r.lastHarvestPos
-			r.lastHarvestPos = nil
+			r.hasCachedInventory = true
+			r.lastCachedItems = newCache.Items
 			r.mu.Unlock()
-			if hpos != nil {
-				r.PruneHarvestedBlockPos(hpos.X, hpos.Y, hpos.Z)
-			}
 		}
 	}
-
-	// Continuously ingest InterestingBlocks into System 1 SpatialIndex (ADR-022)
-	if r.system1State != nil {
-		if si := r.system1State.SpatialIndex(); si != nil {
-			currentY := 64.0
-			if frame.Status != nil && frame.Status.Position != nil {
-				currentY = frame.Status.Position.Y
-			}
-			if updatedPOIs := si.IngestSensoryBlocks(frame, currentY); len(updatedPOIs) > 0 {
-				r.persistPOIsAsync(updatedPOIs)
-			}
-			if frame.Status != nil && frame.Status.Position != nil {
-				if prunedIDs := si.VerifyCloseRangePOIs(frame.Status.Position, frame.InterestingBlocks, 3.5); len(prunedIDs) > 0 {
-					r.invalidatePOIsAsync(prunedIDs)
-				}
-			}
-		}
-	}
-
-	// Update habit trails, record breadcrumbs, advance active corridors, and consolidate arrived trails (ADR-023)
-	r.updateHabitTrails(frame)
-
-	// Ingest completed 360-degree HorizonSurveyReports and process clan rendezvous sync (ADR-032)
-	r.processHorizonSurveyAndRendezvous(frame)
-
-	// Evaluate deterministic System 1 survival reflexes, daily routine, biological needs, and paving (<5 ms)
-	r.evaluateSystem1Reflexes(frame)
-
-	// Immediately sync and broadcast clan rendezvous report if arrival occurred on this tick (ADR-032)
-	r.syncPendingRendezvous(frame)
-
-	// Dispatch System 2 dialogue and barter haggling asynchronously (non-blocking)
-	if len(frame.IncomingChats) > 0 || frame.PendingTrade != nil {
-		r.dispatchDialogue(frame)
-	}
-
-	// Dispatch System 2 Clan Chronicler synthesis at dusk or near library desks (non-blocking)
-	r.dispatchChronicler(frame)
-
-	// Dispatch System 2 Toponymy naming for exploratory landmarks (non-blocking)
-	r.dispatchToponymy(frame)
-
-	// Dispatch Agrarian specialization and farmland sharecropping routines (non-blocking)
-	r.dispatchAgrarian(frame)
-
-	// Dispatch System 2 Nighttime Strategic Contemplation during sleep hours (ticks 13000-23500) (non-blocking)
-	r.dispatchContemplation(frame)
 }
 
 // dispatchDialogue asynchronously processes incoming chat messages and pending trade requests
@@ -4024,19 +3971,26 @@ func (r *AgentRuntime) evaluateCompanion(frame *civquestv1.TelemetryFrame) {
 
 // evaluateSystem1Reflexes evaluates deterministic fight-or-flight combat reflexes,
 // daily utility scheduler, biological needs, and road paving reflexes via the formal AgentFSM in <5ms.
-func (r *AgentRuntime) evaluateSystem1Reflexes(frame *civquestv1.TelemetryFrame) {
+func (r *AgentRuntime) evaluateSystem1Reflexes(frame *civquestv1.TelemetryFrame) (system1.FSMResult, *system1.FSMContext, bool) {
 	if frame == nil || frame.Status == nil || r.IsDead() {
-		return
+		return system1.FSMResult{}, nil, false
 	}
 
 	// Motion telemetry: stamina / navigation state sampled every 100 ticks into the debug log
-	if r.debugLogger != nil && (r.lastMotionLogTick == 0 || frame.WorldTick < r.lastMotionLogTick || frame.WorldTick-r.lastMotionLogTick >= 100) {
-		r.lastMotionLogTick = frame.WorldTick
-		r.debugLogger.Emit(frame.WorldTick, "MOTION", fmt.Sprintf("stamina=%.1f nav=%s", frame.Status.Stamina, frame.Status.NavigationState.String()), map[string]any{
-			"stamina":             frame.Status.Stamina,
-			"navigation_state":    frame.Status.NavigationState.String(),
-			"navigation_enclosed": frame.Status.NavigationEnclosed,
-		})
+	if r.debugLogger != nil {
+		r.mu.Lock()
+		shouldLogMotion := r.lastMotionLogTick == 0 || frame.WorldTick < r.lastMotionLogTick || frame.WorldTick-r.lastMotionLogTick >= 100
+		if shouldLogMotion {
+			r.lastMotionLogTick = frame.WorldTick
+		}
+		r.mu.Unlock()
+		if shouldLogMotion {
+			r.debugLogger.Emit(frame.WorldTick, "MOTION", fmt.Sprintf("stamina=%.1f nav=%s", frame.Status.Stamina, frame.Status.NavigationState.String()), map[string]any{
+				"stamina":             frame.Status.Stamina,
+				"navigation_state":    frame.Status.NavigationState.String(),
+				"navigation_enclosed": frame.Status.NavigationEnclosed,
+			})
+		}
 	}
 
 	r.mu.RLock()
@@ -4050,6 +4004,7 @@ func (r *AgentRuntime) evaluateSystem1Reflexes(frame *civquestv1.TelemetryFrame)
 	if r.lastEatingTick > 0 && frame.WorldTick >= r.lastEatingTick && frame.WorldTick-r.lastEatingTick < 32 {
 		canEat = false
 	}
+	lastEatingTick := r.lastEatingTick
 	fsm := r.agentFSM
 	r.mu.RUnlock()
 
@@ -4075,7 +4030,7 @@ func (r *AgentRuntime) evaluateSystem1Reflexes(frame *civquestv1.TelemetryFrame)
 		Config:         r.identityConfig,
 		SafeNodes:      safeNodes,
 		CanEat:         canEat,
-		LastEatingTick: r.lastEatingTick,
+		LastEatingTick: lastEatingTick,
 		PavingTracker:  r.pavingTracker,
 		HasShield:      hasShield,
 		HasWeapon:      hasWeapon,
@@ -4085,9 +4040,6 @@ func (r *AgentRuntime) evaluateSystem1Reflexes(frame *civquestv1.TelemetryFrame)
 
 	// Execute formal HFSM tick
 	result := fsm.Tick(ctx)
-
-	// Track idle/unproductive dwell duration for daytime System 2 contemplation (ADR-031)
-	r.updateIdleTracker(frame, result)
 
 	// Log FSM transitions
 	if result.Transitioned && r.debugLogger != nil {
@@ -4100,177 +4052,109 @@ func (r *AgentRuntime) evaluateSystem1Reflexes(frame *civquestv1.TelemetryFrame)
 		})
 	}
 
-	// Mark periphery flush before queuing intents so flush + new routine intents dispatch in the same IntentBatch
-	if result.FlushPeriphery && r.slotQueue != nil {
-		r.slotQueue.MarkFlushPeriphery()
-	}
-
-	// Dispatch emitted intents
-	for _, fsmIntent := range result.Intents {
-		if fsmIntent.Intent == nil {
-			continue
-		}
-		if fsmIntent.Priority {
-			// Flee navigation deduplication / churn mitigation
-			skipNav := false
-			if nav := fsmIntent.Intent.GetNavigate(); nav != nil && nav.Target != nil {
-				r.mu.Lock()
-				if r.lastFleeTarget != nil {
-					dx := nav.Target.X - r.lastFleeTarget.X
-					dy := nav.Target.Y - r.lastFleeTarget.Y
-					dz := nav.Target.Z - r.lastFleeTarget.Z
-					dist := math.Sqrt(dx*dx + dy*dy + dz*dz)
-					ticksElapsed := frame.WorldTick - r.lastFleeTick
-					if dist < 2.0 && ticksElapsed <= 10 && ticksElapsed >= 0 {
-						skipNav = true
-					}
-				}
-				if !skipNav {
-					r.lastFleeTarget = &civquestv1.Vec3{
-						X: nav.Target.X,
-						Y: nav.Target.Y,
-						Z: nav.Target.Z,
-					}
-					r.lastFleeTick = frame.WorldTick
-				}
-				r.mu.Unlock()
-			}
-			if skipNav {
-				continue
-			}
-
-			err := r.QueuePriorityIntent(fsmIntent.Intent)
-			if err == nil && fsmIntent.Intent.GetUseItem() != nil && fsmIntent.Intent.GetUseItem().IsEatingOrDrinking {
-				r.mu.Lock()
-				r.lastEatingTick = frame.WorldTick
-				r.mu.Unlock()
-				if r.system1State != nil {
-					r.system1State.SetLastEatingTick(frame.WorldTick)
-				}
-			}
-		} else {
-			_ = r.QueueIntent(fsmIntent.Intent)
-		}
-	}
-
-	if result.FlushPeriphery && r.slotQueue != nil {
-		r.slotQueue.NotifyIfFlushPending()
-	}
-
-	// Reset flee target if not in emergency
-	if result.State != system1.StateEmergency {
-		r.mu.Lock()
-		r.lastFleeTarget = nil
-		r.lastFleeTick = 0
-		r.mu.Unlock()
-	}
-
 	// Record combat/aggro encounter in recent summary and episodic memory (cooldown: 200 ticks / 10s)
-	hostilesPresent := ctx.HostilesPresent()
-	damageTaken := ctx.DamageTaken()
-	if hostilesPresent || damageTaken {
-		bravery := 0.5
-		if r.identityConfig != nil {
-			bravery = r.identityConfig.Traits.Bravery
-		}
-		maxHP := float64(frame.Status.MaxHealth)
-		if maxHP <= 0 {
-			maxHP = 20.0
-		}
-		_, _, hostileList := system1.AssessImmediateThreats(frame, bravery)
-		dayPhase := system1.FormatDayPhase(frame.TimeOfDay)
-		actionDesc := "engaged in combat with"
-		if ctx.ShouldPanic() {
-			actionDesc = "fled from"
-		}
-		targetDesc := "hostile mob"
-		if len(hostileList) > 0 {
-			targetDesc = strings.Join(hostileList, ", ")
-		} else if frame.LastDamageTaken != nil && frame.LastDamageTaken.GetAttackerName() != "" {
-			targetDesc = frame.LastDamageTaken.GetAttackerName()
-		} else if frame.LastDamageTaken != nil && !system1.IsPassiveOrEnvironmentalDamage(frame.LastDamageTaken) {
-			targetDesc = frame.LastDamageTaken.GetSourceType().String()
-		}
-		summary := fmt.Sprintf("At tick %d during %s, %s %s (HP: %.1f/%.1f).",
-			frame.WorldTick, dayPhase, actionDesc, targetDesc, frame.Status.Health, maxHP)
-
-		r.mu.Lock()
-		r.lastCombatSummary = summary
-		shouldIngestCombat := r.memoryPipeline != nil && (r.lastCombatMemoryTick == 0 || frame.WorldTick < r.lastCombatMemoryTick || frame.WorldTick-r.lastCombatMemoryTick >= 200)
-		if shouldIngestCombat {
-			r.lastCombatMemoryTick = frame.WorldTick
-		}
-		memPipe := r.memoryPipeline
-		r.mu.Unlock()
-
-		if shouldIngestCombat && memPipe != nil {
-			var locCoords string
-			if frame.Status.Position != nil {
-				locCoords = fmt.Sprintf("(%.0f, %.0f, %.0f)", frame.Status.Position.X, frame.Status.Position.Y, frame.Status.Position.Z)
-			}
-			go func(tick int64, text string, coords string) {
-				cCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-				defer cancel()
-				_, _ = memPipe.Ingest(cCtx, memory.MemoryEvent{
-					WorldTick:      tick,
-					Category:       memory.CategoryCombat,
-					SummaryText:    text,
-					Actors:         []string{r.agentID},
-					LocationCoords: coords,
-					SaliencyScore:  memory.SaliencyCombat,
-				})
-			}(frame.WorldTick, summary, locCoords)
-		}
-	}
+	r.recordCombatEncounter(frame, ctx)
 
 	// Evaluate Topological Mapping (records 8x8 sector nodes and edges into map_graph.db)
-	if node, edge := system1.EvaluateTopologicalMapping(frame, r.system1State); node != nil && r.agentDB != nil {
-		if node.SafetyScore >= 0.7 {
-			r.mu.Lock()
-			updatedSafe := false
-			for i := range r.safeNodesCache {
-				if r.safeNodesCache[i].ID == node.ID {
-					r.safeNodesCache[i] = *node
-					updatedSafe = true
-					break
-				}
-			}
-			if !updatedSafe {
-				r.safeNodesCache = append(r.safeNodesCache, *node)
-			}
-			r.mu.Unlock()
-		}
-		nCopy := *node
-		var eCopy *db.MapEdge
-		if edge != nil {
-			ec := *edge
-			eCopy = &ec
-		}
-		agentDB := r.agentDB
-		go func() {
-			mCtx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
-			defer cancel()
-			_ = agentDB.AddMapNode(mCtx, nCopy)
-			if eCopy != nil {
-				_ = agentDB.AddMapEdge(mCtx, *eCopy)
-			}
-		}()
+	r.evaluateTopologicalMapping(frame)
+
+	return result, ctx, true
+}
+
+func (r *AgentRuntime) recordCombatEncounter(frame *civquestv1.TelemetryFrame, ctx *system1.FSMContext) {
+	if ctx == nil || (!ctx.HostilesPresent() && !ctx.DamageTaken()) {
+		return
 	}
 
-	// Log goal changes
-	if result.GoalHierarchy != nil && result.GoalHierarchy.ImmediateGoal != "" && result.GoalHierarchy.ImmediateGoal != r.lastLoggedGoal {
-		oldGoal := r.lastLoggedGoal
-		r.lastLoggedGoal = result.GoalHierarchy.ImmediateGoal
-		if r.debugLogger != nil {
-			r.debugLogger.Emit(frame.WorldTick, "GOAL_TRANSITION", fmt.Sprintf("Goal: %s", result.GoalHierarchy.ImmediateGoal), map[string]any{
-				"previous_immediate_goal": oldGoal,
-				"immediate_goal":          result.GoalHierarchy.ImmediateGoal,
-				"short_term_goal":         result.GoalHierarchy.ShortTermGoal,
-				"long_term_goal":          result.GoalHierarchy.LongTermGoal,
-				"time_of_day":             frame.TimeOfDay,
-			})
-		}
+	bravery := 0.5
+	if r.identityConfig != nil {
+		bravery = r.identityConfig.Traits.Bravery
 	}
+	maxHP := float64(frame.Status.MaxHealth)
+	if maxHP <= 0 {
+		maxHP = 20.0
+	}
+	_, _, hostileList := system1.AssessImmediateThreats(frame, bravery)
+	dayPhase := system1.FormatDayPhase(frame.TimeOfDay)
+	actionDesc := "engaged in combat with"
+	if ctx.ShouldPanic() {
+		actionDesc = "fled from"
+	}
+	targetDesc := "hostile mob"
+	if len(hostileList) > 0 {
+		targetDesc = strings.Join(hostileList, ", ")
+	} else if frame.LastDamageTaken != nil && frame.LastDamageTaken.GetAttackerName() != "" {
+		targetDesc = frame.LastDamageTaken.GetAttackerName()
+	} else if frame.LastDamageTaken != nil && !system1.IsPassiveOrEnvironmentalDamage(frame.LastDamageTaken) {
+		targetDesc = frame.LastDamageTaken.GetSourceType().String()
+	}
+	summary := fmt.Sprintf("At tick %d during %s, %s %s (HP: %.1f/%.1f).",
+		frame.WorldTick, dayPhase, actionDesc, targetDesc, frame.Status.Health, maxHP)
+
+	r.mu.Lock()
+	r.lastCombatSummary = summary
+	shouldIngestCombat := r.memoryPipeline != nil && (r.lastCombatMemoryTick == 0 || frame.WorldTick < r.lastCombatMemoryTick || frame.WorldTick-r.lastCombatMemoryTick >= 200)
+	if shouldIngestCombat {
+		r.lastCombatMemoryTick = frame.WorldTick
+	}
+	memPipe := r.memoryPipeline
+	r.mu.Unlock()
+
+	if shouldIngestCombat && memPipe != nil {
+		var locCoords string
+		if frame.Status.Position != nil {
+			locCoords = fmt.Sprintf("(%.0f, %.0f, %.0f)", frame.Status.Position.X, frame.Status.Position.Y, frame.Status.Position.Z)
+		}
+		go func(tick int64, text string, coords string) {
+			cCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+			defer cancel()
+			_, _ = memPipe.Ingest(cCtx, memory.MemoryEvent{
+				WorldTick:      tick,
+				Category:       memory.CategoryCombat,
+				SummaryText:    text,
+				Actors:         []string{r.agentID},
+				LocationCoords: coords,
+				SaliencyScore:  memory.SaliencyCombat,
+			})
+		}(frame.WorldTick, summary, locCoords)
+	}
+}
+
+func (r *AgentRuntime) evaluateTopologicalMapping(frame *civquestv1.TelemetryFrame) {
+	node, edge := system1.EvaluateTopologicalMapping(frame, r.system1State)
+	if node == nil || r.agentDB == nil {
+		return
+	}
+	if node.SafetyScore >= 0.7 {
+		r.mu.Lock()
+		updatedSafe := false
+		for i := range r.safeNodesCache {
+			if r.safeNodesCache[i].ID == node.ID {
+				r.safeNodesCache[i] = *node
+				updatedSafe = true
+				break
+			}
+		}
+		if !updatedSafe {
+			r.safeNodesCache = append(r.safeNodesCache, *node)
+		}
+		r.mu.Unlock()
+	}
+	nCopy := *node
+	var eCopy *db.MapEdge
+	if edge != nil {
+		ec := *edge
+		eCopy = &ec
+	}
+	agentDB := r.agentDB
+	go func() {
+		mCtx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
+		defer cancel()
+		_ = agentDB.AddMapNode(mCtx, nCopy)
+		if eCopy != nil {
+			_ = agentDB.AddMapEdge(mCtx, *eCopy)
+		}
+	}()
 }
 
 // startSocketServer establishes the diagnostic UNIX domain socket.

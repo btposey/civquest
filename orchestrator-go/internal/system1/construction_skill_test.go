@@ -11,9 +11,10 @@ import (
 )
 
 func TestConstructionSkill_RegistrationAndPreconditions(t *testing.T) {
-	skill, ok := DefaultRegistry.GetSkill("blueprint_construction")
+	reg := NewDefaultEngineRegistry()
+	skill, ok := reg.GetSkill("blueprint_construction")
 	if !ok || skill == nil {
-		t.Fatalf("expected 'blueprint_construction' skill registered in DefaultRegistry")
+		t.Fatalf("expected 'blueprint_construction' skill registered in NewDefaultEngineRegistry()")
 	}
 	if skill.Category() != "construction" {
 		t.Errorf("expected Category 'construction', got %q", skill.Category())

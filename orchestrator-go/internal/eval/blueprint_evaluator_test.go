@@ -10,9 +10,10 @@ import (
 )
 
 func TestEval_BlueprintEvaluator_Integration(t *testing.T) {
-	eval, ok := system1.DefaultRegistry.GetEvaluator("blueprint")
+	reg := system1.NewDefaultEngineRegistry()
+	eval, ok := reg.GetEvaluator("blueprint")
 	if !ok || eval == nil {
-		t.Fatalf("expected 'blueprint' evaluator in DefaultRegistry")
+		t.Fatalf("expected 'blueprint' evaluator in NewDefaultEngineRegistry()")
 	}
 
 	tmpDir := t.TempDir()

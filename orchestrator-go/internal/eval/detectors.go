@@ -99,8 +99,8 @@ func (d *FSMOscillationDetector) Transitions() []TransitionRecord {
 
 // NavigationStallDetector detects when an active agent is stuck in PATHING or IDLE without forward progress.
 type NavigationStallDetector struct {
-	MaxStallTicks   int64
-	MinProgressDist float64
+	MaxStallTicks    int64
+	MinProgressDist  float64
 	lastProgressTick int64
 	lastPos          *civquestv1.Vec3
 	violations       []string

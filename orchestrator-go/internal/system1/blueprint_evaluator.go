@@ -12,10 +12,6 @@ import (
 	"github.com/btposey/civquest/orchestrator-go/internal/db"
 )
 
-func init() {
-	RegisterEvaluator(NewBlueprintEvaluator())
-}
-
 type bpCacheEntry struct {
 	invKey               string
 	isUnhoused           bool
@@ -50,6 +46,9 @@ func NewBlueprintEvaluator(cached ...*blueprints.Blueprint) *BlueprintEvaluator 
 		sort.Slice(e.CachedBlueprints, func(i, j int) bool {
 			return e.CachedBlueprints[i].ID < e.CachedBlueprints[j].ID
 		})
+	} else {
+		// Preload blueprint library at construction time so the first System 1 Tick() stays within the <5ms budget.
+		_ = e.getLibraryBlueprints()
 	}
 	return e
 }

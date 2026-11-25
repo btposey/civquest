@@ -289,7 +289,8 @@ func BenchmarkForagingSkill_Sub5ms(b *testing.B) {
 			{EntityId: 1, EntityType: "minecraft:cow", Distance: 10.0, Position: &civquestv1.Vec3{X: 50, Y: 64, Z: 60}},
 		},
 	}
-	facts := DefaultRegistry.EvaluateAll(&EvaluatorContext{AgentID: "bench_forager", Frame: frame, State: state})
+	reg := NewDefaultEngineRegistry()
+	facts := reg.EvaluateAll(&EvaluatorContext{AgentID: "bench_forager", Frame: frame, State: state})
 	skillCtx := &SkillContext{AgentID: "bench_forager", Frame: frame, State: state}
 
 	b.ResetTimer()

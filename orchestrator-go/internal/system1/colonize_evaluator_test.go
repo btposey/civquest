@@ -50,9 +50,10 @@ func TestColonizeEvaluator_Evaluate(t *testing.T) {
 }
 
 func TestColonizeEvaluator_RegisteredInDefaultRegistry(t *testing.T) {
-	eval, ok := DefaultRegistry.GetEvaluator("colonize")
+	reg := NewDefaultEngineRegistry()
+	eval, ok := reg.GetEvaluator("colonize")
 	if !ok || eval == nil {
-		t.Fatalf("expected 'colonize' evaluator to be registered in DefaultRegistry")
+		t.Fatalf("expected 'colonize' evaluator to be registered in NewDefaultEngineRegistry()")
 	}
 	if eval.Category() != "colonize" {
 		t.Errorf("expected category 'colonize', got %q", eval.Category())

@@ -11,9 +11,10 @@ import (
 )
 
 func TestBlueprintEvaluator_Registration(t *testing.T) {
-	eval, ok := DefaultRegistry.GetEvaluator("blueprint")
+	reg := NewDefaultEngineRegistry()
+	eval, ok := reg.GetEvaluator("blueprint")
 	if !ok || eval == nil {
-		t.Fatalf("expected 'blueprint' evaluator registered in DefaultRegistry")
+		t.Fatalf("expected 'blueprint' evaluator registered in NewDefaultEngineRegistry()")
 	}
 	if eval.Name() != "blueprint" {
 		t.Errorf("expected Name() = 'blueprint', got %q", eval.Name())

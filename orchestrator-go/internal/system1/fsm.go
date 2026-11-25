@@ -33,6 +33,18 @@ type FSMContext struct {
 	WeaponSlot     int32
 	CivicDB        *db.CivicRegistryDB
 	Facts          *FactGraph
+	Registry       *EngineRegistry
+}
+
+func resolveContextRegistry(ctx *FSMContext) *EngineRegistry {
+	if ctx != nil && ctx.Registry != nil {
+		return ctx.Registry
+	}
+	reg := NewDefaultEngineRegistry()
+	if ctx != nil {
+		ctx.Registry = reg
+	}
+	return reg
 }
 
 // HostilesPresent checks if any hostile mobs are within perception range.
@@ -599,8 +611,9 @@ func tryForagingPreemption(ctx *FSMContext, skillCtx *SkillContext) ([]FSMIntent
 	if ctx.IsDuskOrNight() && ctx.Frame.Status.FoodLevel > 6 {
 		return nil, false
 	}
+	reg := resolveContextRegistry(ctx)
 	var fSkill Skill = NewForagingSkill()
-	if s, ok := DefaultRegistry.GetSkill("foraging"); ok && s != nil {
+	if s, ok := reg.GetSkill("foraging"); ok && s != nil {
 		fSkill = s
 	}
 	if !fSkill.Preconditions(ctx.Facts) {
@@ -640,6 +653,7 @@ func (h *BootstrapStateHandler) OnTick(ctx *FSMContext) []FSMIntent {
 		return intents
 	}
 
+	reg := resolveContextRegistry(ctx)
 	if ctx.Facts == nil {
 		evalCtx := &EvaluatorContext{
 			AgentID:       ctx.AgentID,
@@ -650,10 +664,10 @@ func (h *BootstrapStateHandler) OnTick(ctx *FSMContext) []FSMIntent {
 			SafeNodes:     ctx.SafeNodes,
 			PavingTracker: ctx.PavingTracker,
 		}
-		ctx.Facts = DefaultRegistry.EvaluateAll(evalCtx)
+		ctx.Facts = reg.EvaluateAll(evalCtx)
 	}
 
-	// Biological needs (eating, sleep, wake) evaluated via DefaultRegistry / BiologicalNeedsSkill
+	// Biological needs (eating, sleep, wake) evaluated via EngineRegistry / BiologicalNeedsSkill
 	skillCtx := &SkillContext{
 		AgentID:       ctx.AgentID,
 		Frame:         ctx.Frame,
@@ -668,7 +682,7 @@ func (h *BootstrapStateHandler) OnTick(ctx *FSMContext) []FSMIntent {
 		hadAssignedBed = ctx.State.GetAssignedBed() != nil
 	}
 	var needsIntents []*civquestv1.AgentIntent
-	if skill, ok := DefaultRegistry.GetSkill("biological_needs"); ok && skill != nil {
+	if skill, ok := reg.GetSkill("biological_needs"); ok && skill != nil {
 		if skill.Preconditions(ctx.Facts) {
 			if si, err := skill.Execute(skillCtx, ctx.Facts); err == nil {
 				needsIntents = si
@@ -739,7 +753,7 @@ func (h *BootstrapStateHandler) OnTick(ctx *FSMContext) []FSMIntent {
 
 			if !deferShelterForActiveHarvest {
 				var shelterIntents []FSMIntent
-				if skillIntents, _, ok := DefaultRegistry.SelectAndExecuteSkill(skillCtx, ctx.Facts, "shelter"); ok && len(skillIntents) > 0 {
+				if skillIntents, _, ok := reg.SelectAndExecuteSkill(skillCtx, ctx.Facts, "shelter"); ok && len(skillIntents) > 0 {
 					for _, si := range skillIntents {
 						if si != nil {
 							shelterIntents = append(shelterIntents, FSMIntent{Intent: si, Priority: false})
@@ -815,7 +829,8 @@ func runBootstrapActivity(ctx *FSMContext, skillCtx *SkillContext, intents []FSM
 			return intents
 		}
 	}
-	if skillIntents, _, ok := DefaultRegistry.SelectAndExecuteSkill(skillCtx, ctx.Facts, "bootstrap"); ok && len(skillIntents) > 0 {
+	reg := resolveContextRegistry(ctx)
+	if skillIntents, _, ok := reg.SelectAndExecuteSkill(skillCtx, ctx.Facts, "bootstrap"); ok && len(skillIntents) > 0 {
 		for _, si := range skillIntents {
 			if si != nil {
 				intents = append(intents, FSMIntent{Intent: si, Priority: false})
@@ -848,6 +863,7 @@ func (h *SettlementStateHandler) OnTick(ctx *FSMContext) []FSMIntent {
 		return intents
 	}
 
+	reg := resolveContextRegistry(ctx)
 	if ctx.Facts == nil {
 		evalCtx := &EvaluatorContext{
 			AgentID:       ctx.AgentID,
@@ -858,10 +874,10 @@ func (h *SettlementStateHandler) OnTick(ctx *FSMContext) []FSMIntent {
 			SafeNodes:     ctx.SafeNodes,
 			PavingTracker: ctx.PavingTracker,
 		}
-		ctx.Facts = DefaultRegistry.EvaluateAll(evalCtx)
+		ctx.Facts = reg.EvaluateAll(evalCtx)
 	}
 
-	// Biological needs (eating, sleep, wake) evaluated via DefaultRegistry / BiologicalNeedsSkill
+	// Biological needs (eating, sleep, wake) evaluated via EngineRegistry / BiologicalNeedsSkill
 	skillCtx := &SkillContext{
 		AgentID:       ctx.AgentID,
 		Frame:         ctx.Frame,
@@ -876,7 +892,7 @@ func (h *SettlementStateHandler) OnTick(ctx *FSMContext) []FSMIntent {
 		hadAssignedBed = ctx.State.GetAssignedBed() != nil
 	}
 	var needsIntents []*civquestv1.AgentIntent
-	if skill, ok := DefaultRegistry.GetSkill("biological_needs"); ok && skill != nil {
+	if skill, ok := reg.GetSkill("biological_needs"); ok && skill != nil {
 		if skill.Preconditions(ctx.Facts) {
 			if si, err := skill.Execute(skillCtx, ctx.Facts); err == nil {
 				needsIntents = si
@@ -906,7 +922,7 @@ func (h *SettlementStateHandler) OnTick(ctx *FSMContext) []FSMIntent {
 
 	// Road paving (suppressed while 360-degree horizon survey is active)
 	if ctx.State == nil || !ctx.State.IsExpeditionSurveying(ctx.Frame.WorldTick) {
-		if skillIntents, _, ok := DefaultRegistry.SelectAndExecuteSkill(skillCtx, ctx.Facts, "infrastructure"); ok && len(skillIntents) > 0 {
+		if skillIntents, _, ok := reg.SelectAndExecuteSkill(skillCtx, ctx.Facts, "infrastructure"); ok && len(skillIntents) > 0 {
 			for _, si := range skillIntents {
 				if si != nil {
 					intents = append(intents, FSMIntent{Intent: si, Priority: false})
@@ -989,7 +1005,7 @@ func (h *SettlementStateHandler) OnTick(ctx *FSMContext) []FSMIntent {
 					return intents
 				}
 			}
-			if skillIntents, _, ok := DefaultRegistry.SelectAndExecuteSkill(skillCtx, ctx.Facts, "security", "exploration"); ok && len(skillIntents) > 0 {
+			if skillIntents, _, ok := reg.SelectAndExecuteSkill(skillCtx, ctx.Facts, "security", "exploration"); ok && len(skillIntents) > 0 {
 				for _, si := range skillIntents {
 					if si != nil {
 						intents = append(intents, FSMIntent{Intent: si, Priority: false})
@@ -1013,7 +1029,7 @@ func (h *SettlementStateHandler) OnTick(ctx *FSMContext) []FSMIntent {
 		}
 	case RoutineCivicPatrol:
 		if len(ctx.Frame.IncomingChats) == 0 && ctx.Frame.PendingTrade == nil {
-			if skillIntents, _, ok := DefaultRegistry.SelectAndExecuteSkill(skillCtx, ctx.Facts, "security", "exploration"); ok && len(skillIntents) > 0 {
+			if skillIntents, _, ok := reg.SelectAndExecuteSkill(skillCtx, ctx.Facts, "security", "exploration"); ok && len(skillIntents) > 0 {
 				for _, si := range skillIntents {
 					if si != nil {
 						intents = append(intents, FSMIntent{Intent: si, Priority: false})
@@ -1032,7 +1048,7 @@ func (h *SettlementStateHandler) OnTick(ctx *FSMContext) []FSMIntent {
 				State:   ctx.State,
 				CivicDB: ctx.CivicDB,
 			}
-			if skillIntents, _, ok := DefaultRegistry.SelectAndExecuteSkill(skillCtx, ctx.Facts, "Armory"); ok && len(skillIntents) > 0 {
+			if skillIntents, _, ok := reg.SelectAndExecuteSkill(skillCtx, ctx.Facts, "Armory"); ok && len(skillIntents) > 0 {
 				for _, si := range skillIntents {
 					if si != nil {
 						intents = append(intents, FSMIntent{Intent: si, Priority: false})
@@ -1063,7 +1079,7 @@ func (h *SettlementStateHandler) OnTick(ctx *FSMContext) []FSMIntent {
 					State:   ctx.State,
 					CivicDB: ctx.CivicDB,
 				}
-				if skillIntents, _, ok := DefaultRegistry.SelectAndExecuteSkill(skillCtx, ctx.Facts, "Armory"); ok && len(skillIntents) > 0 {
+				if skillIntents, _, ok := reg.SelectAndExecuteSkill(skillCtx, ctx.Facts, "Armory"); ok && len(skillIntents) > 0 {
 					for _, si := range skillIntents {
 						if si != nil {
 							intents = append(intents, FSMIntent{Intent: si, Priority: false})
@@ -1103,6 +1119,7 @@ func (h *ColonizeStateHandler) OnTick(ctx *FSMContext) []FSMIntent {
 		return intents
 	}
 
+	reg := resolveContextRegistry(ctx)
 	if ctx.Facts == nil {
 		evalCtx := &EvaluatorContext{
 			AgentID:       ctx.AgentID,
@@ -1113,7 +1130,7 @@ func (h *ColonizeStateHandler) OnTick(ctx *FSMContext) []FSMIntent {
 			SafeNodes:     ctx.SafeNodes,
 			PavingTracker: ctx.PavingTracker,
 		}
-		ctx.Facts = DefaultRegistry.EvaluateAll(evalCtx)
+		ctx.Facts = reg.EvaluateAll(evalCtx)
 	}
 
 	skillCtx := &SkillContext{
@@ -1138,7 +1155,7 @@ func (h *ColonizeStateHandler) OnTick(ctx *FSMContext) []FSMIntent {
 
 	// Road paving (suppressed while 360-degree horizon survey is active)
 	if ctx.State == nil || !ctx.State.IsExpeditionSurveying(ctx.Frame.WorldTick) {
-		if skillIntents, _, ok := DefaultRegistry.SelectAndExecuteSkill(skillCtx, ctx.Facts, "infrastructure"); ok && len(skillIntents) > 0 {
+		if skillIntents, _, ok := reg.SelectAndExecuteSkill(skillCtx, ctx.Facts, "infrastructure"); ok && len(skillIntents) > 0 {
 			for _, si := range skillIntents {
 				if si != nil {
 					intents = append(intents, FSMIntent{Intent: si, Priority: false})
@@ -1196,7 +1213,7 @@ func (h *ColonizeStateHandler) OnTick(ctx *FSMContext) []FSMIntent {
 			return intents
 		} else if surveyIntent := EvaluateHorizonExplorer(ctx.AgentID, ctx.Frame, ctx.Config, ctx.State); surveyIntent != nil {
 			intents = append(intents, FSMIntent{Intent: surveyIntent, Priority: false})
-		} else if skillIntents, _, ok := DefaultRegistry.SelectAndExecuteSkill(skillCtx, ctx.Facts, "exploration"); ok && len(skillIntents) > 0 {
+		} else if skillIntents, _, ok := reg.SelectAndExecuteSkill(skillCtx, ctx.Facts, "exploration"); ok && len(skillIntents) > 0 {
 			for _, si := range skillIntents {
 				if si != nil {
 					intents = append(intents, FSMIntent{Intent: si, Priority: false})
@@ -1229,6 +1246,7 @@ func (h *ShelterStateHandler) OnTick(ctx *FSMContext) []FSMIntent {
 		return intents
 	}
 
+	reg := resolveContextRegistry(ctx)
 	if ctx.Facts == nil {
 		evalCtx := &EvaluatorContext{
 			AgentID:       ctx.AgentID,
@@ -1239,7 +1257,7 @@ func (h *ShelterStateHandler) OnTick(ctx *FSMContext) []FSMIntent {
 			SafeNodes:     ctx.SafeNodes,
 			PavingTracker: ctx.PavingTracker,
 		}
-		ctx.Facts = DefaultRegistry.EvaluateAll(evalCtx)
+		ctx.Facts = reg.EvaluateAll(evalCtx)
 	}
 
 	skillCtx := &SkillContext{
@@ -1252,9 +1270,9 @@ func (h *ShelterStateHandler) OnTick(ctx *FSMContext) []FSMIntent {
 		PavingTracker: ctx.PavingTracker,
 	}
 
-	// Biological needs (eating, sleep, wake) evaluated via DefaultRegistry / BiologicalNeedsSkill
+	// Biological needs (eating, sleep, wake) evaluated via EngineRegistry / BiologicalNeedsSkill
 	var needsIntents []*civquestv1.AgentIntent
-	if skill, ok := DefaultRegistry.GetSkill("biological_needs"); ok && skill != nil {
+	if skill, ok := reg.GetSkill("biological_needs"); ok && skill != nil {
 		if skill.Preconditions(ctx.Facts) {
 			if si, err := skill.Execute(skillCtx, ctx.Facts); err == nil {
 				needsIntents = si
@@ -1273,7 +1291,7 @@ func (h *ShelterStateHandler) OnTick(ctx *FSMContext) []FSMIntent {
 
 	// Shelter construction (only if not busy with chat/trade)
 	if len(ctx.Frame.IncomingChats) == 0 && ctx.Frame.PendingTrade == nil {
-		if skillIntents, _, ok := DefaultRegistry.SelectAndExecuteSkill(skillCtx, ctx.Facts, "shelter"); ok && len(skillIntents) > 0 {
+		if skillIntents, _, ok := reg.SelectAndExecuteSkill(skillCtx, ctx.Facts, "shelter"); ok && len(skillIntents) > 0 {
 			for _, si := range skillIntents {
 				if si != nil {
 					intents = append(intents, FSMIntent{Intent: si, Priority: false})
@@ -1306,6 +1324,7 @@ func (h *EmergencyStateHandler) OnTick(ctx *FSMContext) []FSMIntent {
 		return intents
 	}
 
+	reg := resolveContextRegistry(ctx)
 	if ctx.Facts == nil {
 		evalCtx := &EvaluatorContext{
 			AgentID:       ctx.AgentID,
@@ -1316,7 +1335,7 @@ func (h *EmergencyStateHandler) OnTick(ctx *FSMContext) []FSMIntent {
 			SafeNodes:     ctx.SafeNodes,
 			PavingTracker: ctx.PavingTracker,
 		}
-		ctx.Facts = DefaultRegistry.EvaluateAll(evalCtx)
+		ctx.Facts = reg.EvaluateAll(evalCtx)
 	}
 
 	skillCtx := &SkillContext{
@@ -1330,7 +1349,7 @@ func (h *EmergencyStateHandler) OnTick(ctx *FSMContext) []FSMIntent {
 	}
 
 	var skillIntents []*civquestv1.AgentIntent
-	if skill, ok := DefaultRegistry.GetSkill("combat_defense"); ok && skill != nil {
+	if skill, ok := reg.GetSkill("combat_defense"); ok && skill != nil {
 		if skill.Preconditions(ctx.Facts) {
 			si, err := skill.Execute(skillCtx, ctx.Facts)
 			if err == nil {
@@ -1461,6 +1480,30 @@ type AgentFSM struct {
 	stack               []StateStackFrame
 	maxStackDepth       int
 	lastFacts           *FactGraph
+	registry            *EngineRegistry
+}
+
+// Registry returns the EngineRegistry bound to this AgentFSM.
+func (fsm *AgentFSM) Registry() *EngineRegistry {
+	if fsm == nil {
+		return nil
+	}
+	fsm.mu.RLock()
+	defer fsm.mu.RUnlock()
+	return fsm.registry
+}
+
+// SetRegistry replaces the EngineRegistry bound to this AgentFSM (falling back to NewDefaultEngineRegistry if nil).
+func (fsm *AgentFSM) SetRegistry(reg *EngineRegistry) {
+	if fsm == nil {
+		return
+	}
+	if reg == nil {
+		reg = NewDefaultEngineRegistry()
+	}
+	fsm.mu.Lock()
+	defer fsm.mu.Unlock()
+	fsm.registry = reg
 }
 
 // LastFacts returns the most recently evaluated FactGraph from Tick.
@@ -1476,8 +1519,15 @@ func (fsm *AgentFSM) LastFacts() *FactGraph {
 // AgentHFSM is an alias for AgentFSM representing the formal Two-Tier Hierarchical FSM.
 type AgentHFSM = AgentFSM
 
-// NewAgentFSM constructs an initialized AgentFSM with default state handlers and transition table.
+// NewAgentFSM constructs an initialized AgentFSM with default state handlers, transition table,
+// and an isolated default EngineRegistry.
 func NewAgentFSM(initial State, onTransition func(from, to State, reason string)) *AgentFSM {
+	return NewAgentFSMWithRegistry(initial, onTransition, nil)
+}
+
+// NewAgentFSMWithRegistry constructs an initialized AgentFSM with an explicit EngineRegistry
+// (falling back to NewDefaultEngineRegistry() if reg == nil).
+func NewAgentFSMWithRegistry(initial State, onTransition func(from, to State, reason string), reg *EngineRegistry) *AgentFSM {
 	if initial == "" {
 		initial = StageBootstrap
 	}
@@ -1486,6 +1536,9 @@ func NewAgentFSM(initial State, onTransition func(from, to State, reason string)
 		initialRoutine = RoutineEmergency
 	} else if initial == StageDead {
 		initialRoutine = RoutineDead
+	}
+	if reg == nil {
+		reg = NewDefaultEngineRegistry()
 	}
 	fsm := &AgentFSM{
 		currentStage:      initial,
@@ -1496,6 +1549,7 @@ func NewAgentFSM(initial State, onTransition func(from, to State, reason string)
 		handlers:          make(map[Stage]StateHandler),
 		transitions:       defaultTransitionRules(),
 		onStageTransition: onTransition,
+		registry:          reg,
 	}
 	fsm.RegisterHandler(&BootstrapStateHandler{})
 	fsm.RegisterHandler(&SettlementStateHandler{})
@@ -1816,7 +1870,19 @@ func (fsm *AgentFSM) Tick(ctx *FSMContext) FSMResult {
 		return FSMResult{Stage: StageBootstrap, Routine: RoutineDawnPrep, State: StageBootstrap}
 	}
 
+	var prevCtxRegistry *EngineRegistry
+	var restoreCtxRegistry bool
 	if ctx != nil {
+		prevCtxRegistry = ctx.Registry
+		reg := ctx.Registry
+		if reg == nil {
+			reg = fsm.Registry()
+			if reg == nil {
+				reg = NewDefaultEngineRegistry()
+			}
+			ctx.Registry = reg
+			restoreCtxRegistry = true
+		}
 		evalCtx := &EvaluatorContext{
 			AgentID:       ctx.AgentID,
 			Frame:         ctx.Frame,
@@ -1826,7 +1892,12 @@ func (fsm *AgentFSM) Tick(ctx *FSMContext) FSMResult {
 			SafeNodes:     ctx.SafeNodes,
 			PavingTracker: ctx.PavingTracker,
 		}
-		ctx.Facts = DefaultRegistry.EvaluateAll(evalCtx)
+		ctx.Facts = reg.EvaluateAll(evalCtx)
+	}
+	if restoreCtxRegistry {
+		defer func() {
+			ctx.Registry = prevCtxRegistry
+		}()
 	}
 
 	fsm.mu.Lock()

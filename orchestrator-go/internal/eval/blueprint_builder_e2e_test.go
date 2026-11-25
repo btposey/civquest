@@ -13,12 +13,12 @@ import (
 
 // TestBlueprintBuilder_E2E_AutonomousConstruction verifies end-to-end that an agent
 // autonomously builds a multi-level blueprint structure from schematics:
-// 1. Subterranean cellar level (Y = -1): naturally obstructed terrain is excavated first.
-// 2. Ground and roof levels (Y = 0, Y = 1): built in strict bottom-up layer order (Ymin -> Ymax).
-// 3. In-situ material taxonomy substitution: generic tags (#minecraft:planks, #minecraft:stairs)
-//    are resolved to available inventory stock while preserving directional properties (facing, half).
-// 4. Multi-agent quadrant partitioning: blocks partition into NW, NE, SW, SE with zero collision.
-// 5. Completion & persistence: functional zone is registered in civic_registry.db.
+//  1. Subterranean cellar level (Y = -1): naturally obstructed terrain is excavated first.
+//  2. Ground and roof levels (Y = 0, Y = 1): built in strict bottom-up layer order (Ymin -> Ymax).
+//  3. In-situ material taxonomy substitution: generic tags (#minecraft:planks, #minecraft:stairs)
+//     are resolved to available inventory stock while preserving directional properties (facing, half).
+//  4. Multi-agent quadrant partitioning: blocks partition into NW, NE, SW, SE with zero collision.
+//  5. Completion & persistence: functional zone is registered in civic_registry.db.
 func TestBlueprintBuilder_E2E_AutonomousConstruction(t *testing.T) {
 	tmpDir := t.TempDir()
 

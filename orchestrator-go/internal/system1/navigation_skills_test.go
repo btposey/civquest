@@ -345,28 +345,30 @@ func TestRoadPavingSkill_Execute(t *testing.T) {
 }
 
 func TestDefaultRegistry_NavigationSkillsIntegration(t *testing.T) {
+	reg := NewDefaultEngineRegistry()
+
 	// 1. Verify evaluators registered
-	navEval, ok := DefaultRegistry.GetEvaluator("navigation")
+	navEval, ok := reg.GetEvaluator("navigation")
 	if !ok || navEval == nil {
-		t.Fatalf("expected 'navigation' evaluator registered in DefaultRegistry")
+		t.Fatalf("expected 'navigation' evaluator registered in NewDefaultEngineRegistry()")
 	}
-	infraEval, ok := DefaultRegistry.GetEvaluator("infrastructure")
+	infraEval, ok := reg.GetEvaluator("infrastructure")
 	if !ok || infraEval == nil {
-		t.Fatalf("expected 'infrastructure' evaluator registered in DefaultRegistry")
+		t.Fatalf("expected 'infrastructure' evaluator registered in NewDefaultEngineRegistry()")
 	}
 
 	// 2. Verify skills registered
-	patrolSkill, ok := DefaultRegistry.GetSkill("civic_patrol")
+	patrolSkill, ok := reg.GetSkill("civic_patrol")
 	if !ok || patrolSkill == nil {
-		t.Fatalf("expected 'civic_patrol' skill registered in DefaultRegistry")
+		t.Fatalf("expected 'civic_patrol' skill registered in NewDefaultEngineRegistry()")
 	}
-	scoutSkill, ok := DefaultRegistry.GetSkill("frontier_scouting")
+	scoutSkill, ok := reg.GetSkill("frontier_scouting")
 	if !ok || scoutSkill == nil {
-		t.Fatalf("expected 'frontier_scouting' skill registered in DefaultRegistry")
+		t.Fatalf("expected 'frontier_scouting' skill registered in NewDefaultEngineRegistry()")
 	}
-	paveSkill, ok := DefaultRegistry.GetSkill("road_paving")
+	paveSkill, ok := reg.GetSkill("road_paving")
 	if !ok || paveSkill == nil {
-		t.Fatalf("expected 'road_paving' skill registered in DefaultRegistry")
+		t.Fatalf("expected 'road_paving' skill registered in NewDefaultEngineRegistry()")
 	}
 
 	// 3. Test SelectAndExecuteSkill for security (patrol)
@@ -402,14 +404,14 @@ func TestDefaultRegistry_NavigationSkillsIntegration(t *testing.T) {
 		Config:  cfg,
 		State:   state,
 	}
-	facts := DefaultRegistry.EvaluateAll(evalCtx)
+	facts := reg.EvaluateAll(evalCtx)
 
 	// Warmup
-	_, _, _ = DefaultRegistry.SelectAndExecuteSkill(skillCtx, facts, "security")
+	_, _, _ = reg.SelectAndExecuteSkill(skillCtx, facts, "security")
 
 	// Execute with frame2
 	skillCtx.Frame = frame2
-	intents, name, executed := DefaultRegistry.SelectAndExecuteSkill(skillCtx, facts, "security")
+	intents, name, executed := reg.SelectAndExecuteSkill(skillCtx, facts, "security")
 	if !executed || len(intents) == 0 {
 		t.Fatalf("expected SelectAndExecuteSkill to execute 'civic_patrol', got executed=%t, intents=%d", executed, len(intents))
 	}
