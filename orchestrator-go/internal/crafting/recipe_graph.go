@@ -557,6 +557,12 @@ func replaceInv(dst, src map[string]int) {
 	}
 }
 
+// CanCraftNow reports whether inv already holds every ingredient of recipeID.
+func (g *RecipeGraph) CanCraftNow(recipeID string, inv map[string]int) bool {
+	r, ok := g.RecipeByID(recipeID)
+	return ok && canCraftRecipeDirectly(r, inv)
+}
+
 // RecipeByID returns the indexed recipe with the given id.
 func (g *RecipeGraph) RecipeByID(recipeID string) (Recipe, bool) {
 	if g == nil {

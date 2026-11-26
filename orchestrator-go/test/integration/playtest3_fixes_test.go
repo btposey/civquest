@@ -96,3 +96,39 @@ func TestPlaytest3_01_BootstrapToBedStaysResponsiveOnCyclicCatalog(t *testing.T)
 		})
 	}
 }
+
+// (2) Bed plan without timber (found by the live smoke, 2026-11-26).
+//
+// UNFIXED BEHAVIOUR: with an axe, wool and no log in view the bed frame issued the planks
+// craft it had no ingredients for, every second, and held the stack while doing it.
+func TestPlaytest3_02_BedPlanWithoutLogsDoesNotCraftBlindly(t *testing.T) {
+	civic, err := db.OpenCivicRegistryDB(filepath.Join(t.TempDir(), "civic_registry.db"), "pioneers")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = civic.Close() })
+	inv := append(simKit(), &civquestv1.ItemStackProto{ItemId: "minecraft:white_wool", Count: 3})
+	s := eval.NewPlaytestSim(eval.PlaytestSimConfig{
+		Profession: "EXPLORER", Stage: system1.StageSettlement, World: groundWorld(30),
+		Start: eval.SimVec{X: 0.5, Y: 64, Z: 0.5}, Inventory: inv,
+		Setup: func(st *system1.AgentState) { st.SetBedRegistry(civic) },
+	})
+	bedTicks := 0
+	for elapsed := int64(0); elapsed < 2*simTicksPerMinute; elapsed += 4 {
+		if s.Step().Top == "bed" {
+			bedTicks++
+		}
+	}
+	failed := 0
+	for _, c := range s.Crafts {
+		if !c.OK {
+			failed++
+		}
+	}
+	if failed > 0 {
+		t.Errorf("%d crafts issued without ingredients: %+v", failed, s.Crafts[:min(len(s.Crafts), 6)])
+	}
+	if steps := len(s.Steps); bedTicks > steps/10 {
+		t.Errorf("bed frame held the stack for %d of %d steps with nothing it could do", bedTicks, steps)
+	}
+}

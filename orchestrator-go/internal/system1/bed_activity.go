@@ -154,7 +154,7 @@ func bedStep(ctx *FSMContext, bl *bedLocal) (intent *civquestv1.AgentIntent, wor
 				return bedNavigate(ctx.AgentID, frame, float64(step.Pos.X)+0.5, float64(step.Pos.Y), float64(step.Pos.Z)+0.5), true
 			}
 		case plan.StepPlace:
-			if woolMissing {
+			if woolMissing || inv[step.Item] <= 0 {
 				continue
 			}
 			if last := st.mem.lastShelterPlaceTick; last != 0 && tick >= last && tick-last < bedActionCooldown {
@@ -172,6 +172,11 @@ func bedStep(ctx *FSMContext, bl *bedLocal) (intent *civquestv1.AgentIntent, wor
 			}
 			if step.Requires3x3 && !inReach {
 				return nil, false
+			}
+			// A gather step may have found nothing, leaving the crafts that depend on it
+			// without ingredients: only issue what the inventory can actually make.
+			if !graph.CanCraftNow(step.RecipeID, inv) {
+				continue
 			}
 			if last := st.mem.lastCraftTick; last != 0 && tick >= last && tick-last < 20 {
 				return nil, true
