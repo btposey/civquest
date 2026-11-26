@@ -99,6 +99,9 @@ type expeditionLocal struct {
 	Blocked   []float32 // immutable; extend by copy
 	Returning bool
 	Home      [3]float64
+	// Forage marks a resource trip started from a settled agent: it scouts out and comes back
+	// instead of ending (homestead) or converging on the clan site at once (cq-6l3.3).
+	Forage bool
 
 	LastOrigin    [3]float64 // origin of the newest survey this expedition has seen
 	HasLastOrigin bool
@@ -200,6 +203,45 @@ func (s *AgentState) expeditionKnowledge(pos *civquestv1.Vec3) expeditionKnowled
 		k.Hazards = si.FindPOIsInRadius(pos, POICategoryHazard, 64.0)
 	}
 	return k
+}
+
+// settledSiteRadius: within it of the clan site, an agent has converged.
+const settledSiteRadius = 12.0
+
+// settledAt reports whether settlement scouting has nothing left to do at pos: the homestead is
+// claimed, or the clan site is chosen and reached.
+func (k expeditionKnowledge) settledAt(pos *civquestv1.Vec3) bool {
+	if k.Homesteaded {
+		return true
+	}
+	return pos != nil && k.Site != nil && k.ClanSize > 1 && math.Hypot(pos.X-k.Site[0], pos.Z-k.Site[2]) <= settledSiteRadius
+}
+
+// settledTripIdleTicks: how long a settled agent stands idle before a bootstrap walk may send
+// it out for resources. It is twice the daytime-idle contemplation threshold, so System 2 gets
+// to give it something to do first.
+const settledTripIdleTicks = 600
+
+// idleSince reports whether the agent has been idle for at least ticks.
+func (s *AgentState) idleSince(tick, ticks int64) bool {
+	start, ok, _, _, _ := s.IdleState()
+	return ok && start > 0 && tick-start >= ticks
+}
+
+// settledAt is the read-only form of expeditionKnowledge.settledAt for eligibility checks:
+// reading expeditionKnowledge also records the home origin.
+func (s *AgentState) settledAt(pos *civquestv1.Vec3) bool {
+	if s == nil {
+		return false
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	k := expeditionKnowledge{ClanSize: s.ClanSize, Homesteaded: s.HomesteadClaimed}
+	if s.CollectiveSiteChosen {
+		site := s.CollectiveSitePos
+		k.Site = &site
+	}
+	return k.settledAt(pos)
 }
 
 func (w *fsmWorld) knowledge() expeditionKnowledge {
@@ -390,6 +432,9 @@ func (expeditionActivity) Init(w htpda.World, args any) (any, htpda.Lease) {
 	if lw := asFSMWorld(w); lw != nil {
 		k := lw.knowledge()
 		loc.Home = k.Home
+		if pos := lw.pos(); a.Origin == activityKindBootstrap && k.settledAt(pos) {
+			loc.Forage, loc.Home = true, [3]float64{pos.X, pos.Y, pos.Z}
+		}
 		if k.SurveyTick > 0 {
 			loc.LastOrigin, loc.HasLastOrigin = k.SurveyOrigin, true
 		}
@@ -497,7 +542,7 @@ func (a expeditionActivity) decide(lw *fsmWorld, loc expeditionLocal) htpda.Step
 	loc.Home = firstHome(loc.Home, k.Home)
 
 	// Solo explorers who claimed a homestead stay settled there.
-	if k.Homesteaded {
+	if k.Homesteaded && !loc.Forage {
 		return a.done(lw)
 	}
 
@@ -509,8 +554,8 @@ func (a expeditionActivity) decide(lw *fsmWorld, loc expeditionLocal) htpda.Step
 	}
 
 	// If a collective clan settlement site was chosen, converge toward it when distant.
-	if k.Site != nil && k.ClanSize > 1 {
-		if math.Hypot(pos.X-k.Site[0], pos.Z-k.Site[2]) > 12.0 {
+	if k.Site != nil && k.ClanSize > 1 && !loc.Forage {
+		if !k.settledAt(pos) {
 			loc.Goal, loc.Target, loc.Leg = *k.Site, *k.Site, true
 			loc.Bearing = vectorToBearingDeg(k.Site[0]-pos.X, k.Site[2]-pos.Z)
 			return a.pushNavigate(lw, loc)
@@ -585,7 +630,7 @@ func (a expeditionActivity) onArrived(lw *fsmWorld, loc expeditionLocal, pos *ci
 	loc.Blocked = nil
 	loc.Leg = false
 
-	if k.ClanSize <= 1 {
+	if k.ClanSize <= 1 && !loc.Forage {
 		// Solo explorer: NEVER returns to the rendezvous origin; claims a homestead directly
 		// after chaining at least 2 outbound hops (or surveying locally at the candidate site).
 		distFromSurvey := math.Hypot(pos.X-k.SurveyOrigin[0], pos.Z-k.SurveyOrigin[2])
@@ -1258,12 +1303,19 @@ func (w *fsmWorld) expeditionStart(origin string) (expeditionArgs, bool) {
 	if w.skipped[activityKindExpedition] || w.ctx.State.IsExpeditionActive() || !w.expeditionEligible(origin) {
 		return expeditionArgs{}, false
 	}
+	// Once settled only a resource trip (bootstrap, after standing idle) has anything to do; any
+	// other expedition would finish in the same tick and be requested again.
+	if w.ctx.State.settledAt(w.pos()) &&
+		(origin != activityKindBootstrap || !w.ctx.State.idleSince(w.tick, settledTripIdleTicks)) {
+		return expeditionArgs{}, false
+	}
 	return expeditionArgs{Origin: origin}, true
 }
 
 // directiveExpeditionBid is the Expedition bid of an active SCOUT_FRONTIER directive.
 func (w *fsmWorld) directiveExpeditionBid() (float64, bool) {
-	if w.skipped[activityKindExpedition] || w.ctx == nil || w.ctx.State == nil || w.ctx.State.IsExpeditionActive() || w.surveyBackedOff() {
+	if w.skipped[activityKindExpedition] || w.ctx == nil || w.ctx.State == nil || w.ctx.State.IsExpeditionActive() || w.surveyBackedOff() ||
+		w.ctx.State.settledAt(w.pos()) {
 		return 0, false
 	}
 	return directiveExpeditionUtility(w.fsm.currentStage, w.fsm.currentRoutine, w.ctx)
