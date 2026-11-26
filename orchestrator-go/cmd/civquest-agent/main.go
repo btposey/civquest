@@ -11,6 +11,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"syscall"
+	"time"
 
 	"github.com/btposey/civquest/orchestrator-go/internal/agent"
 	"github.com/btposey/civquest/orchestrator-go/internal/bridge"
@@ -30,6 +31,9 @@ func main() {
 		os.Exit(1)
 	}
 }
+
+// exitStalled is the exit status after a stalled agent brain (sysexits EX_SOFTWARE).
+const exitStalled = 70
 
 func run(parentCtx context.Context, args []string, stdout, stderr io.Writer, r *xdg.Resolver) error {
 	flags := flag.NewFlagSet("civquest-agent", flag.ContinueOnError)
@@ -323,6 +327,13 @@ func run(parentCtx context.Context, args []string, stdout, stderr io.Writer, r *
 		DialogueService:   dialogueSvc,
 		ChroniclerService: chroniclerSvc,
 		ToponymyService:   toponymySvc,
+		OnStall: func(rep agent.StallReport) {
+			// The stuck frame cannot be interrupted, so exit non-zero and let the
+			// supervisor start a fresh process.
+			fmt.Fprintf(stderr, "[civquest-agent] Agent brain stalled for %v; exiting for restart (dump: %s)\n",
+				rep.Elapsed.Round(time.Second), rep.DumpPath)
+			os.Exit(exitStalled)
+		},
 		OnDeath: func(e *civquestv1.DeathEvent) {
 			fmt.Fprintf(stdout, "[civquest-agent] Permadeath event recorded at tick %d (cause: %s)\n",
 				e.GetWorldTick(), e.GetDamageSource())

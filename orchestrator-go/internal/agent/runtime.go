@@ -47,19 +47,23 @@ type StreamConnector interface {
 
 // Config provides initial configuration options for constructing an AgentRuntime.
 type Config struct {
-	AgentID              string
-	AgentUUID            string
-	ClanID               string
-	IdentityConfig       *xdg.AgentIdentityConfig
-	Resolver             *xdg.Resolver
-	AgentDB              *db.AgentDB
-	ReputationDB         *db.ReputationDB
-	MemoryPipeline       *memory.Pipeline
-	BridgeClient         *bridge.Client
-	StreamConnector      StreamConnector
-	SocketPath           string
-	IntentQueueSize      int
-	OnDeath              func(*civquestv1.DeathEvent)
+	AgentID         string
+	AgentUUID       string
+	ClanID          string
+	IdentityConfig  *xdg.AgentIdentityConfig
+	Resolver        *xdg.Resolver
+	AgentDB         *db.AgentDB
+	ReputationDB    *db.ReputationDB
+	MemoryPipeline  *memory.Pipeline
+	BridgeClient    *bridge.Client
+	StreamConnector StreamConnector
+	SocketPath      string
+	IntentQueueSize int
+	OnDeath         func(*civquestv1.DeathEvent)
+	// OnStall runs once if a telemetry frame is still processing after StallAfter
+	// (default DefaultStallAfter). The process owner decides whether to exit.
+	StallAfter           time.Duration
+	OnStall              func(StallReport)
 	DialogueService      *system2.DialogueService
 	ChroniclerService    *system2.ChroniclerService
 	ToponymyService      *system2.ToponymyService
@@ -170,6 +174,10 @@ type AgentRuntime struct {
 
 	// Diagnostics Telemetry & Metrics
 	frameLatencyMicros atomic.Int64
+	inFlight           atomic.Pointer[frameInFlight] // see stall.go
+	stallAfter         time.Duration
+	stallDumpDir       string
+	onStall            func(StallReport)
 	activeLLMRequests  atomic.Int32
 
 	// State and synchronization
@@ -289,7 +297,9 @@ func NewRuntime(cfg Config) (*AgentRuntime, error) {
 	}
 
 	var debugLog *DebugLogger
+	var stallDumpDir string
 	if r != nil {
+		stallDumpDir = r.LogsDir()
 		debugLog = NewDebugLogger(
 			r.AgentDebugJSONLPath(agentID),
 			r.PlaytestEventsJSONLPath(),
@@ -361,6 +371,9 @@ func NewRuntime(cfg Config) (*AgentRuntime, error) {
 		startTime:     time.Now().UTC(),
 		status:        "INITIALIZING",
 		onDeath:       cfg.OnDeath,
+		stallAfter:    cfg.StallAfter,
+		stallDumpDir:  stallDumpDir,
+		onStall:       cfg.OnStall,
 		done:          make(chan struct{}),
 		socketDone:    make(chan struct{}),
 		system1State:  sys1State,
@@ -1052,6 +1065,7 @@ func (r *AgentRuntime) Start(parentCtx context.Context) error {
 	// 4. Run intent sender goroutine
 	sendErrCh := make(chan error, 1)
 	go r.sendLoop(streamCtx, streamCancel, stream, sendErrCh)
+	go r.watchStalls(streamCtx)
 
 	// 5. Run telemetry receiver loop (blocks until stream terminates or death occurs)
 	recvErr := r.recvLoop(streamCtx, stream)
@@ -1264,6 +1278,7 @@ func (r *AgentRuntime) HandleTelemetryFrame(frame *civquestv1.TelemetryFrame) {
 	}
 
 	ctx := &FrameContext{Frame: frame}
+	defer r.beginFrame(frame.WorldTick)()
 	r.ensureFramePipeline().Run(r, ctx)
 }
 

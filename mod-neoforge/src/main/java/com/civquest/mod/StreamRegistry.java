@@ -23,6 +23,8 @@ public class StreamRegistry {
     private static final Logger LOGGER = LoggerFactory.getLogger(StreamRegistry.class);
 
     private final Map<String, StreamObserver<TelemetryFrame>> observers = new ConcurrentHashMap<>();
+    private static final long DROP_LOG_INTERVAL = 200;
+    private final Map<String, Long> droppedFrames = new ConcurrentHashMap<>();
     private final AtomicBoolean closed = new AtomicBoolean(false);
 
     /**
@@ -62,6 +64,7 @@ public class StreamRegistry {
         }
 
         StreamObserver<TelemetryFrame> previous = observers.put(agentId, observer);
+        droppedFrames.remove(agentId);
 
         if (closed.get()) {
             observers.remove(agentId, observer);
@@ -190,6 +193,18 @@ public class StreamRegistry {
     }
 
     /**
+     * Counts a frame dropped for backpressure. A stuck agent drops several per second, so only
+     * the first drop of a run and then every {@link #DROP_LOG_INTERVAL}th are logged.
+     */
+    private void recordDrop(String agentId) {
+        long dropped = droppedFrames.merge(agentId, 1L, Long::sum);
+        if (dropped == 1 || dropped % DROP_LOG_INTERVAL == 0) {
+            LOGGER.warn("Dropping telemetry frames for agent '{}': stream is not ready (backpressure), {} so far",
+                    agentId, dropped);
+        }
+    }
+
+    /**
      * Delivers a telemetry frame to the given observer with flow-control backpressure evaluation.
      *
      * @param agentId  the agent identifier
@@ -200,16 +215,20 @@ public class StreamRegistry {
      */
     private boolean sendFrameToObserver(String agentId, StreamObserver<TelemetryFrame> observer, TelemetryFrame frame, boolean force) {
         if (!force && observer instanceof CallStreamObserver<?> callObserver && !callObserver.isReady()) {
-            LOGGER.warn("Dropping telemetry frame for agent '{}': stream is not ready (backpressure)", agentId);
+            recordDrop(agentId);
             return false;
         }
         try {
             synchronized (observer) {
                 if (!force && observer instanceof CallStreamObserver<?> callObserver && !callObserver.isReady()) {
-                    LOGGER.warn("Dropping telemetry frame for agent '{}': stream is not ready (backpressure)", agentId);
+                    recordDrop(agentId);
                     return false;
                 }
                 observer.onNext(frame);
+            }
+            Long dropped = droppedFrames.remove(agentId);
+            if (dropped != null) {
+                LOGGER.info("Agent '{}' stream ready again after {} dropped telemetry frames", agentId, dropped);
             }
             return true;
         } catch (Throwable t) {
