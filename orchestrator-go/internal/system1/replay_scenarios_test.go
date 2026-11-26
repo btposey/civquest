@@ -47,6 +47,8 @@ func replayScenarios() []replayScenario {
 		scenarioZombieEngagementHeldOnce(),
 		scenarioSettlementBuildsRecommendedBlueprint(),
 		scenarioNineLogTrunkHarvestedToReach(),
+		scenarioCraftLatchHoldsLaggingInventory(),
+		scenarioCraftLatchRetriesAfterFailedReceipt(),
 	}
 }
 
@@ -530,6 +532,64 @@ func scenarioNineLogTrunkHarvestedToReach() replayScenario {
 			}
 			if hasIntentPrefix(tr[5], "Interact(HARVEST_BREAK") {
 				t.Fatalf("y=71/72 are out of reach and must not be targeted: %s", tr[5])
+			}
+		},
+	}
+}
+
+// craftLatchInv: logs ready to plank; the "lagging" inventory never reflects the craft.
+func craftLatchInv() fo { return withInv(item(0, "minecraft:oak_log", 6)) }
+
+func countCrafts(tr []replayRecord) int {
+	n := 0
+	for _, r := range tr {
+		if hasIntentPrefix(r, "Craft(") {
+			n++
+		}
+	}
+	return n
+}
+
+// 23 (cq-dcx.2): the playtest triple craft. The inventory lags the server, so the same craft
+// would be re-issued every 20 ticks; the latch holds it until the inventory changes.
+func scenarioCraftLatchHoldsLaggingInventory() replayScenario {
+	graph := func(st *AgentState) { st.SetRecipeGraph(newTestRecipeGraph()) }
+	return replayScenario{
+		Name: "craft_latch_lagging_inventory", Stage: StageBootstrap, Profession: "EXPLORER",
+		Steps: []replayStep{
+			{Frame: rf(400, 3000, craftLatchInv()), Setup: graph, Annotation: "craft issued"},
+			{Frame: rf(420, 3000, craftLatchInv()), Annotation: "inventory still lagging, throttle expired: latched, no re-issue"},
+			{Frame: rf(440, 3000, craftLatchInv()), Annotation: "still lagging: latched"},
+			{Frame: rf(460, 3000, craftLatchInv()), Annotation: "still lagging: latched"},
+			{Frame: rf(480, 3000, withInv(item(0, "minecraft:oak_log", 5), item(1, "minecraft:oak_planks", 4))), Annotation: "inventory reflects the craft: latch released, next step"},
+		},
+		Check: func(t *testing.T, tr []replayRecord) {
+			if !hasIntentPrefix(tr[0], "Craft(minecraft:oak_planks") {
+				t.Fatalf("expected the first craft at t=400: %s", tr[0])
+			}
+			if n := countCrafts(tr[:4]); n != 1 {
+				t.Fatalf("lagging inventory must yield exactly one craft intent, got %d:\n%s", n, renderTrace(tr))
+			}
+		},
+	}
+}
+
+// 24 (cq-dcx.2): a FAILED receipt for the craft releases the latch so it is retried.
+func scenarioCraftLatchRetriesAfterFailedReceipt() replayScenario {
+	graph := func(st *AgentState) { st.SetRecipeGraph(newTestRecipeGraph()) }
+	return replayScenario{
+		Name: "craft_latch_failed_receipt_retries", Stage: StageBootstrap, Profession: "EXPLORER",
+		Steps: []replayStep{
+			{Frame: rf(400, 3000, craftLatchInv()), Setup: graph, Annotation: "craft issued"},
+			{Frame: rf(420, 3000, craftLatchInv()), Annotation: "latched"},
+			{Frame: rf(425, 3000, craftLatchInv()), Receipt: receipt(1, rcFailed, "craft failed"), Annotation: "failed receipt releases the latch; throttle elapsed: the craft is retried"},
+		},
+		Check: func(t *testing.T, tr []replayRecord) {
+			if !hasIntentPrefix(tr[0], "Craft(") || len(tr[1].Intents) != 0 {
+				t.Fatalf("expected craft then hold:\n%s", renderTrace(tr))
+			}
+			if !hasIntentPrefix(tr[2], "Craft(") {
+				t.Fatalf("expected the craft retried after the failed receipt:\n%s", renderTrace(tr))
 			}
 		},
 	}

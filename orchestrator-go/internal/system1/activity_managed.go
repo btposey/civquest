@@ -116,6 +116,7 @@ func stepManaged(a waterfallActivity, w htpda.World, local any, ev htpda.Event) 
 			// this frame; until the task is framed (next tick) its receipts belong to it.
 			next = n
 		}
+		next = releaseCraftOnReceipt(next, rc)
 		// The frame that owns the failing intent owns its recovery (ADR-037 §3.2).
 		if args, ok := lw.recoverArgsFor(e, 0); ok {
 			args.Dig = scoutDigAllowed(local)

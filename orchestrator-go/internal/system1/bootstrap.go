@@ -295,10 +295,11 @@ func evaluateBootstrapGoalsLocked(
 				continue
 			}
 			if step.CanExecuteNow {
-				if !canCraft {
+				if !canCraft || walk.craftHeld(recipeGraph, step.RecipeID, invMap, frame.WorldTick) {
 					return nil
 				}
 				state.mem.lastCraftTick = frame.WorldTick
+				walk.armCraft(recipeGraph, step.RecipeID, invMap, frame.WorldTick)
 				craftIntent := &civquestv1.CraftItemIntent{
 					RecipeId:   step.RecipeID,
 					BatchCount: 1,
@@ -386,8 +387,9 @@ func evaluateBootstrapGoalsLocked(
 				} else if tableStep, tableOK := recipeGraph.PlanNextStep("minecraft:crafting_table", invMap, false); tableOK && tableStep.CanExecuteNow {
 					// Autonomous self-reliance: craft our own table in 2x2 pocket crafting
 					// if no reachable crafting table exists.
-					if canCraft {
+					if canCraft && !walk.craftHeld(recipeGraph, tableStep.RecipeID, invMap, frame.WorldTick) {
 						state.mem.lastCraftTick = frame.WorldTick
+						walk.armCraft(recipeGraph, tableStep.RecipeID, invMap, frame.WorldTick)
 						return &civquestv1.AgentIntent{
 							AgentId: agentID,
 							Action: &civquestv1.AgentIntent_CraftItem{
@@ -406,7 +408,7 @@ func evaluateBootstrapGoalsLocked(
 	}
 
 	if !inv.hasLight && canCraft && !recipeGraph.IsEmpty() {
-		if craftIntent := craftLightSourceIntentLocked(agentID, frame.WorldTick, invMap, nearestCraftingTable, bestTableDistSq, pos, state); craftIntent != nil {
+		if craftIntent := craftLightSourceIntentLocked(agentID, frame.WorldTick, invMap, nearestCraftingTable, bestTableDistSq, pos, state, walk); craftIntent != nil {
 			return craftIntent
 		}
 	}
@@ -632,6 +634,7 @@ func craftLightSourceIntentLocked(
 	bestTableDistSq float64,
 	pos *civquestv1.Vec3,
 	state *AgentState,
+	walk *walkLocal,
 ) *civquestv1.AgentIntent {
 	if state == nil {
 		return nil
@@ -643,8 +646,9 @@ func craftLightSourceIntentLocked(
 
 	tableInReach := isCraftingTableWithinReach(nearestCraftingTable, bestTableDistSq, pos)
 	if tableInReach {
-		if step, ok := recipeGraph.PlanNextStep("minecraft:campfire", invMap, true); ok && step.CanExecuteNow {
+		if step, ok := recipeGraph.PlanNextStep("minecraft:campfire", invMap, true); ok && step.CanExecuteNow && !walk.craftHeld(recipeGraph, step.RecipeID, invMap, worldTick) {
 			state.mem.lastCraftTick = worldTick
+			walk.armCraft(recipeGraph, step.RecipeID, invMap, worldTick)
 			craftIntent := &civquestv1.CraftItemIntent{
 				RecipeId:   step.RecipeID,
 				BatchCount: 1,
@@ -661,8 +665,9 @@ func craftLightSourceIntentLocked(
 		}
 	}
 
-	if step, ok := recipeGraph.PlanNextStep("minecraft:torch", invMap, tableInReach); ok && step.CanExecuteNow {
+	if step, ok := recipeGraph.PlanNextStep("minecraft:torch", invMap, tableInReach); ok && step.CanExecuteNow && !walk.craftHeld(recipeGraph, step.RecipeID, invMap, worldTick) {
 		state.mem.lastCraftTick = worldTick
+		walk.armCraft(recipeGraph, step.RecipeID, invMap, worldTick)
 		craftIntent := &civquestv1.CraftItemIntent{
 			RecipeId:   step.RecipeID,
 			BatchCount: 1,

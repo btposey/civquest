@@ -33,6 +33,9 @@ type walkLocal struct {
 	// taskReceipt is the receipt routed to it, consumed by its next step.
 	task        *TaskSubroutine
 	taskReceipt *civquestv1.IntentReceipt
+
+	// craftLatch holds the in-flight craft until the inventory reflects it (cq-dcx.2).
+	craftLatch craftLatch
 }
 
 func orFreshWalk(w *walkLocal) *walkLocal {

@@ -436,7 +436,7 @@ func evaluateDuskNightOutpostShelterLocked(
 		}
 		if !inv.hasLight && canCraft && !recipeGraph.IsEmpty() {
 			nearestTable, _, bestTableDistSq := findNearestCraftingTableLocked(frame, pos, state)
-			if craftIntent := craftLightSourceIntentLocked(agentID, frame.WorldTick, invMap, nearestTable, bestTableDistSq, pos, state); craftIntent != nil {
+			if craftIntent := craftLightSourceIntentLocked(agentID, frame.WorldTick, invMap, nearestTable, bestTableDistSq, pos, state, nil); craftIntent != nil {
 				return craftIntent
 			}
 		}

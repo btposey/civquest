@@ -533,3 +533,18 @@ func replaceInv(dst, src map[string]int) {
 		}
 	}
 }
+
+// RecipeByID returns the indexed recipe with the given id.
+func (g *RecipeGraph) RecipeByID(recipeID string) (Recipe, bool) {
+	if g == nil {
+		return Recipe{}, false
+	}
+	for _, list := range g.byResult {
+		for _, r := range list {
+			if r.RecipeID == recipeID {
+				return r, true
+			}
+		}
+	}
+	return Recipe{}, false
+}

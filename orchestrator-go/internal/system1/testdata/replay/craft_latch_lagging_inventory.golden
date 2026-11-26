@@ -1,0 +1,5 @@
+t=400 stage=BOOTSTRAP routine=PRIMARY_DUTY stack=[bootstrap/1] intents=[Craft(minecraft:oak_planks x1)]  // craft issued
+t=420 stage=BOOTSTRAP routine=PRIMARY_DUTY stack=[bootstrap/1] intents=[]  // inventory still lagging, throttle expired: latched, no re-issue
+t=440 stage=BOOTSTRAP routine=PRIMARY_DUTY stack=[survey/3] intents=[Survey(sectors=36)]  // still lagging: latched
+t=460 stage=BOOTSTRAP routine=PRIMARY_DUTY stack=[survey/3] intents=[]  // still lagging: latched
+t=480 stage=BOOTSTRAP routine=PRIMARY_DUTY stack=[survey/3] intents=[]  // inventory reflects the craft: latch released, next step

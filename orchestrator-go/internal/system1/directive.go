@@ -326,7 +326,7 @@ func evaluateDirectiveMineStone(
 	bestBlock, bestDistSq := findNearestMineableStoneBlock(frame, pos, inventory)
 	if bestBlock == nil {
 		if _, havePick := BestToolTier(inventory, ToolClassPickaxe); !havePick {
-			return craftToolIntentLocked(agentID, frame, state, pos, "minecraft:wooden_pickaxe")
+			return craftToolIntentLocked(agentID, frame, state, pos, "minecraft:wooden_pickaxe", &loc.Walk)
 		}
 	}
 	if bestBlock != nil {
@@ -589,7 +589,7 @@ func isMineableStoneBlockID(raw string) bool {
 // craftToolIntentLocked returns a craft intent for targetID when the recipe graph can
 // execute the next step now (with a table in reach for 3x3 steps), else nil so the bootstrap
 // progression (timber, table) supplies the materials. state.mu must be held.
-func craftToolIntentLocked(agentID string, frame *civquestv1.TelemetryFrame, state *AgentState, pos *civquestv1.Vec3, targetID string) *civquestv1.AgentIntent {
+func craftToolIntentLocked(agentID string, frame *civquestv1.TelemetryFrame, state *AgentState, pos *civquestv1.Vec3, targetID string, walk *walkLocal) *civquestv1.AgentIntent {
 	graph := state.RecipeGraphLocked()
 	if graph.IsEmpty() {
 		return nil
@@ -603,7 +603,12 @@ func craftToolIntentLocked(agentID string, frame *civquestv1.TelemetryFrame, sta
 	if !ok || !step.CanExecuteNow {
 		return nil
 	}
+	invMap := crafting.InventoryMapFromProtos(frame.Status.Inventory)
+	if walk.craftHeld(graph, step.RecipeID, invMap, frame.WorldTick) {
+		return nil
+	}
 	state.mem.lastCraftTick = frame.WorldTick
+	walk.armCraft(graph, step.RecipeID, invMap, frame.WorldTick)
 	craft := &civquestv1.CraftItemIntent{RecipeId: step.RecipeID, BatchCount: 1}
 	if step.Requires3x3 && table != nil {
 		craft.WorkstationPos = table.Pos
