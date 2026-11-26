@@ -170,6 +170,9 @@ message AgentStatus {
   repeated int32 leashed_entity_ids = 15;
   float stamina = 16;           // 0 - 100 sprint stamina
   bool navigation_enclosed = 17; // true when local BFS finds no exit (pit / sealed pocket)
+  bool submerged = 18;          // eyes in water (sustained drowning hazard; is_in_water is feet/body)
+  int32 air_supply = 19;        // remaining air ticks (Entity#getAirSupply)
+  int32 max_air_supply = 20;    // Entity#getMaxAirSupply (300 default)
 }
 
 message VisibleEntity {

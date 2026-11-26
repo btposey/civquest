@@ -206,6 +206,20 @@ public class SensoryFrustumCollectorTest {
     }
 
     @Test
+    @DisplayName("AgentStatus sustained hazard fields roundtrip through serialization")
+    void testSustainedHazardFieldsRoundtrip() throws Exception {
+        AgentStatus status = AgentStatus.newBuilder()
+                .setIsInWater(true).setSubmerged(true).setIsOnFire(true)
+                .setAirSupply(120).setMaxAirSupply(300).build();
+        AgentStatus parsed = AgentStatus.parseFrom(status.toByteArray());
+        assertTrue(parsed.getIsInWater());
+        assertTrue(parsed.getSubmerged());
+        assertTrue(parsed.getIsOnFire());
+        assertEquals(120, parsed.getAirSupply());
+        assertEquals(300, parsed.getMaxAirSupply());
+    }
+
+    @Test
     @DisplayName("TelemetryFrame assembly roundtrip preserves all sensory frustum components")
     void testTelemetryFrameAssembly() {
         TelemetryFrame frame = TelemetryFrame.newBuilder()

@@ -171,4 +171,34 @@ public interface AgentStatusOrBuilder extends
    * @return The navigationEnclosed.
    */
   boolean getNavigationEnclosed();
+
+  /**
+   * <pre>
+   * eyes in water (sustained drowning hazard; is_in_water is feet/body)
+   * </pre>
+   *
+   * <code>bool submerged = 18;</code>
+   * @return The submerged.
+   */
+  boolean getSubmerged();
+
+  /**
+   * <pre>
+   * remaining air ticks (Entity#getAirSupply)
+   * </pre>
+   *
+   * <code>int32 air_supply = 19;</code>
+   * @return The airSupply.
+   */
+  int getAirSupply();
+
+  /**
+   * <pre>
+   * Entity#getMaxAirSupply (300 default)
+   * </pre>
+   *
+   * <code>int32 max_air_supply = 20;</code>
+   * @return The maxAirSupply.
+   */
+  int getMaxAirSupply();
 }

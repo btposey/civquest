@@ -132,6 +132,9 @@ public class SensoryFrustumCollector {
                 .setIsSleeping(agent.isSleeping())
                 .setIsInWater(agent.isInWater())
                 .setIsOnFire(agent.isOnFire())
+                .setSubmerged(agent.isUnderWater())
+                .setAirSupply(agent.getAirSupply())
+                .setMaxAirSupply(agent.getMaxAirSupply())
                 .setNavigationState(agent.getNavigator() != null
                         ? agent.getNavigator().getReportedNavigationState()
                         : NavigationState.NAVIGATION_STATE_IDLE)

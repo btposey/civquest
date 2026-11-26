@@ -1429,6 +1429,9 @@ type AgentStatus struct {
 	LeashedEntityIds   []int32                `protobuf:"varint,15,rep,packed,name=leashed_entity_ids,json=leashedEntityIds,proto3" json:"leashed_entity_ids,omitempty"`
 	Stamina            float32                `protobuf:"fixed32,16,opt,name=stamina,proto3" json:"stamina,omitempty"`                                                // 0 - 100 sprint stamina
 	NavigationEnclosed bool                   `protobuf:"varint,17,opt,name=navigation_enclosed,json=navigationEnclosed,proto3" json:"navigation_enclosed,omitempty"` // true when local BFS finds no exit (pit / sealed pocket)
+	Submerged          bool                   `protobuf:"varint,18,opt,name=submerged,proto3" json:"submerged,omitempty"`                                             // eyes in water (sustained drowning hazard; is_in_water is feet/body)
+	AirSupply          int32                  `protobuf:"varint,19,opt,name=air_supply,json=airSupply,proto3" json:"air_supply,omitempty"`                            // remaining air ticks (Entity#getAirSupply)
+	MaxAirSupply       int32                  `protobuf:"varint,20,opt,name=max_air_supply,json=maxAirSupply,proto3" json:"max_air_supply,omitempty"`                 // Entity#getMaxAirSupply (300 default)
 	unknownFields      protoimpl.UnknownFields
 	sizeCache          protoimpl.SizeCache
 }
@@ -1580,6 +1583,27 @@ func (x *AgentStatus) GetNavigationEnclosed() bool {
 		return x.NavigationEnclosed
 	}
 	return false
+}
+
+func (x *AgentStatus) GetSubmerged() bool {
+	if x != nil {
+		return x.Submerged
+	}
+	return false
+}
+
+func (x *AgentStatus) GetAirSupply() int32 {
+	if x != nil {
+		return x.AirSupply
+	}
+	return 0
+}
+
+func (x *AgentStatus) GetMaxAirSupply() int32 {
+	if x != nil {
+		return x.MaxAirSupply
+	}
+	return 0
 }
 
 type VisibleEntity struct {
@@ -3997,7 +4021,7 @@ const file_civquest_v1_civquest_proto_rawDesc = "" +
 	"\x1alast_processed_sequence_id\x18\x0e \x01(\x03R\x17lastProcessedSequenceId\x12@\n" +
 	"\x0ereflex_notices\x18\x0f \x03(\v2\x19.civquest.v1.ReflexNoticeR\rreflexNotices\x124\n" +
 	"\areceipt\x18\x10 \x01(\v2\x1a.civquest.v1.IntentReceiptR\areceipt\x12G\n" +
-	"\x0ehorizon_survey\x18\x11 \x01(\v2 .civquest.v1.HorizonSurveyReportR\rhorizonSurvey\"\xee\x04\n" +
+	"\x0ehorizon_survey\x18\x11 \x01(\v2 .civquest.v1.HorizonSurveyReportR\rhorizonSurvey\"\xd1\x05\n" +
 	"\vAgentStatus\x12\x19\n" +
 	"\bagent_id\x18\x01 \x01(\tR\aagentId\x12\x1b\n" +
 	"\tentity_id\x18\x02 \x01(\x05R\bentityId\x12-\n" +
@@ -4022,7 +4046,11 @@ const file_civquest_v1_civquest_proto_rawDesc = "" +
 	"\tinventory\x18\x0e \x03(\v2\x1b.civquest.v1.ItemStackProtoR\tinventory\x12,\n" +
 	"\x12leashed_entity_ids\x18\x0f \x03(\x05R\x10leashedEntityIds\x12\x18\n" +
 	"\astamina\x18\x10 \x01(\x02R\astamina\x12/\n" +
-	"\x13navigation_enclosed\x18\x11 \x01(\bR\x12navigationEnclosed\"\xe2\x02\n" +
+	"\x13navigation_enclosed\x18\x11 \x01(\bR\x12navigationEnclosed\x12\x1c\n" +
+	"\tsubmerged\x18\x12 \x01(\bR\tsubmerged\x12\x1d\n" +
+	"\n" +
+	"air_supply\x18\x13 \x01(\x05R\tairSupply\x12$\n" +
+	"\x0emax_air_supply\x18\x14 \x01(\x05R\fmaxAirSupply\"\xe2\x02\n" +
 	"\rVisibleEntity\x12\x1b\n" +
 	"\tentity_id\x18\x01 \x01(\x05R\bentityId\x12\x12\n" +
 	"\x04uuid\x18\x02 \x01(\tR\x04uuid\x12\x1f\n" +

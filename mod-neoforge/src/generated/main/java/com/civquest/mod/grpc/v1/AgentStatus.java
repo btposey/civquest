@@ -345,6 +345,51 @@ private static final long serialVersionUID = 0L;
     return navigationEnclosed_;
   }
 
+  public static final int SUBMERGED_FIELD_NUMBER = 18;
+  private boolean submerged_ = false;
+  /**
+   * <pre>
+   * eyes in water (sustained drowning hazard; is_in_water is feet/body)
+   * </pre>
+   *
+   * <code>bool submerged = 18;</code>
+   * @return The submerged.
+   */
+  @java.lang.Override
+  public boolean getSubmerged() {
+    return submerged_;
+  }
+
+  public static final int AIR_SUPPLY_FIELD_NUMBER = 19;
+  private int airSupply_ = 0;
+  /**
+   * <pre>
+   * remaining air ticks (Entity#getAirSupply)
+   * </pre>
+   *
+   * <code>int32 air_supply = 19;</code>
+   * @return The airSupply.
+   */
+  @java.lang.Override
+  public int getAirSupply() {
+    return airSupply_;
+  }
+
+  public static final int MAX_AIR_SUPPLY_FIELD_NUMBER = 20;
+  private int maxAirSupply_ = 0;
+  /**
+   * <pre>
+   * Entity#getMaxAirSupply (300 default)
+   * </pre>
+   *
+   * <code>int32 max_air_supply = 20;</code>
+   * @return The maxAirSupply.
+   */
+  @java.lang.Override
+  public int getMaxAirSupply() {
+    return maxAirSupply_;
+  }
+
   private byte memoizedIsInitialized = -1;
   @java.lang.Override
   public final boolean isInitialized() {
@@ -414,6 +459,15 @@ private static final long serialVersionUID = 0L;
     }
     if (navigationEnclosed_ != false) {
       output.writeBool(17, navigationEnclosed_);
+    }
+    if (submerged_ != false) {
+      output.writeBool(18, submerged_);
+    }
+    if (airSupply_ != 0) {
+      output.writeInt32(19, airSupply_);
+    }
+    if (maxAirSupply_ != 0) {
+      output.writeInt32(20, maxAirSupply_);
     }
     getUnknownFields().writeTo(output);
   }
@@ -501,6 +555,18 @@ private static final long serialVersionUID = 0L;
       size += com.google.protobuf.CodedOutputStream
         .computeBoolSize(17, navigationEnclosed_);
     }
+    if (submerged_ != false) {
+      size += com.google.protobuf.CodedOutputStream
+        .computeBoolSize(18, submerged_);
+    }
+    if (airSupply_ != 0) {
+      size += com.google.protobuf.CodedOutputStream
+        .computeInt32Size(19, airSupply_);
+    }
+    if (maxAirSupply_ != 0) {
+      size += com.google.protobuf.CodedOutputStream
+        .computeInt32Size(20, maxAirSupply_);
+    }
     size += getUnknownFields().getSerializedSize();
     memoizedSize = size;
     return size;
@@ -558,6 +624,12 @@ private static final long serialVersionUID = 0L;
             other.getStamina())) return false;
     if (getNavigationEnclosed()
         != other.getNavigationEnclosed()) return false;
+    if (getSubmerged()
+        != other.getSubmerged()) return false;
+    if (getAirSupply()
+        != other.getAirSupply()) return false;
+    if (getMaxAirSupply()
+        != other.getMaxAirSupply()) return false;
     if (!getUnknownFields().equals(other.getUnknownFields())) return false;
     return true;
   }
@@ -619,6 +691,13 @@ private static final long serialVersionUID = 0L;
     hash = (37 * hash) + NAVIGATION_ENCLOSED_FIELD_NUMBER;
     hash = (53 * hash) + com.google.protobuf.Internal.hashBoolean(
         getNavigationEnclosed());
+    hash = (37 * hash) + SUBMERGED_FIELD_NUMBER;
+    hash = (53 * hash) + com.google.protobuf.Internal.hashBoolean(
+        getSubmerged());
+    hash = (37 * hash) + AIR_SUPPLY_FIELD_NUMBER;
+    hash = (53 * hash) + getAirSupply();
+    hash = (37 * hash) + MAX_AIR_SUPPLY_FIELD_NUMBER;
+    hash = (53 * hash) + getMaxAirSupply();
     hash = (29 * hash) + getUnknownFields().hashCode();
     memoizedHashCode = hash;
     return hash;
@@ -784,6 +863,9 @@ private static final long serialVersionUID = 0L;
       leashedEntityIds_ = emptyIntList();
       stamina_ = 0F;
       navigationEnclosed_ = false;
+      submerged_ = false;
+      airSupply_ = 0;
+      maxAirSupply_ = 0;
       return this;
     }
 
@@ -883,6 +965,15 @@ private static final long serialVersionUID = 0L;
       if (((from_bitField0_ & 0x00010000) != 0)) {
         result.navigationEnclosed_ = navigationEnclosed_;
       }
+      if (((from_bitField0_ & 0x00020000) != 0)) {
+        result.submerged_ = submerged_;
+      }
+      if (((from_bitField0_ & 0x00040000) != 0)) {
+        result.airSupply_ = airSupply_;
+      }
+      if (((from_bitField0_ & 0x00080000) != 0)) {
+        result.maxAirSupply_ = maxAirSupply_;
+      }
       result.bitField0_ |= to_bitField0_;
     }
 
@@ -981,6 +1072,15 @@ private static final long serialVersionUID = 0L;
       }
       if (other.getNavigationEnclosed() != false) {
         setNavigationEnclosed(other.getNavigationEnclosed());
+      }
+      if (other.getSubmerged() != false) {
+        setSubmerged(other.getSubmerged());
+      }
+      if (other.getAirSupply() != 0) {
+        setAirSupply(other.getAirSupply());
+      }
+      if (other.getMaxAirSupply() != 0) {
+        setMaxAirSupply(other.getMaxAirSupply());
       }
       this.mergeUnknownFields(other.getUnknownFields());
       onChanged();
@@ -1114,6 +1214,21 @@ private static final long serialVersionUID = 0L;
               bitField0_ |= 0x00010000;
               break;
             } // case 136
+            case 144: {
+              submerged_ = input.readBool();
+              bitField0_ |= 0x00020000;
+              break;
+            } // case 144
+            case 152: {
+              airSupply_ = input.readInt32();
+              bitField0_ |= 0x00040000;
+              break;
+            } // case 152
+            case 160: {
+              maxAirSupply_ = input.readInt32();
+              bitField0_ |= 0x00080000;
+              break;
+            } // case 160
             default: {
               if (!super.parseUnknownField(input, extensionRegistry, tag)) {
                 done = true; // was an endgroup tag
@@ -2117,6 +2232,138 @@ private static final long serialVersionUID = 0L;
     public Builder clearNavigationEnclosed() {
       bitField0_ = (bitField0_ & ~0x00010000);
       navigationEnclosed_ = false;
+      onChanged();
+      return this;
+    }
+
+    private boolean submerged_ ;
+    /**
+     * <pre>
+     * eyes in water (sustained drowning hazard; is_in_water is feet/body)
+     * </pre>
+     *
+     * <code>bool submerged = 18;</code>
+     * @return The submerged.
+     */
+    @java.lang.Override
+    public boolean getSubmerged() {
+      return submerged_;
+    }
+    /**
+     * <pre>
+     * eyes in water (sustained drowning hazard; is_in_water is feet/body)
+     * </pre>
+     *
+     * <code>bool submerged = 18;</code>
+     * @param value The submerged to set.
+     * @return This builder for chaining.
+     */
+    public Builder setSubmerged(boolean value) {
+
+      submerged_ = value;
+      bitField0_ |= 0x00020000;
+      onChanged();
+      return this;
+    }
+    /**
+     * <pre>
+     * eyes in water (sustained drowning hazard; is_in_water is feet/body)
+     * </pre>
+     *
+     * <code>bool submerged = 18;</code>
+     * @return This builder for chaining.
+     */
+    public Builder clearSubmerged() {
+      bitField0_ = (bitField0_ & ~0x00020000);
+      submerged_ = false;
+      onChanged();
+      return this;
+    }
+
+    private int airSupply_ ;
+    /**
+     * <pre>
+     * remaining air ticks (Entity#getAirSupply)
+     * </pre>
+     *
+     * <code>int32 air_supply = 19;</code>
+     * @return The airSupply.
+     */
+    @java.lang.Override
+    public int getAirSupply() {
+      return airSupply_;
+    }
+    /**
+     * <pre>
+     * remaining air ticks (Entity#getAirSupply)
+     * </pre>
+     *
+     * <code>int32 air_supply = 19;</code>
+     * @param value The airSupply to set.
+     * @return This builder for chaining.
+     */
+    public Builder setAirSupply(int value) {
+
+      airSupply_ = value;
+      bitField0_ |= 0x00040000;
+      onChanged();
+      return this;
+    }
+    /**
+     * <pre>
+     * remaining air ticks (Entity#getAirSupply)
+     * </pre>
+     *
+     * <code>int32 air_supply = 19;</code>
+     * @return This builder for chaining.
+     */
+    public Builder clearAirSupply() {
+      bitField0_ = (bitField0_ & ~0x00040000);
+      airSupply_ = 0;
+      onChanged();
+      return this;
+    }
+
+    private int maxAirSupply_ ;
+    /**
+     * <pre>
+     * Entity#getMaxAirSupply (300 default)
+     * </pre>
+     *
+     * <code>int32 max_air_supply = 20;</code>
+     * @return The maxAirSupply.
+     */
+    @java.lang.Override
+    public int getMaxAirSupply() {
+      return maxAirSupply_;
+    }
+    /**
+     * <pre>
+     * Entity#getMaxAirSupply (300 default)
+     * </pre>
+     *
+     * <code>int32 max_air_supply = 20;</code>
+     * @param value The maxAirSupply to set.
+     * @return This builder for chaining.
+     */
+    public Builder setMaxAirSupply(int value) {
+
+      maxAirSupply_ = value;
+      bitField0_ |= 0x00080000;
+      onChanged();
+      return this;
+    }
+    /**
+     * <pre>
+     * Entity#getMaxAirSupply (300 default)
+     * </pre>
+     *
+     * <code>int32 max_air_supply = 20;</code>
+     * @return This builder for chaining.
+     */
+    public Builder clearMaxAirSupply() {
+      bitField0_ = (bitField0_ & ~0x00080000);
+      maxAirSupply_ = 0;
       onChanged();
       return this;
     }
