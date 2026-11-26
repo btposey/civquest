@@ -264,7 +264,9 @@ public class SensoryFrustumCollector {
             net.minecraft.world.entity.projectile.FishingHook hook = agent.fishing;
             statusBuilder.setFishing(com.civquest.mod.grpc.v1.FishingState.newBuilder()
                     .setCast(true)
-                    .setInWater(hook.isInWater())
+                    // A floating bobber rides the surface and isInWater() can flicker: also accept a water cell.
+                    .setInWater(hook.isInWater() || (level != null
+                            && level.getFluidState(hook.blockPosition()).is(net.minecraft.tags.FluidTags.WATER)))
                     .setBite(com.civquest.mod.actuator.intent.FishingHandler.isBiting(agent))
                     .setBobberPos(toVec3Proto(hook.getX(), hook.getY(), hook.getZ()))
                     .build());

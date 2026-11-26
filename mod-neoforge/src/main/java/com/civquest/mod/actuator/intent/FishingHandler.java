@@ -120,6 +120,21 @@ public final class FishingHandler {
         }
         agent.swing(InteractionHand.MAIN_HAND, true);
         agent.getMainHandItem().use(agent.level(), agent, InteractionHand.MAIN_HAND);
-        return !isCast(agent);
+        boolean retrieved = !isCast(agent);
+        if (retrieved) {
+            // Do not walk away (or into a fight) holding the rod.
+            agent.autoEquipBestGear();
+        }
+        return retrieved;
+    }
+
+    /** Drops a cast line, if any, and takes the best weapon back in hand (a fight interrupts fishing). */
+    public static void abandon(AgentEntity agent) {
+        if (!isCast(agent)) {
+            return;
+        }
+        agent.fishing.discard();
+        agent.fishing = null;
+        agent.autoEquipBestGear();
     }
 }

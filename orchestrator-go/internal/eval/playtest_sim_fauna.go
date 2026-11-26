@@ -20,6 +20,7 @@ import (
 const (
 	simSheepRegrowTicks = int64(1200)
 	simBiteDelayTicks   = int64(200)
+	simBobberFlight     = int64(12)
 	simBiteWindowTicks  = int64(60)
 	simMeleeReach       = 3.5
 	simShearReach       = 4.5
@@ -60,7 +61,8 @@ type SimDrop struct {
 
 type simLine struct {
 	cast    bool
-	inWater bool
+	inWater bool // the bobber will be in water once it lands
+	landAt  int64
 	biteAt  int64
 }
 
@@ -200,7 +202,7 @@ func (s *PlaytestSim) fishingState() *civquestv1.FishingState {
 		return nil
 	}
 	l := s.faunaState.line
-	return &civquestv1.FishingState{Cast: true, InWater: l.inWater, Bite: l.inWater && s.biting(),
+	return &civquestv1.FishingState{Cast: true, InWater: l.inWater && s.Tick >= l.landAt, Bite: l.inWater && s.biting(),
 		BobberPos: &civquestv1.Vec3{X: s.Pos.X, Y: s.Pos.Y, Z: s.Pos.Z}}
 }
 
@@ -326,7 +328,7 @@ func (s *PlaytestSim) applyFaunaIntent(in *civquestv1.AgentIntent) bool {
 			wet = isSimWater(s.World.Blocks[cellOf(u.AimAt.X, u.AimAt.Y, u.AimAt.Z)]) &&
 				horiz(SimVec{X: u.AimAt.X, Z: u.AimAt.Z}) <= 7
 		}
-		f.line = simLine{cast: true, inWater: wet, biteAt: s.Tick + simBiteDelayTicks}
+		f.line = simLine{cast: true, inWater: wet, landAt: s.Tick + simBobberFlight, biteAt: s.Tick + simBiteDelayTicks}
 		return true
 	case civquestv1.UseItemIntent_REEL_FISHING_ROD:
 		if !f.line.cast {

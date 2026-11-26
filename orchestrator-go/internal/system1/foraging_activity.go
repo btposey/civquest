@@ -67,6 +67,7 @@ type forageLocal struct {
 	LastExploreTick   int64
 	ExploreHeadingRad float64
 	ExploreTarget     *civquestv1.Vec3 // immutable once set; replaced, never mutated
+	Fish              fishLocal        // fishing cursor (cq-390.4)
 	Visited           map[string]int64 // container POI -> last visit tick; copy-on-step (ADR: Mem)
 	// Forced is derived each step: a System 2 FORAGE_FOOD directive keeps foraging eligible
 	// while well fed. It is not progress.
@@ -116,6 +117,10 @@ func (a foragingActivity) run(lw *fsmWorld, local any) htpda.Step {
 		intents = unwrapFSMIntents(fi)
 	}
 	lw.skillCtx.Forage = nil
+	// Holding a cast line is progress, not a dead end: keep the frame (and its cursor).
+	if len(intents) == 0 && fishingLineCast(lw.ctx.Frame) {
+		return htpda.Step{Op: htpda.OpStay, Next: prog}
+	}
 	if len(intents) == 0 && prog.Forced {
 		// Well fed and directed to forage but nothing reachable: yield to normal activities.
 		return popFrame(lw, a.kind, nil, false)

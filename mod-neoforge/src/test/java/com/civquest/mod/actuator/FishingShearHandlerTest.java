@@ -122,6 +122,19 @@ class FishingShearHandlerTest {
     }
 
     @Test
+    void abandonDropsTheLineAndRearms() {
+        FishingHandler.abandon(agent);
+        verify(agent, never()).autoEquipBestGear();
+
+        FishingHook hook = mock(FishingHook.class);
+        agent.fishing = hook;
+        FishingHandler.abandon(agent);
+        verify(hook).discard();
+        verify(agent).autoEquipBestGear();
+        assertNull(agent.fishing);
+    }
+
+    @Test
     void reelWithoutALineFails() {
         assertFalse(FishingHandler.reel(agent));
     }

@@ -54,6 +54,7 @@ public class AttackHandler implements IntentHandler {
 
         // 2. Attack target entity within melee reach
         if (intent.getTargetEntityId() > 0 && agent.level() != null) {
+            FishingHandler.abandon(agent);
             Entity target = agent.level().getEntity(intent.getTargetEntityId());
             if (target != null && target.isAlive() && target != agent) {
                 boolean targetAllowed = true;

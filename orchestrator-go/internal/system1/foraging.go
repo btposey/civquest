@@ -149,7 +149,7 @@ func isPassiveFoodAnimal(e *civquestv1.VisibleEntity) bool {
 		return false
 	}
 	switch bareID(e.EntityType) {
-	case "cow", "mooshroom", "pig", "sheep", "chicken", "rabbit", "salmon", "cod":
+	case "cow", "mooshroom", "pig", "sheep", "chicken", "rabbit":
 		return true
 	default:
 		return false
@@ -274,6 +274,12 @@ func evaluateForagingWithMemory(agentID string, frame *civquestv1.TelemetryFrame
 		speedMult = float32(1.15)
 	}
 
+	// A cast fishing line owns the foraging frame: walking to anything else would drop it.
+	if fishingLineCast(frame) {
+		fo, _ := evaluateFishing(agentID, frame, mem, speedMult, canSprint)
+		return fo.intent
+	}
+
 	// 0. Pick up nearby dropped food items (e.g. raw meat or berries from recent kills/harvests).
 	var bestDrop *civquestv1.VisibleEntity
 	bestDropDist := math.MaxFloat64
@@ -356,6 +362,24 @@ func evaluateForagingWithMemory(agentID string, frame *civquestv1.TelemetryFrame
 			bestAnimal = e
 			bestAnimalDist = d
 		}
+	}
+
+	// 2b. Fishing bids against the land options by utility (cq-390.4).
+	landUtil := 0.0
+	if bestPrimePlant != nil {
+		landUtil = fishingUtility(foragePlantYield, bestPrimeDist)
+	}
+	if bestAnimal != nil {
+		landUtil = math.Max(landUtil, fishingUtility(forageAnimalYield, bestAnimalDist))
+	}
+	if bestFallbackPlant != nil {
+		landUtil = math.Max(landUtil, fishingUtility(forageLeafYield, bestFallbackDist))
+	}
+	// Food already within reach is always taken first; fishing only competes with a walk.
+	landInReach := (bestPrimePlant != nil && bestPrimeDist <= forageBlockReach) ||
+		(bestAnimal != nil && bestAnimalDist <= forageMeleeReach)
+	if fo, ok := evaluateFishing(agentID, frame, mem, speedMult, canSprint); ok && !landInReach && fo.utility > landUtil {
+		return fo.intent
 	}
 
 	// Immediate action within reach takes top priority (plant harvest or animal hunt).

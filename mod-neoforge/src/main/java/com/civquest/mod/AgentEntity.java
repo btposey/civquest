@@ -675,7 +675,8 @@ public class AgentEntity extends FakePlayer {
      */
     public void autoEquipBestGear() {
         net.minecraft.world.entity.player.Inventory inv = this.getInventory();
-        if (inv == null) {
+        // Swapping the rod out of the main hand would discard a cast fishing line (cq-390.4).
+        if (inv == null || this.fishing != null) {
             return;
         }
         // 1. Equip shield into offhand if not already holding one
