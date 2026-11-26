@@ -902,9 +902,12 @@ func (s *DaemonSupervisor) healthCheck() {
 
 		// Invariant 4: Strict Permadeath Lifecycle. If deceased, never restart.
 		if s.isAgentDeceased(name) {
+			known := w.Deceased
 			w.Deceased = true
 			w.mu.Unlock()
-			s.logSupervisorEvent("Agent %s is deceased (permadeath archive found); will not restart", name)
+			if !known {
+				s.logSupervisorEvent("Agent %s is deceased (permadeath archive found); will not restart", name)
+			}
 			continue
 		}
 
