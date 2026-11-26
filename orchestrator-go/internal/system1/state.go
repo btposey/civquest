@@ -153,6 +153,7 @@ type AgentState struct {
 	mem                       agentMemory
 	AssignedBed               *civquestv1.BlockPosProto
 	bedRegistry               BedRegistry // clan-shared bed ownership port (nil: single-agent, no claims)
+	bedWatch                  bedWatch    // evidence behind releasing a claim (bed_release.go)
 	ShelterPos                *civquestv1.BlockPosProto
 	stage                     Stage
 	routine                   Routine

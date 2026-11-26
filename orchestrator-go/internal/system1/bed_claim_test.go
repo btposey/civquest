@@ -1,6 +1,7 @@
 package system1
 
 import (
+	"slices"
 	"sync"
 	"testing"
 
@@ -39,6 +40,19 @@ func (r *fakeBedRegistry) ReleaseBed(x, y, z int32, agent string) error {
 		delete(r.owners, k)
 	}
 	return nil
+}
+
+func (r *fakeBedRegistry) BedOwnedBy(agent string) ([][3]int32, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	var out [][3]int32
+	for k, o := range r.owners {
+		if o == agent {
+			out = append(out, k)
+		}
+	}
+	slices.SortFunc(out, func(a, b [3]int32) int { return slices.Compare(a[:], b[:]) })
+	return out, nil
 }
 
 func nightFrameWithPioneerBed(id string) *civquestv1.TelemetryFrame {

@@ -21,6 +21,8 @@ type BedRegistry interface {
 	BedOwner(x, y, z int32) (string, error)
 	// ReleaseBed drops agentID's claim.
 	ReleaseBed(x, y, z int32, agentID string) error
+	// BedOwnedBy returns the blocks agentID has claimed.
+	BedOwnedBy(agentID string) ([][3]int32, error)
 }
 
 // bedClaimRadius is how far from the agent a visible bed may be claimed as "mine".
@@ -129,21 +131,38 @@ func (s *AgentState) claimWholeBed(agentID string, frame *civquestv1.TelemetryFr
 		}
 	}
 	s.SetAssignedBed(halves[0])
+	s.wantBedAgain(halves)
 	return true
 }
 
 // ensureOwnBed validates the agent's assigned bed against the registry and, when it has none,
-// claims the nearest claimable visible bed. It returns the bed the agent owns (nil: none).
-// Contention yields: an assigned bed another agent owns is dropped, not retried.
+// takes back a bed it already claimed (restart) or claims the nearest claimable visible one. It
+// returns the bed the agent owns (nil: none).
+// Contention yields: an assigned bed another agent owns is dropped, not retried. A bed observed
+// gone is released; one blacklisted as unreachable is abandoned (cq-390.5).
 func (s *AgentState) ensureOwnBed(agentID string, frame *civquestv1.TelemetryFrame) *civquestv1.BlockPosProto {
 	if s == nil || frame == nil {
 		return nil
 	}
+	s.releaseAbandonedBeds(agentID, frame.WorldTick)
 	if cur := s.GetAssignedBed(); cur != nil {
-		if s.claimWholeBed(agentID, frame, cur) {
+		switch {
+		case s.bedUnreachable(cur, frame.WorldTick):
+			s.abandonBed(agentID, frame.WorldTick)
+		case s.bedConfirmedGone(frame, cur):
+			s.loseBed(agentID, cur)
+		case s.claimWholeBed(agentID, frame, cur):
 			return s.GetAssignedBed()
+		default:
+			if s.wholeBedTakenByOther(agentID, frame, cur) {
+				s.releaseOwnBeds(agentID)
+			}
+			s.ClearAssignedBed()
 		}
-		s.ClearAssignedBed()
+	}
+	// An agent holds at most one bed: while it counts a claim as its own, it claims no other.
+	if holds, bed := s.resumeOwnBed(agentID, frame); holds {
+		return bed
 	}
 	if frame.Status == nil || frame.Status.Position == nil {
 		return nil

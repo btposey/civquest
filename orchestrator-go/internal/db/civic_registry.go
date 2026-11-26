@@ -108,6 +108,7 @@ type CivicRegistryDB struct {
 	dbPath   string
 	db       *sql.DB
 	isClosed bool
+	worldID  string // scopes world-bound rows (bed claims); "" = unnamed world
 }
 
 // OpenCivicRegistryDB opens and migrates the civic_registry.db at the given file path.
@@ -152,7 +153,12 @@ func OpenCivicRegistryDBForClan(resolver *xdg.Resolver, clanID string) (*CivicRe
 		resolver = xdg.DefaultResolver()
 	}
 	dbPath := resolver.ClanCivicRegistryDBPath(clanID)
-	return OpenCivicRegistryDB(dbPath, clanID)
+	c, err := OpenCivicRegistryDB(dbPath, clanID)
+	if err != nil {
+		return nil, err
+	}
+	c.SetWorldID(resolver.ServerID())
+	return c, nil
 }
 
 func (c *CivicRegistryDB) migrate(ctx context.Context) error {
@@ -323,15 +329,17 @@ func (c *CivicRegistryDB) initSchema(ctx context.Context) error {
 	CREATE INDEX IF NOT EXISTS idx_clan_horizon_sectors_explorer ON clan_horizon_sectors(explorer_id);
 	CREATE INDEX IF NOT EXISTS idx_clan_horizon_sectors_tick ON clan_horizon_sectors(surveyed_tick);
 
-	CREATE TABLE IF NOT EXISTS bed_claims (
+	-- Supersedes the unscoped bed_claims table: legacy rows name no world and are ignored.
+	CREATE TABLE IF NOT EXISTS world_bed_claims (
+		world_id TEXT NOT NULL,
 		x INTEGER NOT NULL,
 		y INTEGER NOT NULL,
 		z INTEGER NOT NULL,
 		owner_agent_id TEXT NOT NULL,
 		claimed_tick INTEGER NOT NULL DEFAULT 0,
-		PRIMARY KEY (x, y, z)
+		PRIMARY KEY (world_id, x, y, z)
 	);
-	CREATE INDEX IF NOT EXISTS idx_bed_claims_owner ON bed_claims(owner_agent_id);
+	CREATE INDEX IF NOT EXISTS idx_world_bed_claims_owner ON world_bed_claims(world_id, owner_agent_id);
 	`
 	_, err := c.db.ExecContext(ctx, schema)
 	return err

@@ -196,3 +196,89 @@ func TestSmoke_BedlessAgentWithoutWoolRunsBedPlan(t *testing.T) {
 		t.Fatalf("bert (no bed, no wool) should run the bed plan: planned=%v harvested=%v", bertPlanned, bertHarvested)
 	}
 }
+
+// bedOwnerAfter steps the agents until the bed at (4,64,0) has the wanted owner, returning the
+// world ticks it took.
+func bedOwnerAfter(t *testing.T, civic *db.CivicRegistryDB, want string, agents ...*bedAgent) int64 {
+	t.Helper()
+	start := agents[0].sim.BuildTelemetryFrame().WorldTick
+	var owner string
+	for i := 0; i < 200; i++ {
+		var err error
+		if owner, err = civic.BedOwner(4, 64, 0); err != nil {
+			t.Fatal(err)
+		}
+		if owner == want {
+			return agents[0].sim.BuildTelemetryFrame().WorldTick - start
+		}
+		for _, a := range agents {
+			a.step(t)
+		}
+	}
+	t.Fatalf("bed owner = %q, want %q", owner, want)
+	return 0
+}
+
+// cq-390.5: permadeath releases the owner's claim and a living agent takes the bed.
+func TestSmoke_DeadOwnersBedBecomesClaimable(t *testing.T) {
+	civic, agents := newBedClan(t, []string{"able", "bert"}, 1000, survivalKit(), true)
+	bedOwnerAfter(t, civic, "able", agents[0], agents[1])
+
+	rt := agents[0].sim.Runtime()
+	rt.HandleTelemetryFrame(&civquestv1.TelemetryFrame{DeathEvent: &civquestv1.DeathEvent{DamageSource: "fall", WorldTick: 100}})
+	if !rt.IsDead() {
+		t.Fatal("able should be dead")
+	}
+	if owned, _ := civic.BedOwnedBy("able"); len(owned) != 0 {
+		t.Fatalf("the dead keep claims: %v", owned)
+	}
+	bedOwnerAfter(t, civic, "bert", agents[1])
+}
+
+// cq-390.5: a claim left behind by another world at the same coordinates is ignored.
+func TestSmoke_OtherWorldsBedClaimIgnored(t *testing.T) {
+	civic, agents := newBedClan(t, []string{"able"}, 1000, survivalKit(), true)
+	civic.SetWorldID("world-old")
+	if _, err := civic.ClaimBed(4, 64, 0, "ghost", 1); err != nil {
+		t.Fatal(err)
+	}
+	civic.SetWorldID("world-new")
+	bedOwnerAfter(t, civic, "able", agents[0])
+}
+
+// cq-390.5: a broken bed is released after a sustained observation, not on the first frame.
+func TestSmoke_BrokenBedReleased(t *testing.T) {
+	// Night: the owner stays by its bed (an owner out of sight keeps its claim).
+	civic, agents := newBedClan(t, []string{"able"}, 13500, survivalKit(), true)
+	able := agents[0]
+	able.sim.AddBlock(0, 63, 0, "minecraft:grass_block")
+	bedOwnerAfter(t, civic, "able", able)
+
+	able.sim.RemoveBlock(4, 64, 0)
+	if took := bedOwnerAfter(t, civic, "", able); took < 200 {
+		t.Fatalf("claim released after only %d ticks", took)
+	}
+	if b := able.sim.Runtime().System1State().GetAssignedBed(); b != nil {
+		t.Fatalf("able still assigned the broken bed: %v", b)
+	}
+}
+
+// cq-390.5: a restarted agent takes its own bed back, not a nearer free one.
+func TestSmoke_RestartedAgentKeepsOwnBed(t *testing.T) {
+	civic, agents := newBedClan(t, []string{"able"}, 1000, survivalKit(), false)
+	if _, err := civic.ClaimBed(14, 64, 0, "able", 1); err != nil {
+		t.Fatal(err)
+	}
+	able := agents[0]
+	able.sim.AddBlock(14, 64, 0, "minecraft:red_bed")
+	able.sim.AddBlock(2, 64, 2, "minecraft:blue_bed")
+	for i := 0; i < 20; i++ {
+		able.step(t)
+	}
+	if b := able.sim.Runtime().System1State().GetAssignedBed(); b == nil || b.X != 14 {
+		t.Fatalf("able should resume its bed at x=14, got %v", b)
+	}
+	if owned, _ := civic.BedOwnedBy("able"); len(owned) != 1 {
+		t.Fatalf("able must hold exactly its old claim: %v", owned)
+	}
+}

@@ -112,6 +112,14 @@ func (r soloBedRegistry) ClaimBed(x, y, z int32, agentID string, _ int64) (strin
 	return r[k], nil
 }
 func (r soloBedRegistry) BedOwner(x, y, z int32) (string, error) { return r[[3]int32{x, y, z}], nil }
+func (r soloBedRegistry) BedOwnedBy(agentID string) (out [][3]int32, _ error) {
+	for k, o := range r {
+		if o == agentID {
+			out = append(out, k)
+		}
+	}
+	return out, nil
+}
 func (r soloBedRegistry) ReleaseBed(x, y, z int32, agentID string) error {
 	if k := [3]int32{x, y, z}; r[k] == agentID {
 		delete(r, k)

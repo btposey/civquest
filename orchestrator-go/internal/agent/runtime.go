@@ -1335,6 +1335,7 @@ func (r *AgentRuntime) executePermadeath(deathEv *civquestv1.DeathEvent) {
 		Resolver:          r.resolver,
 		AgentDB:           r.agentDB,
 		ReputationDB:      r.ReputationDB(),
+		CivicRegistryDB:   r.civicRegistryDB,
 		ChroniclerService: r.chroniclerService,
 	})
 	if err != nil {

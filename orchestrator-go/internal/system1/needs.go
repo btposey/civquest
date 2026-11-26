@@ -260,7 +260,7 @@ func EvaluateSleep(agentID string, frame *civquestv1.TelemetryFrame, state *Agen
 	if state != nil {
 		if existingBed := state.GetAssignedBed(); existingBed != nil {
 			if state.IsTargetUnreachable(float64(existingBed.X)+0.5, float64(existingBed.Y), float64(existingBed.Z)+0.5, frame.WorldTick) {
-				state.ClearAssignedBed()
+				state.abandonBed(agentID, frame.WorldTick)
 			}
 		}
 		if state.bedReg() != nil {
@@ -294,7 +294,7 @@ func EvaluateSleep(agentID string, frame *civquestv1.TelemetryFrame, state *Agen
 					if poi == nil {
 						poi = state.FindNearestReachablePOI(frame.Status.Position, POICategoryHabitation, "bed", "", 64.0, 0.5, frame.WorldTick)
 					}
-					if poi != nil && !state.bedTakenByOther(agentID, poiBlockPos(poi)) && state.claimBed(agentID, poiBlockPos(poi), frame.WorldTick) {
+					if poi != nil && state.mayRecallBed(agentID, poiBlockPos(poi)) && !state.bedTakenByOther(agentID, poiBlockPos(poi)) && state.claimBed(agentID, poiBlockPos(poi), frame.WorldTick) {
 						state.SetAssignedBed(poiBlockPos(poi))
 						recalledBedPOI = poi
 						hasBed = true
@@ -426,7 +426,7 @@ func EvaluateSleep(agentID string, frame *civquestv1.TelemetryFrame, state *Agen
 		if state != nil {
 			if state.IsTargetUnreachable(target.X, target.Y, target.Z, frame.WorldTick) ||
 				state.IsTargetUnreachable(float64(bedPos.X)+0.5, float64(bedPos.Y), float64(bedPos.Z)+0.5, frame.WorldTick) {
-				state.ClearAssignedBed()
+				state.abandonBed(agentID, frame.WorldTick)
 				return nil
 			}
 		}

@@ -30,6 +30,7 @@ type PermadeathRequest struct {
 	Resolver          *xdg.Resolver
 	AgentDB           *db.AgentDB
 	ReputationDB      *db.ReputationDB
+	CivicRegistryDB   *db.CivicRegistryDB // clan registry holding the agent's bed claims
 	ChroniclerService *system2.ChroniclerService
 }
 
@@ -90,7 +91,8 @@ func OfflinePlayerUUID(name string) string {
 		hash[0:4], hash[4:6], hash[6:8], hash[8:10], hash[10:16])
 }
 
-// ExecutePermadeath coordinates the five-step terminal permadeath lifecycle:
+// ExecutePermadeath releases the agent's bed claims (the dead never sleep) and coordinates the
+// five-step terminal permadeath lifecycle:
 // 1. Logs a Saliency 1.0 Memorial Record into memory.db.
 // 2. Updates any active spouse relationships to WIDOWED (-10 disposition).
 // 3. Deducts Player Prestige if murdered (-100.0) or if a companion perished (-50.0).
@@ -127,6 +129,12 @@ func ExecutePermadeath(ctx context.Context, req PermadeathRequest) (*PermadeathR
 	// Ensure context is usable
 	if ctx == nil || ctx.Err() != nil {
 		ctx = context.Background()
+	}
+
+	if req.CivicRegistryDB != nil {
+		if err := req.CivicRegistryDB.ReleaseBedsOwnedBy(req.AgentID); err != nil {
+			log.Printf("[WARN] agent %s failed to release bed claims: %v", req.AgentID, err)
+		}
 	}
 
 	// -------------------------------------------------------------
