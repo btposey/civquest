@@ -49,6 +49,11 @@ var recoverTunables = struct {
 	// CongestionRetries is how many congestion give-ups an expedition Navigate retries
 	// before treating the way as blocked.
 	CongestionRetries int
+	// StallEpisodes is how many stuck episodes on one target, without the agent getting a
+	// block closer between them, blacklist it however each episode ended.
+	StallEpisodes int
+	// StallMemoryTicks is how long an episode counts toward StallEpisodes.
+	StallMemoryTicks int64
 }{
 	LeaseTicks:                100,
 	AttemptTicks:              20,
@@ -56,6 +61,8 @@ var recoverTunables = struct {
 	SidestepDist:              4.0,
 	ExpeditionAttempts:        1,
 	CongestionRetries:         3,
+	StallEpisodes:             4,
+	StallMemoryTicks:          600,
 }
 
 // RecoverCause is why a Recover frame exists, derived from receipt facts only.
@@ -98,6 +105,47 @@ type recoverGaveUp struct {
 	Target [3]float64
 	Cause  RecoverCause
 	Tick   int64
+	// Stalled: repeated episodes proved the target unreachable; blacklist it at once.
+	Stalled bool
+}
+
+// stuckRecord counts stuck episodes against one navigation target. Sidesteps can each
+// succeed while the parent keeps failing the same way (cq-yn1.6).
+type stuckRecord struct {
+	Target   [3]float64
+	Best     float64 // closest 3D distance to Target at the start of an episode
+	Episodes int
+	Last     int64
+}
+
+// noteStuck records one episode and reports whether the target is now proven stalled.
+func (fsm *AgentFSM) noteStuck(target [3]float64, dist float64, tick int64) bool {
+	kept := fsm.stuckLog[:0]
+	for _, r := range fsm.stuckLog {
+		if tick >= r.Last && tick-r.Last < recoverTunables.StallMemoryTicks {
+			kept = append(kept, r)
+		}
+	}
+	fsm.stuckLog = kept
+	for i := range fsm.stuckLog {
+		r := &fsm.stuckLog[i]
+		if r.Target != target {
+			continue
+		}
+		r.Last = tick
+		if dist <= r.Best-1.0 {
+			r.Best, r.Episodes = dist, 1
+			return false
+		}
+		r.Episodes++
+		if r.Episodes < recoverTunables.StallEpisodes {
+			return false
+		}
+		fsm.stuckLog = append(fsm.stuckLog[:i], fsm.stuckLog[i+1:]...)
+		return true
+	}
+	fsm.stuckLog = append(fsm.stuckLog, stuckRecord{Target: target, Best: dist, Episodes: 1, Last: tick})
+	return false
 }
 
 // recoverEscapeLock is the Memory write that keeps an enclosed dig-out heading across Recover
@@ -154,7 +202,17 @@ type recoverLocal struct {
 	DirX, DirZ   int32
 	LastDig      int64
 	NavNotBefore int64 // enclosed: a failed step-out waits before the next one (digging does not)
+	Stalled      bool  // the target has defeated StallEpisodes episodes: give up at once
 }
+
+// moved reports that the agent is at least a block from where the episode began, in any
+// direction including up.
+func (l recoverLocal) moved(pos *civquestv1.Vec3) bool {
+	return l.HasStart && pos != nil &&
+		math.Sqrt(sq(pos.X-l.StartPos[0])+sq(pos.Y-l.StartPos[1])+sq(pos.Z-l.StartPos[2])) >= 1.0
+}
+
+func sq(v float64) float64 { return v * v }
 
 // progressed is the success test (ADR-037 §3.5): with a target, the agent is at least a block
 // closer to it than when Recover began (a sidestep that merely moves is not progress, or a
@@ -255,6 +313,10 @@ func (recoverActivity) Init(w htpda.World, args any) (any, htpda.Lease) {
 			loc.StartPos, loc.HasStart = [3]float64{p.X, p.Y, p.Z}, true
 			if a.HasTarget {
 				loc.StartDist = math.Hypot(p.X-a.Target[0], p.Z-a.Target[2])
+				if a.Cause != CauseCongestion && !loc.SawEntity && lw.fsm != nil {
+					dist := math.Sqrt(sq(p.X-a.Target[0]) + sq(p.Y-a.Target[1]) + sq(p.Z-a.Target[2]))
+					loc.Stalled = lw.fsm.noteStuck(a.Target, dist, w.Tick())
+				}
 			}
 		}
 	}
@@ -266,6 +328,9 @@ func (a recoverActivity) Step(w htpda.World, local any, ev htpda.Event) htpda.St
 	loc := htpda.LocalAs[recoverLocal](local)
 	if lw == nil || lw.ctx == nil || lw.ctx.State == nil {
 		return htpda.Step{Op: htpda.OpPop, Result: a.blocked(loc, nil)}
+	}
+	if _, cancelled := ev.(htpda.Cancel); !cancelled && loc.Stalled {
+		return a.giveUp(lw, loc)
 	}
 	switch e := ev.(type) {
 	case htpda.Cancel:
@@ -285,7 +350,13 @@ func (a recoverActivity) Step(w htpda.World, local any, ev htpda.Event) htpda.St
 func (a recoverActivity) onReceipt(lw *fsmWorld, loc recoverLocal, e htpda.Receipt) htpda.Step {
 	switch e.Status {
 	case civquestv1.IntentReceipt_RECEIPT_STATUS_COMPLETED:
-		return a.pop(loc, recovered{})
+		// A finished leg or dig is not a recovery by itself: a sidestep already within
+		// arrival tolerance completes without moving the agent at all.
+		if pos := lw.pos(); loc.progressed(pos) || loc.moved(pos) {
+			return a.pop(loc, recovered{})
+		}
+		loc.Emitted = false
+		return a.advance(lw, loc)
 	case civquestv1.IntentReceipt_RECEIPT_STATUS_FAILED:
 		loc.Emitted = false
 		reason := ""
@@ -415,8 +486,9 @@ func (recoverActivity) blocked(loc recoverLocal, pos *civquestv1.Vec3) recoverBl
 // involved and no expedition (which flanks instead of blacklisting) writes Memory.
 func (a recoverActivity) giveUp(lw *fsmWorld, loc recoverLocal) htpda.Step {
 	st := a.pop(loc, a.blocked(loc, lw.pos()))
-	if loc.Cause != CauseCongestion && !loc.SawEntity && loc.HasTarget && !lw.ctx.State.IsExpeditionActive() {
-		st.Memory = append(st.Memory, recoverGaveUp{Target: loc.Target, Cause: loc.Cause, Tick: lw.Tick()})
+	// An expedition flanks around one failure itself, so only a proven stall is recorded.
+	if loc.Cause != CauseCongestion && !loc.SawEntity && loc.HasTarget && (loc.Stalled || !lw.ctx.State.IsExpeditionActive()) {
+		st.Memory = append(st.Memory, recoverGaveUp{Target: loc.Target, Cause: loc.Cause, Tick: lw.Tick(), Stalled: loc.Stalled})
 	}
 	return st
 }

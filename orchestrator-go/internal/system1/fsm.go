@@ -257,6 +257,8 @@ type AgentFSM struct {
 	navTargets map[htpda.FrameID][3]float64
 	// recoverOutbox holds Recover give-ups until the runtime drains them (POI decay).
 	recoverOutbox []RecoverGiveUp
+	// stuckLog counts recent stuck episodes per navigation target (recover_activity.go).
+	stuckLog []stuckRecord
 	// orphan is a stuck receipt for an intent no live frame owns (unframed reflex skills);
 	// Recover bids for it as a root frame. orphanNav is the last unframed Navigate target.
 	escapeLock   *recoverEscapeLock // enclosed dig heading kept across Recover episodes

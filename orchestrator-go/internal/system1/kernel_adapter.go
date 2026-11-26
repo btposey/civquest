@@ -277,7 +277,11 @@ func (fsm *AgentFSM) applyMemoryLocked(w *fsmWorld, writes []htpda.MemoryWrite) 
 			continue
 		}
 		if g, ok := wr.(recoverGaveUp); ok {
-			black, _ := w.ctx.State.RecordTargetNavigationStuck(g.Target[0], g.Target[1], g.Target[2], g.Tick, DefaultUnreachableTargetTTL, recoverTunables.TerrainGiveUpsToBlacklist)
+			giveUps := recoverTunables.TerrainGiveUpsToBlacklist
+			if g.Stalled {
+				giveUps = 1
+			}
+			black, _ := w.ctx.State.RecordTargetNavigationStuck(g.Target[0], g.Target[1], g.Target[2], g.Tick, DefaultUnreachableTargetTTL, giveUps)
 			fsm.recoverOutbox = append(fsm.recoverOutbox, RecoverGiveUp{Target: g.Target, Cause: g.Cause, Tick: g.Tick, Blacklisted: black})
 		}
 	}
