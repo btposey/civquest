@@ -885,16 +885,33 @@ public class AgentNavigator {
                     || fluid.is(net.minecraft.world.level.material.Fluids.FLOWING_LAVA))) {
                 return true;
             }
-            return state.is(net.minecraft.world.level.block.Blocks.LAVA)
-                    || state.is(net.minecraft.world.level.block.Blocks.FIRE)
-                    || state.is(net.minecraft.world.level.block.Blocks.SOUL_FIRE)
-                    || state.is(net.minecraft.world.level.block.Blocks.CACTUS)
-                    || state.is(net.minecraft.world.level.block.Blocks.MAGMA_BLOCK)
-                    || state.is(net.minecraft.world.level.block.Blocks.SWEET_BERRY_BUSH)
-                    || state.is(net.minecraft.world.level.block.Blocks.WITHER_ROSE);
+            return isHazardState(state);
         } catch (Throwable ignored) {
             return false;
         }
+    }
+
+    /**
+     * Block-state hazard predicate. A lit campfire is a hazard (cq-gpa.11): its collision shape is only
+     * 7/16 tall so the agent's feet end up inside the cell and take inFire damage. The planner treats a
+     * hazard as impassable and never stands on top of one.
+     */
+    static boolean isHazardState(net.minecraft.world.level.block.state.BlockState state) {
+        if (state == null) {
+            return false;
+        }
+        if (state.is(net.minecraft.world.level.block.Blocks.CAMPFIRE)
+                || state.is(net.minecraft.world.level.block.Blocks.SOUL_CAMPFIRE)) {
+            return state.hasProperty(net.minecraft.world.level.block.CampfireBlock.LIT)
+                    && state.getValue(net.minecraft.world.level.block.CampfireBlock.LIT);
+        }
+        return state.is(net.minecraft.world.level.block.Blocks.LAVA)
+                || state.is(net.minecraft.world.level.block.Blocks.FIRE)
+                || state.is(net.minecraft.world.level.block.Blocks.SOUL_FIRE)
+                || state.is(net.minecraft.world.level.block.Blocks.CACTUS)
+                || state.is(net.minecraft.world.level.block.Blocks.MAGMA_BLOCK)
+                || state.is(net.minecraft.world.level.block.Blocks.SWEET_BERRY_BUSH)
+                || state.is(net.minecraft.world.level.block.Blocks.WITHER_ROSE);
     }
 
     private void replan(net.minecraft.world.level.Level level, Vec3 pos) {

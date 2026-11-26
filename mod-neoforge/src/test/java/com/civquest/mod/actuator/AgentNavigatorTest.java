@@ -1211,4 +1211,19 @@ public class AgentNavigatorTest {
         assertTrue(facts.getStuck());
         assertTrue(facts.getBlockedByEntity(), "entity AABB on the heading must set blocked_by_entity");
     }
+
+    @Test
+    @DisplayName("lit campfires are navigation hazards, unlit ones are not (cq-gpa.11)")
+    void litCampfireIsHazard() {
+        var lit = net.minecraft.world.level.block.Blocks.CAMPFIRE.defaultBlockState()
+                .setValue(net.minecraft.world.level.block.CampfireBlock.LIT, true);
+        var unlit = lit.setValue(net.minecraft.world.level.block.CampfireBlock.LIT, false);
+        var soulLit = net.minecraft.world.level.block.Blocks.SOUL_CAMPFIRE.defaultBlockState()
+                .setValue(net.minecraft.world.level.block.CampfireBlock.LIT, true);
+        assertTrue(AgentNavigator.isHazardState(lit));
+        assertTrue(AgentNavigator.isHazardState(soulLit));
+        assertFalse(AgentNavigator.isHazardState(unlit));
+        assertTrue(AgentNavigator.isHazardState(net.minecraft.world.level.block.Blocks.FIRE.defaultBlockState()));
+        assertFalse(AgentNavigator.isHazardState(net.minecraft.world.level.block.Blocks.STONE.defaultBlockState()));
+    }
 }
