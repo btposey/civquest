@@ -249,6 +249,12 @@ func EvaluateHunger(agentID string, frame *civquestv1.TelemetryFrame, state *Age
 	}
 }
 
+const (
+	// maxSleepAttempts bed interactions without falling asleep, 40 ticks apart, end the claim.
+	maxSleepAttempts   = 8
+	sleepRetryGapTicks = int64(200)
+)
+
 // EvaluateSleep evaluates bed navigation, sleeping in bed, and dawn awakening.
 func EvaluateSleep(agentID string, frame *civquestv1.TelemetryFrame, state *AgentState) *civquestv1.AgentIntent {
 	if frame == nil || frame.Status == nil {
@@ -383,7 +389,12 @@ func EvaluateSleep(agentID string, frame *civquestv1.TelemetryFrame, state *Agen
 				if lastSleep > 0 && frame.WorldTick >= lastSleep && frame.WorldTick-lastSleep < 40 {
 					return nil
 				}
-				state.SetLastSleepAttemptTick(frame.WorldTick)
+				if state.countSleepAttempt(frame.WorldTick) > maxSleepAttempts {
+					// The bed never lets the agent sleep (broken, blocked or taken): give it
+					// up rather than retry all night (cq-6l3.4).
+					state.abandonBed(agentID, frame.WorldTick)
+					return nil
+				}
 			}
 			return &civquestv1.AgentIntent{
 				AgentId: agentID,

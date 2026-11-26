@@ -164,6 +164,7 @@ type AgentState struct {
 	patrolWaypoints           []*civquestv1.Vec3
 	patrolWaypointIndex       int
 	lastSleepAttemptTick      int64
+	sleepAttempts             int
 	lastShelterTimeoutTick    int64
 	lastBootstrapTimeoutTick  int64
 	establishingNewSettlement bool
@@ -495,6 +496,19 @@ func (s *AgentState) SetLastSleepAttemptTick(tick int64) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.lastSleepAttemptTick = tick
+}
+
+// countSleepAttempt records a bed interaction at tick and returns how many the current run of
+// retries holds. A longer pause (a new night, or a sleep that lasted) starts a new run.
+func (s *AgentState) countSleepAttempt(tick int64) int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.lastSleepAttemptTick <= 0 || tick < s.lastSleepAttemptTick || tick-s.lastSleepAttemptTick > sleepRetryGapTicks {
+		s.sleepAttempts = 0
+	}
+	s.lastSleepAttemptTick = tick
+	s.sleepAttempts++
+	return s.sleepAttempts
 }
 
 // IsCompanionActive returns true if the agent is actively accompanying a player as a bonded companion.
