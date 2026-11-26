@@ -98,7 +98,7 @@ for line in open(events_path):
     except ValueError: continue
     by[e.get("agent_id")].append(e)
 failed = []
-print(f"{'agent':8} {'events':>7} {'silent_s':>8} {'stalls':>6} {'stuck':>6} {'moved':>6}  top crafts")
+print(f"{'agent':8} {'events':>7} {'silent_s':>8} {'stalls':>6} {'stuck':>6} {'moved':>6} {'repeat':>6}  top crafts")
 for a in agents:
     ev = by.get(a, [])
     if not ev:
@@ -110,12 +110,17 @@ for a in agents:
     moved = sum(((p[0]-q[0])**2 + (p[2]-q[2])**2) ** .5 for p, q in zip(pos, pos[1:]))
     crafts = collections.Counter(e["summary"].split("recipe=")[1].rstrip(")").replace("minecraft:", "")
                                  for e in ev if "recipe=" in e.get("summary", ""))
+    targets = collections.Counter(tuple(e["details"]["target"]) for e in ev
+                                  if e["category"] == "INTENT_OUT" and e["details"].get("target"))
+    repeat = max(targets.values(), default=0)
     dead = any(e["category"] in ("DEATH", "PERMADEATH") for e in ev)
-    print(f"{a:8} {len(ev):7} {silent:8.0f} {cat['BRAIN_STALL']:6} {cat['MOTOR_STUCK']:6} {moved:6.0f}  {dict(crafts.most_common(5))}" + (" DIED" if dead else ""))
+    print(f"{a:8} {len(ev):7} {silent:8.0f} {cat['BRAIN_STALL']:6} {cat['MOTOR_STUCK']:6} {moved:6.0f} {repeat:6}  {dict(crafts.most_common(5))}" + (" DIED" if dead else ""))
     if cat["BRAIN_STALL"]: failed.append(f"{a}: brain stalled")
     if silent > 15 and not dead: failed.append(f"{a}: silent for the last {silent:.0f}s")
     for recipe, n in crafts.items():
         if n > 40: failed.append(f"{a}: crafted {recipe} {n} times (craft loop)")
+    # Walking to one place re-sends it now and then; hundreds of times is a retry loop.
+    if repeat > 200: failed.append(f"{a}: sent one movement target {repeat} times (retry loop)")
 log = open(server_log, errors="replace").read()
 print(f"server: {log.count('Dropping telemetry frames')} backpressure warnings, {log.count(chr(39) + ' spoke in chat')} agent chat lines")
 if model:
