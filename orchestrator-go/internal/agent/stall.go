@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"sync/atomic"
 	"time"
 )
 
@@ -25,21 +26,34 @@ type StallReport struct {
 	DumpPath string // goroutine dump, "" when it could not be written
 }
 
+// frameMonitor holds what is measured about telemetry frame processing.
+type frameMonitor struct {
+	latencyMicros atomic.Int64
+	inFlight      atomic.Pointer[frameInFlight]
+	stallAfter    time.Duration
+	dumpDir       string
+	onStall       func(StallReport)
+}
+
 type frameInFlight struct {
 	tick  int64
 	since time.Time
 }
 
+// SetFramePipeline replaces the telemetry pipeline. Call it before Start; it exists so tests
+// can inject a stage (for example one that never returns).
+func (r *AgentRuntime) SetFramePipeline(p *FramePipeline) { r.framePipeline = p }
+
 // beginFrame marks a frame as processing; the returned func marks it finished.
 func (r *AgentRuntime) beginFrame(tick int64) func() {
-	r.inFlight.Store(&frameInFlight{tick: tick, since: time.Now()})
-	return func() { r.inFlight.Store(nil) }
+	r.frames.inFlight.Store(&frameInFlight{tick: tick, since: time.Now()})
+	return func() { r.frames.inFlight.Store(nil) }
 }
 
 // watchStalls reports the first frame that runs longer than the configured limit. It touches
 // only atomics and the debug logger, because the stuck frame may hold any runtime lock.
 func (r *AgentRuntime) watchStalls(ctx context.Context) {
-	limit := r.stallAfter
+	limit := r.frames.stallAfter
 	if limit <= 0 {
 		limit = DefaultStallAfter
 	}
@@ -51,7 +65,7 @@ func (r *AgentRuntime) watchStalls(ctx context.Context) {
 			return
 		case <-poll.C:
 		}
-		f := r.inFlight.Load()
+		f := r.frames.inFlight.Load()
 		if f == nil || time.Since(f.since) < limit {
 			continue
 		}
@@ -63,9 +77,9 @@ func (r *AgentRuntime) watchStalls(ctx context.Context) {
 func (r *AgentRuntime) reportStall(rep StallReport) {
 	buf := make([]byte, maxStackDump)
 	buf = buf[:runtime.Stack(buf, true)]
-	if r.stallDumpDir != "" {
+	if r.frames.dumpDir != "" {
 		name := fmt.Sprintf("agent-%s-stall-%s.txt", filepath.Base(rep.AgentID), time.Now().UTC().Format("20060102T150405.000"))
-		path := filepath.Join(r.stallDumpDir, name)
+		path := filepath.Join(r.frames.dumpDir, name)
 		if err := os.WriteFile(path, buf, 0o640); err == nil {
 			rep.DumpPath = path
 		}
@@ -78,7 +92,7 @@ func (r *AgentRuntime) reportStall(rep StallReport) {
 			"dump_path":  rep.DumpPath,
 		})
 	}
-	if r.onStall != nil {
-		r.onStall(rep)
+	if r.frames.onStall != nil {
+		r.frames.onStall(rep)
 	}
 }

@@ -16,8 +16,8 @@ func TestStallMonitorReportsHungFrame(t *testing.T) {
 	release := make(chan struct{})
 	reports := make(chan StallReport, 2)
 	r := &AgentRuntime{
-		agentID: "stuck", stallAfter: 30 * time.Millisecond, stallDumpDir: t.TempDir(),
-		onStall: func(rep StallReport) { reports <- rep },
+		agentID: "stuck",
+		frames:  frameMonitor{stallAfter: 30 * time.Millisecond, dumpDir: t.TempDir(), onStall: func(rep StallReport) { reports <- rep }},
 		framePipeline: NewFramePipeline(FrameStage{Name: "hang", Run: func(r *AgentRuntime, _ *FrameContext) {
 			r.mu.Lock()
 			defer r.mu.Unlock()
@@ -58,7 +58,7 @@ func TestStallMonitorReportsHungFrame(t *testing.T) {
 
 func TestStallMonitorIgnoresFinishedFrames(t *testing.T) {
 	reports := make(chan StallReport, 1)
-	r := &AgentRuntime{agentID: "fine", stallAfter: 50 * time.Millisecond, onStall: func(rep StallReport) { reports <- rep }}
+	r := &AgentRuntime{agentID: "fine", frames: frameMonitor{stallAfter: 50 * time.Millisecond, onStall: func(rep StallReport) { reports <- rep }}}
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	go r.watchStalls(ctx)

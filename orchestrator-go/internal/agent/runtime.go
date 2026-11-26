@@ -173,12 +173,8 @@ type AgentRuntime struct {
 	startTime  time.Time
 
 	// Diagnostics Telemetry & Metrics
-	frameLatencyMicros atomic.Int64
-	inFlight           atomic.Pointer[frameInFlight] // see stall.go
-	stallAfter         time.Duration
-	stallDumpDir       string
-	onStall            func(StallReport)
-	activeLLMRequests  atomic.Int32
+	frames            frameMonitor // frame latency and hung-frame detection (stall.go)
+	activeLLMRequests atomic.Int32
 
 	// State and synchronization
 	mu               sync.RWMutex
@@ -371,9 +367,7 @@ func NewRuntime(cfg Config) (*AgentRuntime, error) {
 		startTime:     time.Now().UTC(),
 		status:        "INITIALIZING",
 		onDeath:       cfg.OnDeath,
-		stallAfter:    cfg.StallAfter,
-		stallDumpDir:  stallDumpDir,
-		onStall:       cfg.OnStall,
+		frames:        frameMonitor{stallAfter: cfg.StallAfter, dumpDir: stallDumpDir, onStall: cfg.OnStall},
 		done:          make(chan struct{}),
 		socketDone:    make(chan struct{}),
 		system1State:  sys1State,
@@ -699,12 +693,12 @@ func (r *AgentRuntime) NavigationDestination() *SocketPosition {
 
 // SetFrameLatency sets the gRPC frame latency in milliseconds.
 func (r *AgentRuntime) SetFrameLatency(ms float64) {
-	r.frameLatencyMicros.Store(int64(ms * 1000.0))
+	r.frames.latencyMicros.Store(int64(ms * 1000.0))
 }
 
 // FrameLatency returns the latest gRPC frame latency in milliseconds.
 func (r *AgentRuntime) FrameLatency() float64 {
-	return float64(r.frameLatencyMicros.Load()) / 1000.0
+	return float64(r.frames.latencyMicros.Load()) / 1000.0
 }
 
 // ActiveLLMRequests returns the number of currently active System 2 LLM requests.
@@ -1243,7 +1237,7 @@ func (r *AgentRuntime) recvLoop(ctx context.Context, stream grpc.BidiStreamingCl
 		if err != nil {
 			return err
 		}
-		r.frameLatencyMicros.Store(time.Since(recvStart).Microseconds())
+		r.frames.latencyMicros.Store(time.Since(recvStart).Microseconds())
 
 		if receipt := frame.GetReceipt(); receipt != nil {
 			r.system1State.IngestReceipt(receipt)
