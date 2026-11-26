@@ -1804,6 +1804,24 @@ public class AgentGameTest {
         helper.succeed();
     }
 
+    /** An idle agent uses food at the normal rate, a full bar in three days (cq-6l3.8). */
+    @GameTest(template = "empty3x3x3")
+    public static void testIdleAgentMetabolism(GameTestHelper helper) {
+        AgentEntityManager manager = new AgentEntityManager();
+        AgentEntity agent = spawnCoverageAgent(helper, manager, "agent-gt-metabolism", new BlockPos(1, 1, 1));
+        helper.runAfterDelay(10, () -> {
+            float before = agent.getFoodData().getExhaustionLevel();
+            helper.runAfterDelay(40, () -> {
+                float used = agent.getFoodData().getExhaustionLevel() - before;
+                float perTick = com.civquest.mod.Metabolism.NORMAL_PER_TICK;
+                helper.assertTrue(used >= 30 * perTick && used <= 50 * perTick,
+                        "40 idle ticks used " + used + " exhaustion, expected about " + 40 * perTick);
+                manager.despawnAgent(helper.getLevel().getServer(), "agent-gt-metabolism").join();
+                helper.succeed();
+            });
+        });
+    }
+
     @GameTest(template = "empty3x3x3")
     public static void testFleeReflexPreemptsMove(GameTestHelper helper) {
         ServerLevel level = helper.getLevel();

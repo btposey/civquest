@@ -14,6 +14,7 @@ import net.minecraft.server.level.ServerLevel;
 import net.minecraft.tags.DamageTypeTags;
 import net.minecraft.tags.EntityTypeTags;
 import net.minecraft.world.damagesource.DamageSource;
+import net.minecraft.world.effect.MobEffects;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.entity.player.Player;
@@ -40,8 +41,6 @@ import java.util.function.Consumer;
  */
 public class AgentEntity extends FakePlayer {
     private static final Logger LOGGER = LogUtils.getLogger();
-    private static final float BASAL_METABOLIC_EXHAUSTION = 0.002F;
-    private static final float MOVEMENT_EXHAUSTION = 0.01F;
     private static final double PEER_SEPARATION_RADIUS = 1.15;
     private static final double PEER_SEPARATION_STEP = 0.10;
     private static final double PEER_SEPARATION_FOOTPRINT_RADIUS = 0.30;
@@ -250,16 +249,24 @@ public class AgentEntity extends FakePlayer {
                     tryPickupNearbyItems();
                 }
                 if (this.isAlive()) {
-                    this.causeFoodExhaustion(BASAL_METABOLIC_EXHAUSTION);
-                    if (this.getDeltaMovement().horizontalDistanceSqr() > 0.001) {
-                        this.causeFoodExhaustion(MOVEMENT_EXHAUSTION);
-                    }
+                    super.causeFoodExhaustion(Metabolism.perTick(Metabolism.isExerting(this)));
                 }
                 // Execute player tick logic (which FakePlayer stubbed out, including FoodData tick at 20 Hz)
                 this.doTick();
             } catch (Exception e) {
                 LOGGER.error("Exception during agent doTick for agent '{}': {}", agentId, e.getMessage(), e);
             }
+        }
+    }
+
+    /**
+     * Food use is metered by time and exertion ({@link Metabolism}); vanilla's per-action costs
+     * (jumping, attacking, taking damage) would stack on top, so only the Hunger effect applies.
+     */
+    @Override
+    public void causeFoodExhaustion(float amount) {
+        if (this.hasEffect(MobEffects.HUNGER)) {
+            super.causeFoodExhaustion(amount);
         }
     }
 

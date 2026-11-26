@@ -310,7 +310,6 @@ public class BlockBreaker {
             if (broken) {
                 agent.swing(InteractionHand.MAIN_HAND, true);
                 agent.tryPickupNearbyItems();
-                agent.causeFoodExhaustion(0.025F);
             }
             return broken;
         }

@@ -671,7 +671,7 @@ public class AgentEntityTest {
     }
 
     @Test
-    @DisplayName("AgentEntity accumulates metabolic, movement, and block-break exhaustion and starves at 0 food")
+    @DisplayName("Food lasts 3 days at normal exertion, 1 day at full exertion; starvation at 0 food")
     void testAgentExhaustionAndStarvationDamage() {
         TestWorldContext ctx = new TestWorldContext();
         AgentEntity agent = ctx.createAgent("agent-hunger-01", "HungryAgent");
@@ -680,20 +680,26 @@ public class AgentEntityTest {
 
         assertEquals(20, agent.getFoodData().getFoodLevel());
         assertEquals(5.0F, agent.getFoodData().getSaturationLevel(), 0.001F);
+        assertEquals(3 * 24000, 80.0F / Metabolism.NORMAL_PER_TICK, 1.0F, "A full bar lasts three days");
+        assertEquals(24000, 80.0F / Metabolism.perTick(true), 1.0F, "and one day at full exertion");
 
-        // 1. Basal metabolic exhaustion accumulates when idle
+        // 1. Standing and walking cost the normal rate
         agent.tick();
         float afterIdleTick = agent.getFoodData().getExhaustionLevel();
-        assertTrue(afterIdleTick > 0.0F, "Idle tick must add basal metabolic exhaustion");
-
-        // 2. Movement exhaustion accumulates when horizontal velocity > 0.001
+        assertEquals(Metabolism.NORMAL_PER_TICK, afterIdleTick, 1e-5F);
         agent.setDeltaMovement(0.25, 0.0, 0.0);
         agent.tick();
-        float afterMoveTick = agent.getFoodData().getExhaustionLevel();
-        assertTrue(afterMoveTick - afterIdleTick >= 0.01F,
-                "Moving tick must add movement exhaustion on top of basal exhaustion");
+        float afterWalkTick = agent.getFoodData().getExhaustionLevel();
+        assertEquals(Metabolism.NORMAL_PER_TICK, afterWalkTick - afterIdleTick, 1e-5F);
 
-        // 3. Block breaking exhaustion (+0.025F when a block is broken)
+        // 2. Sprinting costs three times as much
+        agent.setSprinting(true);
+        agent.setDeltaMovement(0.25, 0.0, 0.0);
+        agent.tick();
+        assertEquals(3 * Metabolism.NORMAL_PER_TICK, agent.getFoodData().getExhaustionLevel() - afterWalkTick, 1e-5F);
+        agent.setSprinting(false);
+
+        // 3. Breaking a block and other actions cost nothing extra
         agent.setOnGround(true);
         BlockPos targetPos = new BlockPos(1, 64, 0);
         BlockState dirt = Blocks.DIRT.defaultBlockState();
@@ -707,17 +713,18 @@ public class AgentEntityTest {
             breaker.tick();
         }
         assertFalse(breaker.isBreaking(), "BlockBreaker should complete breaking dirt");
-        assertTrue(agent.getFoodData().getExhaustionLevel() - beforeBreak >= 0.024F,
-                "Breaking a block must add 0.025F exhaustion");
+        agent.causeFoodExhaustion(0.1F); // what vanilla charges for an attack
+        assertEquals(beforeBreak, agent.getFoodData().getExhaustionLevel(), 1e-5F,
+                "Actions add no exhaustion of their own");
         // Block is now broken in the mock world
         when(ctx.level.getBlockState(targetPos)).thenReturn(Blocks.AIR.defaultBlockState());
 
         // 4. Exhaustion drains saturation and then food level
         agent.getFoodData().setSaturation(0.0F);
         agent.getFoodData().setFoodLevel(20);
-        agent.getFoodData().setExhaustion(3.995F);
+        agent.getFoodData().setExhaustion(3.9995F);
         agent.setDeltaMovement(0.25, 0.0, 0.0);
-        agent.tick(); // 3.995 + 0.012 = 4.007 > 4.0 => foodLevel drops to 19
+        agent.tick(); // 3.9995 + 0.0011 > 4.0 => foodLevel drops to 19
         assertEquals(19, agent.getFoodData().getFoodLevel(),
                 "Food level must decrease when accumulated exhaustion exceeds 4.0");
 
