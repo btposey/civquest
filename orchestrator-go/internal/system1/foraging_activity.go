@@ -100,11 +100,11 @@ func directiveForcesForaging(stage Stage, routine Routine, ctx *FSMContext) bool
 		!hasSurvivalPreemption(ctx.Frame)
 }
 
-// runForage is one step of the Foraging frame: the waterfall runs with the frame's Local bound
-// to the skill context and the updated Local becomes the next Local. A frame whose evaluator
-// has nothing to emit this tick stays on the stack (waiting for the wander cooldown or a
-// target) instead of dead-ending; only a forced (directive) foraging with nothing to find
-// yields to the lower activities.
+// run is one step of the Foraging frame: the waterfall runs with the frame's Local bound to the
+// skill context and the updated Local becomes the next Local. A quiet tick means waiting (a
+// cooldown, a walking leg), so the frame stays even above another frame: popping would discard
+// what it has already visited and walk the agent back there (cq-6l3.2). Eligibility ends it;
+// only a forced (directive) foraging with nothing to find yields to the lower activities.
 func (a foragingActivity) run(lw *fsmWorld, local any) htpda.Step {
 	fl, _ := local.(forageLocal)
 	prog := fl.clone()
@@ -121,16 +121,12 @@ func (a foragingActivity) run(lw *fsmWorld, local any) htpda.Step {
 		intents = unwrapFSMIntents(fi)
 	}
 	lw.skillCtx.Forage = nil
-	// Holding a cast line is progress, not a dead end: keep the frame (and its cursor).
-	if len(intents) == 0 && fishingLineCast(lw.ctx.Frame) {
-		return htpda.Step{Op: htpda.OpStay, Next: prog}
-	}
-	if len(intents) == 0 && prog.Forced {
+	status := lw.ctx.Frame.Status
+	waiting := fishingLineCast(lw.ctx.Frame) ||
+		status.GetNavigationState() == civquestv1.NavigationState_NAVIGATION_STATE_PATHING
+	if len(intents) == 0 && prog.Forced && !waiting {
 		// Well fed and directed to forage but nothing reachable: yield to normal activities.
 		return popFrame(lw, a.kind, nil, false)
-	}
-	if len(intents) == 0 && !lw.holds() {
-		return popFrame(lw, a.kind, nil, true)
 	}
 	return htpda.Step{Op: htpda.OpStay, Intents: intents, Next: prog}
 }

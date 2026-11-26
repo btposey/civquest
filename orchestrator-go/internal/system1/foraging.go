@@ -19,6 +19,9 @@ const (
 	forageActionCooldownTicks  = int64(10)
 	forageExploreCooldownTicks = int64(20)
 	forageExploreStepDist      = 24.0
+	// forageContainerRevisitTicks: agents cannot take items from a container, so a visited one
+	// is not worth another walk for five minutes.
+	forageContainerRevisitTicks = int64(6000)
 )
 
 // ForagingSkill implements deterministic, zero-token food gathering and hunting
@@ -552,7 +555,7 @@ func evaluateForagingWithMemory(agentID string, frame *civquestv1.TelemetryFrame
 				d := math.Hypot(contPOI.X-pos.X, contPOI.Z-pos.Z)
 				if d <= 4.0 {
 					mem.Visited[contPOI.POIID] = frame.WorldTick
-				} else if lastVisit == 0 || frame.WorldTick-lastVisit > 400 {
+				} else if lastVisit == 0 || frame.WorldTick-lastVisit > forageContainerRevisitTicks {
 					targetKey := fmt.Sprintf("poi:%s", contPOI.POIID)
 					if navState != civquestv1.NavigationState_NAVIGATION_STATE_PATHING || mem.LastTargetKey != targetKey {
 						mem.LastTargetKey = targetKey
