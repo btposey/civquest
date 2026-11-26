@@ -168,6 +168,12 @@ func (e *ThreatEvaluator) Evaluate(ctx *EvaluatorContext, graph *FactGraph) erro
 	_, conf, hostiles := AssessImmediateThreats(frame, bravery)
 
 	isDrowning := isDrowningDamage(frame) || sustainedDrowning(frame)
+	// Block-contact hazard (cactus/berries/suffocation/void edge, cq-71l.13). Its unattributed
+	// damage already reads as environmental below, so it never counts as combat damage.
+	blockHazardKind := blockHazardNone
+	if h := detectBlockHazard(frame); h != nil {
+		blockHazardKind = h.Kind
+	}
 	damageTaken := false
 	if frame != nil && frame.LastDamageTaken != nil && !isDrowning {
 		if !IsPassiveOrEnvironmentalDamage(frame.LastDamageTaken) {
@@ -246,7 +252,7 @@ func (e *ThreatEvaluator) Evaluate(ctx *EvaluatorContext, graph *FactGraph) erro
 
 	// Low HP with zero hostile threats or combat damage (e.g. starvation) is a recovery/foraging
 	// concern, not a combat-flee EMERGENCY lock.
-	isEmergency := hostilesPresent || damageTaken || isOnFire || isCriticalHunger || shouldPanic || isDrowning
+	isEmergency := hostilesPresent || damageTaken || isOnFire || isCriticalHunger || shouldPanic || isDrowning || blockHazardKind != blockHazardNone
 	threatsCleared := !isEmergency
 
 	threatType := "NONE"
@@ -271,6 +277,7 @@ func (e *ThreatEvaluator) Evaluate(ctx *EvaluatorContext, graph *FactGraph) erro
 	graph.SetInt("threat.weapon_slot", "threat", int(weaponSlot), fmt.Sprintf("Weapon inventory slot: %d", weaponSlot))
 	graph.SetBool("threat.damage_taken", "threat", damageTaken, fmt.Sprintf("Recent damage taken: %t", damageTaken))
 	graph.SetBool("threat.is_drowning", "threat", isDrowning, fmt.Sprintf("Drowning emergency: %t", isDrowning))
+	graph.SetString("threat.block_hazard", "threat", string(blockHazardKind), fmt.Sprintf("Block-contact hazard: %q", blockHazardKind))
 	graph.SetString("threat.threatType", "threat", threatType, fmt.Sprintf("Threat type: %s", threatType))
 
 	return nil

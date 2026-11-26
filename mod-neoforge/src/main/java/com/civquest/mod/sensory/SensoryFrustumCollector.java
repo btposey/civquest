@@ -369,6 +369,10 @@ public class SensoryFrustumCollector {
             immediateSamples.add(feetPos.relative(dir, 2));
             immediateSamples.add(feetPos.above().relative(dir, 2));
             immediateSamples.add(feetPos.above(2).relative(dir, 2));
+            // Ground below the neighbouring column (void-edge / deep-drop reflex, cq-71l.13)
+            for (int depth = 1; depth <= 4; depth++) {
+                immediateSamples.add(feetPos.relative(dir).below(depth));
+            }
         }
         for (BlockPos footPos : immediateSamples) {
             if (level.hasChunkAt(footPos) && !addedPositions.contains(footPos)) {

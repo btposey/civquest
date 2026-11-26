@@ -421,6 +421,12 @@ func (s *PlaytestSim) frameBlocks() []*civquestv1.VisibleBlock {
 			}
 		}
 	}
+	// Ground below the neighbouring columns, as the Java collector samples it (void-edge reflex, cq-71l.13).
+	for _, d := range dirs {
+		for depth := int32(1); depth <= 4; depth++ {
+			add(BlockPosKey{X: f.X + d[0], Y: f.Y - depth, Z: f.Z + d[1]})
+		}
+	}
 	r := s.cfg.ViewRadius
 	r2 := float64(r * r)
 	for k, id := range s.World.Blocks {

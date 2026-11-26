@@ -85,16 +85,50 @@ func TestIntegration_Reflex_FallDamageDoesNotTriggerCombatFlee(t *testing.T) {
 	}
 }
 
-// Remaining hazards have no Go-side reflex yet (see bead cq-71l.13 "Missing reflexes: cactus/berry
-// contact, void edge, suffocation"); these document the expected behaviour and skip until built.
-func TestIntegration_Reflex_UnimplementedHazards(t *testing.T) {
+// reflex.hazard.fall_void_cactus (cactus, void edge, suffocation): block-contact hazards derived
+// in the emergency activity from adjacent hazard blocks, damage and position (bead cq-71l.13).
+func TestIntegration_Reflex_BlockHazards(t *testing.T) {
+	block := func(x, y, z int32, id string) *civquestv1.VisibleBlock {
+		return &civquestv1.VisibleBlock{Pos: &civquestv1.BlockPosProto{X: x, Y: y, Z: z}, BlockId: id}
+	}
+	envDamage := &civquestv1.DamageEvent{SourceType: civquestv1.DamageSourceType_DAMAGE_SOURCE_TYPE_UNSPECIFIED, DamageAmount: 1}
+	firstNav := func(rt *agent.AgentRuntime, f *civquestv1.TelemetryFrame) *civquestv1.NavigateIntent {
+		for tick := int64(0); tick < 3; tick++ {
+			f.WorldTick = 100 + tick*5
+			rt.HandleTelemetryFrame(f)
+			for _, in := range drain(rt) {
+				if n := in.GetNavigate(); n != nil {
+					return n
+				}
+			}
+		}
+		return nil
+	}
 	t.Run("Cactus", func(t *testing.T) {
-		t.Skip("no cactus reflex: HandleTelemetryFrame emits no intents next to a cactus while taking damage (bead cq-71l.13)")
+		f := baseFrame(100, 18)
+		f.InterestingBlocks = []*civquestv1.VisibleBlock{block(0, 63, 0, "minecraft:grass_block"), block(1, 64, 0, "minecraft:cactus")}
+		f.LastDamageTaken = envDamage
+		n := firstNav(newReflexRuntime(t, "cactus"), f)
+		if n == nil || n.Target.X >= f.Status.Position.X {
+			t.Fatalf("must navigate away from the cactus (-X), got %v", n)
+		}
 	})
 	t.Run("VoidEdge", func(t *testing.T) {
-		t.Skip("no void-edge reflex (bead cq-71l.13)")
+		f := baseFrame(100, 20)
+		f.Status.Position = &civquestv1.Vec3{X: 0.9, Y: 64, Z: 0.5}
+		f.InterestingBlocks = []*civquestv1.VisibleBlock{block(0, 63, 0, "minecraft:stone"), block(-1, 63, 0, "minecraft:stone")}
+		n := firstNav(newReflexRuntime(t, "voidedge"), f)
+		if n == nil || n.Target.X != 0.5 {
+			t.Fatalf("must step back to the cell centre, got %v", n)
+		}
 	})
 	t.Run("Suffocation", func(t *testing.T) {
-		t.Skip("no suffocation reflex (bead cq-71l.13)")
+		f := baseFrame(100, 18)
+		f.InterestingBlocks = []*civquestv1.VisibleBlock{block(0, 64, 0, "minecraft:stone"), block(0, 65, 0, "minecraft:stone")}
+		f.LastDamageTaken = envDamage
+		n := firstNav(newReflexRuntime(t, "suffocate"), f)
+		if n == nil {
+			t.Fatal("must move out of the block (open neighbour cell)")
+		}
 	})
 }

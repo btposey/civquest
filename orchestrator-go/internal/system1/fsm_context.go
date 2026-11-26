@@ -93,6 +93,23 @@ func (c *FSMContext) IsDrowning() bool {
 	return isDrowningDamage(c.Frame) || sustainedDrowning(c.Frame)
 }
 
+// BlockHazard returns the derived block-contact hazard (cactus, berries, void edge,
+// suffocation; cq-71l.13) or "" when none.
+func (c *FSMContext) BlockHazard() blockHazardKind {
+	if c == nil {
+		return blockHazardNone
+	}
+	if c.Facts != nil {
+		if _, ok := c.Facts.Get("threat.block_hazard"); ok {
+			return blockHazardKind(c.Facts.GetString("threat.block_hazard"))
+		}
+	}
+	if h := detectBlockHazard(c.Frame); h != nil {
+		return h.Kind
+	}
+	return blockHazardNone
+}
+
 // IsHealthCritical checks if HP <= 35% max HP.
 func (c *FSMContext) IsHealthCritical() bool {
 	if c == nil {
@@ -188,7 +205,7 @@ func (c *FSMContext) IsEmergency() bool {
 	if c == nil {
 		return false
 	}
-	return c.HostilesPresent() || c.DamageTaken() || c.IsOnFire() || c.IsCriticalHunger() || c.ShouldPanic() || c.IsDrowning()
+	return c.HostilesPresent() || c.DamageTaken() || c.IsOnFire() || c.IsCriticalHunger() || c.ShouldPanic() || c.IsDrowning() || c.BlockHazard() != blockHazardNone
 }
 
 // ThreatsCleared evaluates whether all hostiles, panic, fire, drowning, and critical hunger issues have cleared.
@@ -204,7 +221,7 @@ func (c *FSMContext) ThreatsCleared() bool {
 	if c == nil {
 		return true
 	}
-	return !c.HostilesPresent() && !c.DamageTaken() && !c.IsOnFire() && !c.IsCriticalHunger() && !c.ShouldPanic() && !c.IsDrowning()
+	return !c.HostilesPresent() && !c.DamageTaken() && !c.IsOnFire() && !c.IsCriticalHunger() && !c.ShouldPanic() && !c.IsDrowning() && c.BlockHazard() == blockHazardNone
 }
 
 // HasSurvivalKit returns true if the agent holds an axe, weapon/sword, and light source.

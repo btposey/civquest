@@ -34,6 +34,7 @@ const (
 	emergencyEvasion emergencyMode = "creeper_evasion"
 	emergencyEscape  emergencyMode = "fire_drowning_escape"
 	emergencyHunger  emergencyMode = "critical_hunger"
+	emergencyBlock   emergencyMode = "block_hazard" // cactus/berries/void edge/suffocation (cq-71l.13)
 )
 
 // emergencyLocal is the emergency frame's private state. It also holds the resolution state
@@ -159,13 +160,23 @@ func (el emergencyLocal) resolved(ctx *FSMContext, tick int64) bool {
 	return !el.Drowning && !el.Burning &&
 		quiet(el.LastHostileTick, emergencySettleHostileTicks) &&
 		quiet(el.LastDamageTick, emergencyQuietDamageTicks) &&
-		!ctx.IsCriticalHunger() && !ctx.ShouldPanic()
+		!ctx.IsCriticalHunger() && !ctx.ShouldPanic() && ctx.BlockHazard() == blockHazardNone
 }
 
 // reflexIntents is the emergency frame's motor output. A latched hazard owns the output
 // (life first: drowning, then fire without hostiles); otherwise the combat/hunger reflex runs
 // with the held engagement verdict bound.
 func (el *emergencyLocal) reflexIntents(ctx *FSMContext, tick int64) []*civquestv1.AgentIntent {
+	if ctx != nil && !el.Drowning && !ctx.HostilesPresent() {
+		// Block-contact hazard: recomputed from the frame each tick (frame-local, nothing latched).
+		if h := detectBlockHazard(ctx.Frame); h != nil {
+			var out []*civquestv1.AgentIntent
+			if in := blockHazardIntent(ctx.AgentID, ctx.Frame, h, el.LastFleeTarget, el.LastFleeTick, tick); in != nil {
+				out = append(out, in)
+			}
+			return out
+		}
+	}
 	if el.Drowning || (el.Burning && !ctx.HostilesPresent()) {
 		if el.Drowning && ctx.Frame != nil && ctx.Frame.Status != nil && !ctx.Frame.Status.IsInWater && !ctx.Frame.Status.Submerged {
 			return nil // on dry ground waiting for air to regenerate: do not move
@@ -210,6 +221,9 @@ func classifyEmergency(ctx *FSMContext, el emergencyLocal) emergencyMode {
 				return emergencyEvasion
 			}
 		}
+	}
+	if ctx.BlockHazard() != blockHazardNone && !ctx.HostilesPresent() {
+		return emergencyBlock
 	}
 	if ctx.HostilesPresent() || ctx.DamageTaken() || ctx.ShouldPanic() {
 		return emergencyCombat
