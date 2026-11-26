@@ -65,20 +65,6 @@ func traceTail(s *eval.PlaytestSim, from, to int) string {
 	return sb.String()
 }
 
-// emergenciesInland counts EMERGENCY entries away from the rim of a groundWorld(half). The rim
-// is a real drop that a wandering agent reaches, steps back from and may reach again.
-func emergenciesInland(s *eval.PlaytestSim, half float64) int {
-	n, in := 0, false
-	for _, st := range s.Steps {
-		now := st.Stage == system1.StageEmergency
-		if now && !in && st.Pos.X > 2-half && st.Pos.X < half-2 && st.Pos.Z > 2-half && st.Pos.Z < half-2 {
-			n++
-		}
-		in = now
-	}
-	return n
-}
-
 // (1) Drowning (cq-gpa.1 telemetry + cq-gpa.2 emergency hold).
 //
 // UNFIXED BEHAVIOUR: bert and dave drowned. EMERGENCY was entered and cleared every ~20 ticks
@@ -104,7 +90,7 @@ func TestPlaytest2_01_DrowningHeldUntilOnLandWithAir(t *testing.T) {
 	if s.Air < 240 {
 		t.Errorf("air not restored: %d/300 (want >= 240)", s.Air)
 	}
-	if n := emergenciesInland(s, 40); n > 2 {
+	if n := s.EmergencyEntries(); n > 2 {
 		t.Errorf("EMERGENCY entered %d times (want <= 2): the frame is not held (flapping)\n%s", n, traceTail(s, 0, 60))
 	}
 	// Held: while the agent is still wet after first entering EMERGENCY, the stage must stay EMERGENCY.
@@ -163,7 +149,7 @@ func TestPlaytest2_02_BurningLeavesCampfireAndStaysOut(t *testing.T) {
 			break
 		}
 	}
-	if n := emergenciesInland(s, 40); n > 2 {
+	if n := s.EmergencyEntries(); n > 2 {
 		t.Errorf("EMERGENCY entered %d times (want <= 2): not held\n%s", n, traceTail(s, 0, 60))
 	}
 }

@@ -21,7 +21,11 @@ func NewBlankWorld() *SyntheticStartingWorld {
 	}
 }
 
-// FillGround lays a flat ground layer (top surface Y=63) over [x0..x1] x [z0..z1].
+// perimeterHeight is the height of the wall around filled ground: too tall to step or jump.
+const perimeterHeight = 4
+
+// FillGround lays a flat ground layer (top surface Y=63) over [x0..x1] x [z0..z1] and walls it
+// in just outside that area, so agents cannot reach the drop at the edge of the world.
 func (w *SyntheticStartingWorld) FillGround(x0, z0, x1, z1 int32, blockID string) {
 	if blockID == "" {
 		blockID = "minecraft:grass_block"
@@ -29,6 +33,16 @@ func (w *SyntheticStartingWorld) FillGround(x0, z0, x1, z1 int32, blockID string
 	for x := x0; x <= x1; x++ {
 		for z := z0; z <= z1; z++ {
 			w.Blocks[BlockPosKey{X: x, Y: 63, Z: z}] = blockID
+		}
+	}
+	for x := x0 - 1; x <= x1+1; x++ {
+		for z := z0 - 1; z <= z1+1; z++ {
+			if x >= x0 && x <= x1 && z >= z0 && z <= z1 {
+				continue
+			}
+			for y := int32(63); y <= 63+perimeterHeight; y++ {
+				w.Blocks[BlockPosKey{X: x, Y: y, Z: z}] = "minecraft:bedrock"
+			}
 		}
 	}
 }
