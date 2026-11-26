@@ -93,6 +93,13 @@ $XDG_STATE_HOME/civquest/supervisor.pid. Use --foreground to run interactively.`
 				ShutdownTimeout:     5 * time.Second,
 			}
 
+			if gc, err := r.LoadGlobalConfig(); err == nil && gc != nil && gc.LLMGateway.BaseURL != "" {
+				cfg.InferenceUpstream = gc.LLMGateway.BaseURL
+				cfg.InferenceFallbackSlots = gc.InferenceGovernor.MaxConcurrentLLMRequests
+				cfg.InferenceStaleAge = 60 * time.Second
+				cfg.InferenceRequestTimeout = time.Duration(gc.InferenceGovernor.RequestTimeoutSeconds) * time.Second
+			}
+
 			if foreground {
 				cfg.Out = cmd.OutOrStdout()
 				cfg.ErrOut = cmd.ErrOrStderr()

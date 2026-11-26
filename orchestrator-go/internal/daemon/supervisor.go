@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/http"
 	"net"
 	"os"
 	"os/exec"
@@ -19,6 +20,7 @@ import (
 
 	"github.com/btposey/civquest/orchestrator-go/internal/domain"
 	"github.com/btposey/civquest/orchestrator-go/internal/governor"
+	"github.com/btposey/civquest/orchestrator-go/internal/inference"
 	"github.com/btposey/civquest/orchestrator-go/internal/xdg"
 )
 
@@ -213,6 +215,13 @@ type SupervisorConfig struct {
 	MaxActiveAgents           int
 	MinFoodSurplusDays        int
 	DailyFoodPerAgent         int
+
+	// InferenceUpstream, when set, makes the supervisor host the shared inference
+	// gateway (ADR-038) in front of this llama.cpp base URL and point agents at it.
+	InferenceUpstream       string
+	InferenceFallbackSlots  int
+	InferenceStaleAge       time.Duration
+	InferenceRequestTimeout time.Duration
 }
 
 // DefaultSupervisorConfig returns standard supervisor configuration defaults.
@@ -273,6 +282,8 @@ type DaemonSupervisor struct {
 	stopped              bool
 	readyChan            chan struct{}
 	reproductionGovernor *governor.ReproductionGovernor
+	inferenceURL         string
+	inferenceSrv         *http.Server
 }
 
 // NewDaemonSupervisor creates a new supervisor instance.
@@ -451,6 +462,11 @@ func (s *DaemonSupervisor) Run(ctx context.Context) error {
 	}()
 
 	s.logSupervisorEvent("Supervisor daemon started (PID %d)", s.pid)
+
+	if err := s.startInferenceGateway(); err != nil {
+		return err
+	}
+	defer s.stopInferenceGateway()
 
 	// Discover and start configured agents
 	if err := s.discoverAndStartAgents(); err != nil {
@@ -692,6 +708,10 @@ func (s *DaemonSupervisor) StartAgent(agentName string) error {
 	}
 	if s.resolver.StateDir() != "" {
 		childEnv = append(childEnv, "XDG_STATE_HOME="+filepath.Dir(s.resolver.StateDir()))
+	}
+
+	if s.inferenceURL != "" {
+		childEnv = append(childEnv, "CIVQUEST_INFERENCE_URL="+s.inferenceURL)
 	}
 
 	cmd := exec.Command(binPath, agentArgs...)
@@ -1050,4 +1070,33 @@ func resolveAgentBinary(r *xdg.Resolver, explicitPath string) (string, error) {
 	}
 
 	return "", fmt.Errorf("civquest-agent binary not found in standard paths; build it via 'go build -o ~/.local/bin/civquest-agent ./cmd/civquest-agent'")
+}
+
+// startInferenceGateway hosts the shared inference proxy on a loopback port.
+func (s *DaemonSupervisor) startInferenceGateway() error {
+	if s.config.InferenceUpstream == "" {
+		return nil
+	}
+	slots := inference.Discover(s.ctx, nil, s.config.InferenceUpstream, s.config.InferenceFallbackSlots)
+	gw := inference.New(inference.Config{
+		Slots:          slots,
+		StaleAge:       s.config.InferenceStaleAge,
+		RequestTimeout: s.config.InferenceRequestTimeout,
+	})
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		return fmt.Errorf("listening for inference gateway: %w", err)
+	}
+	srv := &http.Server{Handler: inference.NewProxy(gw, s.config.InferenceUpstream)}
+	go func() { _ = srv.Serve(ln) }()
+	s.inferenceSrv = srv
+	s.inferenceURL = "http://" + ln.Addr().String() + "/v1"
+	s.logSupervisorEvent("Inference gateway listening on %s (slots=%d)", s.inferenceURL, slots)
+	return nil
+}
+
+func (s *DaemonSupervisor) stopInferenceGateway() {
+	if s.inferenceSrv != nil {
+		_ = s.inferenceSrv.Close()
+	}
 }

@@ -16,6 +16,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/btposey/civquest/orchestrator-go/internal/inference"
 	"github.com/btposey/civquest/orchestrator-go/internal/xdg"
 )
 
@@ -55,6 +56,21 @@ func WithHTTPClient(httpClient *http.Client) Option {
 func WithBaseURL(baseURL string) Option {
 	return func(c *Client) {
 		c.baseURL = strings.TrimRight(baseURL, "/")
+	}
+}
+
+// WithInferenceProxy routes all requests through the supervisor-hosted shared
+// inference gateway (ADR-038). The proxy queues without timeout and enforces
+// the request deadline after slot acquisition, so the client-side timeout is
+// disabled and the per-process governor must not cap below the proxy.
+func WithInferenceProxy(proxyURL string) Option {
+	return func(c *Client) {
+		if proxyURL == "" {
+			return
+		}
+		c.baseURL = strings.TrimRight(proxyURL, "/")
+		c.requestTimeout = 0
+		c.viaProxy = true
 	}
 }
 
@@ -119,6 +135,7 @@ type Client struct {
 	requestTimeout time.Duration
 	governor       *Governor
 	maxRetries     int
+	viaProxy       bool
 	mu             sync.RWMutex
 	closed         bool
 }
@@ -278,6 +295,12 @@ func (c *Client) buildURL(endpoint string) string {
 
 // executeRequest performs an HTTP POST against the gateway, decoding JSON into respTarget.
 func (c *Client) executeRequest(ctx context.Context, endpoint string, reqPayload any, respTarget any) error {
+	return c.executeRequestPrio(ctx, endpoint, reqPayload, respTarget, inference.Tactical)
+}
+
+// executeRequestPrio is executeRequest with an explicit default queue priority
+// (overridable per call via inference.WithPriority on ctx).
+func (c *Client) executeRequestPrio(ctx context.Context, endpoint string, reqPayload any, respTarget any, defPrio inference.Priority) error {
 	c.mu.RLock()
 	if c.closed {
 		c.mu.RUnlock()
@@ -306,6 +329,9 @@ func (c *Client) executeRequest(ctx context.Context, endpoint string, reqPayload
 
 	httpReq.Header.Set("Content-Type", "application/json")
 	httpReq.Header.Set("Accept", "application/json")
+	if c.viaProxy {
+		httpReq.Header.Set(inference.PriorityHeader, inference.PriorityFrom(ctx, defPrio).String())
+	}
 	if c.apiKey != "" {
 		httpReq.Header.Set("Authorization", "Bearer "+c.apiKey)
 	}
@@ -611,8 +637,8 @@ func (c *Client) CompleteCreative(ctx context.Context, messages []ChatMessage) (
 		Temperature: c.creativeTemp,
 	}
 
-	resp, err := c.executeChatCompletion(ctx, req)
-	if err != nil {
+	var resp ChatCompletionResponse
+	if err := c.executeRequestPrio(ctx, "/chat/completions", req, &resp, inference.Dialogue); err != nil {
 		return "", err
 	}
 

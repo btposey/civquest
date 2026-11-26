@@ -206,7 +206,11 @@ func run(parentCtx context.Context, args []string, stdout, stderr io.Writer, r *
 		globalCfg.LLMGateway.BaseURL = llmGateway
 	}
 
-	llmClient, err := system2.NewClient(globalCfg)
+	var llmOpts []system2.Option
+	if proxyURL := os.Getenv("CIVQUEST_INFERENCE_URL"); proxyURL != "" {
+		llmOpts = append(llmOpts, system2.WithInferenceProxy(proxyURL))
+	}
+	llmClient, err := system2.NewClient(globalCfg, llmOpts...)
 	if err != nil {
 		return fmt.Errorf("creating System 2 LLM client: %w", err)
 	}
