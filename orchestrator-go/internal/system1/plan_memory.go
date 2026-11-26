@@ -15,6 +15,8 @@ package system1
 // on AgentState. Readers get value copies; the snapshot's maps are copy-on-write.
 
 import (
+	"math"
+
 	"github.com/btposey/civquest/orchestrator-go/internal/system1/htpda"
 	"github.com/btposey/civquest/orchestrator-go/internal/system1/plan"
 	"github.com/btposey/civquest/orchestrator-go/internal/system1/spatialmem"
@@ -154,7 +156,48 @@ func spatialPenalty(m spatialmem.Snapshot, x, z float64, tick int64, weight floa
 	return weight * m.RevisitCost(m.CellOf(x, z), tick)
 }
 
-// spatialNovelty is the novelty in (0,1] of the cell containing (x, z).
+// Explore-target steering (tag: design-budget).
+const (
+	// noveltyTieMargin: a heading must be this much more novel than the default to win.
+	noveltyTieMargin = 0.05
+)
+
+// forageHeadingOffsets: the forage wander's default +0.9 rad turn first, then alternatives.
+var forageHeadingOffsets = []float64{0.9, 0, -0.9, 1.8, -1.8, math.Pi}
+
+// scoutPivotOffsets: the frontier scout's default +1.2 rad pivot first, then alternatives.
+var scoutPivotOffsets = []float64{1.2, 2.4, -1.2, 3.6, -2.4}
+
+// exploreNoveltyWeight: survey-bearing score points per unit novelty of the leg's cells (the
+// feature bonuses it competes with are 10-45 points).
+const exploreNoveltyWeight = 30.0
+
+// noveltyHeading returns base+offset for the offset whose leg (samples at half and full dist)
+// crosses the most novel cells; the first offset wins ties within noveltyTieMargin, so an empty
+// memory reproduces the default heading exactly.
+func noveltyHeading(m spatialmem.Snapshot, x, z, base, dist float64, tick int64, offsets []float64) float64 {
+	best, bestScore := base+offsets[0], -1.0
+	for i, off := range offsets {
+		h := base + off
+		s := 0.0
+		for _, f := range [...]float64{0.5, 1.0} {
+			s += spatialNovelty(m, x+math.Cos(h)*dist*f, z+math.Sin(h)*dist*f, tick)
+		}
+		s /= 2
+		if i == 0 {
+			bestScore = s
+			continue
+		}
+		if s > bestScore+noveltyTieMargin {
+			best, bestScore = h, s
+		}
+	}
+	return best
+}
+
+// spatialNovelty is the novelty in (0,1] of the cell containing (x, z): 1/(1+RevisitCost).
+// (spatialmem.Novelty additionally halves cells in explored sectors, but its coverage scan is
+// O(cells); target steering runs every leg, so it uses the O(1) cell cost.)
 func spatialNovelty(m spatialmem.Snapshot, x, z float64, tick int64) float64 {
-	return m.Novelty(m.CellOf(x, z), tick)
+	return 1 / (1 + m.RevisitCost(m.CellOf(x, z), tick))
 }

@@ -9,6 +9,7 @@ package system1
 import (
 	civquestv1 "github.com/btposey/civquest/orchestrator-go/internal/proto/v1"
 	"github.com/btposey/civquest/orchestrator-go/internal/system1/htpda"
+	"github.com/btposey/civquest/orchestrator-go/internal/system1/spatialmem"
 )
 
 // foragingActivity owns its eligibility (Propose) and waterfall; its weight is priorityForaging.
@@ -72,6 +73,8 @@ type forageLocal struct {
 	// Forced is derived each step: a System 2 FORAGE_FOOD directive keeps foraging eligible
 	// while well fed. It is not progress.
 	Forced bool
+	// Spatial is the agent's spatial memory (Memory, ADR-039), bound each step; read-only.
+	Spatial spatialmem.Snapshot
 }
 
 func newForageLocal() *forageLocal { return &forageLocal{Visited: map[string]int64{}} }
@@ -106,6 +109,7 @@ func (a foragingActivity) run(lw *fsmWorld, local any) htpda.Step {
 	fl, _ := local.(forageLocal)
 	prog := fl.clone()
 	prog.Forced = !NeedsForaging(lw.ctx.Frame) && directiveForcesForaging(lw.fsm.currentStage, lw.fsm.currentRoutine, lw.ctx)
+	prog.Spatial = lw.spatial()
 	lw.skillCtx.Forage = &prog
 	var intents []*civquestv1.AgentIntent
 	if prog.Forced {

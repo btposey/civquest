@@ -607,7 +607,8 @@ func evaluateForagingWithMemory(agentID string, frame *civquestv1.TelemetryFrame
 	if navState == civquestv1.NavigationState_NAVIGATION_STATE_STUCK {
 		mem.ExploreHeadingRad += 2.2
 	} else {
-		mem.ExploreHeadingRad += 0.9
+		// Default +0.9 rad turn, steered off ground the agent has already covered (cq-dcx.4).
+		mem.ExploreHeadingRad = noveltyHeading(mem.Spatial, pos.X, pos.Z, mem.ExploreHeadingRad, forageExploreStepDist, frame.WorldTick, forageHeadingOffsets)
 	}
 	mem.ExploreHeadingRad = math.Atan2(math.Sin(mem.ExploreHeadingRad), math.Cos(mem.ExploreHeadingRad))
 

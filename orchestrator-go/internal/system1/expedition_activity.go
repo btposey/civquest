@@ -25,6 +25,7 @@ import (
 	"github.com/btposey/civquest/orchestrator-go/internal/db"
 	civquestv1 "github.com/btposey/civquest/orchestrator-go/internal/proto/v1"
 	"github.com/btposey/civquest/orchestrator-go/internal/system1/htpda"
+	"github.com/btposey/civquest/orchestrator-go/internal/system1/spatialmem"
 )
 
 const (
@@ -158,6 +159,7 @@ type expeditionKnowledge struct {
 	Homesteaded  bool
 	Site         *[3]float64
 	Hazards      []*db.AgentPOI
+	Spatial      spatialmem.Snapshot // the agent's spatial memory (ADR-039), read-only
 }
 
 func (s *AgentState) expeditionKnowledge(pos *civquestv1.Vec3) expeditionKnowledge {
@@ -208,7 +210,9 @@ func (w *fsmWorld) knowledge() expeditionKnowledge {
 	if w.ctx == nil {
 		return expeditionKnowledge{ClanSize: 1}
 	}
-	return w.ctx.State.expeditionKnowledge(pos)
+	k := w.ctx.State.expeditionKnowledge(pos)
+	k.Spatial = w.spatial()
+	return k
 }
 
 func (w *fsmWorld) agentID() string {
@@ -1008,6 +1012,14 @@ func chooseBestSurveyBearing(agentID string, frame *civquestv1.TelemetryFrame, p
 			// Forward directional momentum along open plains unless a salient feature or blocked ravine dictates turning.
 			diffRad := angularDiffDeg(b, loc.Bearing) * math.Pi / 180.0
 			score += math.Cos(diffRad) * 20.0
+		}
+		// Spatial memory (cq-dcx.4): prefer legs over ground the agent has not covered yet.
+		if bx, bz := bearingToUnitVector(b); k.Spatial.Len() > 0 {
+			nov := 0.0
+			for _, f := range [...]float64{16, 32} {
+				nov += spatialNovelty(k.Spatial, pos.X+bx*f, pos.Z+bz*f, frame.WorldTick)
+			}
+			score += exploreNoveltyWeight * nov / 2
 		}
 		// Deterministic zero-alloc tie-breaker so uniform terrain still fans out cleanly.
 		jitterHash := agentHash ^ (uint32(sec.SectorIndex) * 2654435761)

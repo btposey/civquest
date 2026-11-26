@@ -8,14 +8,17 @@ package system1
 import (
 	"github.com/btposey/civquest/orchestrator-go/internal/crafting"
 	"github.com/btposey/civquest/orchestrator-go/internal/system1/htpda"
+	"github.com/btposey/civquest/orchestrator-go/internal/system1/spatialmem"
 )
 
 func runWalkFrame(a waterfallActivity, lw *fsmWorld, walk walkLocal, wrap func(walkLocal) any) htpda.Step {
 	prog := walk
 	prog.wantExpedition = false
+	prog.spatial = lw.spatial()
 	lw.skillCtx.Walk = &prog
 	fi, done := a.tick(lw)
 	lw.skillCtx.Walk = nil
+	prog.spatial = spatialmem.Snapshot{}
 	intents := unwrapFSMIntents(fi)
 	want := prog.wantExpedition
 	prog.wantExpedition = false

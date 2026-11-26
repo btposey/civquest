@@ -14,6 +14,7 @@ package integration
 
 import (
 	"fmt"
+	"math"
 	"os"
 	"strings"
 	"testing"
@@ -379,27 +380,52 @@ const noRetreadBudget = 0.25
 //
 // UNFIXED BEHAVIOUR: agents retraced the same corridors repeatedly (positions clustered at
 // 1-2 blocks; same targets re-picked) because nothing remembered where they had already been.
+//
+// Attractors: the agent is hungry in a world with no food, so the Foraging frame's outward
+// wander drives five minutes of exploration (its old fixed +0.9 rad turn per 24-block leg closed
+// a ~7-leg loop around the spawn and re-walked it: revisit ratio 0.756 before cq-dcx.4); a
+// crafting table and a timber grid around the spawn are the familiar POIs that pull an agent
+// without spatial memory back over the same ground. A sated explorer in the bounded arena is the
+// control (frontier scouting legs; it must stay within budget too).
 func TestPlaytest2_08_ExplorationDoesNotRetread(t *testing.T) {
-	pendingFix(t, "cq-dcx.4/cq-dcx.6", "spatial-memory-aware planning has not landed; budget stated as design target")
-	// A bounded 100x100 arena: 5 minutes of walking (~1300 blocks) cannot fit without
-	// re-covering ground unless the agent plans around where it has been.
-	w := groundWorld(50)
-	for gx := int32(-40); gx <= 40; gx += 20 {
-		for gz := int32(-40); gz <= 40; gz += 20 {
-			w.AddTrunk(gx, gz, 5, "")
+	run := func(t *testing.T, half int32, food int32) float64 {
+		w := groundWorld(half)
+		for gx := int32(-40); gx <= 40; gx += 20 {
+			for gz := int32(-40); gz <= 40; gz += 20 {
+				w.AddTrunk(gx, gz, 5, "")
+			}
 		}
+		w.Blocks[eval.BlockPosKey{X: 3, Y: 64, Z: 3}] = "minecraft:crafting_table"
+		s := eval.NewPlaytestSim(eval.PlaytestSimConfig{
+			Profession: "EXPLORER", Stage: system1.StageSettlement, World: w,
+			Start: eval.SimVec{X: 0.5, Y: 64, Z: 0.5}, Inventory: simKit(), TimeOfDay: 1000,
+		})
+		if food > 0 {
+			s.Food = food
+		}
+		s.Run(5 * simTicksPerMinute)
+		walked := 0.0
+		path := s.Path()
+		for i := 1; i < len(path); i++ {
+			walked += math.Hypot(path[i].X-path[i-1].X, path[i].Z-path[i-1].Z)
+		}
+		ratio := eval.RevisitRatio(path)
+		t.Logf("revisit ratio over 5 simulated minutes = %.3f over %.0f blocks walked (design budget < %.2f)", ratio, walked, noRetreadBudget)
+		if walked < 200 {
+			t.Errorf("walked only %.0f blocks in 5 minutes: the scenario no longer exercises exploration", walked)
+		}
+		return ratio
 	}
-	s := eval.NewPlaytestSim(eval.PlaytestSimConfig{
-		Profession: "EXPLORER", Stage: system1.StageSettlement, World: w,
-		Start: eval.SimVec{X: 0.5, Y: 64, Z: 0.5}, Inventory: simKit(), TimeOfDay: 1000,
+	t.Run("hungry_forager_open_world", func(t *testing.T) {
+		if r := run(t, 100, 4); r >= noRetreadBudget {
+			t.Errorf("revisit ratio %.3f >= design budget %.2f: the forager is retracing its own path", r, noRetreadBudget)
+		}
 	})
-	s.Run(5 * simTicksPerMinute)
-
-	ratio := eval.RevisitRatio(s.Path())
-	t.Logf("revisit ratio over 5 simulated minutes = %.3f (design budget < %.2f)", ratio, noRetreadBudget)
-	if ratio >= noRetreadBudget {
-		t.Errorf("revisit ratio %.3f >= design budget %.2f: the agent is retracing its own path", ratio, noRetreadBudget)
-	}
+	t.Run("explorer_bounded_arena_control", func(t *testing.T) {
+		if r := run(t, 50, 0); r >= noRetreadBudget {
+			t.Errorf("revisit ratio %.3f >= design budget %.2f: the explorer is retracing its own path", r, noRetreadBudget)
+		}
+	})
 }
 
 // Metric sanity (runs always): the helper itself must separate a retrace from a straight line.

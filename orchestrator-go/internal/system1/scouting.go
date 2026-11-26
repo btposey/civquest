@@ -233,7 +233,9 @@ func evaluateScoutingLocked(
 		walk.exploreStepIndex++
 	} else if stuck || timedOut {
 		// Rotate to a new sector azimuth and reset to leg 0
-		newAz := math.Atan2(math.Sin(walk.frontierAzimuthRad+1.2), math.Cos(walk.frontierAzimuthRad+1.2))
+		// Default +1.2 rad pivot, steered toward the least-covered sector (cq-dcx.4).
+		pivot := noveltyHeading(walk.spatial, origin.X, origin.Z, walk.frontierAzimuthRad, legStep, frame.WorldTick, scoutPivotOffsets)
+		newAz := math.Atan2(math.Sin(pivot), math.Cos(pivot))
 		walk.frontierAzimuthRad = newAz
 		walk.lastHeadingRad = walk.frontierAzimuthRad
 		walk.frontierRadialLeg = 0

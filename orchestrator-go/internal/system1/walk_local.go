@@ -9,7 +9,10 @@ package system1
 // and the mutated copy becomes the next Local. A nil *walkLocal means "no frame bound" (a
 // direct call): evaluators use a fresh cursor (see orFreshWalk).
 
-import civquestv1 "github.com/btposey/civquest/orchestrator-go/internal/proto/v1"
+import (
+	civquestv1 "github.com/btposey/civquest/orchestrator-go/internal/proto/v1"
+	"github.com/btposey/civquest/orchestrator-go/internal/system1/spatialmem"
+)
 
 type walkLocal struct {
 	lastExploreTick         int64
@@ -36,6 +39,10 @@ type walkLocal struct {
 
 	// craftLatch holds the in-flight craft until the inventory reflects it (cq-dcx.2).
 	craftLatch craftLatch
+
+	// spatial is the agent's spatial memory (Memory, ADR-039), bound by the walk stepper for
+	// one step and cleared after it; read-only, never progress.
+	spatial spatialmem.Snapshot
 }
 
 func orFreshWalk(w *walkLocal) *walkLocal {
