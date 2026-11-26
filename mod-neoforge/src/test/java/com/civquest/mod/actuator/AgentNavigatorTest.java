@@ -72,6 +72,27 @@ public class AgentNavigatorTest {
     }
 
     @Test
+    @DisplayName("Dying during the movement step stops the navigator without an error")
+    void testDeathDuringMoveDoesNotThrow() {
+        AgentEntity agent = mock(AgentEntity.class);
+        Level level = mock(Level.class);
+        when(agent.level()).thenReturn(level);
+        when(agent.position()).thenReturn(new Vec3(0.0, 64.0, 0.0));
+        when(agent.getDeltaMovement()).thenReturn(Vec3.ZERO);
+        when(agent.onGround()).thenReturn(true);
+        AgentNavigator navigator = new AgentNavigator(agent);
+        // Death handling stops the navigator from inside Entity.move (cq-6l3.6).
+        doAnswer(inv -> {
+            navigator.stop();
+            return null;
+        }).when(agent).move(any(), any(Vec3.class));
+        navigator.navigate(10.0, 64.0, 0.0, 1.0f, false, false, false, 1);
+
+        assertDoesNotThrow(navigator::tick);
+        verify(agent).move(any(), any(Vec3.class));
+    }
+
+    @Test
     @DisplayName("Yaw is rate limited per tick and velocity ramps smoothly while walking by default")
     void testYawRateLimitAndSmoothWalk() {
         AgentEntity agent = mock(AgentEntity.class);

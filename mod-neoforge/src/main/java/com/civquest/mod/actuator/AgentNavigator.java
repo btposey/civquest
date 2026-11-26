@@ -1435,6 +1435,9 @@ public class AgentNavigator {
         } else {
             this.simulatedPos = this.simulatedPos.add(movement);
         }
+        if (this.targetCoords == null) {
+            return; // the move killed the agent, which stopped this navigator (cq-6l3.6)
+        }
 
         // Re-check arrival after movement
         Vec3 postPos = getPosition();
