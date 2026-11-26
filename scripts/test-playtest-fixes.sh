@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Runs only the playtest-2 fix scenarios (orchestrator-go/test/integration/playtest2_fixes_test.go,
+# Runs only the playtest fix scenarios (orchestrator-go/test/integration/playtest*_fixes_test.go,
 # bead cq-gpa.13) against the real System 1 kernel in the closed-loop synthetic world and prints a
 # pass/fail/skip table. Exit status is non-zero if any scenario FAILS (skips are allowed).
 #
@@ -21,7 +21,7 @@ done
 out="$(mktemp)"
 trap 'rm -f "$out"' EXIT
 # shellcheck disable=SC2086
-go test $race -count=1 -json -run 'TestPlaytest2_' ./test/integration >"$out" 2>&1
+go test $race -count=1 -json -run 'TestPlaytest[23]_' ./test/integration >"$out" 2>&1
 rc=$?
 
 python3 -I - "$out" <<'PY'
@@ -41,7 +41,7 @@ for line in open(sys.argv[1]):
         res[t] = (a.upper(), e.get("Elapsed", 0))
     elif a == "output":
         o = e["Output"].strip()
-        if "playtest2_fixes_test.go" in o:
+        if "playtest2_fixes_test.go" in o or "playtest3_fixes_test.go" in o:
             if "pending cq-" in o: reason[t] = o.split(": ", 1)[-1]
             else: fails[t].append(o)
 rows = [(t, v) for t, v in res.items()]

@@ -21,6 +21,7 @@ import (
 	"math"
 	"strings"
 
+	"github.com/btposey/civquest/orchestrator-go/internal/crafting"
 	civquestv1 "github.com/btposey/civquest/orchestrator-go/internal/proto/v1"
 	"github.com/btposey/civquest/orchestrator-go/internal/system1"
 	"github.com/btposey/civquest/orchestrator-go/internal/xdg"
@@ -48,6 +49,8 @@ type PlaytestSimConfig struct {
 	TimeOfDay  int64 // initial time of day (default 1000 = morning)
 	Registry   *system1.EngineRegistry
 	Setup      func(st *system1.AgentState)
+	// Recipes replaces the simulation catalogue (nil: VanillaRecipeNodes).
+	Recipes []*civquestv1.RecipeNode
 	// NoRecipeGraph leaves AgentState without a recipe graph, so the bootstrap planner never
 	// decides it has gathered enough wood and moves on (isolates tree-reach scenarios).
 	NoRecipeGraph bool
@@ -210,9 +213,12 @@ func NewPlaytestSim(cfg PlaytestSimConfig) *PlaytestSim {
 		visits: map[[2]int32]int{},
 	}
 	s.navState = civquestv1.NavigationState_NAVIGATION_STATE_IDLE
-	s.recipes = VanillaRecipeNodes()
+	s.recipes = cfg.Recipes
+	if len(s.recipes) == 0 {
+		s.recipes = VanillaRecipeNodes()
+	}
 	if !cfg.NoRecipeGraph {
-		st.SetRecipeGraph(VanillaRecipeGraph())
+		st.SetRecipeGraph(crafting.NewRecipeGraph(s.recipes))
 	}
 	for _, it := range cfg.Inventory {
 		if it != nil {
