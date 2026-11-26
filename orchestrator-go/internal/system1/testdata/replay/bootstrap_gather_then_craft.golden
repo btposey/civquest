@@ -1,8 +1,8 @@
-t=100 stage=BOOTSTRAP routine=HARVEST_TREE stack=[bootstrap/1] intents=[Interact(HARVEST_BREAK 3,64,0 minecraft:oak_log)]  // empty inventory: gather logs
+t=100 stage=BOOTSTRAP routine=HARVEST_TREE stack=[plan/1] intents=[Interact(HARVEST_BREAK 3,64,0 minecraft:oak_log)]  // empty inventory: gather logs
 t=126 stage=BOOTSTRAP routine=HARVEST_TREE stack=[task_subroutine/2] intents=[Interact(HARVEST_BREAK 3,66,0 minecraft:oak_log)]  // some logs, keep gathering
-t=150 stage=BOOTSTRAP routine=PRIMARY_DUTY stack=[bootstrap/1] intents=[Craft(minecraft:oak_planks x1)]  // enough logs: craft step
-t=175 stage=BOOTSTRAP routine=PRIMARY_DUTY stack=[bootstrap/1] intents=[Craft(minecraft:stick x1)]  // planks: next craft step
-t=200 stage=BOOTSTRAP routine=PRIMARY_DUTY stack=[bootstrap/1] intents=[Craft(minecraft:crafting_table x1)]  // planks+sticks: tool craft or table
+t=150 stage=BOOTSTRAP routine=PRIMARY_DUTY stack=[plan/1] intents=[Craft(minecraft:oak_planks x1)]  // enough logs: craft step
+t=175 stage=BOOTSTRAP routine=PRIMARY_DUTY stack=[plan/1] intents=[Craft(minecraft:stick x1)]  // planks: next craft step
+t=200 stage=BOOTSTRAP routine=PRIMARY_DUTY stack=[plan/1] intents=[Craft(minecraft:crafting_table x1)]  // planks+sticks: tool craft or table
 t=225 stage=BOOTSTRAP routine=PRIMARY_DUTY stack=[bootstrap/1] intents=[Craft(minecraft:crafting_table x1)]  // axe in hand: sword step
 t=250 stage=SETTLEMENT routine=PRIMARY_DUTY stack=[exploration/1] intents=[Navigate(x=-46.1 z=-11.1)]  // kit complete: exploration's first leg is issued at once (baseline Navigate(-46.1,-11.1))
 t=260 stage=SETTLEMENT routine=PRIMARY_DUTY stack=[exploration/1] intents=[]  // leg in flight: no duplicate

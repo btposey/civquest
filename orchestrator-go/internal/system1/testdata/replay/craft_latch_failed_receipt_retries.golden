@@ -1,3 +1,3 @@
-t=400 stage=BOOTSTRAP routine=PRIMARY_DUTY stack=[bootstrap/1] intents=[Craft(minecraft:oak_planks x1)]  // craft issued
-t=420 stage=BOOTSTRAP routine=PRIMARY_DUTY stack=[bootstrap/1] intents=[]  // latched
-t=425 stage=BOOTSTRAP routine=PRIMARY_DUTY stack=[bootstrap/1] intents=[Craft(minecraft:oak_planks x1)]  // failed receipt releases the latch; throttle elapsed: the craft is retried
+t=400 stage=BOOTSTRAP routine=PRIMARY_DUTY stack=[plan/1] intents=[Craft(minecraft:oak_planks x1)]  // craft issued
+t=420 stage=BOOTSTRAP routine=PRIMARY_DUTY stack=[plan/1] intents=[]  // latched
+t=425 stage=BOOTSTRAP routine=PRIMARY_DUTY stack=[plan/1] intents=[Craft(minecraft:oak_planks x1)]  // failed receipt releases the latch; throttle elapsed: the craft is retried

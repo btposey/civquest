@@ -343,6 +343,12 @@ func (w *fsmWorld) preemptionPush(origin string, returning bool, next any) (htpd
 		return htpda.Step{Op: htpda.OpPush, Child: htpda.Kind(kind), Args: args, Next: next}, true
 	}
 	if origin == activityKindBootstrap && !returning && !w.skipped[activityKindBootstrap] && bootstrapHarvestAvailable(w.ctx) {
+		// The tool-progression plan takes the harvest when its next step is actionable (cq-dcx.4).
+		if pa := newPlanActivity(); !w.skipped[activityKindPlan] && pa.eligible(w) {
+			if args, ok := pa.args(w); ok {
+				return htpda.Step{Op: htpda.OpPush, Child: activityKindPlan, Args: args, Next: next}, true
+			}
+		}
 		return htpda.Step{Op: htpda.OpPush, Child: activityKindBootstrap, Next: next}, true
 	}
 	return htpda.Step{}, false

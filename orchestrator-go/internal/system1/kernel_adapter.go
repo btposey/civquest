@@ -61,6 +61,8 @@ type fsmWorld struct {
 	// never preempts; priority preemption is the running frame's self-push), so Propose
 	// skips the eligibility predicates otherwise.
 	stackEmpty bool
+	// planProbe caches this tick's read-only evaluation of the plan's next step (plan_activity.go).
+	planProbe *planProbe
 }
 
 var _ htpda.World = (*fsmWorld)(nil)
@@ -191,6 +193,7 @@ func (fsm *AgentFSM) dispatchLocked(w *fsmWorld, ev htpda.Event) []FSMIntent {
 		w.ctx.State.applyStoreWrites(fx.Store)
 	}
 	fsm.applyExpeditionStoreLocked(w.ctx, fx.Store)
+	fsm.planning.applyStore(fx.Store)
 	fsm.applyMemoryLocked(w, fx.Memory)
 	fsm.publishStackKindsLocked(w.ctx)
 	fsm.syncAfterDispatchLocked(w.ctx)
@@ -256,6 +259,9 @@ func (fsm *AgentFSM) applyMemoryLocked(w *fsmWorld, writes []htpda.MemoryWrite) 
 		return
 	}
 	for _, wr := range writes {
+		if fsm.planning.applyMemory(wr) {
+			continue
+		}
 		if b, ok := wr.(surveyBackoff); ok {
 			fsm.surveyBackoffUntil = b.Until
 			continue
@@ -323,6 +329,9 @@ func (fsm *AgentFSM) tickActivitiesLocked(ctx *FSMContext, reg *EngineRegistry, 
 			out = append(out, fsm.dispatchLocked(w, htpda.Reflex{Frame: fsm.reflexFrameLocked(n), Kind: n.GetReflexType(), Popped: n.GetPopped()})...)
 		}
 	}
+	// Telemetry-sourced spatial visit (ADR-039): applied before the Tick so this tick's target
+	// selection already counts the cell the agent stands in.
+	fsm.applyMemoryLocked(w, w.visitWrite())
 	out = append(out, fsm.dispatchLocked(w, htpda.Tick{})...)
 	for i := 0; i < maxRefill && w.refill && fsm.kernel.Depth() == 0; i++ {
 		out = append(out, fsm.dispatchLocked(w, htpda.Tick{})...)

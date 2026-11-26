@@ -97,6 +97,8 @@ func walkCarrier(local any) (walkLocal, func(walkLocal) any, bool) {
 		return l.Walk, func(w walkLocal) any { l.Walk = w; return l }, true
 	case directiveLocal:
 		return l.Walk, func(w walkLocal) any { l.Walk = w; return l }, true
+	case planLocal:
+		return l.Walk, func(w walkLocal) any { l.Walk = w; return l }, true
 	case bedLocal:
 		return l.Walk, func(w walkLocal) any { l.Walk = w; return l }, true
 	}

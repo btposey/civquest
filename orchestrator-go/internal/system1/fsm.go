@@ -267,6 +267,7 @@ type AgentFSM struct {
 	lastDiag     []htpda.Diagnostic
 	// surveyBackoffUntil suppresses expeditions after repeated report-less survey timeouts.
 	surveyBackoffUntil int64
+	planning           planningMemory // spatial Memory + banked plan (plan_memory.go, ADR-039)
 	// eventSink receives playtest diagnostics (playtest_events.go); nil disables them.
 	eventSink      EventSink
 	vitalsEmitted  bool
@@ -386,19 +387,6 @@ func (fsm *AgentFSM) ActiveActivityKind() string {
 		return string(top.Kind())
 	}
 	return ""
-}
-
-// ActivityDepth returns the number of frames on the activity stack.
-func (fsm *AgentFSM) ActivityDepth() int {
-	if fsm == nil {
-		return 0
-	}
-	fsm.mu.RLock()
-	defer fsm.mu.RUnlock()
-	if fsm.kernel == nil {
-		return 0
-	}
-	return fsm.kernel.Depth()
 }
 
 // CurrentStage returns the active Tier 1 macro strategic stage.

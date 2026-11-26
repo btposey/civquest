@@ -28,7 +28,10 @@ const (
 	priorityWool = 0.63
 	// priorityBed (cq-390.2): a bed-less, tooled-up agent gathers wool and crafts its own bed
 	// ahead of bootstrap/exploration, behind survival, shelter, tasks and directives.
-	priorityBed         = 0.62
+	priorityBed = 0.62
+	// priorityPlan (cq-dcx.4): a committed plan step that can be acted on now (tool progression)
+	// outbids the ad-hoc bootstrap waterfall and exploration; behind the bed and wool plans.
+	priorityPlan        = 0.61
 	priorityBootstrap   = 0.60
 	priorityExploration = 0.40
 )
@@ -46,6 +49,7 @@ var defaultPriorities = map[htpda.Kind]float64{
 	activityKindConstruction:       priorityConstruction,
 	activityKindWool:               priorityWool,
 	activityKindBed:                priorityBed,
+	activityKindPlan:               priorityPlan,
 	activityKindBootstrap:          priorityBootstrap,
 	activityKindExploration:        priorityExploration,
 }
