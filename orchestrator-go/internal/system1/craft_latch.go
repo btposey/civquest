@@ -14,6 +14,7 @@ import (
 
 	"github.com/btposey/civquest/orchestrator-go/internal/crafting"
 	civquestv1 "github.com/btposey/civquest/orchestrator-go/internal/proto/v1"
+	"github.com/btposey/civquest/orchestrator-go/internal/system1/htpda"
 )
 
 // craftLatchTimeoutTicks is a design budget (tag: design-budget): ~10 s, long enough for any
@@ -79,6 +80,60 @@ func (w *walkLocal) armCraft(graph *crafting.RecipeGraph, recipeID string, inv m
 		return
 	}
 	w.craftLatch = craftLatch{RecipeID: recipeID, Fingerprint: craftFingerprint(r, inv), IssuedTick: tick}
+}
+
+// withCraftLatch attaches a popping frame's armed latch to its pop result, so the frame
+// beneath keeps holding the in-flight craft (still frame-local: it moves, it is not shared).
+func withCraftLatch(step htpda.Step, l craftLatch) htpda.Step {
+	if r, ok := step.Result.(legacyResult); ok && l.armed() {
+		r.Craft = l
+		step.Result = r
+	}
+	return step
+}
+
+// adoptCraftLatch moves a popped child's craft latch into the resumed frame's cursor.
+func adoptCraftLatch(local, result any) any {
+	r, ok := result.(legacyResult)
+	if !ok || !r.Craft.armed() {
+		return local
+	}
+	return setCraftLatch(local, r.Craft)
+}
+
+// inheritCraftLatch copies the in-flight craft of the nearest frame below into a newly pushed
+// frame, so a preemptor does not re-issue a craft a suspended frame is still waiting for.
+func (w *fsmWorld) inheritCraftLatch(local any) any {
+	if w == nil || w.fsm == nil || w.fsm.kernel == nil {
+		return local
+	}
+	frames := w.fsm.kernel.FramesInStep()
+	for i := len(frames) - 1; i >= 0; i-- {
+		if l := craftLatchOf(frames[i].Local); l.armed() {
+			return setCraftLatch(local, l)
+		}
+	}
+	return local
+}
+
+func craftLatchOf(local any) craftLatch {
+	if tl, ok := local.(taskLocal); ok {
+		return tl.Walk.craftLatch
+	}
+	w, _, _ := walkCarrier(local)
+	return w.craftLatch
+}
+
+func setCraftLatch(local any, l craftLatch) any {
+	if tl, ok := local.(taskLocal); ok {
+		tl.Walk.craftLatch = l
+		return tl
+	}
+	if w, rebuild, ok := walkCarrier(local); ok {
+		w.craftLatch = l
+		return rebuild(w)
+	}
+	return local
 }
 
 // releaseCraftOnReceipt: a failed/aborted/preempted receipt routed to the frame releases the

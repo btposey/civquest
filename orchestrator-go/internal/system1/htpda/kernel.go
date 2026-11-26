@@ -166,6 +166,10 @@ func (k *Kernel) Depth() int {
 // from inside Propose/Init/Step (i.e. during a Dispatch on the same goroutine).
 func (k *Kernel) DepthInStep() int { return len(k.stack) }
 
+// FramesInStep returns a copy of the stack, bottom first. Like DepthInStep it takes no lock:
+// only an Activity running inside Dispatch may call it.
+func (k *Kernel) FramesInStep() []Frame { return append([]Frame(nil), k.stack...) }
+
 // Top returns a copy of the top frame.
 func (k *Kernel) Top() (Frame, bool) {
 	k.mu.Lock()

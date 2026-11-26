@@ -125,8 +125,9 @@ func stepManaged(a waterfallActivity, w htpda.World, local any, ev htpda.Event) 
 		}
 		return htpda.Step{Op: htpda.OpStay, Next: next}
 	case htpda.Started:
-		return runFrame(a, lw, local, false)
+		return runFrame(a, lw, lw.inheritCraftLatch(local), false)
 	case htpda.ChildDone:
+		local = adoptCraftLatch(local, e.Result)
 		if halted(e.Result) {
 			return htpda.Step{Op: htpda.OpStay, Next: local}
 		}
@@ -134,6 +135,7 @@ func stepManaged(a waterfallActivity, w htpda.World, local any, ev htpda.Event) 
 		_, rejected := e.Result.(htpda.Rejected)
 		return runFrame(a, lw, a.resume(lw, local), !rejected)
 	case htpda.Resumed:
+		local = adoptCraftLatch(local, e.Result)
 		if halted(e.Result) {
 			return htpda.Step{Op: htpda.OpStay, Next: local}
 		}

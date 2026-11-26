@@ -213,7 +213,9 @@ func (a taskActivity) run(lw *fsmWorld, local any) htpda.Step {
 			Next: taskLocal{Task: next, Receipt: unconsumed, LastStepTick: lw.tick, Walk: walk}}
 	}
 	if next == nil {
-		return popFrame(lw, a.kind, intents, len(intents) > 0 || !a.fallThrough(lw))
+		step := popFrame(lw, a.kind, intents, len(intents) > 0 || !a.fallThrough(lw))
+		// A craft issued by the task's last tick outlives this frame: hand its latch down.
+		return withCraftLatch(step, walk.craftLatch)
 	}
 	return htpda.Step{Op: htpda.OpStay, Intents: intents, Next: taskLocal{Task: next, Receipt: unconsumed, LastStepTick: lw.tick, Walk: walk}}
 }

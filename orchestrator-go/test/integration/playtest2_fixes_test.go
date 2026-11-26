@@ -340,7 +340,6 @@ func TestPlaytest2_06_SettlementPlacesRecommendedBlueprintByDay(t *testing.T) {
 // UNFIXED BEHAVIOUR (craft spam seen in the playtest logs): the kernel re-emits the same
 // CraftItem every frame until the inventory update lands, so one planks craft became several.
 func TestPlaytest2_07_CraftNotReissuedWhilePending(t *testing.T) {
-	pendingFix(t, "cq-dcx.2", "craft re-issue latch is not implemented yet")
 	const latency = int64(60) // ticks between intent and inventory change (mod server tick + receipt)
 	w := groundWorld(30)
 	w.AddTrunk(4, 0, 6, "")

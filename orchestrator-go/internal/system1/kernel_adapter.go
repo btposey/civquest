@@ -119,8 +119,12 @@ func taskActive(t *TaskSubroutine) bool {
 }
 
 // legacyResult is the pop Result of a legacy activity. Halt=true ends the tick's cascade
-// (legacy "return actIntents"); Halt=false lets the exposed frame run (fall-through).
-type legacyResult struct{ Halt bool }
+// (legacy "return actIntents"); Halt=false lets the exposed frame run (fall-through). Craft is
+// an in-flight craft latch handed to the exposed frame (see adoptCraftLatch).
+type legacyResult struct {
+	Halt  bool
+	Craft craftLatch
+}
 
 func halted(result any) bool {
 	r, ok := result.(legacyResult)
