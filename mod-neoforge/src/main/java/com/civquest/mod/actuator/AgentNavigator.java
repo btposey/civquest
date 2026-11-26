@@ -187,7 +187,13 @@ public class AgentNavigator {
         this.reachedTargetCell = false;
         this.cliffDetected = false;
         this.lastPlanTick = Long.MIN_VALUE;
-        this.pillarBaseY = Integer.MIN_VALUE;
+        this.widePath = false;
+        this.searchWide = false;
+        this.nextWideSearchTick = 0L;
+        if (progressTarget == null || progressTarget.distanceToSqr(this.targetCoords) > 0.25) {
+            this.progressTarget = this.targetCoords;
+            this.progressAnchor = null;
+        }
         syncRotationFromAgent();
         this.navigationState = NavigationState.NAVIGATION_STATE_PATHING;
 
@@ -313,6 +319,11 @@ public class AgentNavigator {
     static final double STAMINA_REGEN = 0.3;
     static final double STAMINA_RECOVER_AT = 30.0;
     private static final int REPLAN_INTERVAL = 8;
+    private static final int WIDE_REPLAN_INTERVAL = 100;
+    private static final int WIDE_SEARCH_COOLDOWN_TICKS = 40;
+    /** An agent that stays within this radius for {@link #STALL_WINDOW_TICKS} without closing in is stuck. */
+    static final double STALL_RADIUS = 4.0;
+    static final int STALL_WINDOW_TICKS = 200;
     private static final long FAILED_MEMORY_TICKS = 100L;
 
     private double stamina = STAMINA_MAX;
@@ -330,8 +341,15 @@ public class AgentNavigator {
     private boolean cliffDetected = false;
     private final java.util.Map<Long, Long> failedCells = new java.util.HashMap<>();
     private final java.util.Map<BlockPos, Long> openedDoors = new java.util.HashMap<>();
-    private int pillarBaseY = Integer.MIN_VALUE;
-    private long lastDigTick = Long.MIN_VALUE;
+    /** The current path came from the wide search and is followed to its end. */
+    private boolean widePath = false;
+    private boolean searchWide = false;
+    private long nextWideSearchTick = 0L;
+    // Progress watchdog: kept across stop() so re-issuing the same target cannot reset it.
+    private Vec3 progressTarget;
+    private Vec3 progressAnchor;
+    private double progressBest;
+    private long progressSince;
 
     public double getStamina() {
         return stamina;
@@ -934,6 +952,22 @@ public class AgentNavigator {
                 r = new LocalPathPlanner.Result(r.path(), r.reachedTarget(), false, r.exploredCells());
             }
         }
+        // Nothing leads there from nearby: the way out may leave the local window or start away
+        // from the target (a stair out of a dugout). Search further before walking blind.
+        this.widePath = false;
+        boolean noRoute = !r.reachedTarget() && r.path().isEmpty();
+        if (level != null && !r.enclosed() && (searchWide || (noRoute && now >= nextWideSearchTick))) {
+            LocalPathPlanner.Result wide = LocalPathPlanner.plan(worldOf(level),
+                    new LocalPathPlanner.Cell(bx, by, bz), targetCoords.x, targetCoords.y, targetCoords.z,
+                    LocalPathPlanner.ESCAPE_RADIUS, k -> failedCells.containsKey(k));
+            if (wide.hasPath()) {
+                r = wide;
+                this.widePath = true;
+            } else {
+                this.nextWideSearchTick = now + WIDE_SEARCH_COOLDOWN_TICKS;
+            }
+        }
+        this.searchWide = false;
         this.path = new java.util.ArrayList<>(r.path());
         this.enclosed = r.enclosed();
         this.reachedTargetCell = r.reachedTarget();
@@ -967,8 +1001,8 @@ public class AgentNavigator {
         // Local walkability search (replaces reactive deflection).
         if (level != null) {
             handleDoorInteractions(level, currentPos);
-            boolean breakingNow = this.agent != null && this.agent.getBreaker() != null && this.agent.getBreaker().isBreaking();
-            if (path.isEmpty() || (enclosed && !breakingNow) || navTick - lastPlanTick >= REPLAN_INTERVAL) {
+            int interval = widePath ? WIDE_REPLAN_INTERVAL : REPLAN_INTERVAL;
+            if (path.isEmpty() || enclosed || searchWide || navTick - lastPlanTick >= interval) {
                 replan(level, currentPos);
             }
             // Advance along path: pop waypoint when close to center or standing within the waypoint cell
@@ -1000,15 +1034,8 @@ public class AgentNavigator {
                     break;
                 }
             }
-            if (enclosed && path.isEmpty()) {
-                if (tickEnclosedEscape(level, currentPos)) {
-                    this.stuckTicks = 0;
-                    this.lastPosition = getPosition();
-                    return;
-                }
-            } else if (!enclosed) {
-                pillarBaseY = Integer.MIN_VALUE;
-            }
+            // A walled-in agent reports STUCK through getReportedNavigationState; the brain
+            // decides how to dig out (ADR-037).
         }
 
         // Desired heading toward waypoint (or straight at the target when no local path exists)
@@ -1402,6 +1429,12 @@ public class AgentNavigator {
             return;
         }
 
+        if (stalled(postPos)) {
+            declareStuck();
+            this.lastPosition = postPos;
+            return;
+        }
+
         // Stuck detection using displacement squared (include vertical progress when climbing or swimming)
         if (this.lastPosition != null) {
             double hdx = postPos.x - this.lastPosition.x;
@@ -1426,22 +1459,51 @@ public class AgentNavigator {
                     path.clear();
                 }
                 if (this.stuckTicks >= 16) {
-                    if (this.navigationState != NavigationState.NAVIGATION_STATE_STUCK) {
-                        this.stuckByEntity = isBlockedByEntity(); // latched at declaration (ADR-037)
-                    }
-                    this.navigationState = NavigationState.NAVIGATION_STATE_STUCK;
-                    velX = 0.0;
-                    velZ = 0.0;
-                    if (this.agent != null) {
-                        this.agent.setDeltaMovement(0.0, 0.0, 0.0);
-                        this.agent.setSprinting(false);
-                    }
+                    declareStuck();
                 }
             } else if (movedSq >= 0.0001) {
                 this.stuckTicks = 0;
             }
         }
         this.lastPosition = postPos;
+    }
+
+    /**
+     * Hopping or jittering in place is movement, so the displacement check never fires. This
+     * one does: no closer to the target and still in the same small area for a whole window.
+     * Halfway through, one wide path search is tried first.
+     */
+    private boolean stalled(Vec3 pos) {
+        double distance = pos.distanceTo(this.targetCoords);
+        if (progressAnchor == null || pos.distanceTo(progressAnchor) > STALL_RADIUS
+                || distance <= progressBest - 1.0) {
+            progressAnchor = pos;
+            progressBest = distance;
+            progressSince = navTick;
+            return false;
+        }
+        long waited = navTick - progressSince;
+        if (waited == STALL_WINDOW_TICKS / 2) {
+            searchWide = true;
+        }
+        if (waited < STALL_WINDOW_TICKS) {
+            return false;
+        }
+        progressAnchor = null;
+        return true;
+    }
+
+    private void declareStuck() {
+        if (this.navigationState != NavigationState.NAVIGATION_STATE_STUCK) {
+            this.stuckByEntity = isBlockedByEntity(); // latched at declaration (ADR-037)
+        }
+        this.navigationState = NavigationState.NAVIGATION_STATE_STUCK;
+        this.velX = 0.0;
+        this.velZ = 0.0;
+        if (this.agent != null) {
+            this.agent.setDeltaMovement(0.0, 0.0, 0.0);
+            this.agent.setSprinting(false);
+        }
     }
 
     private double resolveArrivalYAllowance(Level level, boolean onClimbable, double dy, double baseAllowance) {
@@ -1474,133 +1536,6 @@ public class AgentNavigator {
      * (equipping the best tool), or pillaring up with an inventory block when allowed/needed.
      * Returns true when an escape action consumed the tick.
      */
-    private boolean tickEnclosedEscape(net.minecraft.world.level.Level level, Vec3 pos) {
-        if (this.agent == null) {
-            return false;
-        }
-        velX = 0.0;
-        velZ = 0.0;
-        int bx = Mth.floor(pos.x);
-        int bz = Mth.floor(pos.z);
-        int by = Mth.floor(pos.y + 0.1);
-        agent.setSprinting(false);
-
-        if (agent.getBreaker() != null && agent.getBreaker().isBreaking()) {
-            return true; // keep mining until the block gives way
-        }
-
-        BlockPos dig = findEscapeDigTarget(level, pos, bx, by, bz);
-        if (dig != null && agent.getBreaker() != null) {
-            try {
-                agent.equipBestToolFor(level.getBlockState(dig));
-                if (agent.getBreaker().start(dig)) {
-                    lastDigTick = navTick;
-                    this.lastPlanTick = Long.MIN_VALUE;
-                    return true;
-                }
-            } catch (Throwable t) {
-                LOGGER.debug("Escape dig failed: {}", t.getMessage());
-            }
-        }
-
-        net.minecraft.world.item.ItemStack block = findPlaceableBlock();
-        boolean headroom = !isBlockSolid(level, new BlockPos(bx, by + 2, bz));
-        if (!block.isEmpty() && headroom) {
-            // Pillar up: jump, then place a block beneath once high enough
-            if (agent.onGround()) {
-                BlockPos below = new BlockPos(bx, by - 1, bz);
-                pillarBaseY = by;
-                if (!isBlockSolid(level, below)) {
-                    return false;
-                }
-                agent.setDeltaMovement(0.0, 0.42, 0.0);
-                agent.hasImpulse = true;
-                try {
-                    agent.move(MoverType.SELF, new Vec3(0.0, 0.42, 0.0));
-                } catch (Throwable ignored) {
-                }
-            } else if (pillarBaseY != Integer.MIN_VALUE && pos.y >= pillarBaseY + 1.0) {
-                BlockPos place = new BlockPos(bx, pillarBaseY, bz);
-                if (!isBlockSolid(level, place)) {
-                    try {
-                        level.setBlock(place, ((net.minecraft.world.item.BlockItem) block.getItem()).getBlock().defaultBlockState(), 3);
-                        block.shrink(1);
-                        this.lastPlanTick = Long.MIN_VALUE;
-                    } catch (Throwable t) {
-                        LOGGER.debug("Pillar placement failed: {}", t.getMessage());
-                    }
-                }
-            } else {
-                double vy = (agent.getDeltaMovement().y - 0.08) * 0.98;
-                try {
-                    agent.setDeltaMovement(0.0, vy, 0.0);
-                    agent.move(MoverType.SELF, new Vec3(0.0, vy, 0.0));
-                } catch (Throwable ignored) {
-                }
-            }
-            return true;
-        }
-
-        return false;
-    }
-
-    private BlockPos findEscapeDigTarget(net.minecraft.world.level.Level level, Vec3 pos, int bx, int by, int bz) {
-        BlockPos ceiling = new BlockPos(bx, by + 2, bz);
-        if (isBlockSolid(level, ceiling) && BlockBreaker.isBreakable(level, ceiling)) {
-            return ceiling;
-        }
-        double tdx = targetCoords != null ? targetCoords.x - pos.x : 1.0;
-        double tdz = targetCoords != null ? targetCoords.z - pos.z : 0.0;
-        int primaryX = Math.abs(tdx) >= Math.abs(tdz) ? (tdx >= 0 ? 1 : -1) : 0;
-        int primaryZ = primaryX == 0 ? (tdz >= 0 ? 1 : -1) : 0;
-        int secondaryX = primaryX == 0 ? (tdx >= 0 ? 1 : -1) : 0;
-        int secondaryZ = primaryZ == 0 ? (tdz >= 0 ? 1 : -1) : 0;
-        int[][] dirs = {
-                {primaryX, primaryZ},
-                {secondaryX, secondaryZ},
-                {-secondaryX, -secondaryZ},
-                {-primaryX, -primaryZ}
-        };
-        for (int[] dir : dirs) {
-            BlockPos feet = new BlockPos(bx + dir[0], by, bz + dir[1]);
-            BlockPos head = feet.above();
-            BlockPos aboveHead = feet.above(2);
-            if (isBlockSolid(level, feet)) {
-                // Prefer breaking head (y+1) and aboveHead (y+2) so feet (y) becomes a 1-block step-up staircase!
-                if (isBlockSolid(level, head) && BlockBreaker.isBreakable(level, head)) {
-                    return head;
-                }
-                if (isBlockSolid(level, aboveHead) && BlockBreaker.isBreakable(level, aboveHead)) {
-                    return aboveHead;
-                }
-                if (BlockBreaker.isBreakable(level, feet)) {
-                    return feet;
-                }
-            } else if (isBlockSolid(level, head) && BlockBreaker.isBreakable(level, head)) {
-                return head;
-            }
-        }
-        return null;
-    }
-
-    private net.minecraft.world.item.ItemStack findPlaceableBlock() {
-        try {
-            var items = agent.getInventory().items;
-            for (net.minecraft.world.item.ItemStack s : items) {
-                if (!s.isEmpty() && s.getItem() instanceof net.minecraft.world.item.BlockItem bi) {
-                    var b = bi.getBlock();
-                    if (b.defaultBlockState().isSolid()
-                            && !(b instanceof net.minecraft.world.level.block.FallingBlock)
-                            && !(b instanceof net.minecraft.world.level.block.EntityBlock)) {
-                        return s;
-                    }
-                }
-            }
-        } catch (Throwable ignored) {
-        }
-        return net.minecraft.world.item.ItemStack.EMPTY;
-    }
-
     public static boolean isPassableDoor(net.minecraft.world.level.block.state.BlockState state) {
         if (state == null) {
             return false;

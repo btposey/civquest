@@ -515,8 +515,9 @@ public class PeripherySeparationAndQueueRegressionTest {
 
         setupMockServerAndCollisionWorld(harness, mockLevel, gameTime);
         setFlatFloor(harness, 63, -15, 15, -15, 15);
-        // Sheer unbreakable bedrock wall at x=2 across z=-12..12 blocking path to (10.5, 64.0, 0.5)
-        for (int z = -12; z <= 12; z++) {
+        // Sheer unbreakable bedrock wall at x=2 spanning the whole floor, so there is no way around
+        // it to (10.5, 64.0, 0.5)
+        for (int z = -15; z <= 15; z++) {
             for (int y = 64; y <= 68; y++) {
                 harness.setBlock(new BlockPos(2, y, z), Blocks.BEDROCK.defaultBlockState());
             }

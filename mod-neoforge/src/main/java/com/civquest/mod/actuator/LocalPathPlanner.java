@@ -20,6 +20,8 @@ import java.util.function.LongPredicate;
  */
 public final class LocalPathPlanner {
     public static final int DEFAULT_RADIUS = 7; // 15x15 grid
+    /** Fallback when the default window offers no route (49x49 grid). */
+    public static final int ESCAPE_RADIUS = 24;
     public static final int MAX_STEP_UP = 1;
     public static final int MAX_DROP = 3;
     public static final int MAX_VERTICAL_RANGE = 32;

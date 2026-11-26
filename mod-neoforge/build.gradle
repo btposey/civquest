@@ -168,6 +168,8 @@ tasks.named('compileTestJava').configure {
 test {
     useJUnitPlatform()
     classpath += sourceSets.main.compileClasspath
+    // Mockito records every call; navigator tests plan paths over mocked worlds.
+    maxHeapSize = '2g'
 }
 
 processResources {

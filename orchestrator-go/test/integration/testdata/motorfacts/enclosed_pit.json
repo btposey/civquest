@@ -6,7 +6,7 @@
   "facts": {
     "stuck": true,
     "enclosed": true,
-    "blockedBearingDeg": 0.0,
+    "blockedBearingDeg": 270.0,
     "stuckTicks": 0,
     "progress": 10.0,
     "blockedByEntity": false

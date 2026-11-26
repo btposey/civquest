@@ -231,8 +231,8 @@ public class AgentNavigatorTest {
     }
 
     @Test
-    @DisplayName("Enclosed pit escape equips best tool and breaks upper wall block first to create a 1-block step-up")
-    void testEnclosedPitDigsStepUpWithBestTool() {
+    @DisplayName("An enclosed navigator reports STUCK and leaves digging to the brain (ADR-037)")
+    void testEnclosedPitReportsStuckWithoutDigging() {
         AgentEntity agent = mock(AgentEntity.class);
         Level level = mock(Level.class);
         BlockBreaker breaker = new BlockBreaker(agent);
@@ -281,10 +281,7 @@ public class AgentNavigatorTest {
         assertTrue(navigator.isEnclosed(), "1x1x2 pit must be detected as enclosed");
         assertEquals(NavigationState.NAVIGATION_STATE_STUCK, navigator.getReportedNavigationState(),
                 "Enclosed navigator must report STUCK to telemetry");
-        verify(agent, atLeastOnce()).equipBestToolFor(solidDirt);
-        // Must break head-height block (1, 63, 0) so (1, 62, 0) remains intact as a 1-block step-up
-        assertTrue(breaker.isBreaking());
-        assertEquals(new BlockPos(1, 63, 0), breaker.getPos());
+        assertFalse(breaker.isBreaking(), "the navigator must not start a break no motor frame would tick");
     }
 
     @Test

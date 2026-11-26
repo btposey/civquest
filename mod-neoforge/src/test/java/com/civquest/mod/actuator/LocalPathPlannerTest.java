@@ -515,4 +515,48 @@ public class LocalPathPlannerTest {
         assertEquals(1, Math.abs(end.x() - 3) + Math.abs(end.z()),
                 "Approach path must end 4-adjacent to the entity-occupied target cell: " + end);
     }
+
+    /**
+     * A trench two deep (feet y=64, surface y=66) running east from the agent. Its only way out
+     * is a stair of single blocks at the far east end, away from the western target.
+     */
+    private static LocalPathPlanner.World dugoutWithStairAwayFromTarget() {
+        return new LocalPathPlanner.World() {
+            @Override
+            public boolean solid(int x, int y, int z) {
+                if (y <= 63) {
+                    return true;
+                }
+                if (y >= 66) {
+                    return false;
+                }
+                boolean trench = z == 0 && x >= 0 && x <= 10;
+                if (!trench) {
+                    return true;
+                }
+                // Steps: floor rises to y=64 at x=9 and y=65 at x=10.
+                return (x == 9 && y == 64) || (x == 10 && y <= 65 && y >= 64);
+            }
+
+            @Override
+            public boolean hazard(int x, int y, int z) {
+                return false;
+            }
+        };
+    }
+
+    @Test
+    @DisplayName("A stair leading away from the target is found only by the wide escape search")
+    void dugoutStairAwayFromTargetNeedsEscapeRadius() {
+        LocalPathPlanner.Cell start = new LocalPathPlanner.Cell(0, 64, 0);
+        LocalPathPlanner.Result local = LocalPathPlanner.plan(dugoutWithStairAwayFromTarget(), start,
+                -5.5, 66, 0.5, LocalPathPlanner.DEFAULT_RADIUS, null);
+        assertFalse(local.hasPath(), "the default window cannot see past the trench: " + local.path());
+
+        LocalPathPlanner.Result wide = LocalPathPlanner.plan(dugoutWithStairAwayFromTarget(), start,
+                -5.5, 66, 0.5, LocalPathPlanner.ESCAPE_RADIUS, null);
+        assertTrue(wide.reachedTarget(), "wide search must reach the target: " + wide.path());
+        assertTrue(wide.path().contains(new LocalPathPlanner.Cell(9, 65, 0)), "must take the first step: " + wide.path());
+        assertTrue(wide.path().stream().anyMatch(c -> c.y() == 66), "must reach the surface: " + wide.path());
+    }
 }

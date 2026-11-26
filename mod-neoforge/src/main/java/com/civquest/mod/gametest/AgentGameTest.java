@@ -615,6 +615,7 @@ public class AgentGameTest {
                 .setAgentId("agent-gt-attack")
                 .setAttack(fleeIntent)
                 .build();
+        zombie.setPos(agent.getX(), agent.getY(), agent.getZ() + 1.0);
         manager.handleIntent(server, fleeAgentIntent).join();
 
         helper.assertTrue(agent.getNavigator().isPathing(), "Agent must be pathing away when fleeing");
@@ -1076,6 +1077,22 @@ public class AgentGameTest {
         return base.resolve(java.nio.file.Paths.get("civquest", "logs", "motion-integration-trace.jsonl"));
     }
 
+    /**
+     * Starts navigation the way a live agent does: a Navigate intent, which pushes the Move
+     * frame that ticks the navigator. Calling the navigator directly moves nothing.
+     */
+    private static void navigateByIntent(AgentEntityManager manager, MinecraftServer server, String agentId,
+            double x, double y, double z, boolean sprint, boolean allowBreak) {
+        manager.handleIntent(server, AgentIntent.newBuilder().setAgentId(agentId)
+                .setNavigate(com.civquest.mod.grpc.v1.NavigateIntent.newBuilder()
+                        .setTarget(Vec3.newBuilder().setX(x).setY(y).setZ(z).build())
+                        .setSpeedMultiplier(1.0f)
+                        .setSprint(sprint)
+                        .setAllowBreakBlocks(allowBreak)
+                        .setArrivalTolerance(1))
+                .build()).join();
+    }
+
     private static void appendMotionTrace(String scenario, int tick, AgentEntity agent) {
         if (agent == null || agent.getNavigator() == null) {
             return;
@@ -1123,7 +1140,8 @@ public class AgentGameTest {
                 .setSpawnCoords(Vec3.newBuilder().setX(spawnPos.getX() + 0.5).setY(spawnPos.getY()).setZ(spawnPos.getZ() + 0.5).build())
                 .build()).join();
 
-        agent.getNavigator().navigate(targetPos.getX() + 0.5, targetPos.getY(), targetPos.getZ() + 0.5, 1.0f, false, false, false, 1);
+        navigateByIntent(manager, server, "agent-gt-stepup",
+                targetPos.getX() + 0.5, targetPos.getY(), targetPos.getZ() + 0.5, false, false);
         for (int t = 0; t < 40 && !agent.getNavigator().isArrived(); t++) {
             agent.tick();
             appendMotionTrace("one_block_step_up", t, agent);
@@ -1173,7 +1191,8 @@ public class AgentGameTest {
                 .setSpawnCoords(Vec3.newBuilder().setX(spawnPos.getX() + 0.5).setY(spawnPos.getY()).setZ(spawnPos.getZ() + 0.5).build())
                 .build()).join();
 
-        agent.getNavigator().navigate(targetPos.getX() + 0.5, targetPos.getY(), targetPos.getZ() + 0.5, 1.0f, false, false, false, 1);
+        navigateByIntent(manager, server, "agent-gt-pit2x3",
+                targetPos.getX() + 0.5, targetPos.getY(), targetPos.getZ() + 0.5, false, false);
         for (int t = 0; t < 80 && !agent.getNavigator().isArrived(); t++) {
             agent.tick();
             appendMotionTrace("pit_2x3_escape", t, agent);
@@ -1186,7 +1205,7 @@ public class AgentGameTest {
     }
 
     @GameTest(template = "empty3x3x3")
-    public static void testMotionEnclosedPitDigOutWithShovel(GameTestHelper helper) {
+    public static void testMotionEnclosedPitReportsStuck(GameTestHelper helper) {
         ServerLevel level = helper.getLevel();
         MinecraftServer server = level.getServer();
         AgentEntityManager manager = new AgentEntityManager();
@@ -1215,25 +1234,63 @@ public class AgentGameTest {
                 .setSpawnCoords(Vec3.newBuilder().setX(spawnPos.getX() + 0.5).setY(spawnPos.getY()).setZ(spawnPos.getZ() + 0.5).build())
                 .build()).join();
 
-        // Put iron shovel in non-selected slot 4 to verify tool selection equips it into mainhand
-        agent.getInventory().setItem(4, new ItemStack(Items.IRON_SHOVEL));
-        agent.getNavigator().navigate(targetPos.getX() + 0.5, targetPos.getY(), targetPos.getZ() + 0.5, 1.0f, false, true, false, 1);
+        // Drive the navigator itself: a Move frame pops (and stops it) as soon as it reports stuck.
+        agent.getNavigator().navigate(targetPos.getX() + 0.5, targetPos.getY(), targetPos.getZ() + 0.5,
+                1.0f, false, true, false, 1);
+        agent.getNavigator().tick();
 
-        boolean equippedShovel = false;
-        for (int t = 0; t < 40; t++) {
-            agent.tick();
-            if (agent.getMainHandItem().is(Items.IRON_SHOVEL)) {
-                equippedShovel = true;
-            }
-            appendMotionTrace("enclosed_pit_digout", t, agent);
-            if (helper.getBlockState(new BlockPos(2, 2, 1)).isAir()) {
-                break;
+        // ADR-037: the navigator reports the walled-in agent and leaves digging to the brain.
+        helper.assertTrue(agent.getNavigator().isEnclosed() && agent.getNavigator().isStuck(),
+                "A walled-in agent must be reported as enclosed and stuck");
+        helper.assertFalse(agent.getBreaker().isBreaking(), "Navigation must not start a break on its own");
+        helper.assertBlockPresent(Blocks.DIRT, new BlockPos(2, 2, 1));
+        manager.despawnAgent(server, "agent-gt-digout").join();
+        helper.succeed();
+    }
+
+    @GameTest(template = "empty3x3x3")
+    public static void testMotionDugoutStairAwayFromTarget(GameTestHelper helper) {
+        ServerLevel level = helper.getLevel();
+        MinecraftServer server = level.getServer();
+        AgentEntityManager manager = new AgentEntityManager();
+
+        // A trench two deep along +X whose only way out is a single-block stair at its far end,
+        // away from the target. Surface standing height is relative y=3.
+        for (int x = -6; x <= 14; x++) {
+            for (int z = -3; z <= 3; z++) {
+                helper.setBlock(new BlockPos(x, 0, z), Blocks.STONE);
+                boolean trench = z == 0 && x >= 0 && x <= 10;
+                for (int y = 1; y <= 5; y++) {
+                    helper.setBlock(new BlockPos(x, y, z), (y <= 2 && !trench) ? Blocks.STONE : Blocks.AIR);
+                }
             }
         }
+        helper.setBlock(new BlockPos(9, 1, 0), Blocks.STONE);
+        helper.setBlock(new BlockPos(10, 1, 0), Blocks.STONE);
+        helper.setBlock(new BlockPos(10, 2, 0), Blocks.STONE);
 
-        helper.assertTrue(equippedShovel, "Agent must equip the iron shovel when digging dirt");
-        helper.assertBlockNotPresent(Blocks.DIRT, new BlockPos(2, 2, 1));
-        manager.despawnAgent(server, "agent-gt-digout").join();
+        BlockPos spawnPos = helper.absolutePos(new BlockPos(0, 1, 0));
+        BlockPos targetPos = helper.absolutePos(new BlockPos(-5, 3, 0));
+        AgentEntity agent = manager.spawnAgent(server, level, SpawnAgentRequest.newBuilder()
+                .setAgentId("agent-gt-dugout")
+                .setDisplayName("DugoutAgent")
+                .setClanId("clan-ironwood")
+                .setSpawnCoords(Vec3.newBuilder().setX(spawnPos.getX() + 0.5).setY(spawnPos.getY()).setZ(spawnPos.getZ() + 0.5).build())
+                .build()).join();
+
+        navigateByIntent(manager, server, "agent-gt-dugout",
+                targetPos.getX() + 0.5, targetPos.getY(), targetPos.getZ() + 0.5, false, false);
+        for (int t = 0; t < 400 && !agent.getNavigator().isArrived(); t++) {
+            agent.tick();
+            appendMotionTrace("dugout_stair", t, agent);
+        }
+
+        helper.assertTrue(agent.getY() >= targetPos.getY() - 0.1,
+                "Agent must climb out of the dugout, y=" + agent.getY() + " want " + targetPos.getY());
+        // Arrival ends the Move, which stops the navigator, so measure where the agent stands.
+        double remaining = Math.hypot(agent.getX() - (targetPos.getX() + 0.5), agent.getZ() - (targetPos.getZ() + 0.5));
+        helper.assertTrue(remaining <= 1.5, "Agent must reach the target on the surface, " + remaining + " blocks short");
+        manager.despawnAgent(server, "agent-gt-dugout").join();
         helper.succeed();
     }
 
@@ -1251,20 +1308,30 @@ public class AgentGameTest {
                 .setSpawnCoords(Vec3.newBuilder().setX(spawnPos.getX() + 0.5).setY(spawnPos.getY()).setZ(spawnPos.getZ() + 0.5).build())
                 .build()).join();
 
+        for (int x = 0; x <= 2; x++) {
+            for (int z = 0; z <= 2; z++) {
+                helper.setBlock(new BlockPos(x, 0, z), Blocks.STONE);
+            }
+        }
+
         // 1. Default sprint=false walks and preserves full stamina
-        agent.getNavigator().navigate(spawnPos.getX() + 20.0, spawnPos.getY(), spawnPos.getZ() + 0.5, 1.0f, false, false, false, 1);
-        agent.tick();
+        agent.getNavigator().navigate(spawnPos.getX() + 20.0, spawnPos.getY(), spawnPos.getZ() + 0.5,
+                1.0f, false, false, false, 1);
+        agent.getNavigator().tick();
         helper.assertFalse(agent.isSprinting(), "Default navigation must walk, not sprint");
         helper.assertTrue(agent.getStamina() == AgentNavigator.STAMINA_MAX, "Walking must not drain stamina");
 
         // 2. Sprint=true drains stamina until exhausted
-        agent.getNavigator().navigate(spawnPos.getX() + 500.0, spawnPos.getY(), spawnPos.getZ() + 0.5, 1.0f, true, false, false, 1);
+        agent.getNavigator().navigate(spawnPos.getX() + 500.0, spawnPos.getY(), spawnPos.getZ() + 0.5,
+                1.0f, true, false, false, 1);
         for (int t = 0; t < 200 && !agent.getNavigator().isExhausted(); t++) {
             agent.getNavigator().setPosition(spawnPos.getX() + 0.5, spawnPos.getY(), spawnPos.getZ() + 0.5);
             agent.getNavigator().setStuckTicks(0);
-            agent.tick();
+            agent.getNavigator().tick();
         }
-        helper.assertTrue(agent.getNavigator().isExhausted(), "Sustained sprinting must exhaust stamina");
+        helper.assertTrue(agent.getNavigator().isExhausted(), "Sustained sprinting must exhaust stamina, stamina="
+                + agent.getStamina() + " state=" + agent.getNavigator().getReportedNavigationState()
+                + " receipt=" + agent.getMotorFSM().getCurrentReceipt());
 
         manager.despawnAgent(server, "agent-gt-stamina").join();
         helper.succeed();
@@ -1286,7 +1353,8 @@ public class AgentGameTest {
 
         agent.setYRot(0.0f);
         agent.yBodyRot = 0.0f;
-        agent.getNavigator().navigate(spawnPos.getX() + 15.0, spawnPos.getY(), spawnPos.getZ() - 15.0, 1.0f, false, false, false, 1);
+        navigateByIntent(manager, server, "agent-gt-smooth",
+                spawnPos.getX() + 15.0, spawnPos.getY(), spawnPos.getZ() - 15.0, false, false);
 
         float prevHead = agent.getNavigator().getHeadYaw();
         float prevPitch = agent.getNavigator().getNavPitch();
