@@ -32,9 +32,10 @@ func runWalkFrame(a waterfallActivity, lw *fsmWorld, walk walkLocal, wrap func(w
 		// (cq-dcx.2); hold until the inventory reflects it or the latch times out.
 		return htpda.Step{Op: htpda.OpStay, Next: wrap(prog)}
 	}
+	prog.Acted = prog.Acted || len(intents) > 0
 	if done && len(intents) == 0 && !lw.holds() {
 		// A preemptor over another frame (or a fall-through activity) with nothing to do yields.
-		return popFrame(lw, a.Kind(), nil, !a.fallThrough(lw))
+		return yieldWalk(lw, a.Kind(), prog.Acted, !a.fallThrough(lw))
 	}
 	if done && len(intents) == 0 && a.fallThrough(lw) {
 		return popFrame(lw, a.Kind(), nil, false)
@@ -42,6 +43,16 @@ func runWalkFrame(a waterfallActivity, lw *fsmWorld, walk walkLocal, wrap func(w
 	// Hold: the cursor (explore target, throttles) lives in this frame, so waiting for a
 	// cooldown or a pathing leg must not pop it.
 	return htpda.Step{Op: htpda.OpStay, Intents: intents, Next: wrap(prog)}
+}
+
+// yieldWalk pops a stacked walk frame that has nothing to do. A bootstrap frame that never did
+// anything backs off, or the expedition below pushes it again on the next tick (cq-6l3.18).
+func yieldWalk(lw *fsmWorld, kind htpda.Kind, acted, halt bool) htpda.Step {
+	st := popFrame(lw, kind, nil, halt)
+	if kind == activityKindBootstrap && !acted {
+		st.Memory = []htpda.MemoryWrite{workBackoff{Kind: kind, Until: lw.Tick() + workBackoffTicks}}
+	}
+	return st
 }
 
 // craftPending reports whether the walk cursor still latches an in-flight craft.
