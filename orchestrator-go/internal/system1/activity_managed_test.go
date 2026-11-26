@@ -134,7 +134,7 @@ func TestActivityArbiter_UnifiedSelectionAndSkillRegistry(t *testing.T) {
 			AgentID: "arbiter_agent",
 			State:   st,
 			Config:  cfg,
-			Frame: makeArbiterTestFrame(100, 3000, 20, fullSurvivalKitInv(), []*civquestv1.VisibleBlock{
+			Frame: makeArbiterTestFrame(100, 3000, 20, append(fullSurvivalKitInv(), &civquestv1.ItemStackProto{Slot: 8, ItemId: "minecraft:wooden_pickaxe", Count: 1}), []*civquestv1.VisibleBlock{
 				{Pos: &civquestv1.BlockPosProto{X: 2, Y: 64, Z: 0}, BlockId: "minecraft:stone"},
 			}),
 		}

@@ -366,6 +366,12 @@ public class PeripheryHarnessTest {
             assertEquals(0, woodenPickaxe.getDamageValue(), "Pickaxe starts undamaged");
             agent.getInventory().setItem(0, woodenPickaxe);
             agent.getInventory().selected = 0;
+            // Block/item tags are not bound in this unit harness, so the breaker cannot recognise the
+            // pickaxe as the right tool for stone and (cq-gpa.10) would move to an empty hotbar slot.
+            // Fill the rest of the hotbar so no neutral slot exists and the selection stays put.
+            for (int i = 1; i < 9; i++) {
+                agent.getInventory().setItem(i, new ItemStack(Items.WOODEN_AXE));
+            }
 
             InteractBlockIntent harvestIntent = InteractBlockIntent.newBuilder()
                     .setPos(BlockPosProto.newBuilder().setX(1).setY(64).setZ(0).build())

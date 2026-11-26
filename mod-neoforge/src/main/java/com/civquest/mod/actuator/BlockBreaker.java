@@ -93,7 +93,19 @@ public class BlockBreaker {
         return lastStage;
     }
 
-    /** Index of the inventory slot whose item mines {@code state} fastest, or -1 if nothing beats bare hands. */
+    /** Whether breaking {@code state} with {@code stack} yields drops (vanilla "requires correct tool for drops"). */
+    public static boolean yieldsDrops(ItemStack stack, BlockState state) {
+        if (!state.requiresCorrectToolForDrops()) {
+            return true;
+        }
+        return stack != null && !stack.isEmpty() && stack.isCorrectToolForDrops(state);
+    }
+
+    /**
+     * Index of the inventory slot whose item mines {@code state} fastest, or -1 if nothing beats bare hands.
+     * For blocks that need the correct tool for drops, a tool that would produce no drops (e.g. a wooden
+     * pickaxe on iron ore) never counts.
+     */
     public static int bestToolSlot(AgentEntity agent, BlockState state) {
         int best = -1;
         float bestSpeed = 1.0F;
@@ -103,7 +115,7 @@ public class BlockBreaker {
         }
         for (int i = 0; i < inv.items.size(); i++) {
             ItemStack s = inv.items.get(i);
-            if (s.isEmpty()) {
+            if (s.isEmpty() || !yieldsDrops(s, state)) {
                 continue;
             }
             float sp = s.getDestroySpeed(state);
@@ -115,13 +127,22 @@ public class BlockBreaker {
         return best;
     }
 
-    /** Equips the best tool for {@code state} into the selected hotbar slot (swapping if needed). */
+    /**
+     * Equips the best tool for {@code state} into the selected hotbar slot (swapping if needed). When no
+     * inventory item beats bare hands, the selected slot is moved off any unrelated tool (an axe on stone
+     * wastes durability and, for pickaxe-only blocks, drops nothing): an empty hotbar slot is preferred,
+     * then a non-tool item; if the hotbar holds only tools the current selection is left as is.
+     */
     public static void equipBestTool(AgentEntity agent, BlockState state) {
-        int slot = bestToolSlot(agent, state);
-        if (slot < 0) {
+        var inv = agent.getInventory();
+        if (inv == null || inv.items == null) {
             return;
         }
-        var inv = agent.getInventory();
+        int slot = bestToolSlot(agent, state);
+        if (slot < 0) {
+            selectNeutralSlot(inv);
+            return;
+        }
         if (slot == inv.selected) {
             return;
         }
@@ -132,6 +153,30 @@ public class BlockBreaker {
             ItemStack cur = inv.items.get(inv.selected);
             inv.items.set(slot, cur);
             inv.items.set(inv.selected, tool);
+        }
+    }
+
+    private static void selectNeutralSlot(net.minecraft.world.entity.player.Inventory inv) {
+        int sel = inv.selected;
+        if (sel >= 0 && sel < inv.items.size()) {
+            ItemStack cur = inv.items.get(sel);
+            if (cur.isEmpty() || !cur.isDamageableItem()) {
+                return; // already neutral
+            }
+        }
+        int nonTool = -1;
+        for (int i = 0; i < 9 && i < inv.items.size(); i++) {
+            ItemStack s = inv.items.get(i);
+            if (s.isEmpty()) {
+                inv.selected = i;
+                return;
+            }
+            if (nonTool < 0 && !s.isDamageableItem()) {
+                nonTool = i;
+            }
+        }
+        if (nonTool >= 0) {
+            inv.selected = nonTool;
         }
     }
 
@@ -228,7 +273,7 @@ public class BlockBreaker {
             return false;
         }
         BlockState state = level.getBlockState(pos);
-        agent.equipBestToolFor(state);
+        equipBestTool(agent, state);
         ticks++;
         progress += state.getDestroyProgress(agent, level, pos);
         if (ticks % 4 == 1) {

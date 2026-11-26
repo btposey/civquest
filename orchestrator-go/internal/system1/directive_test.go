@@ -102,7 +102,7 @@ func TestEvaluateStrategicDirective_MineStone(t *testing.T) {
 	cfg := xdg.DefaultAgentIdentityConfig("aria")
 
 	// 1. Distant ore -> Navigate toward ore
-	frameFar := newDirectiveTestFrame("aria", 200, 4000, 0.5, 64, 0.5)
+	frameFar := withWoodenPickaxe(newDirectiveTestFrame("aria", 200, 4000, 0.5, 64, 0.5))
 	frameFar.InterestingBlocks = []*civquestv1.VisibleBlock{
 		{Pos: &civquestv1.BlockPosProto{X: 10, Y: 64, Z: 0}, BlockId: "minecraft:coal_ore"},
 	}
@@ -115,7 +115,7 @@ func TestEvaluateStrategicDirective_MineStone(t *testing.T) {
 	}
 
 	// 2. Within reach -> HARVEST_BREAK
-	frameNear := newDirectiveTestFrame("aria", 250, 4000, 8.5, 64, 0.5)
+	frameNear := withWoodenPickaxe(newDirectiveTestFrame("aria", 250, 4000, 8.5, 64, 0.5))
 	frameNear.InterestingBlocks = []*civquestv1.VisibleBlock{
 		{Pos: &civquestv1.BlockPosProto{X: 10, Y: 64, Z: 0}, BlockId: "minecraft:coal_ore"},
 	}
@@ -139,7 +139,7 @@ func TestEvaluateStrategicDirective_MineStone(t *testing.T) {
 		Reliability: 0.9,
 		IsActive:    true,
 	})
-	frameNone := newDirectiveTestFrame("aria", 300, 4000, 0.5, 64, 0.5)
+	frameNone := withWoodenPickaxe(newDirectiveTestFrame("aria", 300, 4000, 0.5, 64, 0.5))
 	poiIntent := EvaluateStrategicDirective(frameNone, state, cfg, nil)
 	if poiIntent == nil || poiIntent.GetNavigate() == nil {
 		t.Fatalf("expected NavigateIntent to recalled mine POI, got %+v", poiIntent)
@@ -303,7 +303,7 @@ func TestAgentFSM_ExecutesDirectiveInBootstrapAndSettlement(t *testing.T) {
 	fsm := NewAgentFSM(StageBootstrap, nil)
 	cfg := xdg.DefaultAgentIdentityConfig("aria")
 
-	frame := newDirectiveTestFrame("aria", 200, 4000, 0.5, 64, 0.5)
+	frame := withWoodenPickaxe(newDirectiveTestFrame("aria", 200, 4000, 0.5, 64, 0.5))
 	frame.InterestingBlocks = []*civquestv1.VisibleBlock{
 		{Pos: &civquestv1.BlockPosProto{X: 2, Y: 64, Z: 0}, BlockId: "minecraft:coal_ore"},
 	}
@@ -396,7 +396,7 @@ func TestEvaluateStrategicDirective_IgnoresDistantHostileAndPreservesSurvey(t *t
 
 	// Harmless daytime zombie at 12m (> 8m) must NOT preempt directive.
 	state.activityKinds = nil
-	frameDay := newDirectiveTestFrame("aria", 220, 3000, 0.5, 64, 0.5)
+	frameDay := withWoodenPickaxe(newDirectiveTestFrame("aria", 220, 3000, 0.5, 64, 0.5))
 	frameDay.VisibleEntities = []*civquestv1.VisibleEntity{
 		{EntityId: 9002, EntityType: "minecraft:zombie", IsHostile: true, Distance: 12.0, Position: &civquestv1.Vec3{X: 12.5, Y: 64, Z: 0.5}},
 	}
@@ -406,4 +406,9 @@ func TestEvaluateStrategicDirective_IgnoresDistantHostileAndPreservesSurvey(t *t
 	if intent := EvaluateStrategicDirective(frameDay, state, cfg, nil); intent == nil || intent.GetInteractBlock() == nil {
 		t.Fatalf("expected daytime directive to ignore 12m non-creeper zombie and harvest stone, got %+v", intent)
 	}
+}
+
+func withWoodenPickaxe(f *civquestv1.TelemetryFrame) *civquestv1.TelemetryFrame {
+	f.Status.Inventory = append(f.Status.Inventory, &civquestv1.ItemStackProto{Slot: 8, ItemId: "minecraft:wooden_pickaxe", Count: 1})
+	return f
 }

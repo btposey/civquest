@@ -22,6 +22,8 @@ type bootstrapInventorySummary struct {
 	buildingBlockCount  int32
 	placeableBlockID    string
 	hasAxe              bool
+	hasPickaxe          bool
+	pickaxeTier         ToolTier
 	hasSword            bool
 	hasWeapon           bool
 	hasStoneGear        bool
@@ -77,6 +79,12 @@ func inspectBootstrapInventory(inventory []*civquestv1.ItemStackProto) bootstrap
 		if strings.Contains(id, "_axe") {
 			s.hasAxe = true
 			s.hasWeapon = true
+		}
+		if class, tier, ok := ToolOf(id); ok && class == ToolClassPickaxe {
+			if !s.hasPickaxe || tier > s.pickaxeTier {
+				s.pickaxeTier = tier
+			}
+			s.hasPickaxe = true
 		}
 		if strings.Contains(id, "_sword") {
 			s.hasSword = true
@@ -279,15 +287,7 @@ func evaluateBootstrapGoalsLocked(
 	tableInReach := isCraftingTableWithinReach(nearestCraftingTable, bestTableDistSq, pos)
 
 	if !recipeGraph.IsEmpty() {
-		var toolTargets []string
-		if !inv.hasStoneGear {
-			toolTargets = append(toolTargets, "minecraft:stone_sword")
-		}
-		if !inv.hasAxe {
-			toolTargets = append(toolTargets, "minecraft:wooden_axe")
-		} else if !inv.hasSword {
-			toolTargets = append(toolTargets, "minecraft:wooden_sword")
-		}
+		toolTargets := bootstrapToolTargets(inv)
 
 		for _, targetID := range toolTargets {
 			step, ok := recipeGraph.PlanNextStep(targetID, invMap, tableInReach)
@@ -900,4 +900,28 @@ func findNearestTreeTrunk(agentID string, frame *civquestv1.TelemetryFrame, pos 
 		idx = int(crc32.ChecksumIEEE([]byte(agentID))) % len(candidates)
 	}
 	return candidates[idx].anchor, nil
+}
+
+// bootstrapToolTargets is the ordered recipe-graph progression of tools the
+// bootstrap stage crafts as materials allow: stone gear (sword, then a stone
+// pickaxe) when cobblestone is on hand, then the wooden axe/sword, then the
+// wooden pickaxe (cq-gpa.10). A target whose raw materials are missing is
+// skipped by the planner, so listing stone first costs nothing without cobble.
+func bootstrapToolTargets(inv bootstrapInventorySummary) []string {
+	var targets []string
+	if !inv.hasStoneGear {
+		targets = append(targets, "minecraft:stone_sword")
+	}
+	if inv.pickaxeTier < TierStone {
+		targets = append(targets, "minecraft:stone_pickaxe")
+	}
+	if !inv.hasAxe {
+		targets = append(targets, "minecraft:wooden_axe")
+	} else if !inv.hasSword {
+		targets = append(targets, "minecraft:wooden_sword")
+	}
+	if !inv.hasPickaxe {
+		targets = append(targets, "minecraft:wooden_pickaxe")
+	}
+	return targets
 }

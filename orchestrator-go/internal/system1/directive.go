@@ -316,7 +316,19 @@ func evaluateDirectiveMineStone(
 	state.mu.Lock()
 	defer state.mu.Unlock()
 
-	bestBlock, bestDistSq := findNearestMineableStoneBlock(frame, pos)
+	var inventory []*civquestv1.ItemStackProto
+	if frame.Status != nil {
+		inventory = frame.Status.Inventory
+	}
+	// Precondition (cq-gpa.10): never issue a stone/ore break without a tool that yields drops.
+	// Only blocks the current tools can harvest are considered; with no pickaxe at all, plan to
+	// craft one (wooden first) instead of mining by hand or with an unrelated tool.
+	bestBlock, bestDistSq := findNearestMineableStoneBlock(frame, pos, inventory)
+	if bestBlock == nil {
+		if _, havePick := BestToolTier(inventory, ToolClassPickaxe); !havePick {
+			return craftToolIntentLocked(agentID, frame, state, pos, "minecraft:wooden_pickaxe")
+		}
+	}
 	if bestBlock != nil {
 		dy := math.Abs(float64(bestBlock.Pos.Y) + 0.5 - pos.Y)
 		if bestDistSq <= directiveReachRadius*directiveReachRadius && dy <= 3.0 {
@@ -574,7 +586,32 @@ func isMineableStoneBlockID(raw string) bool {
 	}
 }
 
-func findNearestMineableStoneBlock(frame *civquestv1.TelemetryFrame, pos *civquestv1.Vec3) (*civquestv1.VisibleBlock, float64) {
+// craftToolIntentLocked returns a craft intent for targetID when the recipe graph can
+// execute the next step now (with a table in reach for 3x3 steps), else nil so the bootstrap
+// progression (timber, table) supplies the materials. state.mu must be held.
+func craftToolIntentLocked(agentID string, frame *civquestv1.TelemetryFrame, state *AgentState, pos *civquestv1.Vec3, targetID string) *civquestv1.AgentIntent {
+	graph := state.RecipeGraphLocked()
+	if graph.IsEmpty() {
+		return nil
+	}
+	if last := state.mem.lastCraftTick; last != 0 && frame.WorldTick >= last && frame.WorldTick-last < 20 {
+		return nil
+	}
+	table, _, tableDistSq := findNearestCraftingTableLocked(frame, pos, state)
+	inReach := isCraftingTableWithinReach(table, tableDistSq, pos)
+	step, ok := graph.PlanNextStep(targetID, crafting.InventoryMapFromProtos(frame.Status.Inventory), inReach)
+	if !ok || !step.CanExecuteNow {
+		return nil
+	}
+	state.mem.lastCraftTick = frame.WorldTick
+	craft := &civquestv1.CraftItemIntent{RecipeId: step.RecipeID, BatchCount: 1}
+	if step.Requires3x3 && table != nil {
+		craft.WorkstationPos = table.Pos
+	}
+	return &civquestv1.AgentIntent{AgentId: agentID, Action: &civquestv1.AgentIntent_CraftItem{CraftItem: craft}}
+}
+
+func findNearestMineableStoneBlock(frame *civquestv1.TelemetryFrame, pos *civquestv1.Vec3, inventory []*civquestv1.ItemStackProto) (*civquestv1.VisibleBlock, float64) {
 	if frame == nil || pos == nil {
 		return nil, math.MaxFloat64
 	}
@@ -586,6 +623,9 @@ func findNearestMineableStoneBlock(frame *civquestv1.TelemetryFrame, pos *civque
 	bestDistSq := math.MaxFloat64
 	for _, b := range frame.InterestingBlocks {
 		if b == nil || b.Pos == nil || !isMineableStoneBlockID(b.BlockId) {
+			continue
+		}
+		if !HasSuitableTool(inventory, RequirementForBlock(b.BlockId)) {
 			continue
 		}
 		// Never mine directly underneath own feet
@@ -650,15 +690,7 @@ func canExecuteImmediateBootstrapCraftLocked(frame *civquestv1.TelemetryFrame, s
 	nearestTable, _, bestTableDistSq := findNearestCraftingTableLocked(frame, pos, state)
 	tableInReach := isCraftingTableWithinReach(nearestTable, bestTableDistSq, pos)
 
-	var toolTargets []string
-	if !inv.hasStoneGear {
-		toolTargets = append(toolTargets, "minecraft:stone_sword")
-	}
-	if !inv.hasAxe {
-		toolTargets = append(toolTargets, "minecraft:wooden_axe")
-	} else if !inv.hasSword {
-		toolTargets = append(toolTargets, "minecraft:wooden_sword")
-	}
+	toolTargets := bootstrapToolTargets(inv)
 
 	for _, targetID := range toolTargets {
 		step, ok := recipeGraph.PlanNextStep(targetID, invMap, tableInReach)
