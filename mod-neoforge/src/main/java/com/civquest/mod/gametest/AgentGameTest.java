@@ -1306,6 +1306,36 @@ public class AgentGameTest {
     private static final int RETREAT_ARENA_Y = 30;
     private static final int SPENT_ARENA_Y = 40;
     private static final int STEP_ARENA_Y = 50;
+    private static final int CAMPFIRE_ARENA_Y = 60;
+
+    // cq-6l3.5: walks that cross a lit campfire must go round it without ever touching it.
+    @GameTest(template = "empty3x3x3")
+    public static void testMotionWalksRoundCampfire(GameTestHelper helper) {
+        MinecraftServer server = helper.getLevel().getServer();
+        AgentEntityManager manager = new AgentEntityManager();
+        stoneFloor(helper, -7, 7, CAMPFIRE_ARENA_Y);
+        helper.setBlock(new BlockPos(0, CAMPFIRE_ARENA_Y + 1, 0), Blocks.CAMPFIRE);
+        AgentEntity agent = spawnCoverageAgent(helper, manager, "agent-gt-campfire", new BlockPos(-5, CAMPFIRE_ARENA_Y + 1, -4));
+        float full = agent.getHealth();
+        // Straight lines through the fire, past its corners and along its edges, at both gaits.
+        int[][] legs = {{5, 4}, {-5, -2}, {5, 1}, {-5, 1}, {5, -1}, {-4, 5}, {4, -5}, {-1, 5}, {-1, -5},
+                {1, 5}, {1, -5}, {-5, 0}, {5, 0}, {-5, -4}, {5, 5}, {-5, -5}};
+        for (int i = 0; i < legs.length * 2; i++) {
+            int[] leg = legs[i % legs.length];
+            boolean sprint = i >= legs.length;
+            BlockPos to = helper.absolutePos(new BlockPos(leg[0], CAMPFIRE_ARENA_Y + 1, leg[1]));
+            navigateByIntent(manager, server, "agent-gt-campfire", to.getX() + 0.3, to.getY(), to.getZ() + 0.7, sprint, false);
+            for (int t = 0; t < 200 && !agent.getNavigator().isArrived(); t++) {
+                agent.tick();
+                helper.assertTrue(agent.getHealth() >= full && !agent.isOnFire(), "Agent burned on leg " + i + " tick " + t
+                        + " at " + agent.position() + " heading to " + to);
+            }
+            double remaining = Math.hypot(agent.getX() - (to.getX() + 0.3), agent.getZ() - (to.getZ() + 0.7));
+            helper.assertTrue(remaining <= 2.0, "Leg " + i + " ended " + remaining + " blocks short at " + agent.position());
+        }
+        manager.despawnAgent(server, "agent-gt-campfire").join();
+        helper.succeed();
+    }
 
     private static void stoneFloor(GameTestHelper helper, int from, int to, int floorY) {
         for (int x = from; x <= to; x++) {

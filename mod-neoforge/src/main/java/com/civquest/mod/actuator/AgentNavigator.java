@@ -869,15 +869,36 @@ public class AgentNavigator {
         return null;
     }
 
+    private static final double BODY_HALF_WIDTH = 0.3;
+    /**
+     * Wider than the agent's body: a narrower check let a corner overlap a campfire, which the
+     * agent then stepped up onto (cq-6l3.5).
+     */
+    private static final double HAZARD_HALF_WIDTH = 0.35;
+    /** Physics applies the set velocity again after the navigator's own move. */
+    private static final double HAZARD_LOOKAHEAD = 2.0;
+
+    /** Whether moving by (vx, vz) would bring the body into, or newly close to, a hazard. */
+    private static boolean entersHazard(Level level, Vec3 from, double vx, double vz) {
+        double x = from.x + vx * HAZARD_LOOKAHEAD;
+        double z = from.z + vz * HAZARD_LOOKAHEAD;
+        return isHazardWithin(level, x, from.y, z, BODY_HALF_WIDTH)
+                || (isHazardFootprint(level, x, from.y, z) && !isHazardFootprint(level, from.x, from.y, from.z));
+    }
+
     private static boolean isHazardFootprint(Level level, double x, double y, double z) {
+        return isHazardWithin(level, x, y, z, HAZARD_HALF_WIDTH);
+    }
+
+    private static boolean isHazardWithin(Level level, double x, double y, double z, double halfWidth) {
         if (level == null) {
             return false;
         }
         int by = Mth.floor(y + 0.1);
-        int minBx = Mth.floor(x - 0.25);
-        int maxBx = Mth.floor(x + 0.25);
-        int minBz = Mth.floor(z - 0.25);
-        int maxBz = Mth.floor(z + 0.25);
+        int minBx = Mth.floor(x - halfWidth);
+        int maxBx = Mth.floor(x + halfWidth);
+        int minBz = Mth.floor(z - halfWidth);
+        int maxBz = Mth.floor(z + halfWidth);
         for (int bx = minBx; bx <= maxBx; bx++) {
             for (int bz = minBz; bz <= maxBz; bz++) {
                 if (isBlockHazard(level, new BlockPos(bx, by, bz))
@@ -1195,15 +1216,15 @@ public class AgentNavigator {
         }
 
         // Prevent turning inertia or momentum from drifting into adjacent hazards (lava, fire, magma, etc.)
-        if (level != null && !isHazardFootprint(level, currentPos.x, currentPos.y, currentPos.z)) {
-            if (velX != 0.0 && isHazardFootprint(level, currentPos.x + velX, currentPos.y, currentPos.z)) {
+        // An agent already touching a hazard is left free to walk out of it.
+        if (level != null && !isHazardWithin(level, currentPos.x, currentPos.y, currentPos.z, BODY_HALF_WIDTH)) {
+            if (velX != 0.0 && entersHazard(level, currentPos, velX, 0.0)) {
                 velX = 0.0;
             }
-            if (velZ != 0.0 && isHazardFootprint(level, currentPos.x, currentPos.y, currentPos.z + velZ)) {
+            if (velZ != 0.0 && entersHazard(level, currentPos, 0.0, velZ)) {
                 velZ = 0.0;
             }
-            if ((velX != 0.0 || velZ != 0.0)
-                    && isHazardFootprint(level, currentPos.x + velX, currentPos.y, currentPos.z + velZ)) {
+            if ((velX != 0.0 || velZ != 0.0) && entersHazard(level, currentPos, velX, velZ)) {
                 velX = 0.0;
                 velZ = 0.0;
             }
