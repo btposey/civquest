@@ -26,4 +26,48 @@ public interface UseItemIntentOrBuilder extends
    * @return The equipArmorOrOffhand.
    */
   boolean getEquipArmorOrOffhand();
+
+  /**
+   * <code>.civquest.v1.UseItemIntent.Mode mode = 4;</code>
+   * @return The enum numeric value on the wire for mode.
+   */
+  int getModeValue();
+  /**
+   * <code>.civquest.v1.UseItemIntent.Mode mode = 4;</code>
+   * @return The mode.
+   */
+  com.civquest.mod.grpc.v1.UseItemIntent.Mode getMode();
+
+  /**
+   * <code>int32 target_entity_id = 5;</code>
+   * @return The targetEntityId.
+   */
+  int getTargetEntityId();
+
+  /**
+   * <pre>
+   * CAST_FISHING_ROD: world point to face before casting (the bobber flies where the agent looks)
+   * </pre>
+   *
+   * <code>.civquest.v1.Vec3 aim_at = 6;</code>
+   * @return Whether the aimAt field is set.
+   */
+  boolean hasAimAt();
+  /**
+   * <pre>
+   * CAST_FISHING_ROD: world point to face before casting (the bobber flies where the agent looks)
+   * </pre>
+   *
+   * <code>.civquest.v1.Vec3 aim_at = 6;</code>
+   * @return The aimAt.
+   */
+  com.civquest.mod.grpc.v1.Vec3 getAimAt();
+  /**
+   * <pre>
+   * CAST_FISHING_ROD: world point to face before casting (the bobber flies where the agent looks)
+   * </pre>
+   *
+   * <code>.civquest.v1.Vec3 aim_at = 6;</code>
+   */
+  com.civquest.mod.grpc.v1.Vec3OrBuilder getAimAtOrBuilder();
 }

@@ -201,4 +201,31 @@ public interface AgentStatusOrBuilder extends
    * @return The maxAirSupply.
    */
   int getMaxAirSupply();
+
+  /**
+   * <pre>
+   * cq-390.4: bobber/bite telemetry; unset when no line is cast
+   * </pre>
+   *
+   * <code>.civquest.v1.FishingState fishing = 21;</code>
+   * @return Whether the fishing field is set.
+   */
+  boolean hasFishing();
+  /**
+   * <pre>
+   * cq-390.4: bobber/bite telemetry; unset when no line is cast
+   * </pre>
+   *
+   * <code>.civquest.v1.FishingState fishing = 21;</code>
+   * @return The fishing.
+   */
+  com.civquest.mod.grpc.v1.FishingState getFishing();
+  /**
+   * <pre>
+   * cq-390.4: bobber/bite telemetry; unset when no line is cast
+   * </pre>
+   *
+   * <code>.civquest.v1.FishingState fishing = 21;</code>
+   */
+  com.civquest.mod.grpc.v1.FishingStateOrBuilder getFishingOrBuilder();
 }

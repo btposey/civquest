@@ -1621,4 +1621,118 @@ public class AgentGameTest {
         helper.assertTrue(campfire, "Placed camp must contain a campfire");
         helper.succeed();
     }
+
+    private static AgentIntent useItem(String agentId, UseItemIntent.Builder b) {
+        return AgentIntent.newBuilder().setAgentId(agentId).setUseItem(b).build();
+    }
+
+    private static int shearsDamage(AgentEntity agent) {
+        for (int i = 0; i < agent.getInventory().getContainerSize(); i++) {
+            ItemStack st = agent.getInventory().getItem(i);
+            if (st.is(Items.SHEARS)) return st.getDamageValue();
+        }
+        return -1;
+    }
+
+    @GameTest(template = "empty3x3x3")
+    public static void testShearSheepIntent(GameTestHelper helper) {
+        ServerLevel level = helper.getLevel();
+        MinecraftServer server = level.getServer();
+        AgentEntityManager manager = new AgentEntityManager();
+        for (int x = 0; x <= 2; x++) {
+            for (int z = 0; z <= 2; z++) {
+                helper.setBlock(new BlockPos(x, 0, z), Blocks.STONE);
+            }
+        }
+        AgentEntity agent = spawnCoverageAgent(helper, manager, "agent-gt-shear", new BlockPos(0, 1, 0));
+        net.minecraft.world.entity.animal.Sheep sheep = helper.spawn(EntityType.SHEEP, new BlockPos(2, 1, 2));
+        sheep.setNoAi(true);
+
+        // Without shears the intent must not shear.
+        manager.handleIntent(server, useItem("agent-gt-shear", UseItemIntent.newBuilder()
+                .setMode(UseItemIntent.Mode.SHEAR_ENTITY).setTargetEntityId(sheep.getId()))).join();
+        helper.assertTrue(!sheep.isSheared(), "A sheep must not be sheared without shears");
+
+        agent.getInventory().add(new ItemStack(Items.SHEARS));
+        manager.handleIntent(server, useItem("agent-gt-shear", UseItemIntent.newBuilder()
+                .setMode(UseItemIntent.Mode.SHEAR_ENTITY).setTargetEntityId(sheep.getId()))).join();
+        helper.assertTrue(sheep.isSheared(), "Shears must shear an adult sheep in reach");
+
+        // Telemetry reports the sheared state.
+        TelemetryFrame frame = new SensoryFrustumCollector().collectFrame(agent, null, null);
+        VisibleEntity seen = frame.getVisibleEntitiesList().stream()
+                .filter(e -> e.getEntityId() == sheep.getId()).findFirst().orElse(null);
+        helper.assertTrue(seen != null && seen.getIsSheared() && !seen.getIsBaby(), "Telemetry must report is_sheared on the sheep");
+
+        // An already-sheared sheep is rejected (no wool, shears not worn twice).
+        int damage = shearsDamage(agent);
+        manager.handleIntent(server, useItem("agent-gt-shear", UseItemIntent.newBuilder()
+                .setMode(UseItemIntent.Mode.SHEAR_ENTITY).setTargetEntityId(sheep.getId()))).join();
+        helper.assertTrue(shearsDamage(agent) == damage, "A sheared sheep must not wear the shears again");
+
+        sheep.discard();
+        manager.despawnAgent(server, "agent-gt-shear").join();
+        helper.succeed();
+    }
+
+    @GameTest(template = "empty3x3x3")
+    public static void testFishingRodCastAndBiteTelemetry(GameTestHelper helper) {
+        ServerLevel level = helper.getLevel();
+        MinecraftServer server = level.getServer();
+        AgentEntityManager manager = new AgentEntityManager();
+        for (int x = 0; x <= 2; x++) {
+            for (int z = 0; z <= 2; z++) {
+                helper.setBlock(new BlockPos(x, 0, z), Blocks.STONE);
+            }
+        }
+        AgentEntity agent = spawnCoverageAgent(helper, manager, "agent-gt-fish", new BlockPos(0, 1, 0));
+
+        // No rod: cast must fail and no line is reported.
+        manager.handleIntent(server, useItem("agent-gt-fish", UseItemIntent.newBuilder()
+                .setMode(UseItemIntent.Mode.CAST_FISHING_ROD))).join();
+        helper.assertTrue(agent.fishing == null, "Casting without a rod must not create a hook");
+
+        agent.getInventory().add(new ItemStack(Items.FISHING_ROD));
+        manager.handleIntent(server, useItem("agent-gt-fish", UseItemIntent.newBuilder()
+                .setMode(UseItemIntent.Mode.CAST_FISHING_ROD))).join();
+        helper.assertTrue(agent.fishing != null, "Casting with a rod must create a hook entity");
+        TelemetryFrame cast = new SensoryFrustumCollector().collectFrame(agent, null, null);
+        helper.assertTrue(cast.getStatus().hasFishing() && cast.getStatus().getFishing().getCast(), "Telemetry must report the cast line");
+        helper.assertTrue(!cast.getStatus().getFishing().getBite(), "No bite on a fresh cast");
+
+        // Force the bite flag the way vanilla does when a fish nibbles, then check telemetry and reel.
+        try {
+            java.lang.reflect.Field f = net.minecraft.world.entity.projectile.FishingHook.class.getDeclaredField("biting");
+            f.setAccessible(true);
+            f.setBoolean(agent.fishing, true);
+        } catch (ReflectiveOperationException e) {
+            helper.fail("cannot reach FishingHook.biting: " + e);
+            return;
+        }
+        TelemetryFrame bite = new SensoryFrustumCollector().collectFrame(agent, null, null);
+        helper.assertTrue(bite.getStatus().getFishing().getBite(), "Telemetry must report the bite");
+
+        manager.handleIntent(server, useItem("agent-gt-fish", UseItemIntent.newBuilder()
+                .setMode(UseItemIntent.Mode.REEL_FISHING_ROD))).join();
+        helper.assertTrue(agent.fishing == null, "Reeling must retrieve the line");
+        helper.assertTrue(!new SensoryFrustumCollector().collectFrame(agent, null, null).getStatus().hasFishing(),
+                "Telemetry must clear fishing state after reeling");
+
+        manager.despawnAgent(server, "agent-gt-fish").join();
+        helper.succeed();
+    }
+
+    @GameTest(template = "empty3x3x3")
+    public static void testSurfaceWaterSurfacedInTelemetry(GameTestHelper helper) {
+        AgentEntityManager manager = new AgentEntityManager();
+        helper.setBlock(new BlockPos(0, 0, 0), Blocks.STONE);
+        AgentEntity agent = spawnCoverageAgent(helper, manager, "agent-gt-water", new BlockPos(0, 1, 0));
+        helper.setBlock(new BlockPos(2, 0, 2), Blocks.WATER);
+        helper.setBlock(new BlockPos(2, 1, 2), Blocks.AIR);
+        TelemetryFrame frame = new SensoryFrustumCollector().collectFrame(agent, null, null);
+        helper.assertTrue(frame.getInterestingBlocksList().stream().anyMatch(b -> "minecraft:water".equals(b.getBlockId())),
+                "Surface water within scan radius must be listed as an interesting block");
+        manager.despawnAgent(helper.getLevel().getServer(), "agent-gt-water").join();
+        helper.succeed();
+    }
 }

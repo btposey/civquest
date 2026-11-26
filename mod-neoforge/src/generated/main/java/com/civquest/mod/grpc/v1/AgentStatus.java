@@ -390,6 +390,44 @@ private static final long serialVersionUID = 0L;
     return maxAirSupply_;
   }
 
+  public static final int FISHING_FIELD_NUMBER = 21;
+  private com.civquest.mod.grpc.v1.FishingState fishing_;
+  /**
+   * <pre>
+   * cq-390.4: bobber/bite telemetry; unset when no line is cast
+   * </pre>
+   *
+   * <code>.civquest.v1.FishingState fishing = 21;</code>
+   * @return Whether the fishing field is set.
+   */
+  @java.lang.Override
+  public boolean hasFishing() {
+    return ((bitField0_ & 0x00000002) != 0);
+  }
+  /**
+   * <pre>
+   * cq-390.4: bobber/bite telemetry; unset when no line is cast
+   * </pre>
+   *
+   * <code>.civquest.v1.FishingState fishing = 21;</code>
+   * @return The fishing.
+   */
+  @java.lang.Override
+  public com.civquest.mod.grpc.v1.FishingState getFishing() {
+    return fishing_ == null ? com.civquest.mod.grpc.v1.FishingState.getDefaultInstance() : fishing_;
+  }
+  /**
+   * <pre>
+   * cq-390.4: bobber/bite telemetry; unset when no line is cast
+   * </pre>
+   *
+   * <code>.civquest.v1.FishingState fishing = 21;</code>
+   */
+  @java.lang.Override
+  public com.civquest.mod.grpc.v1.FishingStateOrBuilder getFishingOrBuilder() {
+    return fishing_ == null ? com.civquest.mod.grpc.v1.FishingState.getDefaultInstance() : fishing_;
+  }
+
   private byte memoizedIsInitialized = -1;
   @java.lang.Override
   public final boolean isInitialized() {
@@ -468,6 +506,9 @@ private static final long serialVersionUID = 0L;
     }
     if (maxAirSupply_ != 0) {
       output.writeInt32(20, maxAirSupply_);
+    }
+    if (((bitField0_ & 0x00000002) != 0)) {
+      output.writeMessage(21, getFishing());
     }
     getUnknownFields().writeTo(output);
   }
@@ -567,6 +608,10 @@ private static final long serialVersionUID = 0L;
       size += com.google.protobuf.CodedOutputStream
         .computeInt32Size(20, maxAirSupply_);
     }
+    if (((bitField0_ & 0x00000002) != 0)) {
+      size += com.google.protobuf.CodedOutputStream
+        .computeMessageSize(21, getFishing());
+    }
     size += getUnknownFields().getSerializedSize();
     memoizedSize = size;
     return size;
@@ -630,6 +675,11 @@ private static final long serialVersionUID = 0L;
         != other.getAirSupply()) return false;
     if (getMaxAirSupply()
         != other.getMaxAirSupply()) return false;
+    if (hasFishing() != other.hasFishing()) return false;
+    if (hasFishing()) {
+      if (!getFishing()
+          .equals(other.getFishing())) return false;
+    }
     if (!getUnknownFields().equals(other.getUnknownFields())) return false;
     return true;
   }
@@ -698,6 +748,10 @@ private static final long serialVersionUID = 0L;
     hash = (53 * hash) + getAirSupply();
     hash = (37 * hash) + MAX_AIR_SUPPLY_FIELD_NUMBER;
     hash = (53 * hash) + getMaxAirSupply();
+    if (hasFishing()) {
+      hash = (37 * hash) + FISHING_FIELD_NUMBER;
+      hash = (53 * hash) + getFishing().hashCode();
+    }
     hash = (29 * hash) + getUnknownFields().hashCode();
     memoizedHashCode = hash;
     return hash;
@@ -830,6 +884,7 @@ private static final long serialVersionUID = 0L;
               .alwaysUseFieldBuilders) {
         getPositionFieldBuilder();
         getInventoryFieldBuilder();
+        getFishingFieldBuilder();
       }
     }
     @java.lang.Override
@@ -866,6 +921,11 @@ private static final long serialVersionUID = 0L;
       submerged_ = false;
       airSupply_ = 0;
       maxAirSupply_ = 0;
+      fishing_ = null;
+      if (fishingBuilder_ != null) {
+        fishingBuilder_.dispose();
+        fishingBuilder_ = null;
+      }
       return this;
     }
 
@@ -974,6 +1034,12 @@ private static final long serialVersionUID = 0L;
       if (((from_bitField0_ & 0x00080000) != 0)) {
         result.maxAirSupply_ = maxAirSupply_;
       }
+      if (((from_bitField0_ & 0x00100000) != 0)) {
+        result.fishing_ = fishingBuilder_ == null
+            ? fishing_
+            : fishingBuilder_.build();
+        to_bitField0_ |= 0x00000002;
+      }
       result.bitField0_ |= to_bitField0_;
     }
 
@@ -1081,6 +1147,9 @@ private static final long serialVersionUID = 0L;
       }
       if (other.getMaxAirSupply() != 0) {
         setMaxAirSupply(other.getMaxAirSupply());
+      }
+      if (other.hasFishing()) {
+        mergeFishing(other.getFishing());
       }
       this.mergeUnknownFields(other.getUnknownFields());
       onChanged();
@@ -1229,6 +1298,13 @@ private static final long serialVersionUID = 0L;
               bitField0_ |= 0x00080000;
               break;
             } // case 160
+            case 170: {
+              input.readMessage(
+                  getFishingFieldBuilder().getBuilder(),
+                  extensionRegistry);
+              bitField0_ |= 0x00100000;
+              break;
+            } // case 170
             default: {
               if (!super.parseUnknownField(input, extensionRegistry, tag)) {
                 done = true; // was an endgroup tag
@@ -2366,6 +2442,163 @@ private static final long serialVersionUID = 0L;
       maxAirSupply_ = 0;
       onChanged();
       return this;
+    }
+
+    private com.civquest.mod.grpc.v1.FishingState fishing_;
+    private com.google.protobuf.SingleFieldBuilder<
+        com.civquest.mod.grpc.v1.FishingState, com.civquest.mod.grpc.v1.FishingState.Builder, com.civquest.mod.grpc.v1.FishingStateOrBuilder> fishingBuilder_;
+    /**
+     * <pre>
+     * cq-390.4: bobber/bite telemetry; unset when no line is cast
+     * </pre>
+     *
+     * <code>.civquest.v1.FishingState fishing = 21;</code>
+     * @return Whether the fishing field is set.
+     */
+    public boolean hasFishing() {
+      return ((bitField0_ & 0x00100000) != 0);
+    }
+    /**
+     * <pre>
+     * cq-390.4: bobber/bite telemetry; unset when no line is cast
+     * </pre>
+     *
+     * <code>.civquest.v1.FishingState fishing = 21;</code>
+     * @return The fishing.
+     */
+    public com.civquest.mod.grpc.v1.FishingState getFishing() {
+      if (fishingBuilder_ == null) {
+        return fishing_ == null ? com.civquest.mod.grpc.v1.FishingState.getDefaultInstance() : fishing_;
+      } else {
+        return fishingBuilder_.getMessage();
+      }
+    }
+    /**
+     * <pre>
+     * cq-390.4: bobber/bite telemetry; unset when no line is cast
+     * </pre>
+     *
+     * <code>.civquest.v1.FishingState fishing = 21;</code>
+     */
+    public Builder setFishing(com.civquest.mod.grpc.v1.FishingState value) {
+      if (fishingBuilder_ == null) {
+        if (value == null) {
+          throw new NullPointerException();
+        }
+        fishing_ = value;
+      } else {
+        fishingBuilder_.setMessage(value);
+      }
+      bitField0_ |= 0x00100000;
+      onChanged();
+      return this;
+    }
+    /**
+     * <pre>
+     * cq-390.4: bobber/bite telemetry; unset when no line is cast
+     * </pre>
+     *
+     * <code>.civquest.v1.FishingState fishing = 21;</code>
+     */
+    public Builder setFishing(
+        com.civquest.mod.grpc.v1.FishingState.Builder builderForValue) {
+      if (fishingBuilder_ == null) {
+        fishing_ = builderForValue.build();
+      } else {
+        fishingBuilder_.setMessage(builderForValue.build());
+      }
+      bitField0_ |= 0x00100000;
+      onChanged();
+      return this;
+    }
+    /**
+     * <pre>
+     * cq-390.4: bobber/bite telemetry; unset when no line is cast
+     * </pre>
+     *
+     * <code>.civquest.v1.FishingState fishing = 21;</code>
+     */
+    public Builder mergeFishing(com.civquest.mod.grpc.v1.FishingState value) {
+      if (fishingBuilder_ == null) {
+        if (((bitField0_ & 0x00100000) != 0) &&
+          fishing_ != null &&
+          fishing_ != com.civquest.mod.grpc.v1.FishingState.getDefaultInstance()) {
+          getFishingBuilder().mergeFrom(value);
+        } else {
+          fishing_ = value;
+        }
+      } else {
+        fishingBuilder_.mergeFrom(value);
+      }
+      if (fishing_ != null) {
+        bitField0_ |= 0x00100000;
+        onChanged();
+      }
+      return this;
+    }
+    /**
+     * <pre>
+     * cq-390.4: bobber/bite telemetry; unset when no line is cast
+     * </pre>
+     *
+     * <code>.civquest.v1.FishingState fishing = 21;</code>
+     */
+    public Builder clearFishing() {
+      bitField0_ = (bitField0_ & ~0x00100000);
+      fishing_ = null;
+      if (fishingBuilder_ != null) {
+        fishingBuilder_.dispose();
+        fishingBuilder_ = null;
+      }
+      onChanged();
+      return this;
+    }
+    /**
+     * <pre>
+     * cq-390.4: bobber/bite telemetry; unset when no line is cast
+     * </pre>
+     *
+     * <code>.civquest.v1.FishingState fishing = 21;</code>
+     */
+    public com.civquest.mod.grpc.v1.FishingState.Builder getFishingBuilder() {
+      bitField0_ |= 0x00100000;
+      onChanged();
+      return getFishingFieldBuilder().getBuilder();
+    }
+    /**
+     * <pre>
+     * cq-390.4: bobber/bite telemetry; unset when no line is cast
+     * </pre>
+     *
+     * <code>.civquest.v1.FishingState fishing = 21;</code>
+     */
+    public com.civquest.mod.grpc.v1.FishingStateOrBuilder getFishingOrBuilder() {
+      if (fishingBuilder_ != null) {
+        return fishingBuilder_.getMessageOrBuilder();
+      } else {
+        return fishing_ == null ?
+            com.civquest.mod.grpc.v1.FishingState.getDefaultInstance() : fishing_;
+      }
+    }
+    /**
+     * <pre>
+     * cq-390.4: bobber/bite telemetry; unset when no line is cast
+     * </pre>
+     *
+     * <code>.civquest.v1.FishingState fishing = 21;</code>
+     */
+    private com.google.protobuf.SingleFieldBuilder<
+        com.civquest.mod.grpc.v1.FishingState, com.civquest.mod.grpc.v1.FishingState.Builder, com.civquest.mod.grpc.v1.FishingStateOrBuilder> 
+        getFishingFieldBuilder() {
+      if (fishingBuilder_ == null) {
+        fishingBuilder_ = new com.google.protobuf.SingleFieldBuilder<
+            com.civquest.mod.grpc.v1.FishingState, com.civquest.mod.grpc.v1.FishingState.Builder, com.civquest.mod.grpc.v1.FishingStateOrBuilder>(
+                getFishing(),
+                getParentForChildren(),
+                isClean());
+        fishing_ = null;
+      }
+      return fishingBuilder_;
     }
 
     // @@protoc_insertion_point(builder_scope:civquest.v1.AgentStatus)

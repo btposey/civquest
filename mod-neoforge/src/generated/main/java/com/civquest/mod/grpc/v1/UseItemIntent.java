@@ -27,6 +27,7 @@ private static final long serialVersionUID = 0L;
     super(builder);
   }
   private UseItemIntent() {
+    mode_ = 0;
   }
 
   public static final com.google.protobuf.Descriptors.Descriptor
@@ -42,6 +43,174 @@ private static final long serialVersionUID = 0L;
             com.civquest.mod.grpc.v1.UseItemIntent.class, com.civquest.mod.grpc.v1.UseItemIntent.Builder.class);
   }
 
+  /**
+   * Protobuf enum {@code civquest.v1.UseItemIntent.Mode}
+   */
+  public enum Mode
+      implements com.google.protobuf.ProtocolMessageEnum {
+    /**
+     * <pre>
+     * legacy: eat/drink/equip flags decide
+     * </pre>
+     *
+     * <code>MODE_UNSPECIFIED = 0;</code>
+     */
+    MODE_UNSPECIFIED(0),
+    /**
+     * <pre>
+     * cq-390.3: shear target_entity_id with shears from the inventory
+     * </pre>
+     *
+     * <code>SHEAR_ENTITY = 1;</code>
+     */
+    SHEAR_ENTITY(1),
+    /**
+     * <pre>
+     * cq-390.4: equip a fishing rod and cast (no-op if a line is out)
+     * </pre>
+     *
+     * <code>CAST_FISHING_ROD = 2;</code>
+     */
+    CAST_FISHING_ROD(2),
+    /**
+     * <pre>
+     * cq-390.4: retrieve the line (catch on bite)
+     * </pre>
+     *
+     * <code>REEL_FISHING_ROD = 3;</code>
+     */
+    REEL_FISHING_ROD(3),
+    UNRECOGNIZED(-1),
+    ;
+
+    static {
+      com.google.protobuf.RuntimeVersion.validateProtobufGencodeVersion(
+        com.google.protobuf.RuntimeVersion.RuntimeDomain.PUBLIC,
+        /* major= */ 4,
+        /* minor= */ 28,
+        /* patch= */ 3,
+        /* suffix= */ "",
+        Mode.class.getName());
+    }
+    /**
+     * <pre>
+     * legacy: eat/drink/equip flags decide
+     * </pre>
+     *
+     * <code>MODE_UNSPECIFIED = 0;</code>
+     */
+    public static final int MODE_UNSPECIFIED_VALUE = 0;
+    /**
+     * <pre>
+     * cq-390.3: shear target_entity_id with shears from the inventory
+     * </pre>
+     *
+     * <code>SHEAR_ENTITY = 1;</code>
+     */
+    public static final int SHEAR_ENTITY_VALUE = 1;
+    /**
+     * <pre>
+     * cq-390.4: equip a fishing rod and cast (no-op if a line is out)
+     * </pre>
+     *
+     * <code>CAST_FISHING_ROD = 2;</code>
+     */
+    public static final int CAST_FISHING_ROD_VALUE = 2;
+    /**
+     * <pre>
+     * cq-390.4: retrieve the line (catch on bite)
+     * </pre>
+     *
+     * <code>REEL_FISHING_ROD = 3;</code>
+     */
+    public static final int REEL_FISHING_ROD_VALUE = 3;
+
+
+    public final int getNumber() {
+      if (this == UNRECOGNIZED) {
+        throw new java.lang.IllegalArgumentException(
+            "Can't get the number of an unknown enum value.");
+      }
+      return value;
+    }
+
+    /**
+     * @param value The numeric wire value of the corresponding enum entry.
+     * @return The enum associated with the given numeric wire value.
+     * @deprecated Use {@link #forNumber(int)} instead.
+     */
+    @java.lang.Deprecated
+    public static Mode valueOf(int value) {
+      return forNumber(value);
+    }
+
+    /**
+     * @param value The numeric wire value of the corresponding enum entry.
+     * @return The enum associated with the given numeric wire value.
+     */
+    public static Mode forNumber(int value) {
+      switch (value) {
+        case 0: return MODE_UNSPECIFIED;
+        case 1: return SHEAR_ENTITY;
+        case 2: return CAST_FISHING_ROD;
+        case 3: return REEL_FISHING_ROD;
+        default: return null;
+      }
+    }
+
+    public static com.google.protobuf.Internal.EnumLiteMap<Mode>
+        internalGetValueMap() {
+      return internalValueMap;
+    }
+    private static final com.google.protobuf.Internal.EnumLiteMap<
+        Mode> internalValueMap =
+          new com.google.protobuf.Internal.EnumLiteMap<Mode>() {
+            public Mode findValueByNumber(int number) {
+              return Mode.forNumber(number);
+            }
+          };
+
+    public final com.google.protobuf.Descriptors.EnumValueDescriptor
+        getValueDescriptor() {
+      if (this == UNRECOGNIZED) {
+        throw new java.lang.IllegalStateException(
+            "Can't get the descriptor of an unrecognized enum value.");
+      }
+      return getDescriptor().getValues().get(ordinal());
+    }
+    public final com.google.protobuf.Descriptors.EnumDescriptor
+        getDescriptorForType() {
+      return getDescriptor();
+    }
+    public static final com.google.protobuf.Descriptors.EnumDescriptor
+        getDescriptor() {
+      return com.civquest.mod.grpc.v1.UseItemIntent.getDescriptor().getEnumTypes().get(0);
+    }
+
+    private static final Mode[] VALUES = values();
+
+    public static Mode valueOf(
+        com.google.protobuf.Descriptors.EnumValueDescriptor desc) {
+      if (desc.getType() != getDescriptor()) {
+        throw new java.lang.IllegalArgumentException(
+          "EnumValueDescriptor is not for this type.");
+      }
+      if (desc.getIndex() == -1) {
+        return UNRECOGNIZED;
+      }
+      return VALUES[desc.getIndex()];
+    }
+
+    private final int value;
+
+    private Mode(int value) {
+      this.value = value;
+    }
+
+    // @@protoc_insertion_point(enum_scope:civquest.v1.UseItemIntent.Mode)
+  }
+
+  private int bitField0_;
   public static final int INVENTORY_SLOT_FIELD_NUMBER = 1;
   private int inventorySlot_ = 0;
   /**
@@ -75,6 +244,73 @@ private static final long serialVersionUID = 0L;
     return equipArmorOrOffhand_;
   }
 
+  public static final int MODE_FIELD_NUMBER = 4;
+  private int mode_ = 0;
+  /**
+   * <code>.civquest.v1.UseItemIntent.Mode mode = 4;</code>
+   * @return The enum numeric value on the wire for mode.
+   */
+  @java.lang.Override public int getModeValue() {
+    return mode_;
+  }
+  /**
+   * <code>.civquest.v1.UseItemIntent.Mode mode = 4;</code>
+   * @return The mode.
+   */
+  @java.lang.Override public com.civquest.mod.grpc.v1.UseItemIntent.Mode getMode() {
+    com.civquest.mod.grpc.v1.UseItemIntent.Mode result = com.civquest.mod.grpc.v1.UseItemIntent.Mode.forNumber(mode_);
+    return result == null ? com.civquest.mod.grpc.v1.UseItemIntent.Mode.UNRECOGNIZED : result;
+  }
+
+  public static final int TARGET_ENTITY_ID_FIELD_NUMBER = 5;
+  private int targetEntityId_ = 0;
+  /**
+   * <code>int32 target_entity_id = 5;</code>
+   * @return The targetEntityId.
+   */
+  @java.lang.Override
+  public int getTargetEntityId() {
+    return targetEntityId_;
+  }
+
+  public static final int AIM_AT_FIELD_NUMBER = 6;
+  private com.civquest.mod.grpc.v1.Vec3 aimAt_;
+  /**
+   * <pre>
+   * CAST_FISHING_ROD: world point to face before casting (the bobber flies where the agent looks)
+   * </pre>
+   *
+   * <code>.civquest.v1.Vec3 aim_at = 6;</code>
+   * @return Whether the aimAt field is set.
+   */
+  @java.lang.Override
+  public boolean hasAimAt() {
+    return ((bitField0_ & 0x00000001) != 0);
+  }
+  /**
+   * <pre>
+   * CAST_FISHING_ROD: world point to face before casting (the bobber flies where the agent looks)
+   * </pre>
+   *
+   * <code>.civquest.v1.Vec3 aim_at = 6;</code>
+   * @return The aimAt.
+   */
+  @java.lang.Override
+  public com.civquest.mod.grpc.v1.Vec3 getAimAt() {
+    return aimAt_ == null ? com.civquest.mod.grpc.v1.Vec3.getDefaultInstance() : aimAt_;
+  }
+  /**
+   * <pre>
+   * CAST_FISHING_ROD: world point to face before casting (the bobber flies where the agent looks)
+   * </pre>
+   *
+   * <code>.civquest.v1.Vec3 aim_at = 6;</code>
+   */
+  @java.lang.Override
+  public com.civquest.mod.grpc.v1.Vec3OrBuilder getAimAtOrBuilder() {
+    return aimAt_ == null ? com.civquest.mod.grpc.v1.Vec3.getDefaultInstance() : aimAt_;
+  }
+
   private byte memoizedIsInitialized = -1;
   @java.lang.Override
   public final boolean isInitialized() {
@@ -98,6 +334,15 @@ private static final long serialVersionUID = 0L;
     if (equipArmorOrOffhand_ != false) {
       output.writeBool(3, equipArmorOrOffhand_);
     }
+    if (mode_ != com.civquest.mod.grpc.v1.UseItemIntent.Mode.MODE_UNSPECIFIED.getNumber()) {
+      output.writeEnum(4, mode_);
+    }
+    if (targetEntityId_ != 0) {
+      output.writeInt32(5, targetEntityId_);
+    }
+    if (((bitField0_ & 0x00000001) != 0)) {
+      output.writeMessage(6, getAimAt());
+    }
     getUnknownFields().writeTo(output);
   }
 
@@ -118,6 +363,18 @@ private static final long serialVersionUID = 0L;
     if (equipArmorOrOffhand_ != false) {
       size += com.google.protobuf.CodedOutputStream
         .computeBoolSize(3, equipArmorOrOffhand_);
+    }
+    if (mode_ != com.civquest.mod.grpc.v1.UseItemIntent.Mode.MODE_UNSPECIFIED.getNumber()) {
+      size += com.google.protobuf.CodedOutputStream
+        .computeEnumSize(4, mode_);
+    }
+    if (targetEntityId_ != 0) {
+      size += com.google.protobuf.CodedOutputStream
+        .computeInt32Size(5, targetEntityId_);
+    }
+    if (((bitField0_ & 0x00000001) != 0)) {
+      size += com.google.protobuf.CodedOutputStream
+        .computeMessageSize(6, getAimAt());
     }
     size += getUnknownFields().getSerializedSize();
     memoizedSize = size;
@@ -140,6 +397,14 @@ private static final long serialVersionUID = 0L;
         != other.getIsEatingOrDrinking()) return false;
     if (getEquipArmorOrOffhand()
         != other.getEquipArmorOrOffhand()) return false;
+    if (mode_ != other.mode_) return false;
+    if (getTargetEntityId()
+        != other.getTargetEntityId()) return false;
+    if (hasAimAt() != other.hasAimAt()) return false;
+    if (hasAimAt()) {
+      if (!getAimAt()
+          .equals(other.getAimAt())) return false;
+    }
     if (!getUnknownFields().equals(other.getUnknownFields())) return false;
     return true;
   }
@@ -159,6 +424,14 @@ private static final long serialVersionUID = 0L;
     hash = (37 * hash) + EQUIP_ARMOR_OR_OFFHAND_FIELD_NUMBER;
     hash = (53 * hash) + com.google.protobuf.Internal.hashBoolean(
         getEquipArmorOrOffhand());
+    hash = (37 * hash) + MODE_FIELD_NUMBER;
+    hash = (53 * hash) + mode_;
+    hash = (37 * hash) + TARGET_ENTITY_ID_FIELD_NUMBER;
+    hash = (53 * hash) + getTargetEntityId();
+    if (hasAimAt()) {
+      hash = (37 * hash) + AIM_AT_FIELD_NUMBER;
+      hash = (53 * hash) + getAimAt().hashCode();
+    }
     hash = (29 * hash) + getUnknownFields().hashCode();
     memoizedHashCode = hash;
     return hash;
@@ -278,13 +551,19 @@ private static final long serialVersionUID = 0L;
 
     // Construct using com.civquest.mod.grpc.v1.UseItemIntent.newBuilder()
     private Builder() {
-
+      maybeForceBuilderInitialization();
     }
 
     private Builder(
         com.google.protobuf.GeneratedMessage.BuilderParent parent) {
       super(parent);
-
+      maybeForceBuilderInitialization();
+    }
+    private void maybeForceBuilderInitialization() {
+      if (com.google.protobuf.GeneratedMessage
+              .alwaysUseFieldBuilders) {
+        getAimAtFieldBuilder();
+      }
     }
     @java.lang.Override
     public Builder clear() {
@@ -293,6 +572,13 @@ private static final long serialVersionUID = 0L;
       inventorySlot_ = 0;
       isEatingOrDrinking_ = false;
       equipArmorOrOffhand_ = false;
+      mode_ = 0;
+      targetEntityId_ = 0;
+      aimAt_ = null;
+      if (aimAtBuilder_ != null) {
+        aimAtBuilder_.dispose();
+        aimAtBuilder_ = null;
+      }
       return this;
     }
 
@@ -335,6 +621,20 @@ private static final long serialVersionUID = 0L;
       if (((from_bitField0_ & 0x00000004) != 0)) {
         result.equipArmorOrOffhand_ = equipArmorOrOffhand_;
       }
+      if (((from_bitField0_ & 0x00000008) != 0)) {
+        result.mode_ = mode_;
+      }
+      if (((from_bitField0_ & 0x00000010) != 0)) {
+        result.targetEntityId_ = targetEntityId_;
+      }
+      int to_bitField0_ = 0;
+      if (((from_bitField0_ & 0x00000020) != 0)) {
+        result.aimAt_ = aimAtBuilder_ == null
+            ? aimAt_
+            : aimAtBuilder_.build();
+        to_bitField0_ |= 0x00000001;
+      }
+      result.bitField0_ |= to_bitField0_;
     }
 
     @java.lang.Override
@@ -357,6 +657,15 @@ private static final long serialVersionUID = 0L;
       }
       if (other.getEquipArmorOrOffhand() != false) {
         setEquipArmorOrOffhand(other.getEquipArmorOrOffhand());
+      }
+      if (other.mode_ != 0) {
+        setModeValue(other.getModeValue());
+      }
+      if (other.getTargetEntityId() != 0) {
+        setTargetEntityId(other.getTargetEntityId());
+      }
+      if (other.hasAimAt()) {
+        mergeAimAt(other.getAimAt());
       }
       this.mergeUnknownFields(other.getUnknownFields());
       onChanged();
@@ -399,6 +708,23 @@ private static final long serialVersionUID = 0L;
               bitField0_ |= 0x00000004;
               break;
             } // case 24
+            case 32: {
+              mode_ = input.readEnum();
+              bitField0_ |= 0x00000008;
+              break;
+            } // case 32
+            case 40: {
+              targetEntityId_ = input.readInt32();
+              bitField0_ |= 0x00000010;
+              break;
+            } // case 40
+            case 50: {
+              input.readMessage(
+                  getAimAtFieldBuilder().getBuilder(),
+                  extensionRegistry);
+              bitField0_ |= 0x00000020;
+              break;
+            } // case 50
             default: {
               if (!super.parseUnknownField(input, extensionRegistry, tag)) {
                 done = true; // was an endgroup tag
@@ -510,6 +836,248 @@ private static final long serialVersionUID = 0L;
       equipArmorOrOffhand_ = false;
       onChanged();
       return this;
+    }
+
+    private int mode_ = 0;
+    /**
+     * <code>.civquest.v1.UseItemIntent.Mode mode = 4;</code>
+     * @return The enum numeric value on the wire for mode.
+     */
+    @java.lang.Override public int getModeValue() {
+      return mode_;
+    }
+    /**
+     * <code>.civquest.v1.UseItemIntent.Mode mode = 4;</code>
+     * @param value The enum numeric value on the wire for mode to set.
+     * @return This builder for chaining.
+     */
+    public Builder setModeValue(int value) {
+      mode_ = value;
+      bitField0_ |= 0x00000008;
+      onChanged();
+      return this;
+    }
+    /**
+     * <code>.civquest.v1.UseItemIntent.Mode mode = 4;</code>
+     * @return The mode.
+     */
+    @java.lang.Override
+    public com.civquest.mod.grpc.v1.UseItemIntent.Mode getMode() {
+      com.civquest.mod.grpc.v1.UseItemIntent.Mode result = com.civquest.mod.grpc.v1.UseItemIntent.Mode.forNumber(mode_);
+      return result == null ? com.civquest.mod.grpc.v1.UseItemIntent.Mode.UNRECOGNIZED : result;
+    }
+    /**
+     * <code>.civquest.v1.UseItemIntent.Mode mode = 4;</code>
+     * @param value The mode to set.
+     * @return This builder for chaining.
+     */
+    public Builder setMode(com.civquest.mod.grpc.v1.UseItemIntent.Mode value) {
+      if (value == null) {
+        throw new NullPointerException();
+      }
+      bitField0_ |= 0x00000008;
+      mode_ = value.getNumber();
+      onChanged();
+      return this;
+    }
+    /**
+     * <code>.civquest.v1.UseItemIntent.Mode mode = 4;</code>
+     * @return This builder for chaining.
+     */
+    public Builder clearMode() {
+      bitField0_ = (bitField0_ & ~0x00000008);
+      mode_ = 0;
+      onChanged();
+      return this;
+    }
+
+    private int targetEntityId_ ;
+    /**
+     * <code>int32 target_entity_id = 5;</code>
+     * @return The targetEntityId.
+     */
+    @java.lang.Override
+    public int getTargetEntityId() {
+      return targetEntityId_;
+    }
+    /**
+     * <code>int32 target_entity_id = 5;</code>
+     * @param value The targetEntityId to set.
+     * @return This builder for chaining.
+     */
+    public Builder setTargetEntityId(int value) {
+
+      targetEntityId_ = value;
+      bitField0_ |= 0x00000010;
+      onChanged();
+      return this;
+    }
+    /**
+     * <code>int32 target_entity_id = 5;</code>
+     * @return This builder for chaining.
+     */
+    public Builder clearTargetEntityId() {
+      bitField0_ = (bitField0_ & ~0x00000010);
+      targetEntityId_ = 0;
+      onChanged();
+      return this;
+    }
+
+    private com.civquest.mod.grpc.v1.Vec3 aimAt_;
+    private com.google.protobuf.SingleFieldBuilder<
+        com.civquest.mod.grpc.v1.Vec3, com.civquest.mod.grpc.v1.Vec3.Builder, com.civquest.mod.grpc.v1.Vec3OrBuilder> aimAtBuilder_;
+    /**
+     * <pre>
+     * CAST_FISHING_ROD: world point to face before casting (the bobber flies where the agent looks)
+     * </pre>
+     *
+     * <code>.civquest.v1.Vec3 aim_at = 6;</code>
+     * @return Whether the aimAt field is set.
+     */
+    public boolean hasAimAt() {
+      return ((bitField0_ & 0x00000020) != 0);
+    }
+    /**
+     * <pre>
+     * CAST_FISHING_ROD: world point to face before casting (the bobber flies where the agent looks)
+     * </pre>
+     *
+     * <code>.civquest.v1.Vec3 aim_at = 6;</code>
+     * @return The aimAt.
+     */
+    public com.civquest.mod.grpc.v1.Vec3 getAimAt() {
+      if (aimAtBuilder_ == null) {
+        return aimAt_ == null ? com.civquest.mod.grpc.v1.Vec3.getDefaultInstance() : aimAt_;
+      } else {
+        return aimAtBuilder_.getMessage();
+      }
+    }
+    /**
+     * <pre>
+     * CAST_FISHING_ROD: world point to face before casting (the bobber flies where the agent looks)
+     * </pre>
+     *
+     * <code>.civquest.v1.Vec3 aim_at = 6;</code>
+     */
+    public Builder setAimAt(com.civquest.mod.grpc.v1.Vec3 value) {
+      if (aimAtBuilder_ == null) {
+        if (value == null) {
+          throw new NullPointerException();
+        }
+        aimAt_ = value;
+      } else {
+        aimAtBuilder_.setMessage(value);
+      }
+      bitField0_ |= 0x00000020;
+      onChanged();
+      return this;
+    }
+    /**
+     * <pre>
+     * CAST_FISHING_ROD: world point to face before casting (the bobber flies where the agent looks)
+     * </pre>
+     *
+     * <code>.civquest.v1.Vec3 aim_at = 6;</code>
+     */
+    public Builder setAimAt(
+        com.civquest.mod.grpc.v1.Vec3.Builder builderForValue) {
+      if (aimAtBuilder_ == null) {
+        aimAt_ = builderForValue.build();
+      } else {
+        aimAtBuilder_.setMessage(builderForValue.build());
+      }
+      bitField0_ |= 0x00000020;
+      onChanged();
+      return this;
+    }
+    /**
+     * <pre>
+     * CAST_FISHING_ROD: world point to face before casting (the bobber flies where the agent looks)
+     * </pre>
+     *
+     * <code>.civquest.v1.Vec3 aim_at = 6;</code>
+     */
+    public Builder mergeAimAt(com.civquest.mod.grpc.v1.Vec3 value) {
+      if (aimAtBuilder_ == null) {
+        if (((bitField0_ & 0x00000020) != 0) &&
+          aimAt_ != null &&
+          aimAt_ != com.civquest.mod.grpc.v1.Vec3.getDefaultInstance()) {
+          getAimAtBuilder().mergeFrom(value);
+        } else {
+          aimAt_ = value;
+        }
+      } else {
+        aimAtBuilder_.mergeFrom(value);
+      }
+      if (aimAt_ != null) {
+        bitField0_ |= 0x00000020;
+        onChanged();
+      }
+      return this;
+    }
+    /**
+     * <pre>
+     * CAST_FISHING_ROD: world point to face before casting (the bobber flies where the agent looks)
+     * </pre>
+     *
+     * <code>.civquest.v1.Vec3 aim_at = 6;</code>
+     */
+    public Builder clearAimAt() {
+      bitField0_ = (bitField0_ & ~0x00000020);
+      aimAt_ = null;
+      if (aimAtBuilder_ != null) {
+        aimAtBuilder_.dispose();
+        aimAtBuilder_ = null;
+      }
+      onChanged();
+      return this;
+    }
+    /**
+     * <pre>
+     * CAST_FISHING_ROD: world point to face before casting (the bobber flies where the agent looks)
+     * </pre>
+     *
+     * <code>.civquest.v1.Vec3 aim_at = 6;</code>
+     */
+    public com.civquest.mod.grpc.v1.Vec3.Builder getAimAtBuilder() {
+      bitField0_ |= 0x00000020;
+      onChanged();
+      return getAimAtFieldBuilder().getBuilder();
+    }
+    /**
+     * <pre>
+     * CAST_FISHING_ROD: world point to face before casting (the bobber flies where the agent looks)
+     * </pre>
+     *
+     * <code>.civquest.v1.Vec3 aim_at = 6;</code>
+     */
+    public com.civquest.mod.grpc.v1.Vec3OrBuilder getAimAtOrBuilder() {
+      if (aimAtBuilder_ != null) {
+        return aimAtBuilder_.getMessageOrBuilder();
+      } else {
+        return aimAt_ == null ?
+            com.civquest.mod.grpc.v1.Vec3.getDefaultInstance() : aimAt_;
+      }
+    }
+    /**
+     * <pre>
+     * CAST_FISHING_ROD: world point to face before casting (the bobber flies where the agent looks)
+     * </pre>
+     *
+     * <code>.civquest.v1.Vec3 aim_at = 6;</code>
+     */
+    private com.google.protobuf.SingleFieldBuilder<
+        com.civquest.mod.grpc.v1.Vec3, com.civquest.mod.grpc.v1.Vec3.Builder, com.civquest.mod.grpc.v1.Vec3OrBuilder> 
+        getAimAtFieldBuilder() {
+      if (aimAtBuilder_ == null) {
+        aimAtBuilder_ = new com.google.protobuf.SingleFieldBuilder<
+            com.civquest.mod.grpc.v1.Vec3, com.civquest.mod.grpc.v1.Vec3.Builder, com.civquest.mod.grpc.v1.Vec3OrBuilder>(
+                getAimAt(),
+                getParentForChildren(),
+                isClean());
+        aimAt_ = null;
+      }
+      return aimAtBuilder_;
     }
 
     // @@protoc_insertion_point(builder_scope:civquest.v1.UseItemIntent)

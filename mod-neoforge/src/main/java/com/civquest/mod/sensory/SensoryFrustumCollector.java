@@ -76,6 +76,8 @@ public class SensoryFrustumCollector {
     public static final int BLOCK_SCAN_RADIUS = 16;
     public static final int MAX_INTERESTING_BLOCKS = 128;
     public static final int MAX_LOG_BLOCKS = 24;
+    /** Cap on surface-water cells surfaced for fishing (cq-390.4); water is otherwise not "interesting". */
+    public static final int MAX_WATER_BLOCKS = 24;
 
     public static final TagKey<Block> INTERESTING_BLOCKS =
             TagKey.create(Registries.BLOCK, ResourceLocation.fromNamespaceAndPath(CivQuestMod.MOD_ID, "interesting_blocks"));
@@ -204,7 +206,9 @@ public class SensoryFrustumCollector {
                             .setIsHostile(isHostileEntity(entity))
                             .setIsTamed(isTamedEntity(entity))
                             .setHeldItemId(getHeldItemId(entity))
-                            .setFuseTicks(getCreeperFuseTicks(entity));
+                            .setFuseTicks(getCreeperFuseTicks(entity))
+                            .setIsBaby(entity instanceof LivingEntity le && le.isBaby())
+                            .setIsSheared(entity instanceof net.minecraft.world.entity.animal.Sheep sheep && sheep.isSheared());
 
                     frameBuilder.addVisibleEntities(veBuilder.build());
                 }
@@ -254,6 +258,16 @@ public class SensoryFrustumCollector {
         }
         if (agent.getMotorFSM() != null && agent.getMotorFSM().getLastProcessedSequenceId() > 0) {
             frameBuilder.setLastProcessedSequenceId(agent.getMotorFSM().getLastProcessedSequenceId());
+        }
+
+        if (com.civquest.mod.actuator.intent.FishingHandler.isCast(agent)) {
+            net.minecraft.world.entity.projectile.FishingHook hook = agent.fishing;
+            statusBuilder.setFishing(com.civquest.mod.grpc.v1.FishingState.newBuilder()
+                    .setCast(true)
+                    .setInWater(hook.isInWater())
+                    .setBite(com.civquest.mod.actuator.intent.FishingHandler.isBiting(agent))
+                    .setBobberPos(toVec3Proto(hook.getX(), hook.getY(), hook.getZ()))
+                    .build());
         }
 
         frameBuilder.setStatus(statusBuilder.build());
@@ -409,6 +423,7 @@ public class SensoryFrustumCollector {
 
         List<BlockPos> logCandidates = new ArrayList<>();
         List<VisibleBlock> nonLogCandidates = new ArrayList<>();
+        List<BlockPos> waterCandidates = new ArrayList<>();
 
         for (int dy = -radius; dy <= radius; dy++) {
             int y = center.getY() + dy;
@@ -438,6 +453,10 @@ public class SensoryFrustumCollector {
                     BlockState state = level.getBlockState(mpos);
                     if (state.isAir()) {
                         continue;
+                    }
+
+                    if (isSurfaceWater(level, state, mpos)) {
+                        waterCandidates.add(mpos.immutable());
                     }
 
                     if (isInterestingBlock(state)) {
@@ -510,6 +529,28 @@ public class SensoryFrustumCollector {
             }
         }
 
+        // Surface water (source block with open water-free space above) so fishing can find a pond: the
+        // nearest MAX_WATER_BLOCKS cells, ahead of the generic non-log candidates.
+        if (!waterCandidates.isEmpty()) {
+            waterCandidates.sort((a, b) -> Double.compare(a.distSqr(center), b.distSqr(center)));
+            int waterAdded = 0;
+            for (BlockPos wp : waterCandidates) {
+                if (waterAdded >= MAX_WATER_BLOCKS || frameBuilder.getInterestingBlocksCount() >= MAX_INTERESTING_BLOCKS) {
+                    break;
+                }
+                if (addedPositions.contains(wp)) {
+                    continue;
+                }
+                frameBuilder.addInterestingBlocks(VisibleBlock.newBuilder()
+                        .setPos(toBlockPosProto(wp))
+                        .setBlockId("minecraft:water")
+                        .setBlockStateString("level=0")
+                        .build());
+                addedPositions.add(wp);
+                waterAdded++;
+            }
+        }
+
         for (VisibleBlock nonLog : nonLogCandidates) {
             if (frameBuilder.getInterestingBlocksCount() >= MAX_INTERESTING_BLOCKS) {
                 break;
@@ -568,6 +609,17 @@ public class SensoryFrustumCollector {
             }
         }
         return false;
+    }
+
+    /** A still-water source block whose cell above holds no fluid: a fishable surface cell. */
+    public static boolean isSurfaceWater(Level level, BlockState state, BlockPos pos) {
+        if (state == null || !state.is(Blocks.WATER)) {
+            return false;
+        }
+        if (state.getValue(net.minecraft.world.level.block.LiquidBlock.LEVEL) != 0) {
+            return false;
+        }
+        return level.getBlockState(pos.above()).getFluidState().isEmpty();
     }
 
     public static boolean isInterestingBlock(BlockState state) {

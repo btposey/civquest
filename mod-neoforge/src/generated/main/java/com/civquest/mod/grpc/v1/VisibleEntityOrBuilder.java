@@ -119,4 +119,24 @@ public interface VisibleEntityOrBuilder extends
    * @return The fuseTicks.
    */
   int getFuseTicks();
+
+  /**
+   * <pre>
+   * AgeableMob#isBaby (never shear or farm babies)
+   * </pre>
+   *
+   * <code>bool is_baby = 12;</code>
+   * @return The isBaby.
+   */
+  boolean getIsBaby();
+
+  /**
+   * <pre>
+   * Sheep#isSheared (wool regrows; shearable only when !is_sheared &amp;&amp; !is_baby)
+   * </pre>
+   *
+   * <code>bool is_sheared = 13;</code>
+   * @return The isSheared.
+   */
+  boolean getIsSheared();
 }

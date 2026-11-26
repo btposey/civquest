@@ -173,6 +173,16 @@ message AgentStatus {
   bool submerged = 18;          // eyes in water (sustained drowning hazard; is_in_water is feet/body)
   int32 air_supply = 19;        // remaining air ticks (Entity#getAirSupply)
   int32 max_air_supply = 20;    // Entity#getMaxAirSupply (300 default)
+  FishingState fishing = 21;    // cq-390.4: bobber/bite telemetry; unset when no line is cast
+}
+
+// FishingState reports the agent's fishing hook (Player#fishing): the bobber in the water and
+// whether a fish is biting (reel now). Absent from AgentStatus when no line is cast.
+message FishingState {
+  bool cast = 1;                // a hook entity exists
+  bool in_water = 2;            // the bobber floats in open water
+  bool bite = 3;                // a fish is on the line: reel in now
+  Vec3 bobber_pos = 4;
 }
 
 message VisibleEntity {
@@ -187,6 +197,8 @@ message VisibleEntity {
   bool is_tamed = 9;
   string held_item_id = 10;
   int32 fuse_ticks = 11;        // > 0 if Creeper is hissing
+  bool is_baby = 12;            // AgeableMob#isBaby (never shear or farm babies)
+  bool is_sheared = 13;         // Sheep#isSheared (wool regrows; shearable only when !is_sheared && !is_baby)
 }
 
 message VisibleBlock {
@@ -384,9 +396,18 @@ message InteractBlockIntent {
 }
 
 message UseItemIntent {
+  enum Mode {
+    MODE_UNSPECIFIED = 0;   // legacy: eat/drink/equip flags decide
+    SHEAR_ENTITY = 1;       // cq-390.3: shear target_entity_id with shears from the inventory
+    CAST_FISHING_ROD = 2;   // cq-390.4: equip a fishing rod and cast (no-op if a line is out)
+    REEL_FISHING_ROD = 3;   // cq-390.4: retrieve the line (catch on bite)
+  }
   int32 inventory_slot = 1;
   bool is_eating_or_drinking = 2;
   bool equip_armor_or_offhand = 3;
+  Mode mode = 4;
+  int32 target_entity_id = 5;
+  Vec3 aim_at = 6;              // CAST_FISHING_ROD: world point to face before casting (the bobber flies where the agent looks)
 }
 
 message CraftItemIntent {

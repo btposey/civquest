@@ -137,9 +137,11 @@ type PlaytestSim struct {
 	pendingDmg    *civquestv1.DamageEvent
 	pendingSurvey bool
 
-	Zombies  []*SimZombie
-	recipes  []*civquestv1.RecipeNode
-	deferred []deferredEffect
+	Zombies []*SimZombie
+	// faunaState holds sheep, fish, drops and the fishing line (playtest_sim_fauna.go).
+	faunaState *simFauna
+	recipes    []*civquestv1.RecipeNode
+	deferred   []deferredEffect
 
 	// Recorded history.
 	Steps       []SimStep
@@ -439,6 +441,7 @@ func (s *PlaytestSim) frameBlocks() []*civquestv1.VisibleBlock {
 		}
 		add(k)
 	}
+	s.faunaBlocks(add)
 	return out
 }
 
@@ -487,6 +490,8 @@ func (s *PlaytestSim) buildFrame() *civquestv1.TelemetryFrame {
 			Distance: float32(d), Position: &civquestv1.Vec3{X: z.Pos.X, Y: z.Pos.Y, Z: z.Pos.Z},
 		})
 	}
+	f.VisibleEntities = append(f.VisibleEntities, s.faunaEntities()...)
+	f.Status.Fishing = s.fishingState()
 	if s.pendingSurvey {
 		s.pendingSurvey = false
 		f.HorizonSurvey = s.syntheticSurvey()
@@ -517,6 +522,7 @@ func (s *PlaytestSim) Step() SimStep {
 		s.advanceBody(dt)
 		s.advanceHazards(dt)
 		s.advanceZombies(dt)
+		s.advanceFauna(dt)
 	}
 	s.Tick += dt
 	s.TOD += dt
@@ -695,6 +701,9 @@ func (s *PlaytestSim) zombie(id int32) *SimZombie {
 // ---- intent application ----
 
 func (s *PlaytestSim) applyIntent(in *civquestv1.AgentIntent) {
+	if s.applyFaunaIntent(in) {
+		return
+	}
 	switch {
 	case in.GetNavigate() != nil:
 		n := in.GetNavigate()

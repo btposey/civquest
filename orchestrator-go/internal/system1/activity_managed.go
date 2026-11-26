@@ -70,6 +70,7 @@ func newManagedActivities() []waterfallActivity {
 		taskActivity{frameBase{activityKindTaskSubroutine}},
 		directiveActivity{frameBase{activityKindStrategicDirective}},
 		constructionActivity{frameBase{activityKindConstruction}},
+		woolActivity{frameBase{activityKindWool}},
 		bedActivity{frameBase{activityKindBed}},
 		bootstrapActivity{frameBase{activityKindBootstrap}},
 		explorationActivity{frameBase{activityKindExploration}},

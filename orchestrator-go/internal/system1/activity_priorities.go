@@ -23,6 +23,9 @@ const (
 	// the Expedition bid a SCOUT_FRONTIER directive makes.
 	priorityDirective    = 0.70
 	priorityConstruction = 0.65
+	// priorityWool (cq-390.3): harvesting a sheep in view outbids the bed plan that wants the
+	// wool; behind survival, shelter, tasks, directives and construction.
+	priorityWool = 0.63
 	// priorityBed (cq-390.2): a bed-less, tooled-up agent gathers wool and crafts its own bed
 	// ahead of bootstrap/exploration, behind survival, shelter, tasks and directives.
 	priorityBed         = 0.62
@@ -41,6 +44,7 @@ var defaultPriorities = map[htpda.Kind]float64{
 	activityKindTaskSubroutine:     priorityTask,
 	activityKindStrategicDirective: priorityDirective,
 	activityKindConstruction:       priorityConstruction,
+	activityKindWool:               priorityWool,
 	activityKindBed:                priorityBed,
 	activityKindBootstrap:          priorityBootstrap,
 	activityKindExploration:        priorityExploration,

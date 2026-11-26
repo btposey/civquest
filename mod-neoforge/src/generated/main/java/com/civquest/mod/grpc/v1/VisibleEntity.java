@@ -307,6 +307,36 @@ private static final long serialVersionUID = 0L;
     return fuseTicks_;
   }
 
+  public static final int IS_BABY_FIELD_NUMBER = 12;
+  private boolean isBaby_ = false;
+  /**
+   * <pre>
+   * AgeableMob#isBaby (never shear or farm babies)
+   * </pre>
+   *
+   * <code>bool is_baby = 12;</code>
+   * @return The isBaby.
+   */
+  @java.lang.Override
+  public boolean getIsBaby() {
+    return isBaby_;
+  }
+
+  public static final int IS_SHEARED_FIELD_NUMBER = 13;
+  private boolean isSheared_ = false;
+  /**
+   * <pre>
+   * Sheep#isSheared (wool regrows; shearable only when !is_sheared &amp;&amp; !is_baby)
+   * </pre>
+   *
+   * <code>bool is_sheared = 13;</code>
+   * @return The isSheared.
+   */
+  @java.lang.Override
+  public boolean getIsSheared() {
+    return isSheared_;
+  }
+
   private byte memoizedIsInitialized = -1;
   @java.lang.Override
   public final boolean isInitialized() {
@@ -353,6 +383,12 @@ private static final long serialVersionUID = 0L;
     }
     if (fuseTicks_ != 0) {
       output.writeInt32(11, fuseTicks_);
+    }
+    if (isBaby_ != false) {
+      output.writeBool(12, isBaby_);
+    }
+    if (isSheared_ != false) {
+      output.writeBool(13, isSheared_);
     }
     getUnknownFields().writeTo(output);
   }
@@ -403,6 +439,14 @@ private static final long serialVersionUID = 0L;
       size += com.google.protobuf.CodedOutputStream
         .computeInt32Size(11, fuseTicks_);
     }
+    if (isBaby_ != false) {
+      size += com.google.protobuf.CodedOutputStream
+        .computeBoolSize(12, isBaby_);
+    }
+    if (isSheared_ != false) {
+      size += com.google.protobuf.CodedOutputStream
+        .computeBoolSize(13, isSheared_);
+    }
     size += getUnknownFields().getSerializedSize();
     memoizedSize = size;
     return size;
@@ -445,6 +489,10 @@ private static final long serialVersionUID = 0L;
         .equals(other.getHeldItemId())) return false;
     if (getFuseTicks()
         != other.getFuseTicks()) return false;
+    if (getIsBaby()
+        != other.getIsBaby()) return false;
+    if (getIsSheared()
+        != other.getIsSheared()) return false;
     if (!getUnknownFields().equals(other.getUnknownFields())) return false;
     return true;
   }
@@ -484,6 +532,12 @@ private static final long serialVersionUID = 0L;
     hash = (53 * hash) + getHeldItemId().hashCode();
     hash = (37 * hash) + FUSE_TICKS_FIELD_NUMBER;
     hash = (53 * hash) + getFuseTicks();
+    hash = (37 * hash) + IS_BABY_FIELD_NUMBER;
+    hash = (53 * hash) + com.google.protobuf.Internal.hashBoolean(
+        getIsBaby());
+    hash = (37 * hash) + IS_SHEARED_FIELD_NUMBER;
+    hash = (53 * hash) + com.google.protobuf.Internal.hashBoolean(
+        getIsSheared());
     hash = (29 * hash) + getUnknownFields().hashCode();
     memoizedHashCode = hash;
     return hash;
@@ -636,6 +690,8 @@ private static final long serialVersionUID = 0L;
       isTamed_ = false;
       heldItemId_ = "";
       fuseTicks_ = 0;
+      isBaby_ = false;
+      isSheared_ = false;
       return this;
     }
 
@@ -706,6 +762,12 @@ private static final long serialVersionUID = 0L;
       if (((from_bitField0_ & 0x00000400) != 0)) {
         result.fuseTicks_ = fuseTicks_;
       }
+      if (((from_bitField0_ & 0x00000800) != 0)) {
+        result.isBaby_ = isBaby_;
+      }
+      if (((from_bitField0_ & 0x00001000) != 0)) {
+        result.isSheared_ = isSheared_;
+      }
       result.bitField0_ |= to_bitField0_;
     }
 
@@ -761,6 +823,12 @@ private static final long serialVersionUID = 0L;
       }
       if (other.getFuseTicks() != 0) {
         setFuseTicks(other.getFuseTicks());
+      }
+      if (other.getIsBaby() != false) {
+        setIsBaby(other.getIsBaby());
+      }
+      if (other.getIsSheared() != false) {
+        setIsSheared(other.getIsSheared());
       }
       this.mergeUnknownFields(other.getUnknownFields());
       onChanged();
@@ -845,6 +913,16 @@ private static final long serialVersionUID = 0L;
               bitField0_ |= 0x00000400;
               break;
             } // case 88
+            case 96: {
+              isBaby_ = input.readBool();
+              bitField0_ |= 0x00000800;
+              break;
+            } // case 96
+            case 104: {
+              isSheared_ = input.readBool();
+              bitField0_ |= 0x00001000;
+              break;
+            } // case 104
             default: {
               if (!super.parseUnknownField(input, extensionRegistry, tag)) {
                 done = true; // was an endgroup tag
@@ -1491,6 +1569,94 @@ private static final long serialVersionUID = 0L;
     public Builder clearFuseTicks() {
       bitField0_ = (bitField0_ & ~0x00000400);
       fuseTicks_ = 0;
+      onChanged();
+      return this;
+    }
+
+    private boolean isBaby_ ;
+    /**
+     * <pre>
+     * AgeableMob#isBaby (never shear or farm babies)
+     * </pre>
+     *
+     * <code>bool is_baby = 12;</code>
+     * @return The isBaby.
+     */
+    @java.lang.Override
+    public boolean getIsBaby() {
+      return isBaby_;
+    }
+    /**
+     * <pre>
+     * AgeableMob#isBaby (never shear or farm babies)
+     * </pre>
+     *
+     * <code>bool is_baby = 12;</code>
+     * @param value The isBaby to set.
+     * @return This builder for chaining.
+     */
+    public Builder setIsBaby(boolean value) {
+
+      isBaby_ = value;
+      bitField0_ |= 0x00000800;
+      onChanged();
+      return this;
+    }
+    /**
+     * <pre>
+     * AgeableMob#isBaby (never shear or farm babies)
+     * </pre>
+     *
+     * <code>bool is_baby = 12;</code>
+     * @return This builder for chaining.
+     */
+    public Builder clearIsBaby() {
+      bitField0_ = (bitField0_ & ~0x00000800);
+      isBaby_ = false;
+      onChanged();
+      return this;
+    }
+
+    private boolean isSheared_ ;
+    /**
+     * <pre>
+     * Sheep#isSheared (wool regrows; shearable only when !is_sheared &amp;&amp; !is_baby)
+     * </pre>
+     *
+     * <code>bool is_sheared = 13;</code>
+     * @return The isSheared.
+     */
+    @java.lang.Override
+    public boolean getIsSheared() {
+      return isSheared_;
+    }
+    /**
+     * <pre>
+     * Sheep#isSheared (wool regrows; shearable only when !is_sheared &amp;&amp; !is_baby)
+     * </pre>
+     *
+     * <code>bool is_sheared = 13;</code>
+     * @param value The isSheared to set.
+     * @return This builder for chaining.
+     */
+    public Builder setIsSheared(boolean value) {
+
+      isSheared_ = value;
+      bitField0_ |= 0x00001000;
+      onChanged();
+      return this;
+    }
+    /**
+     * <pre>
+     * Sheep#isSheared (wool regrows; shearable only when !is_sheared &amp;&amp; !is_baby)
+     * </pre>
+     *
+     * <code>bool is_sheared = 13;</code>
+     * @return This builder for chaining.
+     */
+    public Builder clearIsSheared() {
+      bitField0_ = (bitField0_ & ~0x00001000);
+      isSheared_ = false;
       onChanged();
       return this;
     }
