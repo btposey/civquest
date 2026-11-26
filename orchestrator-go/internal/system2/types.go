@@ -77,6 +77,7 @@ type ChatCompletionRequest struct {
 	ReasoningBudget    *int            `json:"reasoning_budget,omitempty"`
 	ResponseFormat     *ResponseFormat `json:"response_format,omitempty"`
 	ChatTemplateKwargs map[string]any  `json:"chat_template_kwargs,omitempty"`
+	ReasoningFormat    string          `json:"reasoning_format,omitempty"` // llama.cpp extension
 	Stream             bool            `json:"stream,omitempty"`
 }
 

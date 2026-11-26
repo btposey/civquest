@@ -21,6 +21,11 @@ import (
 )
 
 const (
+	// reasoningFormatNone stops llama.cpp from opening a thought block ahead of the JSON.
+	// Asking the chat template to disable thinking is not enough: the local model still
+	// reasoned in over half of dialogue requests and ran out of tokens with no answer.
+	reasoningFormatNone = "none"
+
 	// DefaultStructuredTemperature is the default sampling temperature for deterministic JSON output.
 	DefaultStructuredTemperature = 0.20
 
@@ -532,6 +537,7 @@ func (c *Client) CompleteStructuredWithTemp(ctx context.Context, messages []Chat
 			MaxTokens:          512,
 			ResponseFormat:     &ResponseFormat{Type: "json_object"},
 			ChatTemplateKwargs: map[string]any{"enable_thinking": false},
+			ReasoningFormat:    reasoningFormatNone,
 		}
 
 		resp, err := c.executeChatCompletion(ctx, req)
