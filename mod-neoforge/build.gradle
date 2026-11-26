@@ -20,6 +20,8 @@ def prepareIntegrationServer = tasks.register('prepareIntegrationServer') {
 
     outputs.file(integrationServerDir.map { it.file('eula.txt') })
     outputs.file(integrationServerDir.map { it.file('server.properties') })
+    inputs.property('levelType', project.findProperty('civquest.integrationLevelType') ?: 'minecraft:flat')
+    inputs.property('levelName', project.findProperty('civquest.integrationLevelName') ?: 'world')
 
     doLast {
         def targetDir = integrationServerDir.get().asFile
@@ -29,7 +31,11 @@ def prepareIntegrationServer = tasks.register('prepareIntegrationServer') {
 
         new File(targetDir, 'eula.txt').text = "eula=true\n"
 
-        new File(targetDir, 'server.properties').text = """level-type=minecraft:flat
+        // The live agent smoke (scripts/live-agent-smoke.sh) asks for generated terrain.
+        def levelType = project.findProperty('civquest.integrationLevelType') ?: 'minecraft:flat'
+        def levelName = project.findProperty('civquest.integrationLevelName') ?: 'world'
+        new File(targetDir, 'server.properties').text = """level-type=${levelType}
+level-name=${levelName}
 pause-when-empty-seconds=-1
 max-tick-time=-1
 online-mode=false

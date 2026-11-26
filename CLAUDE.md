@@ -96,6 +96,12 @@ cd orchestrator-go && go test -tags livellm -v ./test/integration -run TestLiveL
 ./gradlew :mod-neoforge:build
 ```
 
+### Live Agent Smoke (before handing a build to a playtest)
+```bash
+./scripts/live-agent-smoke.sh               # 6 real agents, 5 min, throwaway server and XDG sandbox
+```
+- Fails if an agent brain stalls or goes silent, or a chat gets no reply. Simulation fixtures can differ from the live server (recipes, terrain), so run this as well.
+
 ## Architecture Overview
 
 _Add a brief overview of your project architecture_
