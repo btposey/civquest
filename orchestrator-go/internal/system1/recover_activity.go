@@ -203,6 +203,7 @@ type recoverLocal struct {
 	LastDig      int64
 	NavNotBefore int64 // enclosed: a failed step-out waits before the next one (digging does not)
 	Stalled      bool  // the target has defeated StallEpisodes episodes: give up at once
+	NavSent      bool  // the intent in flight is a movement, not a dig
 }
 
 // moved reports that the agent is at least a block from where the episode began, in any
@@ -313,7 +314,8 @@ func (recoverActivity) Init(w htpda.World, args any) (any, htpda.Lease) {
 			loc.StartPos, loc.HasStart = [3]float64{p.X, p.Y, p.Z}, true
 			if a.HasTarget {
 				loc.StartDist = math.Hypot(p.X-a.Target[0], p.Z-a.Target[2])
-				if a.Cause != CauseCongestion && !loc.SawEntity && lw.fsm != nil {
+				// Not for an enclosed agent: digging, not another target, is its remedy.
+				if a.Cause == CauseTerrain && !loc.SawEntity && lw.fsm != nil {
 					dist := math.Sqrt(sq(p.X-a.Target[0]) + sq(p.Y-a.Target[1]) + sq(p.Z-a.Target[2]))
 					loc.Stalled = lw.fsm.noteStuck(a.Target, dist, w.Tick())
 				}
@@ -354,6 +356,10 @@ func (a recoverActivity) onReceipt(lw *fsmWorld, loc recoverLocal, e htpda.Recei
 		// arrival tolerance completes without moving the agent at all.
 		if pos := lw.pos(); loc.progressed(pos) || loc.moved(pos) {
 			return a.pop(loc, recovered{})
+		}
+		if loc.Cause == CauseEnclosed && loc.NavSent {
+			// Enclosed attempts are bounded only by the lease: pace a step that goes nowhere.
+			loc.NavNotBefore = lw.Tick() + recoverTunables.AttemptTicks
 		}
 		loc.Emitted = false
 		return a.advance(lw, loc)
@@ -458,6 +464,7 @@ func (a recoverActivity) advance(lw *fsmWorld, loc recoverLocal) htpda.Step {
 		loc.Attempts++
 	}
 	loc.LastEmit, loc.Emitted = tick, true
+	loc.NavSent = intent.GetNavigate() != nil
 	return htpda.Step{Op: htpda.OpStay, Next: loc, Intents: []*civquestv1.AgentIntent{intent}}
 }
 

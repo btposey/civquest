@@ -74,3 +74,25 @@ func TestRecover_ProgressResetsStallCount(t *testing.T) {
 		t.Fatal("a target being approached must not be blacklisted")
 	}
 }
+
+// cq-yn1.13: while walled in, a step-out that completes without moving the agent waits before
+// it is sent again, instead of being re-sent on every frame.
+func TestRecover_EnclosedMotionlessStepIsPaced(t *testing.T) {
+	r := newRecoverRig(t, rigTarget)
+	at := withPos(0.5, 64, 0.5)
+	enclosed := terrainStuck(2)
+	enclosed.Facts.Enclosed = true
+	sent := len(r.stuck(110, enclosed, at).Intents())
+	for i := int64(1); i <= 4; i++ {
+		fx := r.stuck(110+i*4, receipt(2+i, rcCompleted, ""), at)
+		sent += len(fx.Intents())
+		sent += len(r.dispatch(112+i*4, nil, htpda.Tick{}, at).Intents())
+	}
+	// 18 ticks of motionless completions: at most the first step-out of each AttemptTicks window.
+	if sent > 1 {
+		t.Fatalf("%d intents within one attempt window", sent)
+	}
+	if r.topKind() != activityKindRecover {
+		t.Fatalf("still walled in, top=%s", r.topKind())
+	}
+}

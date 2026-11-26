@@ -318,6 +318,7 @@ public class AgentNavigator {
     static final double STAMINA_DRAIN = 0.6;
     static final double STAMINA_REGEN = 0.3;
     static final double STAMINA_RECOVER_AT = 30.0;
+    private static final double STANDING_Y_ALLOWANCE = 0.6;
     private static final int REPLAN_INTERVAL = 8;
     private static final int WIDE_REPLAN_INTERVAL = 100;
     private static final int WIDE_SEARCH_COOLDOWN_TICKS = 40;
@@ -1507,10 +1508,17 @@ public class AgentNavigator {
     }
 
     private double resolveArrivalYAllowance(Level level, boolean onClimbable, double dy, double baseAllowance) {
-        if (!onClimbable && level != null && dy > 0.0 && this.targetCoords != null) {
+        if (!onClimbable && level != null && this.targetCoords != null) {
             BlockPos targetBlock = BlockPos.containing(this.targetCoords.x, this.targetCoords.y, this.targetCoords.z);
-            if (isBlockSolid(level, targetBlock) && isBlockSolid(level, targetBlock.below())) {
+            boolean solidTarget = isBlockSolid(level, targetBlock);
+            boolean solidBelow = isBlockSolid(level, targetBlock.below());
+            if (dy > 0.0 && solidTarget && solidBelow) {
                 return Math.max(4.5, baseAllowance);
+            }
+            // A cell that can be stood in is reached only by standing at its height: otherwise a
+            // one-block step up counts as arrived from the floor beside it.
+            if (!solidTarget && solidBelow && !isBlockWater(level, targetBlock)) {
+                return STANDING_Y_ALLOWANCE;
             }
         }
         return baseAllowance;

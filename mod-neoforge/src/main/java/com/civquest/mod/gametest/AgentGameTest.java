@@ -1301,6 +1301,7 @@ public class AgentGameTest {
     private static final int DUGOUT_ARENA_Y = 20;
     private static final int RETREAT_ARENA_Y = 30;
     private static final int SPENT_ARENA_Y = 40;
+    private static final int STEP_ARENA_Y = 50;
 
     private static void stoneFloor(GameTestHelper helper, int from, int to, int floorY) {
         for (int x = from; x <= to; x++) {
@@ -1356,6 +1357,28 @@ public class AgentGameTest {
         helper.assertFalse(agent.isShiftKeyDown(), "Agent must not take a defensive crouch");
         arrow.discard();
         manager.despawnAgent(server, "agent-gt-spent").join();
+        helper.succeed();
+    }
+
+    // cq-yn1.13: a standable cell one block up is not "arrived at" from the floor beside it.
+    @GameTest(template = "empty3x3x3")
+    public static void testMotionStepOntoAdjacentBlockWithTolerance(GameTestHelper helper) {
+        MinecraftServer server = helper.getLevel().getServer();
+        AgentEntityManager manager = new AgentEntityManager();
+        stoneFloor(helper, -1, 3, STEP_ARENA_Y);
+        helper.setBlock(new BlockPos(1, STEP_ARENA_Y + 1, 1), Blocks.STONE);
+        AgentEntity agent = spawnCoverageAgent(helper, manager, "agent-gt-adjacent", new BlockPos(0, STEP_ARENA_Y + 1, 1));
+        BlockPos target = helper.absolutePos(new BlockPos(1, STEP_ARENA_Y + 2, 1));
+        double startY = agent.getY();
+
+        navigateByIntent(manager, server, "agent-gt-adjacent",
+                target.getX() + 0.5, target.getY(), target.getZ() + 0.5, false, false);
+        for (int t = 0; t < 40; t++) {
+            agent.tick();
+        }
+
+        helper.assertTrue(agent.getY() >= startY + 0.9, "Agent must climb onto the block, y=" + agent.getY() + " from " + startY);
+        manager.despawnAgent(server, "agent-gt-adjacent").join();
         helper.succeed();
     }
 
