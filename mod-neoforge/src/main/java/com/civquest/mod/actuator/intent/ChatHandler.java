@@ -113,6 +113,7 @@ public class ChatHandler implements IntentHandler {
                     .setSenderName(name)
                     .setMessage(msg)
                     .setDistance(distance)
+                    .setSenderIsAgent(true)
                     .build();
             peer.queueIncomingChat(chatEvent);
         }

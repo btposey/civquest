@@ -1937,11 +1937,14 @@ func (x *VisibleBlock) GetBlockStateString() string {
 }
 
 type ChatEvent struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	SenderUuid    string                 `protobuf:"bytes,1,opt,name=sender_uuid,json=senderUuid,proto3" json:"sender_uuid,omitempty"`
-	SenderName    string                 `protobuf:"bytes,2,opt,name=sender_name,json=senderName,proto3" json:"sender_name,omitempty"`
-	Message       string                 `protobuf:"bytes,3,opt,name=message,proto3" json:"message,omitempty"`
-	Distance      float32                `protobuf:"fixed32,4,opt,name=distance,proto3" json:"distance,omitempty"`
+	state      protoimpl.MessageState `protogen:"open.v1"`
+	SenderUuid string                 `protobuf:"bytes,1,opt,name=sender_uuid,json=senderUuid,proto3" json:"sender_uuid,omitempty"`
+	SenderName string                 `protobuf:"bytes,2,opt,name=sender_name,json=senderName,proto3" json:"sender_name,omitempty"`
+	Message    string                 `protobuf:"bytes,3,opt,name=message,proto3" json:"message,omitempty"`
+	Distance   float32                `protobuf:"fixed32,4,opt,name=distance,proto3" json:"distance,omitempty"`
+	// Set by the server when the speaker is a CivQuest agent. UUIDs cannot tell: in offline
+	// mode every player's UUID is derived from their name, exactly like an agent's.
+	SenderIsAgent bool `protobuf:"varint,5,opt,name=sender_is_agent,json=senderIsAgent,proto3" json:"sender_is_agent,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -2002,6 +2005,13 @@ func (x *ChatEvent) GetDistance() float32 {
 		return x.Distance
 	}
 	return 0
+}
+
+func (x *ChatEvent) GetSenderIsAgent() bool {
+	if x != nil {
+		return x.SenderIsAgent
+	}
+	return false
 }
 
 type DamageEvent struct {
@@ -4251,14 +4261,15 @@ const file_civquest_v1_civquest_proto_rawDesc = "" +
 	"\fVisibleBlock\x12,\n" +
 	"\x03pos\x18\x01 \x01(\v2\x1a.civquest.v1.BlockPosProtoR\x03pos\x12\x19\n" +
 	"\bblock_id\x18\x02 \x01(\tR\ablockId\x12,\n" +
-	"\x12block_state_string\x18\x03 \x01(\tR\x10blockStateString\"\x83\x01\n" +
+	"\x12block_state_string\x18\x03 \x01(\tR\x10blockStateString\"\xab\x01\n" +
 	"\tChatEvent\x12\x1f\n" +
 	"\vsender_uuid\x18\x01 \x01(\tR\n" +
 	"senderUuid\x12\x1f\n" +
 	"\vsender_name\x18\x02 \x01(\tR\n" +
 	"senderName\x12\x18\n" +
 	"\amessage\x18\x03 \x01(\tR\amessage\x12\x1a\n" +
-	"\bdistance\x18\x04 \x01(\x02R\bdistance\"\xea\x01\n" +
+	"\bdistance\x18\x04 \x01(\x02R\bdistance\x12&\n" +
+	"\x0fsender_is_agent\x18\x05 \x01(\bR\rsenderIsAgent\"\xea\x01\n" +
 	"\vDamageEvent\x12>\n" +
 	"\vsource_type\x18\x01 \x01(\x0e2\x1d.civquest.v1.DamageSourceTypeR\n" +
 	"sourceType\x12,\n" +

@@ -50,4 +50,15 @@ public interface ChatEventOrBuilder extends
    * @return The distance.
    */
   float getDistance();
+
+  /**
+   * <pre>
+   * Set by the server when the speaker is a CivQuest agent. UUIDs cannot tell: in offline
+   * mode every player's UUID is derived from their name, exactly like an agent's.
+   * </pre>
+   *
+   * <code>bool sender_is_agent = 5;</code>
+   * @return The senderIsAgent.
+   */
+  boolean getSenderIsAgent();
 }

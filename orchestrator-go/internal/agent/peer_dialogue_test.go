@@ -35,12 +35,13 @@ func TestPeerConversationGate_PairwiseCooldown(t *testing.T) {
 }
 
 func TestPeerChatDetectionAndBypass(t *testing.T) {
-	peer := &civquestv1.ChatEvent{SenderName: "Bran", SenderUuid: OfflinePlayerUUID("Bran")}
+	peer := &civquestv1.ChatEvent{SenderName: "Bran", SenderUuid: OfflinePlayerUUID("Bran"), SenderIsAgent: true}
 	if !isPeerAgentChat(peer) {
-		t.Error("offline-uuid sender should be a peer agent")
+		t.Error("server-flagged sender should be a peer agent")
 	}
-	if isPeerAgentChat(&civquestv1.ChatEvent{SenderName: "Steve", SenderUuid: "11111111-1111-1111-1111-111111111111"}) {
-		t.Error("online player must not be a peer agent")
+	// cq-yn1.8: an offline-mode player has a name-derived UUID too and must not be gated.
+	if isPeerAgentChat(&civquestv1.ChatEvent{SenderName: "pbots", SenderUuid: OfflinePlayerUUID("pbots")}) {
+		t.Error("offline-mode player must not be a peer agent")
 	}
 	if isPeerAgentChat(nil) {
 		t.Error("nil must not be peer")

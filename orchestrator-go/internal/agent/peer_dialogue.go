@@ -171,13 +171,11 @@ func peerReplyJitterDelay(listenerName string) time.Duration {
 	return time.Duration(250+offsetMs) * time.Millisecond
 }
 
-// isPeerAgentChat reports whether a chat originates from a peer CivQuest agent, whose
-// UUID is the deterministic offline UUID of its name (ADR-007).
+// isPeerAgentChat reports whether a chat originates from a peer CivQuest agent. Only the
+// server knows: an offline-mode player's UUID is derived from their name just like an
+// agent's (ADR-007), so humans are never inferred to be peers.
 func isPeerAgentChat(chat *civquestv1.ChatEvent) bool {
-	if chat == nil || chat.SenderUuid == "" || chat.SenderName == "" {
-		return false
-	}
-	return strings.EqualFold(chat.SenderUuid, OfflinePlayerUUID(chat.SenderName))
+	return chat.GetSenderIsAgent()
 }
 
 // peerChatBypassesCooldown returns true for explicit questions and emergency hazard calls.

@@ -291,10 +291,11 @@ func TestRuntime_PeerChatContention_GlobalCooldownMemoryAndHumanPriority(t *test
 		TimeOfDay: 4000,
 		Status:    &civquestv1.AgentStatus{AgentId: "aria_chat", Health: 20, FoodLevel: 20, Position: &civquestv1.Vec3{X: 0, Y: 64, Z: 0}},
 		IncomingChats: []*civquestv1.ChatEvent{{
-			SenderName: "Bran",
-			SenderUuid: agent.OfflinePlayerUUID("Bran"),
-			Message:    "Hey aria_chat, I am chopping oak trees.",
-			Distance:   5,
+			SenderName:    "Bran",
+			SenderUuid:    agent.OfflinePlayerUUID("Bran"),
+			SenderIsAgent: true,
+			Message:       "Hey aria_chat, I am chopping oak trees.",
+			Distance:      5,
 		}},
 	})
 	waitCalls := func(want int) {
@@ -324,10 +325,11 @@ func TestRuntime_PeerChatContention_GlobalCooldownMemoryAndHumanPriority(t *test
 		TimeOfDay: 4200,
 		Status:    &civquestv1.AgentStatus{AgentId: "aria_chat", Health: 20, FoodLevel: 20, Position: &civquestv1.Vec3{X: 0, Y: 64, Z: 0}},
 		IncomingChats: []*civquestv1.ChatEvent{{
-			SenderName: "Cora",
-			SenderUuid: agent.OfflinePlayerUUID("Cora"),
-			Message:    "aria_chat, heading to mine coal east.",
-			Distance:   6,
+			SenderName:    "Cora",
+			SenderUuid:    agent.OfflinePlayerUUID("Cora"),
+			SenderIsAgent: true,
+			Message:       "aria_chat, heading to mine coal east.",
+			Distance:      6,
 		}},
 	})
 	time.Sleep(120 * time.Millisecond)
@@ -344,9 +346,10 @@ func TestRuntime_PeerChatContention_GlobalCooldownMemoryAndHumanPriority(t *test
 		TimeOfDay: 4210,
 		Status:    &civquestv1.AgentStatus{AgentId: "aria_chat", Health: 20, FoodLevel: 20, Position: &civquestv1.Vec3{X: 0, Y: 64, Z: 0}},
 		IncomingChats: []*civquestv1.ChatEvent{{
+			// Offline-mode server: the player's UUID is name-derived, like an agent's.
 			SenderName: "Steve",
-			SenderUuid: "11111111-1111-1111-1111-111111111111",
-			Message:    "Status report please!",
+			SenderUuid: agent.OfflinePlayerUUID("Steve"),
+			Message:    "how is everyone doing tonight? How is the settlement coming along?",
 			Distance:   4,
 		}},
 	})

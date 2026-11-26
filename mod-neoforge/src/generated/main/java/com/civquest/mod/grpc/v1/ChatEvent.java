@@ -173,6 +173,22 @@ private static final long serialVersionUID = 0L;
     return distance_;
   }
 
+  public static final int SENDER_IS_AGENT_FIELD_NUMBER = 5;
+  private boolean senderIsAgent_ = false;
+  /**
+   * <pre>
+   * Set by the server when the speaker is a CivQuest agent. UUIDs cannot tell: in offline
+   * mode every player's UUID is derived from their name, exactly like an agent's.
+   * </pre>
+   *
+   * <code>bool sender_is_agent = 5;</code>
+   * @return The senderIsAgent.
+   */
+  @java.lang.Override
+  public boolean getSenderIsAgent() {
+    return senderIsAgent_;
+  }
+
   private byte memoizedIsInitialized = -1;
   @java.lang.Override
   public final boolean isInitialized() {
@@ -199,6 +215,9 @@ private static final long serialVersionUID = 0L;
     if (java.lang.Float.floatToRawIntBits(distance_) != 0) {
       output.writeFloat(4, distance_);
     }
+    if (senderIsAgent_ != false) {
+      output.writeBool(5, senderIsAgent_);
+    }
     getUnknownFields().writeTo(output);
   }
 
@@ -220,6 +239,10 @@ private static final long serialVersionUID = 0L;
     if (java.lang.Float.floatToRawIntBits(distance_) != 0) {
       size += com.google.protobuf.CodedOutputStream
         .computeFloatSize(4, distance_);
+    }
+    if (senderIsAgent_ != false) {
+      size += com.google.protobuf.CodedOutputStream
+        .computeBoolSize(5, senderIsAgent_);
     }
     size += getUnknownFields().getSerializedSize();
     memoizedSize = size;
@@ -245,6 +268,8 @@ private static final long serialVersionUID = 0L;
     if (java.lang.Float.floatToIntBits(getDistance())
         != java.lang.Float.floatToIntBits(
             other.getDistance())) return false;
+    if (getSenderIsAgent()
+        != other.getSenderIsAgent()) return false;
     if (!getUnknownFields().equals(other.getUnknownFields())) return false;
     return true;
   }
@@ -265,6 +290,9 @@ private static final long serialVersionUID = 0L;
     hash = (37 * hash) + DISTANCE_FIELD_NUMBER;
     hash = (53 * hash) + java.lang.Float.floatToIntBits(
         getDistance());
+    hash = (37 * hash) + SENDER_IS_AGENT_FIELD_NUMBER;
+    hash = (53 * hash) + com.google.protobuf.Internal.hashBoolean(
+        getSenderIsAgent());
     hash = (29 * hash) + getUnknownFields().hashCode();
     memoizedHashCode = hash;
     return hash;
@@ -400,6 +428,7 @@ private static final long serialVersionUID = 0L;
       senderName_ = "";
       message_ = "";
       distance_ = 0F;
+      senderIsAgent_ = false;
       return this;
     }
 
@@ -445,6 +474,9 @@ private static final long serialVersionUID = 0L;
       if (((from_bitField0_ & 0x00000008) != 0)) {
         result.distance_ = distance_;
       }
+      if (((from_bitField0_ & 0x00000010) != 0)) {
+        result.senderIsAgent_ = senderIsAgent_;
+      }
     }
 
     @java.lang.Override
@@ -476,6 +508,9 @@ private static final long serialVersionUID = 0L;
       }
       if (other.getDistance() != 0F) {
         setDistance(other.getDistance());
+      }
+      if (other.getSenderIsAgent() != false) {
+        setSenderIsAgent(other.getSenderIsAgent());
       }
       this.mergeUnknownFields(other.getUnknownFields());
       onChanged();
@@ -523,6 +558,11 @@ private static final long serialVersionUID = 0L;
               bitField0_ |= 0x00000008;
               break;
             } // case 37
+            case 40: {
+              senderIsAgent_ = input.readBool();
+              bitField0_ |= 0x00000010;
+              break;
+            } // case 40
             default: {
               if (!super.parseUnknownField(input, extensionRegistry, tag)) {
                 done = true; // was an endgroup tag
@@ -784,6 +824,53 @@ private static final long serialVersionUID = 0L;
     public Builder clearDistance() {
       bitField0_ = (bitField0_ & ~0x00000008);
       distance_ = 0F;
+      onChanged();
+      return this;
+    }
+
+    private boolean senderIsAgent_ ;
+    /**
+     * <pre>
+     * Set by the server when the speaker is a CivQuest agent. UUIDs cannot tell: in offline
+     * mode every player's UUID is derived from their name, exactly like an agent's.
+     * </pre>
+     *
+     * <code>bool sender_is_agent = 5;</code>
+     * @return The senderIsAgent.
+     */
+    @java.lang.Override
+    public boolean getSenderIsAgent() {
+      return senderIsAgent_;
+    }
+    /**
+     * <pre>
+     * Set by the server when the speaker is a CivQuest agent. UUIDs cannot tell: in offline
+     * mode every player's UUID is derived from their name, exactly like an agent's.
+     * </pre>
+     *
+     * <code>bool sender_is_agent = 5;</code>
+     * @param value The senderIsAgent to set.
+     * @return This builder for chaining.
+     */
+    public Builder setSenderIsAgent(boolean value) {
+
+      senderIsAgent_ = value;
+      bitField0_ |= 0x00000010;
+      onChanged();
+      return this;
+    }
+    /**
+     * <pre>
+     * Set by the server when the speaker is a CivQuest agent. UUIDs cannot tell: in offline
+     * mode every player's UUID is derived from their name, exactly like an agent's.
+     * </pre>
+     *
+     * <code>bool sender_is_agent = 5;</code>
+     * @return This builder for chaining.
+     */
+    public Builder clearSenderIsAgent() {
+      bitField0_ = (bitField0_ & ~0x00000010);
+      senderIsAgent_ = false;
       onChanged();
       return this;
     }

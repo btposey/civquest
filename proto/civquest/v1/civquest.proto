@@ -212,6 +212,9 @@ message ChatEvent {
   string sender_name = 2;
   string message = 3;
   float distance = 4;
+  // Set by the server when the speaker is a CivQuest agent. UUIDs cannot tell: in offline
+  // mode every player's UUID is derived from their name, exactly like an agent's.
+  bool sender_is_agent = 5;
 }
 
 message DamageEvent {

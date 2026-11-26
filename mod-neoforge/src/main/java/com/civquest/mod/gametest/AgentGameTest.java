@@ -1498,8 +1498,8 @@ public class AgentGameTest {
                 .build()).join();
 
         List<com.civquest.mod.grpc.v1.ChatEvent> heard = listener.pollIncomingChats();
-        helper.assertTrue(heard.stream().anyMatch(e -> "hello clan".equals(e.getMessage())),
-                "Nearby agent must receive the chat event, got " + heard.size() + " events");
+        helper.assertTrue(heard.stream().anyMatch(e -> "hello clan".equals(e.getMessage()) && e.getSenderIsAgent()),
+                "Nearby agent must receive the chat event flagged as an agent's, got " + heard.size() + " events");
         helper.assertTrue(speaker.pollIncomingChats().stream().noneMatch(e -> "hello clan".equals(e.getMessage())),
                 "Speaker must not hear its own chat");
 
