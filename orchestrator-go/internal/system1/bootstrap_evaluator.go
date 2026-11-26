@@ -178,11 +178,17 @@ func (e *ShelterEvaluator) Evaluate(ctx *EvaluatorContext, graph *FactGraph) err
 
 	hasBed := false
 	if ctx != nil {
-		if ctx.State != nil && ctx.State.GetAssignedBed() != nil {
+		registryActive := false
+		if ctx.State != nil && ctx.Frame != nil {
+			// Clan-shared registry: only a bed this agent owns (or may claim) counts; a bed
+			// another agent owns must not suppress shelter/bed-plan activities (cq-390.1).
+			registryActive, hasBed = ctx.State.BedAvailableFor(ctx.AgentID, ctx.Frame)
+		}
+		if !registryActive && ctx.State != nil && ctx.State.GetAssignedBed() != nil {
 			hasBed = true
 		}
 		if !hasBed && ctx.Frame != nil {
-			if ctx.Frame.Status != nil && ctx.Frame.Status.Position != nil {
+			if ctx.Frame.Status != nil && ctx.Frame.Status.Position != nil && !registryActive {
 				pos := ctx.Frame.Status.Position
 				for _, b := range ctx.Frame.InterestingBlocks {
 					if b != nil && b.Pos != nil && strings.Contains(strings.ToLower(b.BlockId), "bed") {

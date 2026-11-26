@@ -269,6 +269,9 @@ func NewRuntime(cfg Config) (*AgentRuntime, error) {
 	pavingTracker := system1.NewRoadPavingTracker(1000, system1.DefaultPavingThreshold)
 	sys1State := system1.NewAgentState()
 	sys1State.PavingTracker = pavingTracker
+	if cfg.CivicRegistryDB != nil {
+		sys1State.SetBedRegistry(cfg.CivicRegistryDB) // per-agent bed ownership (cq-390.1)
+	}
 
 	agentUUID := cfg.AgentUUID
 	if agentUUID == "" {

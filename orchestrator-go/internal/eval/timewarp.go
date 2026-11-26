@@ -57,6 +57,7 @@ type TimeWarpConfig struct {
 	Runtime              *agent.AgentRuntime
 	ContemplationService *system2.ContemplationService
 	AgentDB              *db.AgentDB
+	CivicRegistryDB      *db.CivicRegistryDB // clan-shared registry (bed claims); nil = private/none
 	WorkDir              string
 }
 
@@ -160,6 +161,7 @@ func NewTimeWarpSimulation(cfg TimeWarpConfig) (*TimeWarpSimulation, error) {
 			IdentityConfig:       cfg.IdentityConfig,
 			Resolver:             resolver,
 			AgentDB:              agentDB,
+			CivicRegistryDB:      cfg.CivicRegistryDB,
 			ContemplationService: cfg.ContemplationService,
 			IntentQueueSize:      512,
 		})

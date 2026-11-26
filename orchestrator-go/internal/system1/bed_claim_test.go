@@ -1,0 +1,106 @@
+package system1
+
+import (
+	"sync"
+	"testing"
+
+	civquestv1 "github.com/btposey/civquest/orchestrator-go/internal/proto/v1"
+	"github.com/btposey/civquest/orchestrator-go/internal/xdg"
+)
+
+// fakeBedRegistry is an in-memory BedRegistry shared by several AgentStates in one test.
+type fakeBedRegistry struct {
+	mu     sync.Mutex
+	owners map[[3]int32]string
+}
+
+func newFakeBedRegistry() *fakeBedRegistry { return &fakeBedRegistry{owners: map[[3]int32]string{}} }
+
+func (r *fakeBedRegistry) ClaimBed(x, y, z int32, agent string, _ int64) (string, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	k := [3]int32{x, y, z}
+	if o, ok := r.owners[k]; ok {
+		return o, nil
+	}
+	r.owners[k] = agent
+	return agent, nil
+}
+func (r *fakeBedRegistry) BedOwner(x, y, z int32) (string, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.owners[[3]int32{x, y, z}], nil
+}
+func (r *fakeBedRegistry) ReleaseBed(x, y, z int32, agent string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	k := [3]int32{x, y, z}
+	if r.owners[k] == agent {
+		delete(r.owners, k)
+	}
+	return nil
+}
+
+func nightFrameWithPioneerBed(id string) *civquestv1.TelemetryFrame {
+	inv := []*civquestv1.ItemStackProto{
+		{Slot: 0, ItemId: "minecraft:oak_planks", Count: 16},
+		{Slot: 1, ItemId: "minecraft:torch", Count: 4},
+	}
+	f := makeArbiterTestFrame(100, 14000, 20, inv, []*civquestv1.VisibleBlock{
+		{Pos: &civquestv1.BlockPosProto{X: 4, Y: 64, Z: 0}, BlockId: "minecraft:red_bed"},
+	})
+	f.Status.AgentId = id
+	return f
+}
+
+func tickNight(t *testing.T, id string, reg BedRegistry) (*AgentFSM, *AgentState) {
+	t.Helper()
+	fsm := NewAgentFSMWithRegistry(StageBootstrap, nil, NewDefaultEngineRegistry())
+	st := NewAgentState()
+	if reg != nil {
+		st.SetBedRegistry(reg)
+	}
+	cfg := xdg.DefaultAgentIdentityConfig(id)
+	fsm.Tick(&FSMContext{AgentID: id, State: st, Config: cfg, Frame: nightFrameWithPioneerBed(id)})
+	return fsm, st
+}
+
+// cq-390.1 root cause: a visible bed satisfied shelter.has_bed for EVERY agent, so with one
+// pioneer bed in sight the Shelter activity never bid (the playtest-2 regression).
+func TestBedClaim_ForeignClaimedBedDoesNotSuppressShelter(t *testing.T) {
+	reg := newFakeBedRegistry()
+	if o, _ := reg.ClaimBed(4, 64, 0, "able", 1); o != "able" {
+		t.Fatal("setup claim failed")
+	}
+	fsm, st := tickNight(t, "bert", reg)
+	if fsm.ActiveActivityKind() != activityKindShelter {
+		t.Fatalf("bert (bed owned by able) should build shelter, active=%q", fsm.ActiveActivityKind())
+	}
+	if st.GetAssignedBed() != nil {
+		t.Fatalf("bert must not be assigned able's bed: %+v", st.GetAssignedBed())
+	}
+}
+
+// The first agent to see the unclaimed bed owns it and uses it instead of building.
+func TestBedClaim_FirstAgentOwnsBedAndSkipsShelter(t *testing.T) {
+	reg := newFakeBedRegistry()
+	fsm, st := tickNight(t, "able", reg)
+	if fsm.ActiveActivityKind() == activityKindShelter {
+		t.Fatal("able has a bed; shelter must not bid")
+	}
+	if b := st.GetAssignedBed(); b == nil || b.X != 4 {
+		t.Fatalf("able should be assigned the pioneer bed, got %+v", b)
+	}
+	if o, _ := reg.BedOwner(4, 64, 0); o != "able" {
+		t.Fatalf("registry owner = %q", o)
+	}
+}
+
+// Control documenting the pre-fix behaviour: with no clan registry a visible bed still
+// satisfies the gate and suppresses shelter (single-agent legacy semantics).
+func TestBedClaim_LegacyNoRegistryBedSuppressesShelter(t *testing.T) {
+	fsm, _ := tickNight(t, "solo", nil)
+	if fsm.ActiveActivityKind() == activityKindShelter {
+		t.Fatal("legacy single-agent: a visible bed must keep suppressing shelter")
+	}
+}

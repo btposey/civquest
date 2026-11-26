@@ -8,6 +8,8 @@ import civquestv1 "github.com/btposey/civquest/orchestrator-go/internal/proto/v1
 type StateView interface {
 	ActiveTaskInfo() (active bool, kind string, phase TaskPhase, routine Routine)
 	GetAssignedBed() *civquestv1.BlockPosProto
+	// BedAvailableFor is the read-only bed gate: the agent owns/may claim a bed (cq-390.1).
+	BedAvailableFor(agentID string, frame *civquestv1.TelemetryFrame) (registryActive, available bool)
 	GetHomeOrigin() *civquestv1.Vec3
 	GetOutposts() []*civquestv1.Vec3
 	GetPatrolWaypointIndex() int

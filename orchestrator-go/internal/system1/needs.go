@@ -263,6 +263,9 @@ func EvaluateSleep(agentID string, frame *civquestv1.TelemetryFrame, state *Agen
 				state.ClearAssignedBed()
 			}
 		}
+		if state.bedReg() != nil {
+			state.ensureOwnBed(agentID, frame)
+		}
 		hasBed := state.GetAssignedBed() != nil
 		hasShelter := state.GetShelterPos() != nil
 		if !hasBed || !hasShelter {
@@ -274,7 +277,7 @@ func EvaluateSleep(agentID string, frame *civquestv1.TelemetryFrame, state *Agen
 					continue
 				}
 				id := strings.ToLower(b.BlockId)
-				if !hasBed && strings.Contains(id, "bed") {
+				if !hasBed && strings.Contains(id, "bed") && state.bedReg() == nil {
 					state.SetAssignedBed(b.Pos)
 					hasBed = true
 				}
@@ -291,7 +294,7 @@ func EvaluateSleep(agentID string, frame *civquestv1.TelemetryFrame, state *Agen
 					if poi == nil {
 						poi = state.FindNearestReachablePOI(frame.Status.Position, POICategoryHabitation, "bed", "", 64.0, 0.5, frame.WorldTick)
 					}
-					if poi != nil {
+					if poi != nil && !state.bedTakenByOther(agentID, poiBlockPos(poi)) && state.claimBed(agentID, poiBlockPos(poi), frame.WorldTick) {
 						state.SetAssignedBed(poiBlockPos(poi))
 						recalledBedPOI = poi
 						hasBed = true

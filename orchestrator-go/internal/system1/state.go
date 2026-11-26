@@ -152,6 +152,7 @@ type AgentState struct {
 	mu                        sync.RWMutex
 	mem                       agentMemory
 	AssignedBed               *civquestv1.BlockPosProto
+	bedRegistry               BedRegistry // clan-shared bed ownership port (nil: single-agent, no claims)
 	ShelterPos                *civquestv1.BlockPosProto
 	stage                     Stage
 	routine                   Routine

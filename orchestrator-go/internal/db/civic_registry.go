@@ -322,6 +322,16 @@ func (c *CivicRegistryDB) initSchema(ctx context.Context) error {
 	);
 	CREATE INDEX IF NOT EXISTS idx_clan_horizon_sectors_explorer ON clan_horizon_sectors(explorer_id);
 	CREATE INDEX IF NOT EXISTS idx_clan_horizon_sectors_tick ON clan_horizon_sectors(surveyed_tick);
+
+	CREATE TABLE IF NOT EXISTS bed_claims (
+		x INTEGER NOT NULL,
+		y INTEGER NOT NULL,
+		z INTEGER NOT NULL,
+		owner_agent_id TEXT NOT NULL,
+		claimed_tick INTEGER NOT NULL DEFAULT 0,
+		PRIMARY KEY (x, y, z)
+	);
+	CREATE INDEX IF NOT EXISTS idx_bed_claims_owner ON bed_claims(owner_agent_id);
 	`
 	_, err := c.db.ExecContext(ctx, schema)
 	return err
