@@ -22,6 +22,7 @@ import (
 	"github.com/btposey/civquest/orchestrator-go/internal/bridge"
 	"github.com/btposey/civquest/orchestrator-go/internal/db"
 	civquestv1 "github.com/btposey/civquest/orchestrator-go/internal/proto/v1"
+	"github.com/btposey/civquest/orchestrator-go/internal/system1"
 	"github.com/btposey/civquest/orchestrator-go/internal/system2"
 	"github.com/btposey/civquest/orchestrator-go/internal/xdg"
 	"google.golang.org/grpc"
@@ -2548,6 +2549,9 @@ func TestRuntime_System2_ClanChroniclerBookSynthesis(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed creating agent runtime: %v", err)
 	}
+
+	// Professions apply only once a settlement exists (cq-6l3.12).
+	rt.System1State().SpatialIndex().UpsertPOI(db.AgentPOI{POIID: "hearth", Category: system1.POICategorySettlement, Reliability: 1})
 
 	runErrCh := make(chan error, 1)
 	go func() {

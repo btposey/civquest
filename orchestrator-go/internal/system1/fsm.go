@@ -543,6 +543,9 @@ func (fsm *AgentFSM) Tick(ctx *FSMContext) FSMResult {
 		if ctx.State != nil && ctx.State.bedReg() != nil {
 			ctx.State.ensureOwnBed(ctx.AgentID, ctx.Frame)
 		}
+		configured := ctx.Config
+		ctx.Config = EffectiveIdentity(ctx.State, configured)
+		defer func() { ctx.Config = configured }()
 		evalCtx := newEvaluatorContext(ctx)
 		ctx.Facts = reg.EvaluateAll(evalCtx)
 	}

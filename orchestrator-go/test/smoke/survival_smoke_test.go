@@ -125,6 +125,7 @@ func TestSmoke_PatrolMovesBetweenWaypoints(t *testing.T) {
 	sim := newSim(t, "guard1", "GUARD", eval.TimeWarpConfig{InitialTimeOfDay: 1200, InitialInventory: survivalKit()})
 	st := sim.Runtime().System1State()
 	st.SetHomeOrigin(&civquestv1.Vec3{X: 0.5, Y: 64, Z: 0.5})
+	consecrate(st)
 	distinct := map[[2]int]bool{}
 	maxDist := 0.0
 	for i := 0; i < 1200; i++ {

@@ -45,7 +45,10 @@ func countPlaces(tr []replayRecord) int {
 // construction activity existed, nothing drove ConstructionSkill and the trace never held a
 // single placement.
 func scenarioSettlementBuildsRecommendedBlueprint() replayScenario {
-	home := func(st *AgentState) { st.SetHomeOrigin(&civquestv1.Vec3{X: 0.5, Y: 64, Z: 0.5}) }
+	home := func(st *AgentState) {
+		st.SetHomeOrigin(&civquestv1.Vec3{X: 0.5, Y: 64, Z: 0.5})
+		consecrateSettlement(st) // professions apply only once a settlement exists
+	}
 	at := func(tick int64) *civquestv1.TelemetryFrame {
 		// Standing on the site (anchor = home + 8 east) so every block is within reach.
 		return rf(tick, 3000, withInv(settlementKit()...), withPos(9, 64, 1))

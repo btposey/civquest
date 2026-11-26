@@ -440,24 +440,20 @@ func (r *AgentRuntime) IdentityConfig() *xdg.AgentIdentityConfig {
 	return &cp
 }
 
-// Profession returns the agent's current primary profession.
-// ADR-027: If no settlement POI is recorded in SpatialIndex, specialized professions
-// fall back to EXPLORER.
+// Profession returns the agent's current primary profession: EXPLORER until a settlement is
+// established, then the configured one (ADR-027, cq-6l3.12).
 func (r *AgentRuntime) Profession() string {
 	r.mu.RLock()
-	if r.identityConfig == nil {
-		r.mu.RUnlock()
-		return ""
+	defer r.mu.RUnlock()
+	if identity := r.effectiveIdentity(); identity != nil {
+		return identity.Profession
 	}
-	prof := r.identityConfig.Profession
-	r.mu.RUnlock()
+	return ""
+}
 
-	if si := r.system1State.SpatialIndex(); si != nil && !si.HasSettlementPOI(nil, 0) {
-		if system1.IsSpecializedProfession(prof) {
-			return "EXPLORER"
-		}
-	}
-	return prof
+// effectiveIdentity is the identity behaviour and speech use. It takes no runtime lock.
+func (r *AgentRuntime) effectiveIdentity() *xdg.AgentIdentityConfig {
+	return system1.EffectiveIdentity(r.system1State, r.identityConfig)
 }
 
 // SecondaryHobby returns the agent's current secondary hobby.
@@ -1565,6 +1561,7 @@ func (r *AgentRuntime) dispatchDialogue(frame *civquestv1.TelemetryFrame) {
 			}
 
 			req := system2.ChatDialogueRequest{
+				Identity:     r.effectiveIdentity(),
 				PlayerUUID:   c.SenderUuid,
 				PlayerName:   c.SenderName,
 				Message:      c.Message,
@@ -1721,6 +1718,7 @@ func (r *AgentRuntime) dispatchDialogue(frame *civquestv1.TelemetryFrame) {
 				defer r.activeLLMRequests.Add(-1)
 
 				req := system2.TradeDialogueRequest{
+					Identity:       r.effectiveIdentity(),
 					PlayerEntityID: trade.PlayerEntityId,
 					PlayerUUID:     trade.PlayerUuid,
 					PlayerName:     trade.PlayerName,
@@ -1766,9 +1764,9 @@ func (r *AgentRuntime) dispatchChronicler(frame *civquestv1.TelemetryFrame) {
 	}
 
 	isChronicler := false
-	if r.identityConfig != nil {
-		if strings.EqualFold(r.identityConfig.Profession, "CHRONICLER") ||
-			strings.EqualFold(r.identityConfig.SecondaryHobby, "CHRONICLER") {
+	if identity := r.effectiveIdentity(); identity != nil {
+		if strings.EqualFold(identity.Profession, "CHRONICLER") ||
+			strings.EqualFold(identity.SecondaryHobby, "CHRONICLER") {
 			isChronicler = true
 		}
 	}
@@ -1942,9 +1940,9 @@ func (r *AgentRuntime) dispatchToponymy(frame *civquestv1.TelemetryFrame) {
 	}
 
 	isExplorer := false
-	if r.identityConfig != nil {
-		if strings.EqualFold(r.identityConfig.Profession, "EXPLORER") ||
-			strings.EqualFold(r.identityConfig.SecondaryHobby, "EXPLORER") {
+	if identity := r.effectiveIdentity(); identity != nil {
+		if strings.EqualFold(identity.Profession, "EXPLORER") ||
+			strings.EqualFold(identity.SecondaryHobby, "EXPLORER") {
 			isExplorer = true
 		}
 	}
@@ -2239,7 +2237,7 @@ func (r *AgentRuntime) dispatchContemplation(frame *civquestv1.TelemetryFrame) {
 
 		agentID := r.agentID
 		clanID := r.clanID
-		agentCfg := r.identityConfig
+		agentCfg := r.effectiveIdentity()
 		agentDB := r.agentDB
 		civicDB := r.civicRegistryDB
 		rumorsDB := r.rumorsDB
@@ -2427,7 +2425,7 @@ func (r *AgentRuntime) TriggerContemplation(ctx context.Context, frame *civquest
 	}
 	agentID := r.agentID
 	clanID := r.clanID
-	agentCfg := r.identityConfig
+	agentCfg := r.effectiveIdentity()
 	agentDB := r.agentDB
 	civicDB := r.civicRegistryDB
 	rumorsDB := r.rumorsDB
@@ -3124,7 +3122,7 @@ func (r *AgentRuntime) buildDialogueVitals(frame *civquestv1.TelemetryFrame) *sy
 		posStr = fmt.Sprintf("(%.0f, %.0f, %.0f)", p.X, p.Y, p.Z)
 	}
 	routineStr := string(r.system1State.GetCurrentRoutine())
-	goals := system1.EvaluateGoals(frame, r.identityConfig, r.system1State)
+	goals := system1.EvaluateGoals(frame, r.effectiveIdentity(), r.system1State)
 	r.mu.RLock()
 	immGoal := goals.ImmediateGoal
 	stGoal := goals.ShortTermGoal
@@ -3279,8 +3277,8 @@ func (r *AgentRuntime) executeSystem1Trade(
 	worldTick int64,
 ) {
 	prof := "EXPLORER"
-	if r.identityConfig != nil && r.identityConfig.Profession != "" {
-		prof = r.identityConfig.Profession
+	if identity := r.effectiveIdentity(); identity != nil && identity.Profession != "" {
+		prof = identity.Profession
 	}
 
 	r.mu.RLock()
@@ -3770,7 +3768,7 @@ func (r *AgentRuntime) Snapshot() SocketStatusResponse {
 	shiftStr := ""
 	var goals *system1.GoalHierarchy
 	if r.identityConfig != nil {
-		shiftStr = string(r.identityConfig.EffectiveShift())
+		shiftStr = string(system1.EffectiveIdentity(r.system1State, r.identityConfig).EffectiveShift())
 		if r.identityConfig.ImmediateGoal != "" || r.identityConfig.ShortTermGoal != "" || r.identityConfig.LongTermGoal != "" {
 			goals = &system1.GoalHierarchy{
 				ImmediateGoal: r.identityConfig.ImmediateGoal,

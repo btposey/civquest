@@ -23,6 +23,7 @@ func TestSmoke_ArmoryCraftsWeapon(t *testing.T) {
 	sim := newSim(t, "armorer", "GUARD", eval.TimeWarpConfig{InitialTimeOfDay: 1200, InitialInventory: inv})
 	st := sim.Runtime().System1State()
 	st.SetHomeOrigin(&civquestv1.Vec3{X: 0.5, Y: 64, Z: 0.5})
+	consecrate(st)
 	st.SetArmoryMaintenanceNeeded(true)
 
 	var placedTable, crafted bool

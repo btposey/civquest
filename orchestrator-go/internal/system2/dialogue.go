@@ -74,6 +74,9 @@ type ChatDialogueRequest struct {
 	SurplusState  SurplusState    `json:"surplus_state,omitempty"`
 	Dangerous     bool            `json:"dangerous,omitempty"`
 	VerifiedFacts string          `json:"verified_facts,omitempty"`
+	// Identity, when set, replaces the service's configured identity for this reply: before a
+	// settlement exists an agent speaks as an explorer.
+	Identity *xdg.AgentIdentityConfig `json:"-"`
 }
 
 // WithFactGraph formats and attaches verified environmental facts to ChatDialogueRequest via FactGraph.ToPromptContext().
@@ -110,6 +113,8 @@ type TradeDialogueRequest struct {
 	SurplusState   SurplusState                 `json:"surplus_state,omitempty"`
 	Dangerous      bool                         `json:"dangerous,omitempty"`
 	VerifiedFacts  string                       `json:"verified_facts,omitempty"`
+	// Identity, when set, replaces the service's configured identity for this reply.
+	Identity *xdg.AgentIdentityConfig `json:"-"`
 }
 
 // WithFactGraph formats and attaches verified environmental facts to TradeDialogueRequest via FactGraph.ToPromptContext().
@@ -385,6 +390,9 @@ func (s *DialogueService) ProcessChat(ctx context.Context, req ChatDialogueReque
 	randFn := s.randFn
 	sanitizer := s.sanitizer
 	s.mu.RUnlock()
+	if req.Identity != nil {
+		agentCfg = req.Identity
+	}
 
 	cleanPlayerName := sanitizePlayerName(req.PlayerName)
 	cleanMessage := sanitizer.SanitizeInput(req.Message)
@@ -600,6 +608,9 @@ func (s *DialogueService) ProcessTrade(ctx context.Context, req TradeDialogueReq
 	randFn := s.randFn
 	sanitizer := s.sanitizer
 	s.mu.RUnlock()
+	if req.Identity != nil {
+		agentCfg = req.Identity
+	}
 
 	cleanPlayerName := sanitizePlayerName(req.PlayerName)
 	cleanProposal := sanitizer.SanitizeInput(req.SpokenProposal)
