@@ -3,6 +3,7 @@ package crafting
 import (
 	"sort"
 	"strings"
+	"sync"
 
 	civquestv1 "github.com/btposey/civquest/orchestrator-go/internal/proto/v1"
 )
@@ -10,6 +11,9 @@ import (
 const (
 	maxPlanDepth = 10
 	maxBatchLoop = 64
+	// maxSearchNodes bounds one prerequisite search; planning runs inside the agent tick, so
+	// a catalogue that defeats the pruning must fail rather than run on.
+	maxSearchNodes = 2000
 )
 
 // IngredientSlot represents one grouped ingredient requirement for a recipe,
@@ -44,7 +48,19 @@ type Step struct {
 // RecipeGraph indexes runtime crafting recipes exported from the Minecraft server
 // and resolves cycle-safe, multi-step prerequisite crafting chains (ADR-029).
 type RecipeGraph struct {
-	byResult map[string][]Recipe
+	byResult  map[string][]Recipe
+	indexOnce sync.Once
+	idx       *recipeIndex
+}
+
+// search is the state of one bounded prerequisite search.
+type search struct {
+	reach  map[string]bool
+	budget int
+}
+
+func (g *RecipeGraph) newSearch(inv map[string]int) *search {
+	return &search{reach: g.Reachable(inv), budget: maxSearchNodes}
 }
 
 // NewRecipeGraph constructs a RecipeGraph from protobuf RecipeNode entries.
@@ -154,9 +170,11 @@ func (g *RecipeGraph) CanEventuallyCraft(targetItemID string, inv map[string]int
 	if target == "" {
 		return false
 	}
-	workInv := cloneInv(inv)
-	visiting := make(map[string]bool)
-	_, ok := g.simulateCraftOne(target, workInv, visiting, 0)
+	return g.canCraft(g.newSearch(inv), target, inv)
+}
+
+func (g *RecipeGraph) canCraft(q *search, target string, inv map[string]int) bool {
+	_, ok := g.simulateCraftOne(q, target, cloneInv(inv), map[string]bool{}, 0)
 	return ok
 }
 
@@ -193,10 +211,14 @@ func (g *RecipeGraph) PlanNextStep(targetItemID string, inv map[string]int, hasT
 	// Otherwise, simulate full prerequisite plans across available recipes for target.
 	// Collect successful plans and pick the best next step.
 	var bestPlan []Recipe
-	for _, r := range recipes {
+	reach := g.Reachable(inv)
+	if !reach[target] {
+		return Step{ResultItemID: target, MissingRaw: true}, false
+	}
+	for _, r := range g.preferred(target) {
 		workInv := cloneInv(inv)
 		visiting := map[string]bool{target: true}
-		plan, ok := g.simulateCraftRecipe(r, workInv, visiting, 1)
+		plan, ok := g.simulateCraftRecipe(&search{reach: reach, budget: maxSearchNodes}, r, workInv, visiting, 1)
 		if !ok || len(plan) == 0 {
 			continue
 		}
@@ -350,11 +372,12 @@ func computeDeficientItemsForRecipe(r Recipe, inv map[string]int) map[string]boo
 	return deficient
 }
 
-func (g *RecipeGraph) simulateCraftOne(itemID string, workInv map[string]int, visiting map[string]bool, depth int) ([]Recipe, bool) {
-	if depth > maxPlanDepth || visiting[itemID] {
+func (g *RecipeGraph) simulateCraftOne(q *search, itemID string, workInv map[string]int, visiting map[string]bool, depth int) ([]Recipe, bool) {
+	if depth > maxPlanDepth || visiting[itemID] || !q.reach[itemID] || q.budget <= 0 {
 		return nil, false
 	}
-	recipes := g.byResult[itemID]
+	q.budget--
+	recipes := g.preferred(itemID)
 	if len(recipes) == 0 {
 		return nil, false
 	}
@@ -364,7 +387,7 @@ func (g *RecipeGraph) simulateCraftOne(itemID string, workInv map[string]int, vi
 
 	for _, r := range recipes {
 		snap := cloneInv(workInv)
-		steps, ok := g.simulateCraftRecipe(r, snap, visiting, depth+1)
+		steps, ok := g.simulateCraftRecipe(q, r, snap, visiting, depth+1)
 		if ok {
 			replaceInv(workInv, snap)
 			return steps, true
@@ -373,7 +396,7 @@ func (g *RecipeGraph) simulateCraftOne(itemID string, workInv map[string]int, vi
 	return nil, false
 }
 
-func (g *RecipeGraph) simulateCraftRecipe(r Recipe, workInv map[string]int, visiting map[string]bool, depth int) ([]Recipe, bool) {
+func (g *RecipeGraph) simulateCraftRecipe(q *search, r Recipe, workInv map[string]int, visiting map[string]bool, depth int) ([]Recipe, bool) {
 	if depth > maxPlanDepth {
 		return nil, false
 	}
@@ -391,7 +414,7 @@ func (g *RecipeGraph) simulateCraftRecipe(r Recipe, workInv map[string]int, visi
 			batches++
 			crafted := false
 			for _, candID := range slot.AcceptedItemIDs {
-				subSteps, ok := g.simulateCraftOne(candID, workInv, visiting, depth+1)
+				subSteps, ok := g.simulateCraftOne(q, candID, workInv, visiting, depth+1)
 				if ok {
 					steps = append(steps, subSteps...)
 					missing = consumeMatchingFromInv(slot.AcceptedItemIDs, missing, workInv)

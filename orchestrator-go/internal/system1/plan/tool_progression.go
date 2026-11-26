@@ -10,6 +10,9 @@ import (
 const (
 	itemTable = "minecraft:crafting_table"
 	maxDepth  = 10
+	// maxExpansions bounds the search for one goal item. Planning runs inside the agent
+	// tick, so an unforeseen catalogue shape must yield "unplannable" rather than run on.
+	maxExpansions = 4000
 )
 
 type goalItem struct {
@@ -45,10 +48,15 @@ type sim struct {
 	inv     map[string]int
 	steps   []Step
 	tableOK bool
-	hasTool func(string) bool
-	// raw items are gathered directly even when a recipe exists (wool is sheared or dropped,
-	// never crafted from string, so the bed plan stays on a real wool source).
-	raw func(string) bool
+	// Shared by every clone of one planning call.
+	reach  map[string]bool // craftable from the starting inventory
+	path   map[string]bool // items being expanded: a recipe may not consume its own product
+	budget *int
+}
+
+func newSim(f Facts, inv map[string]int) *sim {
+	budget := maxExpansions
+	return &sim{g: f.Recipes, f: f, inv: inv, reach: f.Recipes.Reachable(inv), path: map[string]bool{}, budget: &budget}
 }
 
 func (s *sim) clone() *sim {
@@ -75,12 +83,13 @@ func planToolProgression(f Facts) ([]Step, []BOMLine, []string) {
 			inv[k] = v
 		}
 	}
-	st := &sim{g: f.Recipes, f: f, inv: inv}
+	st := newSim(f, inv)
 	var unplannable []string
 	for _, goal := range toolProgressionGoals {
 		if owned(goal.item, goal.qty, st.inv) {
 			continue
 		}
+		*st.budget = maxExpansions
 		trial := st.clone()
 		if len(f.Recipes.RecipesFor(goal.item)) == 0 || !trial.expand(goal.item, goal.qty, 0) {
 			unplannable = append(unplannable, goal.item)
@@ -98,9 +107,10 @@ func planToolProgression(f Facts) ([]Step, []BOMLine, []string) {
 // false (leaving s in an undefined state; callers expand on a clone) when the
 // item cannot be produced.
 func (s *sim) expand(item string, qty, depth int) bool {
-	if depth > maxDepth {
+	if depth > maxDepth || *s.budget <= 0 {
 		return false
 	}
+	*s.budget--
 	if _, _, isTool := toolRank(item); isTool && owned(item, qty, s.inv) {
 		return true
 	}
@@ -113,17 +123,23 @@ func (s *sim) expand(item string, qty, depth int) bool {
 	if deficit == 0 {
 		return true
 	}
-	recipes := s.g.RecipesFor(item)
-	if s.raw != nil && s.raw(item) {
-		recipes = nil
+	// Natural resources are collected, never converted from other items (wool is sheared or
+	// dropped, not spun from string; coal is mined, not unpacked from blocks).
+	if crafting.Natural(item) {
+		return s.gather(item, deficit)
 	}
-	if len(recipes) == 0 {
+	if len(s.g.RecipesFor(item)) == 0 {
 		if _, _, isTool := toolRank(item); isTool || item == itemTable {
 			return false // tools and tables are crafted, never gathered
 		}
 		return s.gather(item, deficit)
 	}
-	for _, r := range recipes {
+	if s.path[item] {
+		return false
+	}
+	s.path[item] = true
+	defer delete(s.path, item)
+	for _, r := range s.options(item) {
 		trial := s.clone()
 		if trial.craft(r, deficit, depth) {
 			*s = *trial
@@ -131,6 +147,59 @@ func (s *sim) expand(item string, qty, depth int) bool {
 		}
 	}
 	return false
+}
+
+// options lists the recipes worth trying for item, in order: those the held items satisfy
+// right now, then the grounded derivation, then other routes that start from held items.
+// Conversions that would need yet more converting (dyeing one bed into another) are never
+// candidates, which keeps the search from exploring every ordering of them.
+func (s *sim) options(item string) []crafting.Recipe {
+	var now, later []crafting.Recipe
+	best, grounded := s.g.Derivation(item)
+	for _, r := range s.g.RecipesFor(item) {
+		switch {
+		case s.holds(r):
+			now = append(now, r)
+		case grounded && r.RecipeID == best.RecipeID:
+		case s.reachable(r):
+			later = append(later, r)
+		}
+	}
+	if grounded && !s.holds(best) {
+		now = append(now, best)
+	}
+	return append(now, later...)
+}
+
+// holds reports whether every slot of r can be filled from the current inventory.
+func (s *sim) holds(r crafting.Recipe) bool {
+	for _, slot := range r.Slots {
+		have := 0
+		for _, c := range slot.AcceptedItemIDs {
+			have += s.inv[c]
+		}
+		if have < slot.Count {
+			return false
+		}
+	}
+	return true
+}
+
+// reachable reports whether every slot of r has a choice craftable from the starting items.
+func (s *sim) reachable(r crafting.Recipe) bool {
+	for _, slot := range r.Slots {
+		ok := false
+		for _, c := range slot.AcceptedItemIDs {
+			if s.reach[c] {
+				ok = true
+				break
+			}
+		}
+		if !ok {
+			return false
+		}
+	}
+	return true
 }
 
 func (s *sim) gather(item string, qty int) bool {
@@ -179,12 +248,18 @@ func (s *sim) fillSlot(slot crafting.IngredientSlot, need, depth int) bool {
 		if ri != rj {
 			return ri < rj
 		}
+		if ci, cj := s.cost(cands[i]), s.cost(cands[j]); ci != cj {
+			return ci < cj
+		}
 		return cands[i] < cands[j]
 	})
 	// Pass 0 accepts only choices that need no new gathering (use what is
 	// held, directly or via a craft); pass 1 accepts any producible choice.
 	for pass := 0; pass < 2; pass++ {
 		for _, c := range cands {
+			if pass == 0 && s.inv[c] == 0 && !s.reach[c] {
+				continue // cannot be had without gathering
+			}
 			trial := s.clone()
 			if !trial.expand(c, need, depth) {
 				continue
@@ -197,6 +272,14 @@ func (s *sim) fillSlot(slot crafting.IngredientSlot, need, depth int) bool {
 		}
 	}
 	return false
+}
+
+// cost ranks a candidate by how hard it is to obtain; cycle-only items rank last.
+func (s *sim) cost(item string) int {
+	if v, ok := s.g.Cost(item); ok {
+		return v
+	}
+	return math.MaxInt32
 }
 
 func countGathers(steps []Step) int {

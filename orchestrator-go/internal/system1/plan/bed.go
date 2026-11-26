@@ -38,8 +38,6 @@ func bedColourOrder(inv map[string]int) []string {
 	return out
 }
 
-func isWool(item string) bool { return strings.HasSuffix(item, "_wool") }
-
 func planBed(f Facts) ([]Step, []BOMLine, []string) {
 	inv := map[string]int{}
 	for k, v := range f.Inventory {
@@ -56,7 +54,7 @@ func planBed(f Facts) ([]Step, []BOMLine, []string) {
 		if len(f.Recipes.RecipesFor(bed)) == 0 {
 			continue
 		}
-		st := &sim{g: f.Recipes, f: f, inv: copyInv(inv), raw: isWool}
+		st := newSim(f, copyInv(inv))
 		if st.expand(bed, 1, 0) {
 			steps, bom := mergeGathers(st.steps)
 			return steps, bom, nil
