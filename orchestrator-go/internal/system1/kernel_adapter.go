@@ -262,6 +262,13 @@ func (fsm *AgentFSM) applyMemoryLocked(w *fsmWorld, writes []htpda.MemoryWrite) 
 		if fsm.planning.applyMemory(wr) {
 			continue
 		}
+		if b, ok := wr.(workBackoff); ok {
+			if fsm.workBackoffUntil == nil {
+				fsm.workBackoffUntil = map[htpda.Kind]int64{}
+			}
+			fsm.workBackoffUntil[b.Kind] = b.Until
+			continue
+		}
 		if b, ok := wr.(surveyBackoff); ok {
 			fsm.surveyBackoffUntil = b.Until
 			continue

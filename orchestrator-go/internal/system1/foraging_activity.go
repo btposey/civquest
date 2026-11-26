@@ -46,7 +46,7 @@ func (foragingActivity) eligible(lw *fsmWorld) bool {
 	if ctx.IsDuskOrNight() && ctx.Frame.Status.FoodLevel > foragingFedFoodLevel {
 		return false
 	}
-	if directiveForcesForaging(stage, routine, ctx) {
+	if directiveForcesForaging(stage, routine, ctx) && !lw.backedOff(activityKindForaging) {
 		return true
 	}
 	var fSkill Skill = NewForagingSkill()
@@ -126,7 +126,7 @@ func (a foragingActivity) run(lw *fsmWorld, local any) htpda.Step {
 		status.GetNavigationState() == civquestv1.NavigationState_NAVIGATION_STATE_PATHING
 	if len(intents) == 0 && prog.Forced && !waiting {
 		// Well fed and directed to forage but nothing reachable: yield to normal activities.
-		return popFrame(lw, a.kind, nil, false)
+		return popNoWork(lw, a.kind)
 	}
 	return htpda.Step{Op: htpda.OpStay, Intents: intents, Next: prog}
 }

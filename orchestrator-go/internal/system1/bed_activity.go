@@ -55,7 +55,7 @@ func (bedActivity) tick(*fsmWorld) ([]FSMIntent, bool) {
 // or may claim while the clan registry is wired.
 func (bedActivity) eligible(lw *fsmWorld) bool {
 	ctx := lw.ctx
-	if ctx == nil || ctx.Frame == nil || ctx.Frame.Status == nil || ctx.State == nil {
+	if ctx == nil || ctx.Frame == nil || ctx.Frame.Status == nil || ctx.State == nil || lw.backedOff(activityKindBed) {
 		return false
 	}
 	if len(ctx.Frame.IncomingChats) > 0 || ctx.Frame.PendingTrade != nil || ctx.Frame.Status.IsSleeping {
@@ -76,7 +76,7 @@ func (a bedActivity) run(lw *fsmWorld, local any) htpda.Step {
 	in, working := bedStep(lw.ctx, &bl)
 	if !working {
 		// Nothing to progress (no sheep, no timber, no recipe): yield to lower activities.
-		return popFrame(lw, a.kind, nil, false)
+		return popNoWork(lw, a.kind)
 	}
 	var intents []*civquestv1.AgentIntent
 	if in != nil {
