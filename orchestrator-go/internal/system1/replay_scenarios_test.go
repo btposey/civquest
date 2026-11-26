@@ -46,6 +46,7 @@ func replayScenarios() []replayScenario {
 		scenarioBurningHoldsUntilExtinguished(),
 		scenarioZombieEngagementHeldOnce(),
 		scenarioSettlementBuildsRecommendedBlueprint(),
+		scenarioNineLogTrunkHarvestedToReach(),
 	}
 }
 
@@ -495,6 +496,40 @@ func scenarioSleepBedUnreachableBlacklists() replayScenario {
 			}
 			if tr[4].Probe != "bedAssigned=true unreachable=true" || tr[5].Probe != "bedAssigned=false unreachable=true" {
 				t.Fatalf("two terrain give-ups must blacklist the bed and clear the assignment: %s / %s", tr[4], tr[5])
+			}
+		},
+	}
+}
+
+// cq-gpa.9: a 9-log trunk worked from directly beside it is felled bottom-up up
+// to the eye's real reach (y+6); the top two logs are left (ladders: cq-3a0).
+func scenarioNineLogTrunkHarvestedToReach() replayScenario {
+	trunk := func(from, to int32) []*civquestv1.VisibleBlock {
+		var out []*civquestv1.VisibleBlock
+		for y := from; y <= to; y++ {
+			out = append(out, blk(0, y, 0, "minecraft:oak_log"))
+		}
+		return out
+	}
+	at := withPos(1.5, 64, 0.5)
+	return replayScenario{
+		Name: "nine_log_trunk_harvested_to_eye_reach", Stage: StageBootstrap, Profession: "EXPLORER",
+		Steps: []replayStep{
+			{Frame: rf(100, 3000, at, withBlocks(trunk(64, 72)...)), Annotation: "all nine present: break bottom log y=64"},
+			{Frame: rf(125, 3000, at, withBlocks(trunk(65, 72)...)), Annotation: "bottom-up: y=65"},
+			{Frame: rf(150, 3000, at, withBlocks(trunk(68, 72)...)), Annotation: "y=68 (old feet-centre reach stopped at y+4=68)"},
+			{Frame: rf(175, 3000, at, withBlocks(trunk(69, 72)...)), Annotation: "y=69 now reachable (eye reach)"},
+			{Frame: rf(200, 3000, at, withBlocks(trunk(70, 72)...)), Annotation: "y=70 = y+6, last reachable log"},
+			{Frame: rf(225, 3000, at, withBlocks(trunk(71, 72)...)), Annotation: "only y=71,72 left: out of reach, left standing"},
+		},
+		Check: func(t *testing.T, tr []replayRecord) {
+			for i, y := range []int{64, 65, 68, 69, 70} {
+				if !hasIntentPrefix(tr[i], fmt.Sprintf("Interact(HARVEST_BREAK 0,%d,0", y)) {
+					t.Fatalf("step %d: expected HARVEST_BREAK at y=%d: %s", i, y, tr[i])
+				}
+			}
+			if hasIntentPrefix(tr[5], "Interact(HARVEST_BREAK") {
+				t.Fatalf("y=71/72 are out of reach and must not be targeted: %s", tr[5])
 			}
 		},
 	}

@@ -403,3 +403,111 @@ func TestHarvestTreeTask_IgnoresZeroDisplacementCompletedAndBlacklistsOnFail(t *
 		t.Fatalf("expected IsUnachievable to abort blacklisted tree immediately, got %+v", res4)
 	}
 }
+
+func nineLogTrunk(x, z int32, y0 int32, n int32) []*civquestv1.VisibleBlock {
+	var out []*civquestv1.VisibleBlock
+	for y := y0; y < y0+n; y++ {
+		out = append(out, &civquestv1.VisibleBlock{Pos: &civquestv1.BlockPosProto{X: x, Y: y, Z: z}, BlockId: "minecraft:oak_log"})
+	}
+	return out
+}
+
+// cq-gpa.9: from the ground beside a 9-log trunk the eye (1.62) reaches the
+// nearest point of logs up to y+6, not just y+4; the top two are left.
+func TestScanTreeClusterLogs_NineLogTrunkReachFromGround(t *testing.T) {
+	frame := &civquestv1.TelemetryFrame{
+		WorldTick:         100,
+		Status:            &civquestv1.AgentStatus{Position: &civquestv1.Vec3{X: 1.5, Y: 64, Z: 0.5}},
+		InterestingBlocks: nineLogTrunk(0, 0, 64, 9),
+	}
+	total, reachable, _, _, _ := scanTreeClusterLogs(frame, 0, 64, 0, 4.5, "oak")
+	if total != 9 {
+		t.Fatalf("total=%d want 9", total)
+	}
+	got := map[int32]bool{}
+	for _, b := range reachable {
+		got[b.Pos.Y] = true
+	}
+	for y := int32(64); y <= 70; y++ {
+		if !got[y] {
+			t.Errorf("log y=%d must be reachable from the ground", y)
+		}
+	}
+	if got[71] || got[72] || len(reachable) != 7 {
+		t.Errorf("y=71/72 must stay unreachable; reachable=%d", len(reachable))
+	}
+}
+
+func TestHarvestTreeTask_NineLogTrunkBottomUpThenLeavesUnreachable(t *testing.T) {
+	tx, ty, tz := int32(0), int32(64), int32(0)
+	task := NewHarvestTreeTask(tx, ty, tz, StageBootstrap, 100)
+	state := NewAgentState()
+	rigStart(state, task)
+
+	logs := nineLogTrunk(tx, tz, ty, 9)
+	var order []int32
+	tick := int64(100)
+	for len(logs) > 0 {
+		frame := &civquestv1.TelemetryFrame{
+			WorldTick: tick,
+			Status: &civquestv1.AgentStatus{
+				Position:        &civquestv1.Vec3{X: 1.5, Y: 64, Z: 0.5},
+				NavigationState: civquestv1.NavigationState_NAVIGATION_STATE_IDLE,
+			},
+			InterestingBlocks: logs,
+		}
+		res := rigStep(state, "agent", frame)
+		ib := res.Intent.GetInteractBlock()
+		if ib == nil {
+			break
+		}
+		order = append(order, ib.Pos.Y)
+		logs = logs[1:] // the lowest log (bottom-up) was broken
+		tick += 21
+	}
+	want := []int32{64, 65, 66, 67, 68, 69, 70}
+	if len(order) != len(want) {
+		t.Fatalf("harvest order %v, want %v", order, want)
+	}
+	for i := range want {
+		if order[i] != want[i] {
+			t.Fatalf("harvest order %v, want bottom-up %v", order, want)
+		}
+	}
+	// y=71,72 remain, out of reach: the task completes and leaves them (ladders are cq-3a0).
+	frame := &civquestv1.TelemetryFrame{
+		WorldTick: tick + 100,
+		Status: &civquestv1.AgentStatus{
+			Position: &civquestv1.Vec3{X: 1.5, Y: 64, Z: 0.5},
+		},
+		InterestingBlocks: logs,
+	}
+	if len(logs) != 2 {
+		t.Fatalf("expected 2 leftover logs, got %d", len(logs))
+	}
+	res := rigStep(state, "agent", frame)
+	if res.Intent != nil || state.HasActiveTask() {
+		t.Fatalf("expected task to finish leaving unreachable logs, got %+v active=%v", res, state.HasActiveTask())
+	}
+}
+
+// Approaching a tall trunk from afar targets the trunk base (not the airborne
+// log) so the agent ends up standing under it.
+func TestHarvestTreeTask_ApproachStandsAtTrunkBase(t *testing.T) {
+	task := NewHarvestTreeTask(0, 64, 0, StageBootstrap, 100)
+	state := NewAgentState()
+	rigStart(state, task)
+	frame := &civquestv1.TelemetryFrame{
+		WorldTick: 100,
+		Status: &civquestv1.AgentStatus{
+			Position:        &civquestv1.Vec3{X: 20.5, Y: 64, Z: 0.5},
+			NavigationState: civquestv1.NavigationState_NAVIGATION_STATE_IDLE,
+		},
+		InterestingBlocks: nineLogTrunk(0, 0, 64, 9),
+	}
+	res := rigStep(state, "agent", frame)
+	nav := res.Intent.GetNavigate()
+	if nav == nil || nav.Target.Y != 64 {
+		t.Fatalf("expected navigate to trunk base y=64, got %+v", res.Intent)
+	}
+}

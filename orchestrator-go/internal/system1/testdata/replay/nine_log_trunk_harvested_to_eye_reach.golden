@@ -1,0 +1,6 @@
+t=100 stage=BOOTSTRAP routine=HARVEST_TREE stack=[bootstrap/1] intents=[Interact(HARVEST_BREAK 0,64,0 minecraft:oak_log)]  // all nine present: break bottom log y=64
+t=125 stage=BOOTSTRAP routine=HARVEST_TREE stack=[task_subroutine/2] intents=[Interact(HARVEST_BREAK 0,65,0 minecraft:oak_log)]  // bottom-up: y=65
+t=150 stage=BOOTSTRAP routine=HARVEST_TREE stack=[task_subroutine/2] intents=[Interact(HARVEST_BREAK 0,68,0 minecraft:oak_log)]  // y=68 (old feet-centre reach stopped at y+4=68)
+t=175 stage=BOOTSTRAP routine=HARVEST_TREE stack=[task_subroutine/2] intents=[Interact(HARVEST_BREAK 0,69,0 minecraft:oak_log)]  // y=69 now reachable (eye reach)
+t=200 stage=BOOTSTRAP routine=HARVEST_TREE stack=[task_subroutine/2] intents=[Interact(HARVEST_BREAK 0,70,0 minecraft:oak_log)]  // y=70 = y+6, last reachable log
+t=225 stage=BOOTSTRAP routine=PRIMARY_DUTY stack=[survey/3] intents=[Survey(sectors=36)]  // only y=71,72 left: out of reach, left standing

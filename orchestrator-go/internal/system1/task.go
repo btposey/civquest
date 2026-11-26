@@ -7,6 +7,7 @@ import (
 
 	"github.com/btposey/civquest/orchestrator-go/internal/db"
 	civquestv1 "github.com/btposey/civquest/orchestrator-go/internal/proto/v1"
+	"github.com/btposey/civquest/orchestrator-go/internal/system1/vertical"
 )
 
 // TaskPhase represents the execution phase of a generic TaskFSM / TaskSubroutine.
@@ -50,12 +51,15 @@ type TaskTarget struct {
 
 // TaskDescriptor parameterizes a generic, preemptible TaskFSM / TaskSubroutine.
 type TaskDescriptor struct {
-	ID                 string
-	Kind               string
-	Stage              Stage
-	Routine            Routine
-	Target             TaskTarget
-	ReachRadius        float64
+	ID          string
+	Kind        string
+	Stage       Stage
+	Routine     Routine
+	Target      TaskTarget
+	ReachRadius float64
+	// EyeReach measures "within reach" of a block sub-target as vanilla does
+	// (eye to nearest point of the block AABB) instead of feet to block centre.
+	EyeReach           bool
 	ArrivalTolerance   int32
 	ActionCooldown     int64
 	ProgressTimeout    int64
@@ -415,7 +419,12 @@ func (t *TaskSubroutine) TickWithReceipt(agentID string, state *AgentState, fram
 	if t.ApproachBestDistSq <= 0 {
 		t.ApproachBestDistSq = distSq
 	}
-	if t.Phase != TaskPhasePrepare && t.Phase != TaskPhaseAct && distSq > reach*reach {
+	inReach := distSq <= reach*reach
+	if !inReach && t.Spec.EyeReach && t.ActiveSubTarget != nil {
+		inReach = vertical.ReachableAABB(vertical.Vec3{X: pos.X, Y: pos.Y, Z: pos.Z}, vertical.DefaultEyeHeight, reach,
+			vertical.Cell{X: int(t.ActiveSubTarget.X), Y: int(t.ActiveSubTarget.Y), Z: int(t.ActiveSubTarget.Z)})
+	}
+	if t.Phase != TaskPhasePrepare && t.Phase != TaskPhaseAct && !inReach {
 		t.Phase = TaskPhaseApproach
 		navState := frame.Status.NavigationState
 		if navState == civquestv1.NavigationState_NAVIGATION_STATE_PATHING {
@@ -675,7 +684,6 @@ func scanTreeClusterLogs(
 		pos = &civquestv1.Vec3{X: float64(tx) + 0.5, Y: float64(anchorY), Z: float64(tz) + 0.5}
 	}
 
-	reachSq := reachRadius * reachRadius
 	bestDistSq := math.MaxFloat64
 	minY := int32(math.MaxInt32)
 	maxY := int32(math.MinInt32)
@@ -717,7 +725,10 @@ func scanTreeClusterLogs(
 		by := float64(b.Pos.Y) + 0.5 - pos.Y
 		bz := float64(b.Pos.Z) + 0.5 - pos.Z
 		dSq := bx*bx + by*by + bz*bz
-		if dSq <= reachSq {
+		// Vanilla reach: eye to nearest point of the block AABB (cq-gpa.9), so a
+		// trunk worked from directly underneath is harvestable to ~y+6.
+		if vertical.ReachableAABB(vertical.Vec3{X: pos.X, Y: pos.Y, Z: pos.Z}, vertical.DefaultEyeHeight, reachRadius,
+			vertical.Cell{X: int(b.Pos.X), Y: int(b.Pos.Y), Z: int(b.Pos.Z)}) {
 			reachableLogs = append(reachableLogs, b)
 		}
 		if dSq < bestDistSq {
@@ -761,6 +772,7 @@ func NewHarvestTreeTask(tx, ty, tz int32, stage Stage, startTick int64) *TaskSub
 		Stage:            stage,
 		Routine:          RoutineHarvestTree,
 		ReachRadius:      treeReach,
+		EyeReach:         true,
 		ArrivalTolerance: 2,
 		ActionCooldown:   20,
 		ProgressTimeout:  harvestTimeoutTicks,
@@ -817,8 +829,10 @@ func NewHarvestTreeTask(tx, ty, tz int32, stage Stage, startTick int64) *TaskSub
 				return true
 			}
 			if frame != nil && frame.Status != nil && frame.Status.Position != nil {
-				curDistSq := distanceSqToSubTarget(frame.Status.Position, nil, current.ActiveSubTarget)
-				if curDistSq > treeReach*treeReach {
+				p := frame.Status.Position
+				curReach := vertical.ReachableAABB(vertical.Vec3{X: p.X, Y: p.Y, Z: p.Z}, vertical.DefaultEyeHeight, treeReach,
+					vertical.Cell{X: int(current.ActiveSubTarget.X), Y: int(current.ActiveSubTarget.Y), Z: int(current.ActiveSubTarget.Z)})
+				if !curReach {
 					_, reachableLogs, _, _, _ := scanTreeClusterLogs(frame, tx, ty, tz, treeReach, woodFamily)
 					if len(reachableLogs) > 0 {
 						return true
@@ -843,8 +857,13 @@ func NewHarvestTreeTask(tx, ty, tz int32, stage Stage, startTick int64) *TaskSub
 					}
 				}
 			}
-			isTallMode := isTall
-			if current != nil {
+			// Bottom-up from the ground (the agent stands under the trunk); top-down
+			// felling is only for an agent already elevated on a ladder/scaffold
+			// (cq-3a0). Logs beyond reach from the ground are simply left.
+			elevated := frame != nil && frame.Status != nil && frame.Status.Position != nil &&
+				frame.Status.Position.Y > float64(ty)+1.0
+			isTallMode := isTall && elevated
+			if current != nil && elevated {
 				if isTall {
 					current.Metadata["is_tall"] = "true"
 				} else if current.Metadata["is_tall"] == "true" {
@@ -884,17 +903,27 @@ func NewHarvestTreeTask(tx, ty, tz int32, stage Stage, startTick int64) *TaskSub
 					}
 				}
 			} else if totalInCluster > 0 {
-				if isTallMode && apexLog != nil {
+				underTrunk := frame != nil && frame.Status != nil && frame.Status.Position != nil &&
+					math.Hypot(float64(tx)+0.5-frame.Status.Position.X, float64(tz)+0.5-frame.Status.Position.Z) <= 2.5
+				switch {
+				case !elevated && underTrunk:
+					// Already standing under the trunk: the rest is out of reach; leave it (ladders: cq-3a0).
+				case isTallMode && apexLog != nil:
 					chosen = apexLog
-				} else {
+				default:
 					chosen = nearestLog
 				}
 			}
 
 			if chosen != nil && chosen.Pos != nil {
+				approachY := float64(chosen.Pos.Y)
+				if !elevated && chosen.Pos.Y > ty {
+					// Stand at the trunk base so the eye can reach up the trunk.
+					approachY = float64(ty)
+				}
 				approach := &civquestv1.Vec3{
 					X: float64(chosen.Pos.X) + 0.5,
-					Y: float64(chosen.Pos.Y),
+					Y: approachY,
 					Z: float64(chosen.Pos.Z) + 0.5,
 				}
 				return approach, chosen.Pos, chosen.BlockId, true

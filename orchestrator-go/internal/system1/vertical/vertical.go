@@ -67,12 +67,41 @@ func FeetAt(c Cell) Vec3 { return Vec3{float64(c.X) + 0.5, float64(c.Y), float64
 
 // Reachable reports whether the centre of block target is within reach of an
 // agent standing at feet with the given eye height. Distance is inclusive
-// (exactly == reach is reachable).
+// (exactly == reach is reachable). This conservative centre test drives the
+// ladder planner; vanilla block reach is ReachableAABB.
 func Reachable(feet Vec3, eyeHeight, reach float64, target Cell) bool {
 	dx := float64(target.X) + 0.5 - feet.X
 	dy := float64(target.Y) + 0.5 - (feet.Y + eyeHeight)
 	dz := float64(target.Z) + 0.5 - feet.Z
 	return dx*dx+dy*dy+dz*dz <= reach*reach+1e-9
+}
+
+// ReachableAABB mirrors vanilla: the distance is measured from the eye
+// (feet + eyeHeight) to the NEAREST POINT of the block's AABB, inclusive. The
+// Java mod's BlockBreaker.withinReach implements the same predicate; both are
+// pinned by testdata/reach/block_reach.json.
+func ReachableAABB(feet Vec3, eyeHeight, reach float64, target Cell) bool {
+	return DistSqToBlock(feet, eyeHeight, target) <= reach*reach+1e-9
+}
+
+// DistSqToBlock is the squared distance from the eye (feet + eyeHeight) to the
+// nearest point of target's unit AABB.
+func DistSqToBlock(feet Vec3, eyeHeight float64, target Cell) float64 {
+	dx := nearestAxis(feet.X, float64(target.X))
+	dy := nearestAxis(feet.Y+eyeHeight, float64(target.Y))
+	dz := nearestAxis(feet.Z, float64(target.Z))
+	return dx*dx + dy*dy + dz*dz
+}
+
+// nearestAxis is the distance from p to the interval [lo, lo+1].
+func nearestAxis(p, lo float64) float64 {
+	if p < lo {
+		return lo - p
+	}
+	if p > lo+1 {
+		return p - lo - 1
+	}
+	return 0
 }
 
 // ReachInput configures ReachDecision.
@@ -81,6 +110,9 @@ type ReachInput struct {
 	Agent     Vec3    // feet position the agent will work from
 	EyeHeight float64 // default DefaultEyeHeight
 	Reach     float64 // default DefaultReach
+	// AABB selects the vanilla nearest-point-of-block test (ReachableAABB)
+	// instead of the conservative block-centre test (Reachable).
+	AABB bool
 }
 
 func (in ReachInput) eye() float64 {
@@ -106,7 +138,11 @@ type ReachDecision struct {
 func DecideReach(in ReachInput) ReachDecision {
 	var un []Cell
 	for _, t := range in.Targets {
-		if !Reachable(in.Agent, in.eye(), in.reach(), t) {
+		ok := Reachable
+		if in.AABB {
+			ok = ReachableAABB
+		}
+		if !ok(in.Agent, in.eye(), in.reach(), t) {
 			un = append(un, t)
 		}
 	}

@@ -655,11 +655,12 @@ func TestHarvestTreeTask_StrictColumnCommitmentAndReachability(t *testing.T) {
 		t.Fatalf("expected continued HARVEST_BREAK on locked trunk (4,65,0), got %+v", intent2)
 	}
 
-	// Condition (a): Suppose only a canopy log above 4.5m reach (Y=70, dist > 4.5m from Y=64) remains in column
-	// Wait: [Y-1..Y+5] is [63..69], so test Y=69 where distance from eye/pos (3.5, 64, 0.5) to (4.5, 69.5, 0.5) is sqrt(1 + 30.25) = 5.59m > 4.5m!
+	// Condition (a): Suppose only a canopy log beyond vanilla reach remains in the column. Reach is eye
+	// (feet+1.62) to the nearest AABB point (cq-gpa.9), so Y=69 would be reachable; Y=72 (bottom face
+	// 6.38m above the eye) is not.
 	frame.WorldTick = 145
 	frame.InterestingBlocks = []*civquestv1.VisibleBlock{
-		{Pos: &civquestv1.BlockPosProto{X: 4, Y: 69, Z: 0}, BlockId: "minecraft:oak_log"},
+		{Pos: &civquestv1.BlockPosProto{X: 4, Y: 72, Z: 0}, BlockId: "minecraft:oak_log"},
 	}
 	// Agent is within 2.5m horizontally of (4, 0) and zero logs remain within 4.5m reach -> task completes and unlocks!
 	_ = EvaluateBootstrapGoals("Logger", frame, cfg, state, rigWalk(state))

@@ -54,7 +54,10 @@ public class InteractHandler implements IntentHandler {
                 if (level == null || !level.hasChunkAt(pos)) {
                     return false;
                 }
-                if (agent.distanceToSqr(pos.getX() + 0.5, pos.getY() + 0.5, pos.getZ() + 0.5) > INTERACT_REACH_SQ) {
+                // Vanilla reach (eye to nearest AABB point, cq-gpa.9) also admits blocks the centre test
+                // rejects, e.g. trunk logs at y+6 from directly beside the trunk.
+                if (agent.distanceToSqr(pos.getX() + 0.5, pos.getY() + 0.5, pos.getZ() + 0.5) > INTERACT_REACH_SQ
+                        && !com.civquest.mod.actuator.BlockBreaker.withinReach(agent.getX(), agent.getEyeY(), agent.getZ(), pos)) {
                     return false;
                 }
                 BlockState state = level.getBlockState(pos);

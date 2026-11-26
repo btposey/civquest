@@ -1101,7 +1101,8 @@ func TestIntegration_StuckHarvestTaskAndUnstuckQueueDrain_BlacklistsAndEscapes(t
 
 	carl := newActuatorSimAgent(
 		t, "carl", "pioneers",
-		civquestv1.Vec3{X: -40.5, Y: 86.0, Z: -7.5},
+		// Start 5.5m from the trunk's near face so it is genuinely out of vanilla reach (cq-gpa.9: eye to nearest AABB point).
+		civquestv1.Vec3{X: -39.5, Y: 86.0, Z: -7.5},
 		res, sockDir, nil, nil, world,
 	)
 	defer carl.close()

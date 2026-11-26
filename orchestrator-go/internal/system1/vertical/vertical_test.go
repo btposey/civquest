@@ -1,8 +1,11 @@
 package vertical
 
 import (
+	"encoding/json"
 	"fmt"
 	"math"
+	"os"
+	"path/filepath"
 	"reflect"
 	"testing"
 )
@@ -405,4 +408,45 @@ func TestVerticalAccess(t *testing.T) {
 		t.Fatal("low target is reachable from ground")
 	}
 	_ = math.Pi
+}
+
+// TestReachableAABBContract replays the shared Go/Java block-reach fixture
+// (cq-gpa.9). Java's BlockBreakerReachTest asserts the same file.
+func TestReachableAABBContract(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join("..", "..", "..", "test", "integration", "testdata", "reach", "block_reach.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var fx struct {
+		EyeHeight float64 `json:"eyeHeight"`
+		Reach     float64 `json:"reach"`
+		Cases     []struct {
+			Name      string     `json:"name"`
+			Feet      [3]float64 `json:"feet"`
+			Block     [3]int     `json:"block"`
+			Reachable bool       `json:"reachable"`
+		} `json:"cases"`
+	}
+	if err := json.Unmarshal(raw, &fx); err != nil {
+		t.Fatal(err)
+	}
+	if fx.EyeHeight != DefaultEyeHeight || fx.Reach != DefaultReach {
+		t.Fatalf("fixture constants drifted from defaults: %v %v", fx.EyeHeight, fx.Reach)
+	}
+	for _, c := range fx.Cases {
+		feet := Vec3{c.Feet[0], c.Feet[1], c.Feet[2]}
+		cell := Cell{c.Block[0], c.Block[1], c.Block[2]}
+		if got := ReachableAABB(feet, fx.EyeHeight, fx.Reach, cell); got != c.Reachable {
+			t.Errorf("%s: ReachableAABB=%v want %v", c.Name, got, c.Reachable)
+		}
+	}
+}
+
+func TestDecideReachAABBCoversNineLogTrunk(t *testing.T) {
+	targets := trunk(0, 0, 64, 9)
+	feet := Vec3{1.5, 64, 0.5}
+	aabb := DecideReach(ReachInput{Targets: targets, Agent: feet, AABB: true})
+	if aabb.FromGround || len(aabb.Unreachable) != 2 || aabb.Unreachable[0].Y != 72 || aabb.Unreachable[1].Y != 71 {
+		t.Fatalf("want only y=72,71 unreachable, got %+v", aabb.Unreachable)
+	}
 }

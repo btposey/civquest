@@ -15,7 +15,34 @@ import net.minecraft.world.level.block.state.BlockState;
  * and finally destroys the block. Refuses fluids, lava-adjacent blocks, bedrock and void edges.
  */
 public class BlockBreaker {
-    private static final double REACH_SQ = 20.25;
+    /** Vanilla survival block interaction range, measured from the eye to the nearest point of the block. */
+    public static final double REACH = 4.5;
+
+    /**
+     * Vanilla reach predicate: squared distance from the eye to the nearest point of {@code p}'s unit AABB is
+     * within {@link #REACH}. Mirrors Go {@code vertical.ReachableAABB}; both are pinned by the shared fixture
+     * {@code orchestrator-go/test/integration/testdata/reach/block_reach.json} (cq-gpa.9).
+     */
+    public static boolean withinReach(double eyeX, double eyeY, double eyeZ, BlockPos p) {
+        double dx = nearestAxis(eyeX, p.getX());
+        double dy = nearestAxis(eyeY, p.getY());
+        double dz = nearestAxis(eyeZ, p.getZ());
+        return dx * dx + dy * dy + dz * dz <= REACH * REACH + 1e-9;
+    }
+
+    private static double nearestAxis(double v, double lo) {
+        if (v < lo) {
+            return lo - v;
+        }
+        if (v > lo + 1.0) {
+            return v - lo - 1.0;
+        }
+        return 0.0;
+    }
+
+    private static boolean agentWithinReach(AgentEntity agent, BlockPos p) {
+        return withinReach(agent.getX(), agent.getEyeY(), agent.getZ(), p);
+    }
 
     private final AgentEntity agent;
     private BlockPos pos;
@@ -117,7 +144,7 @@ public class BlockBreaker {
         if (!isBreakable(level, target)) {
             return false;
         }
-        if (agent.distanceToSqr(target.getX() + 0.5, target.getY() + 0.5, target.getZ() + 0.5) > REACH_SQ) {
+        if (!agentWithinReach(agent, target)) {
             return false;
         }
         if (target.equals(pos)) {
@@ -152,7 +179,7 @@ public class BlockBreaker {
         if (!isBreakable(level, target)) {
             return false;
         }
-        if (agent.distanceToSqr(target.getX() + 0.5, target.getY() + 0.5, target.getZ() + 0.5) > REACH_SQ) {
+        if (!agentWithinReach(agent, target)) {
             return false;
         }
         cancel();
@@ -196,7 +223,7 @@ public class BlockBreaker {
         }
         Level level = agent.level();
         if (level == null || !isBreakable(level, pos)
-                || agent.distanceToSqr(pos.getX() + 0.5, pos.getY() + 0.5, pos.getZ() + 0.5) > REACH_SQ) {
+                || !agentWithinReach(agent, pos)) {
             cancel();
             return false;
         }

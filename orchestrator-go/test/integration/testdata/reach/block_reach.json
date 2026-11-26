@@ -1,0 +1,20 @@
+{
+  "_comment": "cq-gpa.9 contract: eye-to-nearest-AABB-point block reach. Consumed by Go vertical.ReachableAABB and Java BlockBreaker.withinReach; both must agree on every case.",
+  "eyeHeight": 1.62,
+  "reach": 4.5,
+  "cases": [
+    {"name": "adjacent_base_log", "feet": [1.5, 64.0, 0.5], "block": [0, 64, 0], "reachable": true},
+    {"name": "adjacent_y_plus_4", "feet": [1.5, 64.0, 0.5], "block": [0, 68, 0], "reachable": true},
+    {"name": "adjacent_y_plus_5", "feet": [1.5, 64.0, 0.5], "block": [0, 69, 0], "reachable": true},
+    {"name": "adjacent_y_plus_6_top_of_reach", "feet": [1.5, 64.0, 0.5], "block": [0, 70, 0], "reachable": true},
+    {"name": "adjacent_y_plus_7", "feet": [1.5, 64.0, 0.5], "block": [0, 71, 0], "reachable": false},
+    {"name": "adjacent_y_plus_8", "feet": [1.5, 64.0, 0.5], "block": [0, 72, 0], "reachable": false},
+    {"name": "directly_below_trunk_y_plus_6", "feet": [0.5, 63.0, 0.5], "block": [0, 69, 0], "reachable": true},
+    {"name": "directly_below_trunk_y_plus_7", "feet": [0.5, 63.0, 0.5], "block": [0, 70, 0], "reachable": false},
+    {"name": "horizontal_edge_exact", "feet": [0.5, 64.0, 0.5], "block": [5, 65, 0], "reachable": true},
+    {"name": "horizontal_just_beyond", "feet": [0.5, 64.0, 0.5], "block": [6, 65, 0], "reachable": false},
+    {"name": "diagonal_far_corner", "feet": [0.5, 64.0, 0.5], "block": [4, 66, 4], "reachable": false},
+    {"name": "block_below_feet", "feet": [0.5, 64.0, 0.5], "block": [0, 61, 0], "reachable": true},
+    {"name": "block_far_below_feet", "feet": [0.5, 64.0, 0.5], "block": [0, 57, 0], "reachable": false}
+  ]
+}
