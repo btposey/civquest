@@ -40,7 +40,8 @@ func TestDetectBlockHazard(t *testing.T) {
 	})
 	t.Run("void edge: at border over a deep drop", func(t *testing.T) {
 		h := detectBlockHazard(bhFrame(0.9, 64, 0.5, false, ground, [4]any{-1, 63, 0, "minecraft:stone"}))
-		if h == nil || h.Kind != blockHazardVoidEdge || h.Target.X != 0.5 {
+		// Farther than the arrival tolerance, or the navigator would not move at all (cq-6l3.1).
+		if h == nil || h.Kind != blockHazardVoidEdge || h.Target.X != -0.5 || h.Target.Z != 0.5 {
 			t.Fatalf("got %+v", h)
 		}
 	})

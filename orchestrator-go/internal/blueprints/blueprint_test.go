@@ -433,3 +433,23 @@ func TestBlueprint_MultiBlockBOMAccounting(t *testing.T) {
 
 // Silence unused import in test if needed
 var _ = os.PathSeparator
+
+// cq-6l3.1: the navigator treats a target within the arrival tolerance (1) as reached, so a
+// shorter step back left the builder re-sending it for minutes.
+func TestCalculateCabinStepBackAlwaysMovesTheAgent(t *testing.T) {
+	center := &civquestv1.BlockPosProto{X: 0, Y: 64, Z: 0}
+	voxel := &civquestv1.BlockPosProto{X: 2, Y: 64, Z: 0}
+	for _, x := range []float64{1.6, 2.5, 2.9, 3.4, 3.5} {
+		pos := &civquestv1.Vec3{X: x, Y: 64, Z: 0.5}
+		to := CalculateCabinStepBack(pos, voxel, center)
+		if d := math.Hypot(to.X-pos.X, to.Z-pos.Z); d < CabinStepBackMinDist-0.1 {
+			t.Errorf("from x=%v: step of %.2f blocks to (%v,%v)", x, d, to.X, to.Z)
+		}
+		// Even stopping one block short of the target leaves the voxel clear.
+		d := math.Hypot(to.X-pos.X, to.Z-pos.Z)
+		stop := &civquestv1.Vec3{X: to.X - (to.X-pos.X)/d, Y: 64, Z: to.Z - (to.Z-pos.Z)/d}
+		if IsCollidingWithVoxel(stop, voxel) {
+			t.Errorf("from x=%v: still colliding at (%v,%v)", x, stop.X, stop.Z)
+		}
+	}
+}

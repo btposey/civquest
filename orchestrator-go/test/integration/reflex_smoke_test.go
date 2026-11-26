@@ -118,8 +118,9 @@ func TestIntegration_Reflex_BlockHazards(t *testing.T) {
 		f.Status.Position = &civquestv1.Vec3{X: 0.9, Y: 64, Z: 0.5}
 		f.InterestingBlocks = []*civquestv1.VisibleBlock{block(0, 63, 0, "minecraft:stone"), block(-1, 63, 0, "minecraft:stone")}
 		n := firstNav(newReflexRuntime(t, "voidedge"), f)
-		if n == nil || n.Target.X != 0.5 {
-			t.Fatalf("must step back to the cell centre, got %v", n)
+		// Past the cell centre by the arrival tolerance, or the navigator would not move (cq-6l3.1).
+		if n == nil || n.Target.X != -0.5 || n.ArrivalTolerance != 1 {
+			t.Fatalf("must step back from the drop, got %v", n)
 		}
 	})
 	t.Run("Suffocation", func(t *testing.T) {

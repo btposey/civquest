@@ -450,6 +450,9 @@ func evaluateDuskNightOutpostShelterLocked(
 		// If pos is within 1.0 block horizontally and vertically of target.GetTargetVoxel(),
 		// emit a micro-step NavigateIntent to step back outside the construction boundary.
 		if targetVoxel := target.GetTargetVoxel(); targetVoxel != nil && blueprints.IsCollidingWithVoxel(pos, targetVoxel) {
+			if frame.Status.NavigationState == civquestv1.NavigationState_NAVIGATION_STATE_PATHING {
+				return nil // already stepping back
+			}
 			stepBackPos := blueprints.CalculateCabinStepBack(pos, targetVoxel, prog.Pos)
 			walk.lastExploreTick = frame.WorldTick
 			return &civquestv1.AgentIntent{

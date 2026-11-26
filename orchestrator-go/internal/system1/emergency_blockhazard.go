@@ -41,6 +41,8 @@ const (
 	// voidEdgeMargin: distance (blocks) from the cell border toward the drop that counts as about
 	// to step off; wider margins fire on ordinary walking along a ledge. Design budget.
 	voidEdgeMargin = 0.15
+	// hazardArrivalTolerance is the arrival tolerance, in blocks, of a block-hazard escape.
+	hazardArrivalTolerance = 1
 	// contactEscapeDistance: how far away from contact hazards to retreat.
 	contactEscapeDistance = 3.0
 	// eyeHeight is the standing eye offset used for the suffocation cell.
@@ -167,6 +169,8 @@ func detectBlockHazard(f *civquestv1.TelemetryFrame) *blockHazard {
 	}
 	if sampled && at(fx, fy-1, fz) != "" {
 		fracX, fracZ := p.X-float64(fx)-0.5, p.Z-float64(fz)-0.5
+		var awayX, awayZ float64
+		atEdge := false
 		for _, d := range horizontalDirs {
 			off := fracX*float64(d[0]) + fracZ*float64(d[1])
 			if off < 0.5-voidEdgeMargin {
@@ -174,8 +178,18 @@ func detectBlockHazard(f *civquestv1.TelemetryFrame) *blockHazard {
 			}
 			x, z := fx+d[0], fz+d[1]
 			if at(x, fy, z) == "" && at(x, fy+1, z) == "" && columnEmpty(x, z) {
-				return &blockHazard{Kind: blockHazardVoidEdge, Target: &civquestv1.Vec3{X: float64(fx) + 0.5, Y: float64(fy), Z: float64(fz) + 0.5}}
+				atEdge = true
+				awayX -= float64(d[0])
+				awayZ -= float64(d[1])
 			}
+		}
+		if atEdge {
+			// Aim past the cell centre, away from the drop: the navigator calls a target within the
+			// arrival tolerance reached without moving, and the centre is closer than that
+			// (cq-6l3.1). Walking stops one tolerance short, at about the centre.
+			return &blockHazard{Kind: blockHazardVoidEdge, Target: &civquestv1.Vec3{
+				X: float64(fx) + 0.5 + awayX*hazardArrivalTolerance, Y: float64(fy), Z: float64(fz) + 0.5 + awayZ*hazardArrivalTolerance,
+			}}
 		}
 	}
 	return nil
@@ -201,6 +215,6 @@ func blockHazardIntent(agentID string, f *civquestv1.TelemetryFrame, h *blockHaz
 		return nil
 	}
 	return &civquestv1.AgentIntent{AgentId: agentID, Action: &civquestv1.AgentIntent_Navigate{Navigate: &civquestv1.NavigateIntent{
-		Target: h.Target, SpeedMultiplier: 1.2,
+		Target: h.Target, SpeedMultiplier: 1.2, ArrivalTolerance: hazardArrivalTolerance,
 	}}}
 }

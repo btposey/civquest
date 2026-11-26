@@ -398,6 +398,10 @@ func IsCollidingWithVoxel(pos *civquestv1.Vec3, targetVoxel *civquestv1.BlockPos
 	return hDist <= 1.0 && vDist <= 1.0
 }
 
+// CabinStepBackMinDist is the shortest step back worth sending: past the arrival tolerance of 1
+// with room to clear the voxel.
+const CabinStepBackMinDist = 2.5
+
 // CalculateCabinStepBack computes a micro-step waypoint positioned outside the 5x5 construction boundary
 // when the agent is within collision range of targetVoxel during shelter construction.
 func CalculateCabinStepBack(pos *civquestv1.Vec3, targetVoxel *civquestv1.BlockPosProto, shelterCenter *civquestv1.BlockPosProto) *civquestv1.Vec3 {
@@ -439,9 +443,14 @@ func CalculateCabinStepBack(pos *civquestv1.Vec3, targetVoxel *civquestv1.BlockP
 
 	// Step back outside the 5x5 construction boundary (half-width 2.5, place at 3.5)
 	const boundaryRadius = 3.5
+	x, z := cx+normX*boundaryRadius, cz+normZ*boundaryRadius
+	// A move within the navigator's arrival tolerance never happens (cq-6l3.1).
+	if math.Hypot(x-pos.X, z-pos.Z) < CabinStepBackMinDist {
+		x, z = pos.X+normX*CabinStepBackMinDist, pos.Z+normZ*CabinStepBackMinDist
+	}
 	return &civquestv1.Vec3{
-		X: math.Round((cx+normX*boundaryRadius)*10) / 10,
+		X: math.Round(x*10) / 10,
 		Y: cy,
-		Z: math.Round((cz+normZ*boundaryRadius)*10) / 10,
+		Z: math.Round(z*10) / 10,
 	}
 }
