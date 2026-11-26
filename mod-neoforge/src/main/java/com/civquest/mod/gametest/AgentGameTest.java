@@ -742,7 +742,11 @@ public class AgentGameTest {
         // 5. SLEEP_IN_BED and WAKE_UP (requires night time or thundering)
         BlockPos localBed = new BlockPos(1, 1, 0);
         BlockPos absBed = helper.absolutePos(localBed);
-        helper.setBlock(localBed, Blocks.RED_BED);
+        helper.setBlock(localBed, Blocks.RED_BED.defaultBlockState()
+                .setValue(net.minecraft.world.level.block.BedBlock.FACING, net.minecraft.core.Direction.EAST));
+        helper.setBlock(localBed.east(), Blocks.RED_BED.defaultBlockState()
+                .setValue(net.minecraft.world.level.block.BedBlock.FACING, net.minecraft.core.Direction.EAST)
+                .setValue(net.minecraft.world.level.block.BedBlock.PART, net.minecraft.world.level.block.state.properties.BedPart.HEAD));
         level.setDayTime(13000L); // Set to night
         level.setThunderLevel(1.0F);
         level.setRainLevel(1.0F);
@@ -1718,6 +1722,85 @@ public class AgentGameTest {
             level.setRainLevel(0.0f);
         }
         manager.despawnAgent(server, "agent-gt-sleep").join();
+        helper.succeed();
+    }
+
+    private static void interactAt(GameTestHelper helper, AgentEntityManager manager, String id, BlockPos rel,
+                                   InteractBlockIntent.InteractionType type, String item) {
+        BlockPos abs = helper.absolutePos(rel);
+        manager.handleIntent(helper.getLevel().getServer(), AgentIntent.newBuilder().setAgentId(id)
+                .setInteractBlock(InteractBlockIntent.newBuilder()
+                        .setPos(BlockPosProto.newBuilder().setX(abs.getX()).setY(abs.getY()).setZ(abs.getZ()).build())
+                        .setInteractionType(type).setBlockOrItemId(item).build())
+                .build()).join();
+    }
+
+    private static boolean isBedPart(GameTestHelper helper, BlockPos rel,
+                                     net.minecraft.world.level.block.state.properties.BedPart part) {
+        var state = helper.getLevel().getBlockState(helper.absolutePos(rel));
+        return state.getBlock() instanceof net.minecraft.world.level.block.BedBlock
+                && state.getValue(net.minecraft.world.level.block.BedBlock.PART) == part;
+    }
+
+    /** A placed bed occupies two blocks and needs room for both (cq-6l3.10). */
+    @GameTest(template = "empty3x3x3")
+    public static void testBedPlacementPlacesBothHalves(GameTestHelper helper) {
+        AgentEntityManager manager = new AgentEntityManager();
+        AgentEntity agent = spawnCoverageAgent(helper, manager, "agent-gt-bed-place", new BlockPos(0, 1, 0));
+        agent.getInventory().add(new ItemStack(Items.WHITE_BED));
+        agent.getInventory().add(new ItemStack(Items.WHITE_BED));
+        var foot = net.minecraft.world.level.block.state.properties.BedPart.FOOT;
+        var head = net.minecraft.world.level.block.state.properties.BedPart.HEAD;
+
+        BlockPos boxed = new BlockPos(1, 1, 1);
+        for (net.minecraft.core.Direction d : net.minecraft.core.Direction.Plane.HORIZONTAL) {
+            helper.setBlock(boxed.relative(d), Blocks.STONE);
+        }
+        interactAt(helper, manager, "agent-gt-bed-place", boxed, InteractBlockIntent.InteractionType.PLACE_BLOCK, "minecraft:white_bed");
+        helper.assertBlockPresent(Blocks.AIR, boxed);
+        helper.assertTrue(countItem(agent, Items.WHITE_BED) == 2, "A bed with no room must stay in the inventory");
+
+        helper.setBlock(boxed.east(), Blocks.AIR);
+        interactAt(helper, manager, "agent-gt-bed-place", boxed, InteractBlockIntent.InteractionType.PLACE_BLOCK, "minecraft:white_bed");
+        helper.assertTrue(isBedPart(helper, boxed, foot), "Foot half expected at the target cell");
+        helper.assertTrue(isBedPart(helper, boxed.east(), head), "Head half expected in the only free neighbour");
+        helper.assertTrue(countItem(agent, Items.WHITE_BED) == 1, "One bed item makes both halves");
+
+        manager.despawnAgent(helper.getLevel().getServer(), "agent-gt-bed-place").join();
+        helper.succeed();
+    }
+
+    /** Sleeping in a half bed completes it, or fails when the other half cannot fit (cq-6l3.10). */
+    @GameTest(template = "empty3x3x3")
+    public static void testSleepCompletesOrRejectsHalfBed(GameTestHelper helper) {
+        ServerLevel level = helper.getLevel();
+        AgentEntityManager manager = new AgentEntityManager();
+        AgentEntity agent = spawnCoverageAgent(helper, manager, "agent-gt-halfbed", new BlockPos(0, 1, 0));
+        BlockPos foot = new BlockPos(1, 1, 1);
+        helper.setBlock(foot.north(), Blocks.STONE);
+        helper.setBlock(foot, Blocks.RED_BED);
+        level.setDayTime(14000L);
+        level.setThunderLevel(1.0f);
+        level.setRainLevel(1.0f);
+        try {
+            // The default state faces north, into the stone.
+            interactAt(helper, manager, "agent-gt-halfbed", foot, InteractBlockIntent.InteractionType.SLEEP_IN_BED, "minecraft:bed");
+            helper.assertFalse(agent.isSleeping(), "No sleeping in a half bed that cannot be completed");
+
+            helper.setBlock(foot.north(), Blocks.AIR); // the update removes the lone foot, so set it again
+            helper.setBlock(foot, Blocks.RED_BED);
+            interactAt(helper, manager, "agent-gt-halfbed", foot, InteractBlockIntent.InteractionType.SLEEP_IN_BED, "minecraft:bed");
+            helper.assertTrue(isBedPart(helper, foot.north(), net.minecraft.world.level.block.state.properties.BedPart.HEAD),
+                    "The missing head must be added");
+            helper.assertTrue(agent.isSleeping(), "Agent must be asleep in the completed bed");
+            BlockPos at = agent.getSleepingPos().orElse(null);
+            helper.assertTrue(at != null && level.getBlockState(at).isBed(level, at, agent),
+                    "The sleeping position must hold a bed, or vanilla wakes the sleeper");
+        } finally {
+            level.setThunderLevel(0.0f);
+            level.setRainLevel(0.0f);
+        }
+        manager.despawnAgent(level.getServer(), "agent-gt-halfbed").join();
         helper.succeed();
     }
 

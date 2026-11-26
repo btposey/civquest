@@ -22,6 +22,7 @@ import net.minecraft.world.item.BlockItem;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.level.Level;
+import net.minecraft.world.level.block.BedBlock;
 import net.minecraft.world.level.block.BellBlock;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.Blocks;
@@ -152,12 +153,20 @@ public class InteractHandler implements IntentHandler {
                     }
                 }
 
+                Direction bedHead = null;
+                if (blockState.getBlock() instanceof BedBlock) {
+                    bedHead = Beds.headDirection(agent, level, pos, requiredFacing(intent.getBlockOrItemId(), blockState));
+                    if (bedHead == null) {
+                        return false;
+                    }
+                }
+
                 if (!agent.isCreative() && slot >= 0) {
                     ItemStack chosen = agent.getInventory().getItem(slot);
                     chosen.shrink(1);
                 }
                 agent.swing(InteractionHand.MAIN_HAND, true);
-                return level.setBlockAndUpdate(pos, blockState);
+                return bedHead != null ? Beds.place(level, pos, blockState, bedHead) : level.setBlockAndUpdate(pos, blockState);
             }
             case RING_BELL -> {
                 if (level != null && level.hasChunkAt(pos)) {
@@ -206,7 +215,16 @@ public class InteractHandler implements IntentHandler {
         if (!agent.isCreative() && findMatchingBlockItemSlot(agent, state, intent.getBlockOrItemId()) < 0) {
             return "no matching block item in inventory for " + intent.getBlockOrItemId();
         }
+        if (state.getBlock() instanceof BedBlock
+                && Beds.headDirection(agent, level, pos, requiredFacing(intent.getBlockOrItemId(), state)) == null) {
+            return "no room for the head half of " + intent.getBlockOrItemId();
+        }
         return "";
+    }
+
+    /** The bed facing the intent spelled out, or null to let the placement choose. */
+    private static Direction requiredFacing(String blockId, BlockState bed) {
+        return blockId != null && blockId.contains("facing=") ? bed.getValue(BedBlock.FACING) : null;
     }
 
     int findMatchingBlockItemSlot(AgentEntity agent, BlockState targetState, String requestedId) {

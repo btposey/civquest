@@ -19,7 +19,7 @@ public record Sleep(BlockPos bed, int ticksAsleep, Predicate<AgentEntity> start)
         }
         Sleep started = new Sleep(bed, ticksAsleep, null);
         if (!start.test(agent) && !agent.isSleeping()) {
-            return Outcome.failed(started, "SLEEP_IN_BED failed (out of reach, occupied, or daytime)", null);
+            return Outcome.failed(started, "SLEEP_IN_BED failed (out of reach, occupied, daytime, or half a bed with no room for the rest)", null);
         }
         return Outcome.stay(started);
     }

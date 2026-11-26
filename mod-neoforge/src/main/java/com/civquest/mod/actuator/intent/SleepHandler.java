@@ -46,19 +46,21 @@ public class SleepHandler implements IntentHandler {
 
         BlockPos targetPos = pos;
         if (state.getBlock() instanceof BedBlock) {
-            if (state.hasProperty(BedBlock.PART) && state.getValue(BedBlock.PART) == BedPart.FOOT) {
-                if (state.hasProperty(BedBlock.FACING)) {
-                    targetPos = pos.relative(state.getValue(BedBlock.FACING));
-                }
+            if (state.hasProperty(BedBlock.OCCUPIED) && state.getValue(BedBlock.OCCUPIED)) {
+                return false;
             }
-        }
-
-        BlockState targetState = level.getBlockState(targetPos);
-        if (state.hasProperty(BedBlock.OCCUPIED) && state.getValue(BedBlock.OCCUPIED)) {
-            return false;
-        }
-        if (targetState.hasProperty(BedBlock.OCCUPIED) && targetState.getValue(BedBlock.OCCUPIED)) {
-            return false;
+            // A half bed left by an earlier build is finished here; vanilla would wake a sleeper in it.
+            if (!Beds.isWhole(level, pos, state) && !Beds.complete(agent, level, pos, state)) {
+                return false;
+            }
+            if (state.hasProperty(BedBlock.PART) && state.getValue(BedBlock.PART) == BedPart.FOOT
+                    && state.hasProperty(BedBlock.FACING)) {
+                targetPos = pos.relative(state.getValue(BedBlock.FACING));
+            }
+            BlockState targetState = level.getBlockState(targetPos);
+            if (targetState.hasProperty(BedBlock.OCCUPIED) && targetState.getValue(BedBlock.OCCUPIED)) {
+                return false;
+            }
         }
         if (!level.isNight() && !level.isThundering()) {
             return false;
