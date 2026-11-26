@@ -120,3 +120,36 @@ func TestBedClaim_ContendedAssignmentYields(t *testing.T) {
 		t.Fatalf("bert must not target able's bed, intent=%v", in)
 	}
 }
+
+// A Java bed is two blocks (foot + head = foot+facing) reported as two visible blocks. It is ONE
+// bed: the second agent must not "own" the other half.
+func TestBedClaim_TwoBlockBedHasOneOwner(t *testing.T) {
+	reg := newFakeBedRegistry()
+	frame := func(id string, agentX float64) *civquestv1.TelemetryFrame {
+		f := nightFrameWithPioneerBed(id)
+		f.Status.Position = &civquestv1.Vec3{X: agentX, Y: 64, Z: 0.5}
+		f.InterestingBlocks = []*civquestv1.VisibleBlock{
+			{Pos: &civquestv1.BlockPosProto{X: 5, Y: 64, Z: 0}, BlockId: "minecraft:white_bed", BlockStateString: "facing=east,occupied=false,part=head"},
+			{Pos: &civquestv1.BlockPosProto{X: 4, Y: 64, Z: 0}, BlockId: "minecraft:white_bed", BlockStateString: "facing=east,occupied=false,part=foot"},
+		}
+		return f
+	}
+	able, bert := NewAgentState(), NewAgentState()
+	able.SetBedRegistry(reg)
+	bert.SetBedRegistry(reg)
+	// able stands nearer the head half, bert too: whichever half is nearest, the foot is the key.
+	if b := able.ensureOwnBed("able", frame("able", 7.5)); b == nil || b.X != 4 {
+		t.Fatalf("able should own the bed by its foot block, got %v", b)
+	}
+	if b := bert.ensureOwnBed("bert", frame("bert", 7.5)); b != nil {
+		t.Fatalf("bert must not claim the other half of able's bed, got %v", b)
+	}
+	if _, available := bert.BedAvailableFor("bert", frame("bert", 7.5)); available {
+		t.Fatal("able's bed must not look available to bert")
+	}
+	for _, x := range []int32{4, 5} {
+		if o, _ := reg.BedOwner(x, 64, 0); o != "able" {
+			t.Fatalf("half x=%d owner = %q, want able", x, o)
+		}
+	}
+}
