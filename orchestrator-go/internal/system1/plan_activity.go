@@ -84,6 +84,7 @@ type planLocal struct {
 	Invalid    plan.Invalidation // last invalidation that forced a replan
 	Fails      int               // consecutive failed gather targets
 	Backoff    int64             // tree gathering is not attempted before this tick
+	PlaceTries int               // placements sent since the held item last left the inventory
 }
 
 type planActivity struct{ frameBase }
@@ -376,6 +377,7 @@ func (x *planExec) craft(step plan.Step) (*civquestv1.AgentIntent, bool) {
 
 func (x *planExec) place(step plan.Step) (*civquestv1.AgentIntent, bool) {
 	if x.facts.Inventory[step.Item] <= 0 {
+		x.l.PlaceTries = 0
 		return nil, false
 	}
 	if x.dry {
@@ -386,8 +388,20 @@ func (x *planExec) place(step plan.Step) (*civquestv1.AgentIntent, bool) {
 		return nil, true
 	}
 	st.mem.lastShelterPlaceTick = x.tick
+	// A placement that worked leaves the inventory; one that is still here failed, so try the
+	// next cell, and after the last one stand somewhere else (cq-6l3.17).
+	cells := placementCells(x.frame(), x.pos())
+	try := x.l.PlaceTries % (len(cells) + 1)
+	x.l.PlaceTries++
+	if try == len(cells) {
+		p, turn := x.pos(), float64(x.l.PlaceTries/(len(cells)+1))*math.Pi/2
+		return &civquestv1.AgentIntent{AgentId: x.agent(), Action: &civquestv1.AgentIntent_Navigate{Navigate: &civquestv1.NavigateIntent{
+			Target:          &civquestv1.Vec3{X: p.X + math.Cos(turn)*placeRelocateDist, Y: p.Y, Z: p.Z + math.Sin(turn)*placeRelocateDist},
+			SpeedMultiplier: 1.0, ArrivalTolerance: 1,
+		}}}, true
+	}
 	return &civquestv1.AgentIntent{AgentId: x.agent(), Action: &civquestv1.AgentIntent_InteractBlock{InteractBlock: &civquestv1.InteractBlockIntent{
-		Pos:             selectAdjacentCraftingTablePos(x.frame(), x.pos()),
+		Pos:             cells[try],
 		InteractionType: civquestv1.InteractBlockIntent_PLACE_BLOCK,
 		BlockOrItemId:   step.Item,
 	}}}, true

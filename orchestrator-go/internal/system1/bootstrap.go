@@ -726,6 +726,27 @@ func selectAdjacentCraftingTablePos(frame *civquestv1.TelemetryFrame, pos *civqu
 	return candidates[0]
 }
 
+// placeRelocateDist is how far an agent steps when no cell beside it takes a placement.
+const placeRelocateDist = 4.0
+
+// placementCells lists distinct cells to try for a placement beside pos: the preferred one
+// first, then the other neighbours at foot height and one up.
+func placementCells(frame *civquestv1.TelemetryFrame, pos *civquestv1.Vec3) []*civquestv1.BlockPosProto {
+	first := selectAdjacentCraftingTablePos(frame, pos)
+	out := []*civquestv1.BlockPosProto{first}
+	seen := map[[3]int32]bool{{first.X, first.Y, first.Z}: true}
+	cx, cy, cz := int32(math.Floor(pos.X)), int32(math.Floor(pos.Y)), int32(math.Floor(pos.Z))
+	for _, d := range [][3]int32{{1, 0, 0}, {-1, 0, 0}, {0, 0, 1}, {0, 0, -1}, {1, 0, 1}, {-1, 0, -1}, {1, 0, -1}, {-1, 0, 1},
+		{1, 1, 0}, {-1, 1, 0}, {0, 1, 1}, {0, 1, -1}} {
+		c := [3]int32{cx + d[0], cy + d[1], cz + d[2]}
+		if !seen[c] {
+			seen[c] = true
+			out = append(out, &civquestv1.BlockPosProto{X: c[0], Y: c[1], Z: c[2]})
+		}
+	}
+	return out
+}
+
 type trunkCandidate struct {
 	tx     int32
 	tz     int32
