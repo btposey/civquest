@@ -69,6 +69,8 @@ type replayScenario struct {
 	Steps      []replayStep
 	// Check holds scenario-specific semantic assertions over the recorded trace.
 	Check func(t *testing.T, tr []replayRecord)
+	// Sink, when set, receives the FSM's playtest events (cq-gpa.5).
+	Sink EventSink
 }
 
 type replayRecord struct {
@@ -143,6 +145,7 @@ func summarizeIntent(in *civquestv1.AgentIntent) string {
 func runReplay(t *testing.T, sc replayScenario) []replayRecord {
 	t.Helper()
 	fsm := NewAgentFSM(sc.Stage, nil)
+	fsm.SetEventSink(sc.Sink)
 	st := NewAgentState()
 	if sc.Clan > 0 {
 		st.SetClanSize(sc.Clan)

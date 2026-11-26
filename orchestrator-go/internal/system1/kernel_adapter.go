@@ -182,6 +182,7 @@ func (fsm *AgentFSM) dispatchLocked(w *fsmWorld, ev htpda.Event) []FSMIntent {
 	w.stackEmpty = fsm.kernel.Depth() == 0
 	fx := fsm.kernel.Dispatch(w, ev)
 	fsm.lastDiag = fx.Diagnostics
+	fsm.emitLifecycleLocked(w.tick, fx.Lifecycle)
 	if w.ctx != nil {
 		w.ctx.State.applyStoreWrites(fx.Store)
 	}
@@ -301,10 +302,12 @@ func (fsm *AgentFSM) DrainRecoverGiveUps() []RecoverGiveUp {
 func (fsm *AgentFSM) tickActivitiesLocked(ctx *FSMContext, reg *EngineRegistry, skillCtx *SkillContext) []FSMIntent {
 	w := newFSMWorld(fsm, ctx, reg, skillCtx)
 	var out []FSMIntent
+	fsm.emitVitalsLocked(ctx, w.tick)
 	if ctx != nil && ctx.Frame != nil {
 		if r := ctx.Frame.GetReceipt(); fsm.admitReceiptLocked(r) {
 			w.receipt = r
 			rev := htpda.Receipt{Frame: htpda.FrameID(r.GetFrameId()), Status: r.GetStatus(), Facts: motorFacts(r.GetFacts())}
+			fsm.emitStuckReceiptLocked(w.tick, r, rev.Facts)
 			// A receipt can push Recover, whose first attempt is emitted by that dispatch.
 			out = append(out, fsm.dispatchLocked(w, rev)...)
 			fsm.noteOrphanStuckLocked(w, rev)

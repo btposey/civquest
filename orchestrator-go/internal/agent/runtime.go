@@ -306,6 +306,10 @@ func NewRuntime(cfg Config) (*AgentRuntime, error) {
 		}
 	})
 
+	if debugLog != nil {
+		agentFSM.SetEventSink(debugLog.Emit)
+	}
+
 	runtime := &AgentRuntime{
 		agentID:           agentID,
 		agentUUID:         agentUUID,
@@ -3448,6 +3452,9 @@ func (r *AgentRuntime) evaluateSystem1Reflexes(frame *civquestv1.TelemetryFrame)
 		r.mu.Lock()
 		if r.agentFSM == nil {
 			r.agentFSM = system1.NewAgentFSM(system1.StateBootstrap, nil)
+			if r.debugLogger != nil {
+				r.agentFSM.SetEventSink(r.debugLogger.Emit)
+			}
 		}
 		fsm = r.agentFSM
 		r.mu.Unlock()

@@ -7,6 +7,12 @@ type run struct {
 	fx      Effects
 	budget  int
 	stepped map[FrameID]bool
+	// replacing is the kind of the frame an OpReplace is swapping out (consumed by push).
+	replacing Kind
+}
+
+func (r *run) life(op string, f Frame, from Kind, result any) {
+	r.fx.Lifecycle = append(r.fx.Lifecycle, FrameEvent{Op: op, Frame: f.ID, Kind: f.Kind(), From: from, Parent: f.Parent, Depth: len(r.k.stack), Result: result})
 }
 
 func (r *run) diag(id FrameID, kind Kind, reason string) {
@@ -72,6 +78,7 @@ func (r *run) cancel(ev Cancel) {
 		r.fx.Store = append(r.fx.Store, s.Store...)
 		r.fx.Memory = append(r.fx.Memory, s.Memory...)
 		r.k.stack = r.k.stack[:len(r.k.stack)-1]
+		r.life(LifeCancel, f, "", nil)
 	}
 }
 
@@ -96,9 +103,14 @@ func (r *run) push(act Activity, args any, band Band, parent FrameID) FrameID {
 	}
 	r.k.next++
 	id := r.k.next
-	r.k.stack = append(r.k.stack, Frame{
-		ID: id, Act: act, Local: local, Scope: act.Scope(), Lease: lease, Band: band, Parent: parent,
-	})
+	nf := Frame{ID: id, Act: act, Local: local, Scope: act.Scope(), Lease: lease, Band: band, Parent: parent}
+	r.k.stack = append(r.k.stack, nf)
+	if r.replacing != "" {
+		r.life(LifeReplace, nf, r.replacing, nil)
+		r.replacing = ""
+	} else {
+		r.life(LifePush, nf, "", nil)
+	}
 	r.stepTop(Started{})
 	return id
 }
@@ -149,13 +161,20 @@ func (r *run) stepTop(ev Event) {
 		act, reason := r.resolve(s.Child, false)
 		r.pop(s.Store)
 		if reason != "" {
+			r.life(LifePop, f, "", Rejected{Kind: s.Child, Reason: reason})
 			r.diag(f.ID, s.Child, reason)
 			r.notify(f, Rejected{Kind: s.Child, Reason: reason})
 			return
 		}
+		r.replacing = f.Kind()
 		r.push(act, s.Args, f.Band, f.Parent)
 	case OpPop:
 		r.pop(s.Store)
+		if _, ok := ev.(Expired); ok {
+			r.life(LifeExpire, f, "", s.Result)
+		} else {
+			r.life(LifePop, f, "", s.Result)
+		}
 		r.notify(f, s.Result)
 	default:
 		r.diag(f.ID, f.Kind(), ReasonBadOp)

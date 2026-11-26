@@ -267,6 +267,10 @@ type AgentFSM struct {
 	lastDiag     []htpda.Diagnostic
 	// surveyBackoffUntil suppresses expeditions after repeated report-less survey timeouts.
 	surveyBackoffUntil int64
+	// eventSink receives playtest diagnostics (playtest_events.go); nil disables them.
+	eventSink      EventSink
+	vitalsEmitted  bool
+	lastVitalsTick int64
 }
 
 // StartTask commits a task from outside any frame; the task activity pushes it as a task frame.

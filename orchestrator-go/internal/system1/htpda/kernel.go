@@ -63,6 +63,31 @@ type Effects struct {
 	Memory      []MemoryWrite
 	Decision    *Decision
 	Diagnostics []Diagnostic
+	// Lifecycle lists the frame push/pop/expire/replace/cancel operations of this Dispatch, in
+	// order. It is observability only: nothing in the kernel reads it.
+	Lifecycle []FrameEvent
+}
+
+// Frame lifecycle operations reported in Effects.Lifecycle.
+const (
+	LifePush    = "push"
+	LifePop     = "pop"
+	LifeExpire  = "expire"
+	LifeReplace = "replace"
+	LifeCancel  = "cancel"
+)
+
+// FrameEvent is one frame stack operation. Depth is the stack depth after the operation.
+// For LifeReplace, Kind is the new frame and From the frame it replaced; for pops, expiries
+// and cancels, Result is the frame's pop Result.
+type FrameEvent struct {
+	Op     string
+	Frame  FrameID
+	Kind   Kind
+	From   Kind
+	Parent FrameID
+	Depth  int
+	Result any
 }
 
 // Intents flattens all emitted intents in emission order.
