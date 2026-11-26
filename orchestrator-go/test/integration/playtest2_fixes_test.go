@@ -194,7 +194,6 @@ func TestPlaytest2_03_NineLogTrunkFelledToEyeReach(t *testing.T) {
 // UNFIXED BEHAVIOUR: able and dave issued HARVEST_BREAK on minecraft:stone holding only an
 // axe (no drops); the bootstrap tool ladder had no pickaxe and zero pickaxe crafts happened.
 func TestPlaytest2_04_StoneNeedsPickaxeCraftedFirst(t *testing.T) {
-	pendingFix(t, "cq-gpa.10", "pickaxe progression and stone-harvest precondition are not committed yet")
 	w := groundWorld(30)
 	w.AddStoneOutcrop(2, -1, 3, 3)
 	w.Blocks[eval.BlockPosKey{X: -1, Y: 64, Z: 0}] = "minecraft:crafting_table"
