@@ -82,6 +82,15 @@ cd orchestrator-go && go test -tags livellm -v ./test/integration -run TestLiveL
 ./scripts/check-arch-budgets.sh --strict # Enforce recorded baseline ceilings
 ```
 
+### Capability Coverage Matrix
+```bash
+./scripts/check-capability-coverage.sh           # Report coverage % (always exits 0)
+./scripts/check-capability-coverage.sh --strict  # Fail on any GAP/partial row or missing referenced test
+./scripts/check-capability-coverage.sh --deep    # Also verify Go tests via `go test -list`
+```
+- Matrix: `doc/capability-coverage.yaml` (source of truth) and `doc/capability-coverage.md` (generated via `--emit-md`).
+- **Definition of Done:** a new agent feature or capability is not done until it has a row in the matrix and a smoke test (integration-sim, replay, GameTest or live level; a unit test alone does not count).
+
 ### NeoForge Server Mod
 ```bash
 ./gradlew :mod-neoforge:build
