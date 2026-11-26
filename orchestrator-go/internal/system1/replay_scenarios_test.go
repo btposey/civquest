@@ -49,6 +49,9 @@ func replayScenarios() []replayScenario {
 		scenarioNineLogTrunkHarvestedToReach(),
 		scenarioCraftLatchHoldsLaggingInventory(),
 		scenarioCraftLatchRetriesAfterFailedReceipt(),
+		scenarioPlanCommitmentHysteresis(),
+		scenarioPlanReplanSiteLost(),
+		scenarioPlanResumeAfterEmergency(),
 	}
 }
 

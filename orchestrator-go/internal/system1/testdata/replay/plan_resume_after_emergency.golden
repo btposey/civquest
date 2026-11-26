@@ -1,0 +1,3 @@
+t=100 stage=BOOTSTRAP routine=PRIMARY_DUTY stack=[plan/1] intents=[Navigate(x=8.5 z=0.5)]  // plan commits the stone at x=8
+t=110 stage=EMERGENCY routine=EMERGENCY stack=[emergency/2] intents=[Attack(target=9 shield=false kite=false flee=true); Navigate(x=-15.5 z=0.5)]  // hostile: emergency over the plan frame
+t=160 stage=BOOTSTRAP routine=PRIMARY_DUTY stack=[plan/1] intents=[Navigate(x=8.5 z=0.5)]  // cleared: plan resumes the committed x=8 stone

@@ -1,0 +1,3 @@
+t=100 stage=BOOTSTRAP routine=PRIMARY_DUTY stack=[plan/1] intents=[Navigate(x=8.5 z=0.5)]  // wooden tools in hand: plan gathers cobblestone, commits the stone at x=8
+t=140 stage=BOOTSTRAP routine=PRIMARY_DUTY stack=[plan/1] intents=[Navigate(x=8.5 z=0.5)]  // nearer stone at z=6 (not 2x cheaper): commitment held, re-issue to x=8
+t=180 stage=BOOTSTRAP routine=PRIMARY_DUTY stack=[plan/1] intents=[Interact(HARVEST_BREAK 2,64,1 minecraft:stone)]  // stone at x=2 is past the hysteresis ratio: switch

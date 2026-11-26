@@ -1,0 +1,2 @@
+t=100 stage=BOOTSTRAP routine=PRIMARY_DUTY stack=[plan/1] intents=[Navigate(x=10.5 z=0.5)]  // planks+sticks, table known: Goto table
+t=140 stage=BOOTSTRAP routine=PRIMARY_DUTY stack=[plan/1] intents=[Craft(minecraft:crafting_table x1)]  // table gone: site lost, replan crafts a table
