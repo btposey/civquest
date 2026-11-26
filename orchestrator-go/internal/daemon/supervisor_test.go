@@ -601,3 +601,42 @@ sleep 10
 		t.Errorf("child %s not found in supervisor managed agents", resSuccess.ChildID)
 	}
 }
+
+// cq-yn1.9: an agent the operator is stopping (marked, then killed) is not a crash.
+func TestSupervisor_OperatorStopIsNotRestarted(t *testing.T) {
+	tmpDir := t.TempDir()
+	r := xdg.NewResolver(xdg.WithCustomRoot(tmpDir))
+	setupMockAgent(t, r, "stopped", "pioneers")
+
+	countFile := filepath.Join(tmpDir, "run_count")
+	script := filepath.Join(tmpDir, "bin", "civquest-agent")
+	writeMockScript(t, script, fmt.Sprintf(`#!/usr/bin/env bash
+echo x >> %q
+mkdir -p %q
+echo stopped > %q
+exit 137
+`, countFile, r.AgentStateDir("stopped"), r.AgentStopMarkerPath("stopped")))
+
+	cfg := DefaultSupervisorConfig(r)
+	cfg.AgentBinPath = script
+	cfg.HealthCheckInterval = 20 * time.Millisecond
+	cfg.CrashBackoff = 10 * time.Millisecond
+	cfg.ShutdownTimeout = time.Second
+	sup, err := NewDaemonSupervisor(cfg)
+	if err != nil {
+		t.Fatalf("failed creating supervisor: %v", err)
+	}
+	if err := sup.Start(context.Background()); err != nil {
+		t.Fatalf("failed starting supervisor: %v", err)
+	}
+	defer func() { _ = sup.Stop() }()
+
+	time.Sleep(500 * time.Millisecond)
+	data, err := os.ReadFile(countFile)
+	if err != nil {
+		t.Fatalf("agent never ran: %v", err)
+	}
+	if runs := strings.Count(string(data), "x"); runs != 1 {
+		t.Errorf("stopped agent ran %d times, want 1", runs)
+	}
+}

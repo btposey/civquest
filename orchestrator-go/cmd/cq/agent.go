@@ -726,10 +726,9 @@ func newAgentStopCmd() *cobra.Command {
 			r := getResolver()
 			agentName := r.ResolveAgentName(args[0])
 
-			// Mark intentional stop so watchdog does not restart
-			stopMarkerPath := filepath.Join(r.AgentStateDir(agentName), "stop.marker")
-			_ = os.WriteFile(stopMarkerPath, []byte("stopped"), 0644)
-			defer os.Remove(stopMarkerPath)
+			// Mark intentional stop so neither the watchdog nor the supervisor restarts it. The
+			// marker outlives this command and is cleared by the next start.
+			_ = os.WriteFile(r.AgentStopMarkerPath(agentName), []byte("stopped"), 0o644)
 
 			// Cancel in-process watchdog if present
 			stopInProcessWatchdog(agentName)

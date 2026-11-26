@@ -654,6 +654,9 @@ func (s *DaemonSupervisor) StartAgent(agentName string) error {
 		}
 	}
 
+	// An explicit start supersedes an earlier operator stop.
+	_ = os.Remove(s.resolver.AgentStopMarkerPath(agentName))
+
 	binPath, err := resolveAgentBinary(s.resolver, s.config.AgentBinPath)
 	if err != nil {
 		return err
@@ -902,6 +905,12 @@ func (s *DaemonSupervisor) healthCheck() {
 			w.Deceased = true
 			w.mu.Unlock()
 			s.logSupervisorEvent("Agent %s is deceased (permadeath archive found); will not restart", name)
+			continue
+		}
+
+		// An operator stopped it (even if it then had to be killed): leave it stopped.
+		if _, err := os.Stat(s.resolver.AgentStopMarkerPath(name)); err == nil {
+			w.mu.Unlock()
 			continue
 		}
 

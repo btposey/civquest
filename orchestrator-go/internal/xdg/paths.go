@@ -509,6 +509,12 @@ func (r *Resolver) AgentStateDir(agentName string) string {
 	return filepath.Join(r.AgentsStateDir(), agentName)
 }
 
+// AgentStopMarkerPath is written when an operator stops an agent, so no supervisor restarts
+// it. Starting the agent removes it.
+func (r *Resolver) AgentStopMarkerPath(agentName string) string {
+	return filepath.Join(r.AgentStateDir(agentName), "stop.marker")
+}
+
 // AgentLogPath returns $XDG_STATE_HOME/civquest/agents/{agent_name}/{agent_name}.log.
 func (r *Resolver) AgentLogPath(agentName string) string {
 	return filepath.Join(r.AgentStateDir(agentName), fmt.Sprintf("%s.log", agentName))
