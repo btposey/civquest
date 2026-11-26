@@ -8,6 +8,7 @@ import com.civquest.mod.grpc.v1.TelemetryFrame;
 import com.civquest.mod.sensory.SensoryFrustumCollector;
 import com.mojang.authlib.GameProfile;
 import com.mojang.logging.LogUtils;
+import net.minecraft.tags.FluidTags;
 import net.minecraft.core.UUIDUtil;
 import net.minecraft.network.chat.Component;
 import net.minecraft.server.level.ServerLevel;
@@ -245,6 +246,7 @@ public class AgentEntity extends FakePlayer {
                         && (this.navigator == null || this.navigator.getNavigationState() != com.civquest.mod.grpc.v1.NavigationState.NAVIGATION_STATE_PATHING)) {
                     updateIdleSocialGaze();
                 }
+                keepAfloat();
                 if (this.tickCount % 10 == 0 && this.isAlive()) {
                     tryPickupNearbyItems();
                 }
@@ -257,6 +259,22 @@ public class AgentEntity extends FakePlayer {
                 LOGGER.error("Exception during agent doTick for agent '{}': {}", agentId, e.getMessage(), e);
             }
         }
+    }
+
+    /** Upward speed of an agent keeping its head above water. */
+    private static final double FLOAT_SPEED = 0.1;
+
+    /**
+     * Swims up while the eyes are under water and no walk is steering: nothing else holds an
+     * agent that has arrived or stopped, so it sank and drowned (cq-6l3.16).
+     */
+    private void keepAfloat() {
+        if (!this.isAlive() || !this.isEyeInFluid(FluidTags.WATER) || (this.navigator != null
+                && this.navigator.getNavigationState() == com.civquest.mod.grpc.v1.NavigationState.NAVIGATION_STATE_PATHING)) {
+            return;
+        }
+        net.minecraft.world.phys.Vec3 v = this.getDeltaMovement();
+        this.setDeltaMovement(v.x, Math.max(v.y, FLOAT_SPEED), v.z);
     }
 
     /**

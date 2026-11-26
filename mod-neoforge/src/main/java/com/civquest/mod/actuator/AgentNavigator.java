@@ -319,6 +319,8 @@ public class AgentNavigator {
     static final double STAMINA_REGEN = 0.3;
     static final double STAMINA_RECOVER_AT = 30.0;
     private static final double STANDING_Y_ALLOWANCE = 0.6;
+    /** From the water, a target overhead is reached only about head-high to it (cq-6l3.16). */
+    private static final double SWIM_UP_Y_ALLOWANCE = 1.1;
     private static final int REPLAN_INTERVAL = 8;
     private static final int WIDE_REPLAN_INTERVAL = 100;
     private static final int WIDE_SEARCH_COOLDOWN_TICKS = 40;
@@ -1532,6 +1534,9 @@ public class AgentNavigator {
     }
 
     private double resolveArrivalYAllowance(Level level, boolean onClimbable, double dy, double baseAllowance) {
+        if (dy > 0.0 && this.agent != null && this.agent.isInWater()) {
+            return SWIM_UP_Y_ALLOWANCE;
+        }
         if (!onClimbable && level != null && this.targetCoords != null) {
             BlockPos targetBlock = BlockPos.containing(this.targetCoords.x, this.targetCoords.y, this.targetCoords.z);
             boolean solidTarget = isBlockSolid(level, targetBlock);

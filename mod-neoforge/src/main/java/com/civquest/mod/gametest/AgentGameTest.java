@@ -1307,6 +1307,72 @@ public class AgentGameTest {
     private static final int SPENT_ARENA_Y = 40;
     private static final int STEP_ARENA_Y = 50;
     private static final int CAMPFIRE_ARENA_Y = 60;
+    private static final int IDLE_POOL_ARENA_Y = 70;
+    private static final int SURFACE_POOL_ARENA_Y = 80;
+    private static final int POOL_DEPTH = 5;
+
+    /** A walled 3x3 pool, POOL_DEPTH water blocks on a stone floor, with air above. */
+    private static void pool(GameTestHelper helper, int floorY) {
+        for (int x = -2; x <= 2; x++) {
+            for (int z = -2; z <= 2; z++) {
+                boolean wall = Math.abs(x) == 2 || Math.abs(z) == 2;
+                helper.setBlock(new BlockPos(x, floorY, z), Blocks.STONE);
+                for (int y = 1; y <= POOL_DEPTH + 3; y++) {
+                    boolean water = !wall && y <= POOL_DEPTH;
+                    helper.setBlock(new BlockPos(x, floorY + y, z),
+                            water ? Blocks.WATER : wall && y <= POOL_DEPTH ? Blocks.STONE : Blocks.AIR);
+                }
+            }
+        }
+    }
+
+    /** Spawning lifts an agent out of water, so sink it afterwards. */
+    private static void submerge(GameTestHelper helper, AgentEntity agent, int floorY) {
+        BlockPos abs = helper.absolutePos(new BlockPos(0, floorY + 1, 0));
+        agent.moveTo(abs.getX() + 0.5, abs.getY(), abs.getZ() + 0.5);
+        agent.setDeltaMovement(0.0, 0.0, 0.0);
+    }
+
+    // cq-6l3: an agent with nothing to do in deep water sank and drowned.
+    @GameTest(template = "empty3x3x3")
+    public static void testIdleAgentStaysAfloat(GameTestHelper helper) {
+        AgentEntityManager manager = new AgentEntityManager();
+        pool(helper, IDLE_POOL_ARENA_Y);
+        AgentEntity agent = spawnCoverageAgent(helper, manager, "agent-gt-float", new BlockPos(0, IDLE_POOL_ARENA_Y + 1, 0));
+        submerge(helper, agent, IDLE_POOL_ARENA_Y);
+        float full = agent.getHealth();
+        for (int t = 0; t < 800; t++) {
+            agent.tick();
+            helper.assertTrue(agent.getHealth() >= full, "Idle agent is drowning at tick " + t + " at " + agent.position()
+                    + " air=" + agent.getAirSupply());
+        }
+        double surface = helper.absolutePos(new BlockPos(0, IDLE_POOL_ARENA_Y + POOL_DEPTH + 1, 0)).getY();
+        helper.assertTrue(agent.getY() >= surface - 2.0, "Idle agent must float near the surface, y=" + agent.getY() + " surface=" + surface);
+        manager.despawnAgent(helper.getLevel().getServer(), "agent-gt-float").join();
+        helper.succeed();
+    }
+
+    // cq-6l3: a surface target overhead counted as reached from the bottom of the pool.
+    @GameTest(template = "empty3x3x3")
+    public static void testSwimsUpToSurfaceTarget(GameTestHelper helper) {
+        AgentEntityManager manager = new AgentEntityManager();
+        pool(helper, SURFACE_POOL_ARENA_Y);
+        AgentEntity agent = spawnCoverageAgent(helper, manager, "agent-gt-surface", new BlockPos(0, SURFACE_POOL_ARENA_Y + 1, 0));
+        submerge(helper, agent, SURFACE_POOL_ARENA_Y);
+        agent.tick();
+        BlockPos up = helper.absolutePos(new BlockPos(0, SURFACE_POOL_ARENA_Y + POOL_DEPTH + 1, 0));
+        double startDepth = up.getY() - agent.getY();
+        navigateByIntent(manager, helper.getLevel().getServer(), "agent-gt-surface",
+                up.getX() + 0.5, up.getY(), up.getZ() + 0.5, true, false);
+        // Arrival ends the Move, so measure where the agent is when it does.
+        for (int t = 0; t < 100 && (t == 0 || agent.getMotorFSM().topMotor().isPresent()); t++) {
+            agent.tick();
+        }
+        helper.assertTrue(agent.getMotorFSM().topMotor().isEmpty() && up.getY() - agent.getY() <= 1.1,
+                "Agent must swim to the surface target, started " + startDepth + " below, now " + (up.getY() - agent.getY()));
+        manager.despawnAgent(helper.getLevel().getServer(), "agent-gt-surface").join();
+        helper.succeed();
+    }
 
     // cq-6l3.5: walks that cross a lit campfire must go round it without ever touching it.
     @GameTest(template = "empty3x3x3")
