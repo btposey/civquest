@@ -45,6 +45,7 @@ public class AgentWatchdogFSM {
     private volatile int eatCooldownTicks = 0;
     private volatile int threatScanCooldownTicks = 0;
     private volatile boolean cachedHostileThreat = false;
+    private volatile net.minecraft.world.phys.Vec3 cachedThreatPos;
 
     public AgentWatchdogFSM(AgentEntity agent) {
         this.agent = agent;
@@ -320,7 +321,13 @@ public class AgentWatchdogFSM {
 
         if (underAttack || hostileThreat) {
             ticksSinceLastThreat = 0;
-            engageDefensivePosture();
+            if (hasShield()) {
+                engageDefensivePosture();
+            } else if (underAttack || currentState == WatchdogState.DISCONNECTED_SAFE_MODE) {
+                // Nothing to block with: standing still only feeds the attacker.
+                releaseDefensivePosture();
+                retreat();
+            }
         } else {
             ticksSinceLastThreat++;
             if (defensiveLockActive && ticksSinceLastThreat >= THREAT_SUBSIDE_TICKS) {
@@ -334,30 +341,63 @@ public class AgentWatchdogFSM {
         }
     }
 
+    /** Hostile mobs and projectiles still in flight; arrows lying in the ground are harmless. */
     private boolean scanForHostileThreats() {
+        cachedThreatPos = null;
         if (agent.level() != null) {
             try {
-                List<LivingEntity> nearbyHostiles = agent.level().getEntitiesOfClass(
-                        LivingEntity.class,
-                        agent.getBoundingBox().inflate(THREAT_SCAN_RADIUS),
-                        e -> e != null && e.isAlive() && e != agent && (e instanceof Enemy || e.getType().getCategory() == MobCategory.MONSTER)
-                );
-                if (!nearbyHostiles.isEmpty()) {
-                    return true;
-                }
-
-                List<Projectile> nearbyProjectiles = agent.level().getEntitiesOfClass(
-                        Projectile.class,
-                        agent.getBoundingBox().inflate(THREAT_SCAN_RADIUS),
-                        p -> p != null && p.isAlive()
-                );
-                if (!nearbyProjectiles.isEmpty()) {
-                    return true;
-                }
+                var bubble = agent.getBoundingBox().inflate(THREAT_SCAN_RADIUS);
+                List<net.minecraft.world.entity.Entity> threats = new java.util.ArrayList<>(agent.level().getEntitiesOfClass(
+                        LivingEntity.class, bubble,
+                        e -> e != null && e.isAlive() && e != agent && (e instanceof Enemy || e.getType().getCategory() == MobCategory.MONSTER)));
+                threats.addAll(agent.level().getEntitiesOfClass(Projectile.class, bubble, p -> isIncoming(p, agent)));
+                threats.stream()
+                        .min(java.util.Comparator.comparingDouble(e -> e.distanceToSqr(agent)))
+                        .ifPresent(e -> cachedThreatPos = e.position());
+                return !threats.isEmpty();
             } catch (Throwable ignored) {
             }
         }
         return false;
+    }
+
+    static boolean isIncoming(Projectile projectile, net.minecraft.world.entity.Entity self) {
+        return projectile != null && projectile.isAlive() && projectile.getOwner() != self
+                && projectile.getDeltaMovement() != null && projectile.getDeltaMovement().lengthSqr() >= 0.04;
+    }
+
+    private boolean hasShield() {
+        if (isShield(agent.getItemInHand(InteractionHand.OFF_HAND)) || isShield(agent.getItemInHand(InteractionHand.MAIN_HAND))) {
+            return true;
+        }
+        var inventory = agent.getInventory();
+        if (inventory != null) {
+            for (int i = 0; i < inventory.getContainerSize(); i++) {
+                if (isShield(inventory.getItem(i))) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    private static boolean isShield(ItemStack stack) {
+        return stack != null && stack.is(Items.SHIELD);
+    }
+
+    /** Runs from whoever hurt the agent, else from the nearest threat. */
+    private void retreat() {
+        AgentMotorFSM motorFSM = agent.getMotorFSM();
+        if (motorFSM == null) {
+            return;
+        }
+        LivingEntity attacker = agent.getLastHurtByMob();
+        net.minecraft.world.phys.Vec3 from = attacker != null && attacker.isAlive() ? attacker.position() : cachedThreatPos;
+        if (from == null) {
+            return;
+        }
+        motorFSM.preemptWithFleeReflex(com.civquest.mod.grpc.v1.Vec3.newBuilder()
+                .setX(from.x).setY(from.y).setZ(from.z).build(), "watchdog_retreat");
     }
 
     /**
@@ -367,7 +407,6 @@ public class AgentWatchdogFSM {
         if (agent == null || !agent.isAlive()) {
             return;
         }
-
         boolean hasShieldInHand = agent.getItemInHand(InteractionHand.OFF_HAND).is(Items.SHIELD)
                 || agent.getItemInHand(InteractionHand.MAIN_HAND).is(Items.SHIELD);
 

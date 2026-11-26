@@ -1258,19 +1258,19 @@ public class AgentGameTest {
         // away from the target. Surface standing height is relative y=3.
         for (int x = -6; x <= 14; x++) {
             for (int z = -3; z <= 3; z++) {
-                helper.setBlock(new BlockPos(x, 0, z), Blocks.STONE);
+                helper.setBlock(new BlockPos(x, DUGOUT_ARENA_Y, z), Blocks.STONE);
                 boolean trench = z == 0 && x >= 0 && x <= 10;
                 for (int y = 1; y <= 5; y++) {
-                    helper.setBlock(new BlockPos(x, y, z), (y <= 2 && !trench) ? Blocks.STONE : Blocks.AIR);
+                    helper.setBlock(new BlockPos(x, DUGOUT_ARENA_Y + y, z), (y <= 2 && !trench) ? Blocks.STONE : Blocks.AIR);
                 }
             }
         }
-        helper.setBlock(new BlockPos(9, 1, 0), Blocks.STONE);
-        helper.setBlock(new BlockPos(10, 1, 0), Blocks.STONE);
-        helper.setBlock(new BlockPos(10, 2, 0), Blocks.STONE);
+        helper.setBlock(new BlockPos(9, DUGOUT_ARENA_Y + 1, 0), Blocks.STONE);
+        helper.setBlock(new BlockPos(10, DUGOUT_ARENA_Y + 1, 0), Blocks.STONE);
+        helper.setBlock(new BlockPos(10, DUGOUT_ARENA_Y + 2, 0), Blocks.STONE);
 
-        BlockPos spawnPos = helper.absolutePos(new BlockPos(0, 1, 0));
-        BlockPos targetPos = helper.absolutePos(new BlockPos(-5, 3, 0));
+        BlockPos spawnPos = helper.absolutePos(new BlockPos(0, DUGOUT_ARENA_Y + 1, 0));
+        BlockPos targetPos = helper.absolutePos(new BlockPos(-5, DUGOUT_ARENA_Y + 3, 0));
         AgentEntity agent = manager.spawnAgent(server, level, SpawnAgentRequest.newBuilder()
                 .setAgentId("agent-gt-dugout")
                 .setDisplayName("DugoutAgent")
@@ -1291,6 +1291,71 @@ public class AgentGameTest {
         double remaining = Math.hypot(agent.getX() - (targetPos.getX() + 0.5), agent.getZ() - (targetPos.getZ() + 0.5));
         helper.assertTrue(remaining <= 1.5, "Agent must reach the target on the surface, " + remaining + " blocks short");
         manager.despawnAgent(server, "agent-gt-dugout").join();
+        helper.succeed();
+    }
+
+    /**
+     * Arenas wider than the 3x3 test template are built this far above it (each at its own
+     * height) so they cannot overwrite neighbouring tests.
+     */
+    private static final int DUGOUT_ARENA_Y = 20;
+    private static final int RETREAT_ARENA_Y = 30;
+    private static final int SPENT_ARENA_Y = 40;
+
+    private static void stoneFloor(GameTestHelper helper, int from, int to, int floorY) {
+        for (int x = from; x <= to; x++) {
+            for (int z = from; z <= to; z++) {
+                helper.setBlock(new BlockPos(x, floorY, z), Blocks.STONE);
+                for (int y = 1; y <= 3; y++) {
+                    helper.setBlock(new BlockPos(x, floorY + y, z), Blocks.AIR);
+                }
+            }
+        }
+    }
+
+    // cq-yn1.5: with its brain silent and no shield, an agent runs from a threat instead of crouching.
+    @GameTest(template = "empty3x3x3")
+    public static void testSafeModeWithoutShieldRetreats(GameTestHelper helper) {
+        MinecraftServer server = helper.getLevel().getServer();
+        AgentEntityManager manager = new AgentEntityManager();
+        stoneFloor(helper, -14, 6, RETREAT_ARENA_Y);
+        AgentEntity agent = spawnCoverageAgent(helper, manager, "agent-gt-retreat", new BlockPos(1, RETREAT_ARENA_Y + 1, 1));
+        Zombie zombie = helper.spawn(EntityType.ZOMBIE, new BlockPos(3, RETREAT_ARENA_Y + 1, 3));
+        zombie.setNoAi(true);
+        double before = agent.distanceTo(zombie);
+
+        for (int t = 0; t < 40; t++) {
+            agent.tick();
+        }
+
+        helper.assertTrue(agent.distanceTo(zombie) >= before + 3.0,
+                "Agent must retreat, distance " + before + " -> " + agent.distanceTo(zombie));
+        helper.assertFalse(agent.isShiftKeyDown(), "A retreating agent must not crouch");
+        zombie.discard();
+        manager.despawnAgent(server, "agent-gt-retreat").join();
+        helper.succeed();
+    }
+
+    // An arrow lying still is not a threat.
+    @GameTest(template = "empty3x3x3")
+    public static void testSafeModeIgnoresSpentArrow(GameTestHelper helper) {
+        MinecraftServer server = helper.getLevel().getServer();
+        AgentEntityManager manager = new AgentEntityManager();
+        stoneFloor(helper, -4, 6, SPENT_ARENA_Y);
+        AgentEntity agent = spawnCoverageAgent(helper, manager, "agent-gt-spent", new BlockPos(1, SPENT_ARENA_Y + 1, 1));
+        net.minecraft.world.entity.projectile.Arrow arrow = helper.spawn(EntityType.ARROW, new BlockPos(3, SPENT_ARENA_Y + 1, 1));
+        arrow.setNoGravity(true);
+        arrow.setDeltaMovement(net.minecraft.world.phys.Vec3.ZERO);
+        net.minecraft.world.phys.Vec3 start = agent.position();
+
+        for (int t = 0; t < 30; t++) {
+            agent.tick();
+        }
+
+        helper.assertTrue(agent.position().distanceTo(start) < 0.5, "Agent must stay put, moved to " + agent.position());
+        helper.assertFalse(agent.isShiftKeyDown(), "Agent must not take a defensive crouch");
+        arrow.discard();
+        manager.despawnAgent(server, "agent-gt-spent").join();
         helper.succeed();
     }
 
@@ -1471,6 +1536,15 @@ public class AgentGameTest {
         BlockPos wall = new BlockPos(2, 1, 2);
         BlockPos rung = new BlockPos(1, 1, 2);
         helper.setBlock(wall, Blocks.STONE);
+        // A closed floor and side walls keep the scattered drop within pickup range.
+        for (int x = -1; x <= 3; x++) {
+            for (int z = -1; z <= 3; z++) {
+                helper.setBlock(new BlockPos(x, 0, z), Blocks.STONE);
+                if (x == -1 || x == 3 || z == -1 || z == 3) {
+                    helper.setBlock(new BlockPos(x, 1, z), Blocks.STONE);
+                }
+            }
+        }
         BlockPos absRung = helper.absolutePos(rung);
         manager.handleIntent(server, AgentIntent.newBuilder()
                 .setAgentId("agent-gt-ladder")
@@ -1635,6 +1709,8 @@ public class AgentGameTest {
             }
         }
         AgentEntity agent = spawnCoverageAgent(helper, manager, "agent-gt-flee", new BlockPos(0, 1, 0));
+        // A connected brain: otherwise the safe-mode watchdog raises its own retreat first.
+        agent.getWatchdogFSM().onConnected();
         Zombie zombie = helper.spawn(EntityType.ZOMBIE, new BlockPos(0, 1, 2));
         zombie.setNoAi(true);
 

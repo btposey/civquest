@@ -422,6 +422,9 @@ public class AgentMotorFSM {
      * detected. If a Combat frame or an engaged Strike is on top it is refreshed (timeout restarts).
      */
     public synchronized boolean preemptWithCombatReflex(String reason) {
+        if (topMotor().filter(m -> m instanceof Flee).isPresent()) {
+            return false; // a retreating agent keeps running rather than stopping to guard
+        }
         if (refreshCombat(-1)) {
             return false;
         }
@@ -447,9 +450,12 @@ public class AgentMotorFSM {
         return pushed;
     }
 
-    /** Pushes a {@link Flee} frame retreating from {@code from} over the top frame. */
+    /**
+     * Pushes a {@link Flee} frame retreating from {@code from}, over the top frame or onto an
+     * idle stack. Returns false while a retreat is already under way.
+     */
     public synchronized boolean preemptWithFleeReflex(Vec3 from, String reason) {
-        if (!hasPreemptableFrame() && getStackDepth() == 0) {
+        if (motorStack.snapshot().stream().anyMatch(f -> f.motor() instanceof Flee)) {
             return false;
         }
         return pushReflex(new Flee(from, Flee.DEFAULT_TICKS), reason);
