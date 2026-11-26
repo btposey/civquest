@@ -54,3 +54,7 @@ crash-reports/
 .beads-credential-key
 .beads/proxieddb/
 *.gate.lock*
+
+# Go build outputs from `go build ./cmd/...` at module root
+/orchestrator-go/civquest-agent
+/orchestrator-go/cq
