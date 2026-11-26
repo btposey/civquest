@@ -843,10 +843,12 @@ func (r *AgentRuntime) QueueIntent(intent *civquestv1.AgentIntent) error {
 	r.recordPlacedBlockPOI(intent)
 	r.PruneHarvestedBlockPOI(intent)
 	if r.debugLogger != nil {
-		r.debugLogger.Emit(r.WorldTick(), "INTENT_OUT", intentActionName(intent), map[string]any{
+		d := map[string]any{
 			"sequence_id": intent.SequenceId,
 			"action":      intentActionName(intent),
-		})
+		}
+		r.annotateNavigateEvent(d, intent)
+		r.debugLogger.Emit(r.WorldTick(), "INTENT_OUT", intentActionName(intent), d)
 	}
 	return nil
 }
@@ -917,13 +919,31 @@ func (r *AgentRuntime) QueuePriorityIntent(intent *civquestv1.AgentIntent) error
 	r.recordPlacedBlockPOI(intent)
 	r.PruneHarvestedBlockPOI(intent)
 	if r.debugLogger != nil {
-		r.debugLogger.Emit(r.WorldTick(), "INTENT_OUT", intentActionName(intent), map[string]any{
+		d := map[string]any{
 			"sequence_id": intent.SequenceId,
 			"action":      intentActionName(intent),
 			"priority":    true,
-		})
+		}
+		r.annotateNavigateEvent(d, intent)
+		r.debugLogger.Emit(r.WorldTick(), "INTENT_OUT", intentActionName(intent), d)
 	}
 	return nil
+}
+
+// annotateNavigateEvent adds the navigate target and why it was chosen (activity kind and
+// goal) to an INTENT_OUT event so path retreading can be analysed after a run.
+func (r *AgentRuntime) annotateNavigateEvent(d map[string]any, intent *civquestv1.AgentIntent) {
+	nav := intent.GetNavigate()
+	if nav == nil || nav.Target == nil {
+		return
+	}
+	d["target"] = []float64{nav.Target.X, nav.Target.Y, nav.Target.Z}
+	r.mu.RLock()
+	fsm := r.agentFSM
+	r.mu.RUnlock()
+	if reason := fsm.NavReason(); reason != nil {
+		d["reason"] = reason
+	}
 }
 
 func intentActionName(intent *civquestv1.AgentIntent) string {
@@ -3429,11 +3449,15 @@ func (r *AgentRuntime) evaluateSystem1Reflexes(frame *civquestv1.TelemetryFrame)
 	// Motion telemetry: stamina / navigation state sampled every 100 ticks into the debug log
 	if r.debugLogger != nil {
 		if r.system1State.TryAdvanceMotionLogTick(frame.WorldTick, 100) {
-			r.debugLogger.Emit(frame.WorldTick, "MOTION", fmt.Sprintf("stamina=%.1f nav=%s", frame.Status.Stamina, frame.Status.NavigationState.String()), map[string]any{
+			md := map[string]any{
 				"stamina":             frame.Status.Stamina,
 				"navigation_state":    frame.Status.NavigationState.String(),
 				"navigation_enclosed": frame.Status.NavigationEnclosed,
-			})
+			}
+			if p := frame.Status.Position; p != nil {
+				md["position"] = []float64{p.X, p.Y, p.Z}
+			}
+			r.debugLogger.Emit(frame.WorldTick, "MOTION", fmt.Sprintf("stamina=%.1f nav=%s", frame.Status.Stamina, frame.Status.NavigationState.String()), md)
 		}
 	}
 

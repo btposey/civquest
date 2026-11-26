@@ -88,3 +88,10 @@ func TestPlaytestEventsNilSinkIsSilent(t *testing.T) {
 	runReplay(t, replayScenario{Name: "nil", Stage: StageBootstrap, Profession: "EXPLORER",
 		Steps: []replayStep{{Frame: rf(100, 3000, withBlocks(treeColumn...))}}})
 }
+
+func TestNavReasonNilSafe(t *testing.T) {
+	var fsm *AgentFSM
+	if fsm.NavReason() != nil {
+		t.Fatal("nil FSM must give nil reason")
+	}
+}

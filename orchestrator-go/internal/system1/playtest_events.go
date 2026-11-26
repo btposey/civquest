@@ -134,3 +134,19 @@ func (fsm *AgentFSM) emitVitalsLocked(ctx *FSMContext, tick int64) {
 	}
 	fsm.eventSink(tick, EventVitals, fmt.Sprintf("hp=%.1f food=%d air=%d", s.Health, s.FoodLevel, s.AirSupply), d)
 }
+
+// NavReason describes why the FSM is currently navigating: the top activity kind (what the
+// agent is doing) and the strategic goal (stage and circadian routine). Diagnostic only.
+func (fsm *AgentFSM) NavReason() map[string]any {
+	if fsm == nil {
+		return nil
+	}
+	fsm.mu.RLock()
+	stage, routine := fsm.currentStage, fsm.currentRoutine
+	fsm.mu.RUnlock()
+	d := map[string]any{"goal": string(stage), "routine": fmt.Sprint(routine)}
+	if top, ok := fsm.kernel.Top(); ok {
+		d["activity"] = string(top.Kind())
+	}
+	return d
+}
