@@ -55,6 +55,10 @@ func (s *AgentState) claimBed(agentID string, pos *civquestv1.BlockPosProto, tic
 	if pos == nil || agentID == "" {
 		return false
 	}
+	// Read first: this runs every tick and an owned bed must not take the registry write lock.
+	if owner, err := reg.BedOwner(pos.X, pos.Y, pos.Z); err != nil || owner != "" {
+		return err == nil && owner == agentID
+	}
 	owner, err := reg.ClaimBed(pos.X, pos.Y, pos.Z, agentID, tick)
 	return err == nil && owner == agentID
 }
@@ -136,4 +140,17 @@ func (s *AgentState) BedAvailableFor(agentID string, frame *civquestv1.Telemetry
 		return true, true
 	}
 	return true, false
+}
+
+// claimBedNoLock is claimBed for callers already holding s.mu (reads the registry field directly).
+func (s *AgentState) claimBedNoLock(agentID string, pos *civquestv1.BlockPosProto, tick int64) bool {
+	reg := s.bedRegistry
+	if reg == nil {
+		return true
+	}
+	if pos == nil || agentID == "" {
+		return false
+	}
+	owner, err := reg.ClaimBed(pos.X, pos.Y, pos.Z, agentID, tick)
+	return err == nil && owner == agentID
 }

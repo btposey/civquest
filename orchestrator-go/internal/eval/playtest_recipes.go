@@ -6,8 +6,9 @@ import (
 )
 
 // VanillaRecipeNodes returns the small vanilla recipe subset the bootstrap tool progression
-// uses (planks, sticks, table, wooden and stone tools, torch). In production the recipe graph
-// arrives from the mod; scenarios install this one on AgentState via SetRecipeGraph.
+// uses (planks, sticks, table, wooden and stone tools, torch) plus beds (cq-390.2). In
+// production the recipe graph arrives from the mod; scenarios install this one on AgentState
+// via SetRecipeGraph.
 func VanillaRecipeNodes() []*civquestv1.RecipeNode {
 	planks := []string{"minecraft:birch_planks", "minecraft:oak_planks", "minecraft:spruce_planks"}
 	cobble := []string{"minecraft:cobbled_deepslate", "minecraft:cobblestone"}
@@ -46,6 +47,14 @@ func VanillaRecipeNodes() []*civquestv1.RecipeNode {
 			IngredientSlots: []*civquestv1.RecipeIngredientSlot{slot(1, "minecraft:charcoal", "minecraft:coal"), slot(1, stick...)},
 			Result:          res("minecraft:torch", 4)},
 	)
+	for _, c := range []string{"white", "black", "brown"} {
+		nodes = append(nodes, &civquestv1.RecipeNode{
+			RecipeId: "minecraft:" + c + "_bed", RecipeType: "minecraft:crafting_shaped",
+			WorkstationBlock: "minecraft:crafting_table", Requires_3X3: true,
+			IngredientSlots: []*civquestv1.RecipeIngredientSlot{slot(3, "minecraft:"+c+"_wool"), slot(3, planks...)},
+			Result:          res("minecraft:"+c+"_bed", 1),
+		})
+	}
 	return nodes
 }
 

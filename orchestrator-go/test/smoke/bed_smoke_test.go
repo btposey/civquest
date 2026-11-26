@@ -1,9 +1,12 @@
 package smoke
 
 import (
+	"math"
 	"path/filepath"
+	"strings"
 	"testing"
 
+	"github.com/btposey/civquest/orchestrator-go/internal/crafting"
 	"github.com/btposey/civquest/orchestrator-go/internal/db"
 	"github.com/btposey/civquest/orchestrator-go/internal/eval"
 	civquestv1 "github.com/btposey/civquest/orchestrator-go/internal/proto/v1"
@@ -28,7 +31,9 @@ func newBedClan(t *testing.T, ids []string, tod int64, inv []*civquestv1.ItemSta
 		sim := newSim(t, id, "EXPLORER", eval.TimeWarpConfig{
 			InitialTimeOfDay: tod, InitialInventory: append([]*civquestv1.ItemStackProto(nil), inv...),
 			CivicRegistryDB: civic,
-			InitialPosition: &civquestv1.Vec3{X: 0.5 + float64(i)*1.5, Y: 64, Z: 0.5},
+			// No hunger within a day: night foraging is not what these scenarios test.
+			HungerDecayRateTicks: 1 << 30,
+			InitialPosition:      &civquestv1.Vec3{X: 0.5 + float64(i)*1.5, Y: 64, Z: 0.5},
 		})
 		if bed {
 			sim.AddBlock(4, 64, 0, "minecraft:red_bed")
@@ -83,5 +88,111 @@ func TestSmoke_SharedBedOwnerOnlyOthersBuildShelter(t *testing.T) {
 	}
 	if owners != 1 {
 		t.Fatalf("expected exactly one agent assigned the shared bed, got %d", owners)
+	}
+}
+
+func bedRecipes() *crafting.RecipeGraph { return eval.VanillaRecipeGraph() }
+
+// cq-390.2: three agents, ONE pioneer bed. The first owns it; the other two each craft their own
+// bed from wool + planks at a table, place it, own it, and only ever sleep in their own bed.
+func TestSmoke_ThreeAgentsOneBedEachEndsWithOwnBed(t *testing.T) {
+	inv := append(survivalKit(),
+		&civquestv1.ItemStackProto{ItemId: "minecraft:oak_planks", Count: 16},
+		&civquestv1.ItemStackProto{ItemId: "minecraft:white_wool", Count: 3},
+	)
+	civic, agents := newBedClan(t, []string{"able", "bert", "carl"}, 9000, inv, true)
+	for _, a := range agents {
+		a.sim.Runtime().System1State().SetRecipeGraph(bedRecipes())
+	}
+
+	// bert already has a shelter: its bed goes there.
+	shelter := &civquestv1.BlockPosProto{X: 14, Y: 64, Z: 8}
+	agents[1].sim.Runtime().System1State().SetShelterPos(shelter)
+
+	sleptAt := map[string][]*civquestv1.BlockPosProto{}
+	sawPlan := map[string]bool{}
+	// Afternoon through the following night (TickDelta 4: tick 9000 -> 23000).
+	for i := 0; i < 3500; i++ {
+		for _, a := range agents {
+			a.step(t)
+			if a.sim.Runtime().System1State().ActiveActivityKind() == "bed" {
+				sawPlan[a.id] = true
+			}
+			for _, in := range a.sim.IntentsThisStep {
+				if ib := in.GetInteractBlock(); ib != nil && ib.InteractionType == civquestv1.InteractBlockIntent_SLEEP_IN_BED {
+					sleptAt[a.id] = append(sleptAt[a.id], ib.Pos)
+				}
+			}
+		}
+	}
+
+	seen := map[[3]int32]string{}
+	for _, a := range agents {
+		owned, err := civic.BedOwnedBy(a.id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		b := a.sim.Runtime().System1State().GetAssignedBed()
+		if len(owned) == 0 || b == nil {
+			t.Fatalf("%s ends without its own bed (claims=%v assigned=%v planSeen=%v)", a.id, owned, b, sawPlan[a.id])
+		}
+		key := [3]int32{b.X, b.Y, b.Z}
+		if o, _ := civic.BedOwner(b.X, b.Y, b.Z); o != a.id {
+			t.Fatalf("%s is assigned a bed owned by %q", a.id, o)
+		}
+		if other, dup := seen[key]; dup {
+			t.Fatalf("%s and %s share bed %v", a.id, other, key)
+		}
+		seen[key] = a.id
+		if id, ok := a.sim.HasBlock(b.X, b.Y, b.Z); !ok || !strings.HasSuffix(id, "_bed") {
+			t.Fatalf("%s assigned bed %v is not a bed block (%q)", a.id, key, id)
+		}
+		for _, p := range sleptAt[a.id] {
+			if o, _ := civic.BedOwner(p.X, p.Y, p.Z); o != a.id {
+				t.Fatalf("%s tried to sleep in a bed owned by %q at %v", a.id, o, p)
+			}
+		}
+		if len(sleptAt[a.id]) == 0 {
+			t.Errorf("%s never slept", a.id)
+		}
+	}
+	if b := agents[1].sim.Runtime().System1State().GetAssignedBed(); math.Hypot(float64(b.X-shelter.X), float64(b.Z-shelter.Z)) > 2 {
+		t.Errorf("bert's bed %v was not placed in its shelter %v", b, shelter)
+	}
+	for _, id := range []string{"bert", "carl"} {
+		if !sawPlan[id] {
+			t.Errorf("%s never ran the bed plan", id)
+		}
+	}
+}
+
+// cq-390.2: bed-less agents with no wool still hold an active bed plan: they harvest the timber
+// for the planks while the wool is outstanding.
+func TestSmoke_BedlessAgentWithoutWoolRunsBedPlan(t *testing.T) {
+	civic, agents := newBedClan(t, []string{"able", "bert"}, 1000, survivalKit(), true)
+	for _, a := range agents {
+		a.sim.Runtime().System1State().SetRecipeGraph(bedRecipes())
+		a.sim.AddBlock(-3, 64, 0, "minecraft:oak_log")
+	}
+	var bertPlanned, bertHarvested bool
+	for i := 0; i < 400; i++ {
+		for _, a := range agents {
+			a.step(t)
+		}
+		b := agents[1]
+		if b.sim.Runtime().System1State().ActiveActivityKind() == "bed" {
+			bertPlanned = true
+			for _, in := range b.sim.IntentsThisStep {
+				if ib := in.GetInteractBlock(); ib != nil && ib.InteractionType == civquestv1.InteractBlockIntent_HARVEST_BREAK {
+					bertHarvested = true
+				}
+			}
+		}
+	}
+	if o, _ := civic.BedOwner(4, 64, 0); o != "able" {
+		t.Fatalf("pioneer bed owner = %q, want able", o)
+	}
+	if !bertPlanned || !bertHarvested {
+		t.Fatalf("bert (no bed, no wool) should run the bed plan: planned=%v harvested=%v", bertPlanned, bertHarvested)
 	}
 }

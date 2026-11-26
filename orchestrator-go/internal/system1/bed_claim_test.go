@@ -104,3 +104,19 @@ func TestBedClaim_LegacyNoRegistryBedSuppressesShelter(t *testing.T) {
 		t.Fatal("legacy single-agent: a visible bed must keep suppressing shelter")
 	}
 }
+
+// cq-390.2: contention yields. An agent holding a stale assignment to a bed another agent owns
+// drops it and does not retry; the bed activity (not SLEEP_IN_BED) takes over.
+func TestBedClaim_ContendedAssignmentYields(t *testing.T) {
+	reg := newFakeBedRegistry()
+	_, _ = reg.ClaimBed(4, 64, 0, "able", 1)
+	st := NewAgentState()
+	st.SetBedRegistry(reg)
+	st.SetAssignedBed(&civquestv1.BlockPosProto{X: 4, Y: 64, Z: 0})
+	if got := st.ensureOwnBed("bert", nightFrameWithPioneerBed("bert")); got != nil || st.GetAssignedBed() != nil {
+		t.Fatalf("bert must drop able's bed, got=%v assigned=%v", got, st.GetAssignedBed())
+	}
+	if in := EvaluateSleep("bert", nightFrameWithPioneerBed("bert"), st); in != nil {
+		t.Fatalf("bert must not target able's bed, intent=%v", in)
+	}
+}

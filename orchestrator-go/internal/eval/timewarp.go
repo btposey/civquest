@@ -844,6 +844,16 @@ func (sim *TimeWarpSimulation) applyIntentFeedback(intent *civquestv1.AgentInten
 	if craft := intent.GetCraftItem(); craft != nil {
 		recipe := strings.ToLower(craft.RecipeId)
 		switch {
+		case strings.HasSuffix(recipe, "_bed"):
+			// 3 same-colour wool + 3 planks -> 1 bed (cq-390.2)
+			colour := strings.TrimSuffix(strings.TrimPrefix(recipe, "minecraft:"), "_bed")
+			wool := "minecraft:" + colour + "_wool"
+			if sim.InventoryItemCount(wool) >= 3 && sim.InventoryItemCount("minecraft:oak_planks") >= 3 {
+				sim.RemoveInventoryItem(wool, 3)
+				sim.RemoveInventoryItem("minecraft:oak_planks", 3)
+				sim.AddInventoryItem("minecraft:"+colour+"_bed", 1)
+				sim.ActionOccurredThisStep = true
+			}
 		case strings.Contains(recipe, "oak_planks") || strings.Contains(recipe, "planks"):
 			// 1 log -> 4 planks
 			if sim.RemoveFirstMatchingLog() {

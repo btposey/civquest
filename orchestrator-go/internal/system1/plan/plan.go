@@ -32,6 +32,8 @@ const (
 	SourceStone SourceClass = "stone"
 	SourceOre   SourceClass = "ore"
 	SourceWorld SourceClass = "world"
+	// SourceMob: dropped or sheared by a mob (wool from a sheep).
+	SourceMob SourceClass = "mob"
 )
 
 // Pos is an integer block position.
@@ -63,6 +65,9 @@ type GoalKind string
 
 // GoalToolProgression is the wooden->stone tool and torch progression.
 const GoalToolProgression GoalKind = "tool_progression"
+
+// GoalBed is one bed: 3 same-colour wool (any colour) + 3 planks, crafted at a table (cq-390.2).
+const GoalBed GoalKind = "bed"
 
 // Goal names what a plan is for.
 type Goal struct {
@@ -254,6 +259,9 @@ func derive(goal Goal, f Facts) ([]Step, []BOMLine, []string, bool) {
 	case GoalToolProgression:
 		steps, bom, un := planToolProgression(f)
 		return steps, bom, un, true
+	case GoalBed:
+		steps, bom, un := planBed(f)
+		return steps, bom, un, true
 	}
 	return nil, nil, nil, false
 }
@@ -270,6 +278,8 @@ func DefaultToolGate(item string) string {
 func sourceOf(item string) SourceClass {
 	id := strings.TrimPrefix(item, "minecraft:")
 	switch {
+	case strings.HasSuffix(id, "_wool"):
+		return SourceMob
 	case strings.HasSuffix(id, "_log"), strings.HasSuffix(id, "_stem"), strings.HasSuffix(id, "_wood"):
 		return SourceTree
 	case id == "cobblestone", id == "cobbled_deepslate", id == "stone", id == "blackstone":

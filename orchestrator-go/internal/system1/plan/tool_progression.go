@@ -46,6 +46,9 @@ type sim struct {
 	steps   []Step
 	tableOK bool
 	hasTool func(string) bool
+	// raw items are gathered directly even when a recipe exists (wool is sheared or dropped,
+	// never crafted from string, so the bed plan stays on a real wool source).
+	raw func(string) bool
 }
 
 func (s *sim) clone() *sim {
@@ -111,6 +114,9 @@ func (s *sim) expand(item string, qty, depth int) bool {
 		return true
 	}
 	recipes := s.g.RecipesFor(item)
+	if s.raw != nil && s.raw(item) {
+		recipes = nil
+	}
 	if len(recipes) == 0 {
 		if _, _, isTool := toolRank(item); isTool || item == itemTable {
 			return false // tools and tables are crafted, never gathered

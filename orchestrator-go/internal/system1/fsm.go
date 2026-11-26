@@ -546,6 +546,11 @@ func (fsm *AgentFSM) Tick(ctx *FSMContext) FSMResult {
 			ctx.Registry = reg
 			restoreCtxRegistry = true
 		}
+		// Claim a bed as soon as one is seen, day or night: unclaimed visible beds would
+		// otherwise look available to every agent until dusk (cq-390.2).
+		if ctx.State != nil && ctx.State.bedReg() != nil {
+			ctx.State.ensureOwnBed(ctx.AgentID, ctx.Frame)
+		}
 		evalCtx := newEvaluatorContext(ctx)
 		ctx.Facts = reg.EvaluateAll(evalCtx)
 	}
