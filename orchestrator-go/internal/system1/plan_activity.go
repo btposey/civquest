@@ -287,8 +287,8 @@ func (w *fsmWorld) probePlan() *planProbe {
 		return w.planProbe
 	}
 	facts, table := planFactsLocked(frame, frame.Status.Position, st)
-	p := plan.NewToolProgression("probe", plan.Lease{}, facts)
-	step, status := plan.Next(p, facts)
+	// Next derives the steps itself; building a Plan first would derive them twice per tick.
+	step, status := plan.Next(plan.Plan{Goal: plan.Goal{Kind: plan.GoalToolProgression}}, facts)
 	pr := &planProbe{status: status, step: step}
 	if status == plan.NextReady {
 		l := planLocal{}
