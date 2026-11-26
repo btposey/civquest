@@ -1,5 +1,5 @@
 t=100 stage=SETTLEMENT routine=HARVEST_TREE stack=[task_subroutine/1] intents=[Interact(HARVEST_BREAK 2,64,0 minecraft:oak_log)]  // committed harvest_tree in Settlement
-t=110 stage=EMERGENCY routine=EMERGENCY stack=[emergency/2] intents=[Attack(target=9 shield=false kite=false flee=true); Attack(target=9 shield=false kite=false flee=false); Navigate(x=-15.5 z=0.5)] probe={hasTask=true}  // emergency preempts the task
-t=120 stage=EMERGENCY routine=EMERGENCY stack=[emergency/2] intents=[Attack(target=9 shield=false kite=false flee=true); Attack(target=9 shield=false kite=false flee=false); Navigate(x=-15.5 z=0.5)] probe={hasTask=true}  // emergency holds
+t=110 stage=EMERGENCY routine=EMERGENCY stack=[emergency/2] intents=[Attack(target=9 shield=false kite=false flee=true); Navigate(x=-15.5 z=0.5)] probe={hasTask=true}  // emergency preempts the task
+t=120 stage=EMERGENCY routine=EMERGENCY stack=[emergency/2] intents=[Attack(target=9 shield=false kite=false flee=true); Navigate(x=-15.5 z=0.5)] probe={hasTask=true}  // emergency holds
 t=140 stage=SETTLEMENT routine=HARVEST_TREE stack=[task_subroutine/1] intents=[Interact(HARVEST_BREAK 2,65,0 minecraft:oak_log)] probe={hasTask=true}  // cleared: task resumes
 t=150 stage=SETTLEMENT routine=HARVEST_TREE stack=[task_subroutine/1] intents=[] probe={hasTask=true}  // task continues

@@ -550,6 +550,13 @@ type ReflexContext struct {
 	HasShield  bool
 	HasWeapon  bool
 	WeaponSlot int32
+
+	// Eng, when set, is the emergency frame's held fight-vs-flee verdict (cq-gpa.3): the panic
+	// decision is made once per engagement instead of recomputed every frame. nil keeps the
+	// stateless per-frame behaviour (callers outside the emergency frame).
+	Eng          *engagement
+	DirectiveAct string // active System 2 directive action ("" none)
+	DirectiveAt  int64  // its issued tick
 }
 
 // ScanInventoryCombatItems scans inventory items and returns whether a shield exists,
@@ -729,6 +736,21 @@ func EvaluateReflexes(ctx ReflexContext) ReflexResult {
 	isPanic := ShouldPanic(selfHP, maxHP, confidence, hasThreats, creeperHissingNearby)
 	res.IsPanic = isPanic
 
+	if ctx.Eng != nil && !isDrowning {
+		in := engagementInput{
+			Tick: ctx.Frame.WorldTick, HasThreat: hasThreats, DefaultFlee: isPanic,
+			HP: selfHP, MaxHP: maxHP, CreeperHiss: creeperHissingNearby,
+			DirectiveAct: ctx.DirectiveAct, DirectiveAt: ctx.DirectiveAt,
+		}
+		if ph := SelectPriorityHostile(hostiles); ph != nil {
+			in.Target = ph.EntityId
+		} else if dmg := ctx.Frame.LastDamageTaken; dmg != nil && !IsPassiveOrEnvironmentalDamage(dmg) {
+			in.Target = dmg.AttackerEntityId
+		}
+		isPanic = ctx.Eng.resolve(in)
+		res.IsPanic = isPanic
+	}
+
 	if isDrowning {
 		surfaceTarget := computeSurfaceTarget(selfPos, ctx.Frame.InterestingBlocks)
 		res.ShouldAct = true
@@ -790,7 +812,7 @@ func EvaluateReflexes(ctx ReflexContext) ReflexResult {
 		res.Intents = append(res.Intents, attackIntent)
 
 		// Tactical counter-attack if hostile mob is within melee reach (<= 2.5 blocks) and agent has a weapon
-		if ctx.HasWeapon {
+		if ctx.HasWeapon && ctx.Eng == nil { // a held flee does not also swing (cq-gpa.3)
 			var meleeTarget *civquestv1.VisibleEntity
 			if priorityHostile != nil {
 				dist := float64(priorityHostile.Distance)

@@ -559,7 +559,7 @@ func (fsm *AgentFSM) Tick(ctx *FSMContext) FSMResult {
 	defer fsm.mu.Unlock()
 
 	if ctx != nil {
-		fsm.lastFacts = ctx.Facts
+		fsm.lastFacts = fsm.holdEmergencyFactsLocked(ctx)
 	}
 
 	worldTick := int64(0)

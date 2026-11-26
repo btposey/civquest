@@ -1,0 +1,5 @@
+t=100 stage=EMERGENCY routine=EMERGENCY stack=[emergency/1] intents=[Attack(target=31 shield=false kite=true flee=false)]  // zombie in range, full HP + sword: decide fight
+t=110 stage=EMERGENCY routine=EMERGENCY stack=[emergency/1] intents=[Attack(target=31 shield=false kite=true flee=false)]  // hit, HP 12: confidence moved but verdict held (fight)
+t=130 stage=EMERGENCY routine=EMERGENCY stack=[emergency/1] intents=[Attack(target=31 shield=false kite=true flee=false)]  // HP 8 (40%, above panic): still fight
+t=150 stage=EMERGENCY routine=EMERGENCY stack=[emergency/1] intents=[Attack(target=31 shield=false kite=false flee=true); Navigate(x=-15.5 z=0.5)]  // HP 3 <= floor: single escalation to flee
+t=160 stage=EMERGENCY routine=EMERGENCY stack=[emergency/1] intents=[Attack(target=31 shield=false kite=false flee=true); Navigate(x=-15.5 z=0.5)]  // HP regained above panic: flee held, never back to fight

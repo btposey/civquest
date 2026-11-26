@@ -90,7 +90,7 @@ func (c *FSMContext) IsDrowning() bool {
 	if c.Facts != nil {
 		return c.Facts.GetBool("threat.is_drowning") || c.Facts.GetString("threat.threatType") == "DROWNING"
 	}
-	return isDrowningDamage(c.Frame)
+	return isDrowningDamage(c.Frame) || sustainedDrowning(c.Frame)
 }
 
 // IsHealthCritical checks if HP <= 35% max HP.

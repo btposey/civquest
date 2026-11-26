@@ -83,10 +83,14 @@ func TestFSM_StateTransitions(t *testing.T) {
 			res.Stage, res.Routine, state.Stage(), state.Routine())
 	}
 
-	// 3. Creeper disappears, daylight -> transitions back to SETTLEMENT
+	// 3. Creeper disappears: the reflex holds through the settle window (cq-gpa.2), then
+	// daylight -> transitions back to SETTLEMENT
 	ctx.Frame.WorldTick = 110
 	ctx.Frame.VisibleEntities = nil
-
+	if res = fsm.Tick(ctx); res.Stage != StageEmergency {
+		t.Fatalf("expected emergency held during the %d-tick settle window, got %s", emergencySettleHostileTicks, res.Stage)
+	}
+	ctx.Frame.WorldTick = 116
 	res = fsm.Tick(ctx)
 	if res.Stage != StageSettlement {
 		t.Fatalf("expected stage %s when creeper cleared, got %s", StageSettlement, res.Stage)
@@ -97,7 +101,7 @@ func TestFSM_StateTransitions(t *testing.T) {
 
 	// 4. Founding new settlement site -> transitions to COLONIZE
 	state.SetEstablishingNewSettlement(true)
-	ctx.Frame.WorldTick = 115
+	ctx.Frame.WorldTick = 117
 	res = fsm.Tick(ctx)
 	if res.Stage != StageColonize {
 		t.Fatalf("expected stage %s when founding new settlement, got %s", StageColonize, res.Stage)

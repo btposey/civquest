@@ -65,6 +65,9 @@ type SkillContext struct {
 	Directive *directiveLocal
 	// Construction is the driving activity's blueprint progress Local (nil: start at block 0, untracked).
 	Construction *ConstructionLocal
+	// Engagement is the emergency frame's held fight-vs-flee verdict, bound only while that
+	// frame steps (nil otherwise; cq-gpa.3).
+	Engagement *engagement
 }
 
 // Skill defines a modular behavior skill activated by preconditions on the FactGraph.

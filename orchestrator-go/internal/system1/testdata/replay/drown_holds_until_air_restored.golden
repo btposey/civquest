@@ -1,0 +1,7 @@
+t=100 stage=BOOTSTRAP routine=HARVEST_TREE stack=[bootstrap/1] intents=[Interact(HARVEST_BREAK 3,64,0 minecraft:oak_log)]  // dry: harvesting
+t=110 stage=EMERGENCY routine=EMERGENCY stack=[emergency/2] intents=[Navigate(x=6.5 z=0.5)]  // submerged, air 20%, drown damage: emergency, swim to dry cell
+t=115 stage=EMERGENCY routine=EMERGENCY stack=[emergency/2] intents=[Navigate(x=6.5 z=0.5)]  // no damage edge this frame: still held (old edge trigger popped here)
+t=130 stage=EMERGENCY routine=EMERGENCY stack=[emergency/2] intents=[Navigate(x=6.5 z=0.5)]  // periodic damage: held
+t=145 stage=EMERGENCY routine=EMERGENCY stack=[emergency/2] intents=[Navigate(x=6.5 z=0.5)]  // head above water but still in water: held
+t=155 stage=EMERGENCY routine=EMERGENCY stack=[emergency/2] intents=[]  // on shore, air 60% < 80%: hold, no motion
+t=170 stage=BOOTSTRAP routine=HARVEST_TREE stack=[task_subroutine/2] intents=[Interact(HARVEST_BREAK 3,64,0 minecraft:oak_log)]  // air restored: pop, routine resumes

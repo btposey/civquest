@@ -125,6 +125,12 @@ func (s *CombatDefenseSkill) Execute(ctx *SkillContext, facts *FactGraph) ([]*ci
 		HasShield:  hasShield,
 		HasWeapon:  hasWeapon,
 		WeaponSlot: weaponSlot,
+		Eng:        ctx.Engagement,
+	}
+	if ctx.Engagement != nil && ctx.State != nil {
+		if dir, ok := ctx.State.ActiveStrategicDirective(ctx.Frame.WorldTick); ok {
+			rCtx.DirectiveAct, rCtx.DirectiveAt = dir.Action, dir.IssuedTick
+		}
 	}
 
 	combatResult := EvaluateReflexes(rCtx)

@@ -167,7 +167,7 @@ func (e *ThreatEvaluator) Evaluate(ctx *EvaluatorContext, graph *FactGraph) erro
 
 	_, conf, hostiles := AssessImmediateThreats(frame, bravery)
 
-	isDrowning := isDrowningDamage(frame)
+	isDrowning := isDrowningDamage(frame) || sustainedDrowning(frame)
 	damageTaken := false
 	if frame != nil && frame.LastDamageTaken != nil && !isDrowning {
 		if !IsPassiveOrEnvironmentalDamage(frame.LastDamageTaken) {
