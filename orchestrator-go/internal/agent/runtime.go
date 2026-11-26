@@ -184,10 +184,11 @@ type AgentRuntime struct {
 	permadeathResult *PermadeathResult
 
 	// System 1 Reflexes and Shared State
-	system1State   *system1.AgentState
-	agentFSM       *system1.AgentFSM
-	memoryPipeline *memory.Pipeline
-	peerGate       peerConversationGate
+	savedSettlement system1.Settlement // last settlement written to the agent database
+	system1State    *system1.AgentState
+	agentFSM        *system1.AgentFSM
+	memoryPipeline  *memory.Pipeline
+	peerGate        peerConversationGate
 
 	// System 2 Deliberative Dialogue Pipeline
 	dialogueService            *system2.DialogueService
@@ -390,6 +391,7 @@ func NewRuntime(cfg Config) (*AgentRuntime, error) {
 	runtime.loadSafeNodes()
 	runtime.loadTradeValuations()
 	runtime.loadSpatialPOIs()
+	runtime.loadSettlement()
 
 	return runtime, nil
 }
@@ -2084,12 +2086,8 @@ func (r *AgentRuntime) dispatchAgrarian(frame *civquestv1.TelemetryFrame) {
 	}
 
 	// 1. Emergent Specialization evaluation
-	// ADR-027: Specialized career transitions require a consecrated Settlement POI in SpatialIndex
-	hasSettlement := false
-	if si := r.system1State.SpatialIndex(); si != nil {
-		hasSettlement = si.HasSettlementPOI(nil, 0)
-	}
-	if hasSettlement && identity != nil && agrarian.IsTransitionableProfession(identity.Profession) {
+	// ADR-027: specialized career transitions require a settlement.
+	if r.system1State.SettlementEstablished() && identity != nil && agrarian.IsTransitionableProfession(identity.Profession) {
 		specCtx := agrarian.SpecializationContext{
 			AgentID:           r.agentID,
 			CurrentProfession: identity.Profession,

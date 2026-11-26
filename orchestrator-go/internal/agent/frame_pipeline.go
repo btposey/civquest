@@ -141,6 +141,7 @@ func stageFactGraphAndSystem1(r *AgentRuntime, ctx *FrameContext) {
 	}
 
 	r.syncPendingRendezvous(frame)
+	r.persistSettlement()
 	r.applyRecoverGiveUps()
 }
 

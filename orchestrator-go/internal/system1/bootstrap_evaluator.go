@@ -73,18 +73,15 @@ func (e *SurvivalKitEvaluator) Evaluate(ctx *EvaluatorContext, graph *FactGraph)
 	hasSettlement := false
 	nucleationLocked := false
 	if ctx != nil && ctx.State != nil {
-		si := ctx.State.SpatialIndexLocked()
-		if si != nil {
-			hasSettlement = si.HasSettlementPOI(nil, 0)
-		}
+		hasSettlement = ctx.State.SettlementEstablished()
 		prof := ""
 		if ctx.Config != nil {
 			prof = ctx.Config.Profession
 		}
-		nucleationLocked = IsPioneerNucleationLocked(si, prof)
+		nucleationLocked = IsPioneerNucleationLocked(hasSettlement, prof)
 	}
-	graph.SetBool("bootstrap.has_settlement_poi", "bootstrap", hasSettlement, fmt.Sprintf("Settlement POI verified: %t", hasSettlement))
-	graph.SetBool("settlement.is_consecrated", "settlement", hasSettlement, fmt.Sprintf("Settlement hearth consecrated: %t", hasSettlement))
+	graph.SetBool("bootstrap.has_settlement_poi", "bootstrap", hasSettlement, fmt.Sprintf("Settlement established: %t", hasSettlement))
+	graph.SetBool("settlement.is_consecrated", "settlement", hasSettlement, fmt.Sprintf("Settlement established: %t", hasSettlement))
 	graph.SetBool("bootstrap.nucleation_locked", "bootstrap", nucleationLocked, fmt.Sprintf("Specialized career nucleation locked: %t", nucleationLocked))
 
 	taskActive := false

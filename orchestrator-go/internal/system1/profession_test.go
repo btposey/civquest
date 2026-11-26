@@ -7,10 +7,8 @@ import (
 	"github.com/btposey/civquest/orchestrator-go/internal/xdg"
 )
 
-// consecrateSettlement records a verified settlement at the origin.
-func consecrateSettlement(st *AgentState) {
-	st.SpatialIndex().UpsertPOI(db.AgentPOI{POIID: "test-hearth", Category: POICategorySettlement, X: 0.5, Y: 64, Z: 0.5, Reliability: 1})
-}
+// consecrateSettlement selects a clan site at the origin.
+func consecrateSettlement(st *AgentState) { st.SetCollectiveSettlementSite(0.5, 64, 0.5) }
 
 // cq-6l3.12: no professions before a settlement; every agent is an explorer until then.
 func TestProfession_ExplorerUntilSettlementEstablished(t *testing.T) {
@@ -52,5 +50,43 @@ func TestProfession_FSMTreatsUnsettledGuardAsExplorer(t *testing.T) {
 	consecrateSettlement(settled)
 	if patrol, _ := run(settled); !patrol {
 		t.Error("after settlement the guard patrols")
+	}
+}
+
+// cq-6l3.14: a campfire or bed on its own is not a settlement.
+func TestProfession_HearthIsNotASettlement(t *testing.T) {
+	st := NewAgentState()
+	for _, block := range []string{"minecraft:campfire", "minecraft:red_bed"} {
+		st.SpatialIndex().UpsertPOI(db.AgentPOI{POIID: block, Category: POICategoryHabitation, BlockID: block, X: 0.5, Y: 64, Z: 0.5, Reliability: 1, IsActive: true})
+	}
+	cfg := xdg.DefaultAgentIdentityConfig("camper")
+	cfg.Profession = "FARMER"
+	if st.SettlementEstablished() || EffectiveIdentity(st, cfg).Profession != "EXPLORER" {
+		t.Error("a hearth alone ended the explorer phase")
+	}
+}
+
+// cq-6l3.14: a lone agent that claims a homestead becomes a homesteader.
+func TestProfession_LoneAgentBecomesHomesteader(t *testing.T) {
+	for _, prof := range []string{"FARMER", "EXPLORER"} {
+		st := NewAgentState()
+		cfg := xdg.DefaultAgentIdentityConfig("loner")
+		cfg.Profession = prof
+		st.applyHomesteadClaim([3]float64{10, 64, 10})
+		if got := EffectiveIdentity(st, cfg).Profession; got != "HOMESTEADER" {
+			t.Errorf("%s with a homestead: %q", prof, got)
+		}
+		if cfg.Profession != prof {
+			t.Errorf("configured identity modified to %q", cfg.Profession)
+		}
+		restored := NewAgentState()
+		was, ok := st.Settlement()
+		if !ok {
+			t.Fatal("no settlement recorded")
+		}
+		restored.RestoreSettlement(was)
+		if got, _ := restored.Settlement(); got != was {
+			t.Errorf("restored %+v, want %+v", got, was)
+		}
 	}
 }

@@ -22,6 +22,7 @@ type StateView interface {
 	IsShelterOnCooldown(currentTick int64) bool
 	IsTargetUnreachable(x, y, z float64, worldTick int64) bool
 	Routine() Routine
+	SettlementEstablished() bool
 	SpatialIndexLocked() *SpatialIndex
 	Stage() Stage
 	ActiveStrategicDirective(worldTick int64) (StrategicDirectiveState, bool)

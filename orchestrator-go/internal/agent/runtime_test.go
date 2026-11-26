@@ -22,7 +22,6 @@ import (
 	"github.com/btposey/civquest/orchestrator-go/internal/bridge"
 	"github.com/btposey/civquest/orchestrator-go/internal/db"
 	civquestv1 "github.com/btposey/civquest/orchestrator-go/internal/proto/v1"
-	"github.com/btposey/civquest/orchestrator-go/internal/system1"
 	"github.com/btposey/civquest/orchestrator-go/internal/system2"
 	"github.com/btposey/civquest/orchestrator-go/internal/xdg"
 	"google.golang.org/grpc"
@@ -2551,7 +2550,7 @@ func TestRuntime_System2_ClanChroniclerBookSynthesis(t *testing.T) {
 	}
 
 	// Professions apply only once a settlement exists (cq-6l3.12).
-	rt.System1State().SpatialIndex().UpsertPOI(db.AgentPOI{POIID: "hearth", Category: system1.POICategorySettlement, Reliability: 1})
+	rt.System1State().SetCollectiveSettlementSite(0, 64, 0)
 
 	runErrCh := make(chan error, 1)
 	go func() {
@@ -2834,6 +2833,9 @@ func TestRuntime_AgrarianSharecroppingAndSpecialization(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
+
+	// Career transitions need a settlement (cq-6l3.14).
+	rt.System1State().SetCollectiveSettlementSite(10, 64, 10)
 
 	runErrCh := make(chan error, 1)
 	go func() {
@@ -3905,9 +3907,13 @@ func TestRuntime_PioneerGenesisAndNucleationLifecycle(t *testing.T) {
 	// Give runtime a moment to ingest frame and update SpatialIndex
 	time.Sleep(50 * time.Millisecond)
 
-	// After settlement hearth is indexed, specialized profession is unlocked
+	// A hearth alone is not a settlement (cq-6l3.14).
+	if prof := rtSpecialized.Profession(); prof != "EXPLORER" {
+		t.Errorf("a campfire alone unlocked %q", prof)
+	}
+	rtSpecialized.System1State().SetCollectiveSettlementSite(12, 64, 12)
 	if prof := rtSpecialized.Profession(); prof != "FARMER" {
-		t.Errorf("expected profession unlocked to FARMER after settlement hearth consecrated, got %q", prof)
+		t.Errorf("expected profession unlocked to FARMER once the clan site is chosen, got %q", prof)
 	}
 
 	rtSpecialized.Stop()

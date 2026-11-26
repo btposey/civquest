@@ -254,25 +254,7 @@ func (r *AgentRuntime) syncRendezvousReport(frame *civquestv1.TelemetryFrame, su
 			}
 		}
 
-		// Score collective settlement candidates across all merged clan explorers.
-		if cand, err := civicDB.ScoreCollectiveSettlementCandidates(ctx); err == nil && cand != nil {
-			if cand.ExplorerCount >= 2 || cand.Score >= 35.0 {
-				r.system1State.SetCollectiveSettlementSite(cand.X, cand.Y, cand.Z)
-				if debugLog != nil {
-					debugLog.Emit(frame.WorldTick, "COLLECTIVE_SETTLEMENT_SITE",
-						fmt.Sprintf("Collective clan settlement site scored %.1f at (%.0f, %.0f, %.0f): %s",
-							cand.Score, cand.X, cand.Y, cand.Z, cand.Summary),
-						map[string]any{
-							"x":              cand.X,
-							"y":              cand.Y,
-							"z":              cand.Z,
-							"score":          cand.Score,
-							"explorer_count": cand.ExplorerCount,
-							"summary":        cand.Summary,
-						})
-				}
-			}
-		}
+		r.joinClanSite(ctx, frame, civicDB, clanID, agentID, debugLog)
 	}
 
 	// Broadcast local chat report to nearby clanmates & players (ADR-030).

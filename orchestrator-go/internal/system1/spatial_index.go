@@ -340,62 +340,9 @@ func (si *SpatialIndex) FindPOIsInRadius(pos *civquestv1.Vec3, category string, 
 	return out
 }
 
-// HasSettlementPOI returns true if a verified settlement POI or habitation hearth exists in spatial memory (ADR-027).
-// A consecrated settlement is anchored by either a POICategorySettlement entry or a POICategoryHabitation hearth
-// (e.g. campfire, soul_campfire, bed, hearth) with reliability >= 0.5.
-// If origin is nil or maxDist <= 0, any matching settlement POI in the index satisfies the query.
-func (si *SpatialIndex) HasSettlementPOI(origin *civquestv1.Vec3, maxDist float64) bool {
-	return si.FindSettlementHearth(origin, maxDist) != nil
-}
-
-// FindSettlementHearth returns the nearest verified settlement POI or habitation hearth in spatial memory (ADR-027).
-// Returns nil if no valid settlement anchor has been recorded.
-func (si *SpatialIndex) FindSettlementHearth(origin *civquestv1.Vec3, maxDist float64) *db.AgentPOI {
-	if si == nil {
-		return nil
-	}
-	si.mu.RLock()
-	defer si.mu.RUnlock()
-
-	var closest *db.AgentPOI
-	minDistSq := math.MaxFloat64
-	if maxDist > 0 {
-		minDistSq = maxDist * maxDist
-	}
-
-	for _, poi := range si.poisByID {
-		if poi == nil || poi.Reliability < 0.5 {
-			continue
-		}
-		isSettlement := strings.EqualFold(poi.Category, POICategorySettlement)
-		bLower := strings.ToLower(poi.BlockID)
-		isHearth := strings.EqualFold(poi.Category, POICategoryHabitation) &&
-			(strings.Contains(bLower, "campfire") || strings.Contains(bLower, "bed") || strings.Contains(bLower, "hearth"))
-		if !isSettlement && !isHearth {
-			continue
-		}
-
-		if origin == nil || maxDist <= 0 {
-			cp := *poi
-			return &cp
-		}
-
-		dx := poi.X - origin.X
-		dy := poi.Y - origin.Y
-		dz := poi.Z - origin.Z
-		distSq := dx*dx + dy*dy + dz*dz
-		if distSq <= minDistSq {
-			minDistSq = distSq
-			cp := *poi
-			closest = &cp
-		}
-	}
-	return closest
-}
-
 // IsSpecializedProfession returns true if the given profession is an advanced specialized urban/guild role
 // (such as Farmer, Miner, Forester, Crafter, Builder, Rancher, Guard, Blacksmith) whose career duties
-// and progression require a consecrated Clan Settlement POI (ADR-027).
+// and progression require a settlement (ADR-027).
 // Wilderness pioneer archetypes (Explorer, Pioneer, Settler, Scout, Unassigned) return false.
 func IsSpecializedProfession(prof string) bool {
 	norm := strings.ToUpper(strings.TrimSpace(prof))

@@ -124,25 +124,10 @@ func HasSurvivalKit(inventory []*civquestv1.ItemStackProto) bool {
 	return inv.hasAxe && (inv.hasSword || inv.hasWeapon) && inv.hasLight
 }
 
-// IsPioneerNucleationLocked returns true if specialized profession duties and career transitions
-// are locked due to the absence of a verified Settlement POI (or Habitation hearth) in SpatialIndex (ADR-027).
-func IsPioneerNucleationLocked(si *SpatialIndex, profession string) bool {
-	if si == nil || !si.HasSettlementPOI(nil, 0) {
-		return IsSpecializedProfession(profession)
-	}
-	return false
-}
-
-// EffectivePioneerProfession returns the effective profession for utility and behavior evaluation (ADR-027).
-// If no verified Settlement POI exists in SpatialIndex, specialized professions fall back to EXPLORER.
-func EffectivePioneerProfession(si *SpatialIndex, profession string) string {
-	if IsPioneerNucleationLocked(si, profession) {
-		return "EXPLORER"
-	}
-	if strings.TrimSpace(profession) == "" {
-		return "EXPLORER"
-	}
-	return strings.ToUpper(strings.TrimSpace(profession))
+// IsPioneerNucleationLocked reports whether a specialised profession's duties and career
+// transitions are locked because the agent has no settlement yet (ADR-027).
+func IsPioneerNucleationLocked(settled bool, profession string) bool {
+	return !settled && IsSpecializedProfession(profession)
 }
 
 // EvaluateBootstrapGoals directly executes bootstrap timber harvesting, basic tool crafting,
@@ -428,7 +413,7 @@ func evaluateBootstrapGoalsLocked(
 				return stepRes.Intent
 			}
 		} else if recalledTreePOI != nil &&
-			(!isLeavesBlockID(recalledTreePOI.BlockID) || recalledTreePOI.Reliability >= 0.9 || cfg == nil || !isExplorerProfession(cfg.Profession)) &&
+			(!isLeavesBlockID(recalledTreePOI.BlockID) || recalledTreePOI.Reliability >= 0.9 || cfg == nil || !travelsTheWild(cfg.Profession)) &&
 			!state.IsExpeditionActiveLocked() {
 			if navIntent, handled := navigateToRecalledTreePOILocked(agentID, frame, pos, navState, state, recalledTreePOI, walk); handled {
 				return navIntent

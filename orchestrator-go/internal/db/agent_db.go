@@ -287,6 +287,13 @@ func (a *AgentDB) migrateMapDB(ctx context.Context) error {
 		`CREATE INDEX IF NOT EXISTS idx_trail_corridors_from ON trail_corridors(from_poi_id);`,
 		`CREATE INDEX IF NOT EXISTS idx_trail_corridors_to ON trail_corridors(to_poi_id);`,
 		`CREATE INDEX IF NOT EXISTS idx_trail_corridors_endpoints ON trail_corridors(from_poi_id, to_poi_id);`,
+		`CREATE TABLE IF NOT EXISTS settlement_claim (
+			id INTEGER PRIMARY KEY CHECK (id = 1),
+			kind TEXT NOT NULL CHECK(kind IN ('HOMESTEAD', 'CLAN_SITE')),
+			x REAL NOT NULL,
+			y REAL NOT NULL,
+			z REAL NOT NULL
+		);`,
 		`CREATE TABLE IF NOT EXISTS horizon_sectors (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
 			origin_x REAL,

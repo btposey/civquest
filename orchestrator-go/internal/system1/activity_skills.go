@@ -116,7 +116,7 @@ func (s *PatrolExplorationSkill) Execute(ctx *SkillContext, facts *FactGraph) ([
 		}
 	}
 	var intent *civquestv1.AgentIntent
-	if (prof == "EXPLORER" || prof == "TRAILBLAZER" || prof == "SCOUT") && routine == RoutinePrimaryDuty {
+	if travelsTheWild(prof) && routine == RoutinePrimaryDuty {
 		intent = EvaluateScouting(ctx.AgentID, ctx.Frame, ctx.Config, ctx.State, ctx.Walk)
 	} else {
 		intent = EvaluatePatrol(ctx.AgentID, ctx.Frame, ctx.Config, ctx.State, ctx.Walk)

@@ -1190,32 +1190,21 @@ func TestPioneerGenesis_SettlementNucleationLifecycle(t *testing.T) {
 	}
 
 	state := NewAgentState()
-	si := state.SpatialIndex()
 
-	// 2. Wilderness Phase: No settlement POI exists in SpatialIndex
-	if si.HasSettlementPOI(nil, 0) {
-		t.Fatalf("expected HasSettlementPOI=false in raw wilderness without hearth")
-	}
-
+	// 2. Wilderness Phase: no settlement yet
 	specializedRoles := []string{"FARMER", "MINER", "BUILDER", "CRAFTER", "RANCHER", "GUARD"}
 	for _, role := range specializedRoles {
 		if !IsSpecializedProfession(role) {
 			t.Errorf("expected %s to be recognized as specialized profession", role)
 		}
-		if !IsPioneerNucleationLocked(si, role) {
-			t.Errorf("expected %s nucleation to be locked without settlement POI", role)
-		}
-		if eff := EffectivePioneerProfession(si, role); eff != "EXPLORER" {
-			t.Errorf("expected %s to fall back to EXPLORER before settlement genesis, got %q", role, eff)
+		if !IsPioneerNucleationLocked(state.SettlementEstablished(), role) {
+			t.Errorf("expected %s nucleation to be locked without a settlement", role)
 		}
 	}
 
 	// Pioneer Explorer itself is never locked
-	if IsPioneerNucleationLocked(si, "EXPLORER") {
+	if IsPioneerNucleationLocked(false, "EXPLORER") {
 		t.Errorf("expected EXPLORER to not be locked")
-	}
-	if eff := EffectivePioneerProfession(si, "EXPLORER"); eff != "EXPLORER" {
-		t.Errorf("expected EXPLORER to remain EXPLORER, got %q", eff)
 	}
 
 	// Verify SurvivalKitEvaluator facts reflect locked nucleation
@@ -1241,46 +1230,23 @@ func TestPioneerGenesis_SettlementNucleationLifecycle(t *testing.T) {
 		t.Errorf("expected bootstrap.nucleation_locked=true for FARMER in wilderness")
 	}
 
-	// 3. Settlement Genesis: Consecrate a campfire hearth POI in SpatialIndex
-	hearthPOI := db.AgentPOI{
-		POIID:       FormatPOIID(POICategoryHabitation, 0, 64, 0),
-		Category:    POICategoryHabitation,
-		BlockID:     "minecraft:campfire",
-		X:           0.5,
-		Y:           64.0,
-		Z:           0.5,
-		Reliability: 1.0,
-	}
-	si.UpsertPOI(hearthPOI)
-
-	if !si.HasSettlementPOI(nil, 0) {
-		t.Fatalf("expected HasSettlementPOI=true after registering campfire hearth")
-	}
-	nearestHearth := si.FindSettlementHearth(&civquestv1.Vec3{X: 10, Y: 64, Z: 10}, 64.0)
-	if nearestHearth == nil || nearestHearth.POIID != hearthPOI.POIID {
-		t.Fatalf("expected to find nearest hearth %s, got %+v", hearthPOI.POIID, nearestHearth)
-	}
-
-	// Now career nucleation unlocks: specialized roles can be assumed!
+	// 3. Settlement Genesis: the clan selects a site
+	state.SetCollectiveSettlementSite(0.5, 64, 0.5)
 	for _, role := range specializedRoles {
-		if IsPioneerNucleationLocked(si, role) {
-			t.Errorf("expected %s nucleation to be unlocked once settlement hearth exists", role)
-		}
-		if eff := EffectivePioneerProfession(si, role); eff != role {
-			t.Errorf("expected %s effective profession to be active after settlement genesis, got %q", role, eff)
+		if IsPioneerNucleationLocked(state.SettlementEstablished(), role) {
+			t.Errorf("expected %s nucleation to be unlocked once the settlement exists", role)
 		}
 	}
 
-	// Verify SurvivalKitEvaluator facts reflect unlocked settlement genesis
 	graphSettled := NewFactGraph()
 	if err := eval.Evaluate(evalCtx, graphSettled); err != nil {
 		t.Fatalf("evaluator error: %v", err)
 	}
 	if !graphSettled.GetBool("bootstrap.has_settlement_poi") {
-		t.Errorf("expected bootstrap.has_settlement_poi=true after hearth established")
+		t.Errorf("expected bootstrap.has_settlement_poi=true after settlement genesis")
 	}
 	if graphSettled.GetBool("bootstrap.nucleation_locked") {
-		t.Errorf("expected bootstrap.nucleation_locked=false after hearth established")
+		t.Errorf("expected bootstrap.nucleation_locked=false after settlement genesis")
 	}
 }
 

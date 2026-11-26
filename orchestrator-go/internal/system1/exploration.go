@@ -511,8 +511,7 @@ func evaluateGeneralExplorationLocked(
 	if cfg != nil {
 		prof = strings.ToUpper(strings.TrimSpace(cfg.Profession))
 	}
-	isExplorer := prof == "EXPLORER" || prof == "TRAILBLAZER" || prof == "SCOUT"
-	if isExplorer {
+	if travelsTheWild(prof) {
 		if state.mem.telemetryFramesSeen < 2 {
 			return nil
 		}
