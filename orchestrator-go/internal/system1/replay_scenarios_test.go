@@ -42,6 +42,7 @@ func replayScenarios() []replayScenario {
 		scenarioDirectiveSurveyWithoutReportIsBounded(),
 		scenarioScoutingStuckDigsThrough(),
 		scenarioSleepBedUnreachableBlacklists(),
+		scenarioSettlementBuildsRecommendedBlueprint(),
 	}
 }
 

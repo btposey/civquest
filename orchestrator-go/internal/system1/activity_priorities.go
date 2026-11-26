@@ -21,9 +21,10 @@ const (
 	priorityTask       = 0.75
 	// priorityDirective is the weight of the strategic_directive activity and the Utility of
 	// the Expedition bid a SCOUT_FRONTIER directive makes.
-	priorityDirective   = 0.70
-	priorityBootstrap   = 0.60
-	priorityExploration = 0.40
+	priorityDirective    = 0.70
+	priorityConstruction = 0.65
+	priorityBootstrap    = 0.60
+	priorityExploration  = 0.40
 )
 
 // defaultPriorities is the stage-independent priority row (read-only).
@@ -36,6 +37,7 @@ var defaultPriorities = map[htpda.Kind]float64{
 	activityKindShelter:            priorityShelter,
 	activityKindTaskSubroutine:     priorityTask,
 	activityKindStrategicDirective: priorityDirective,
+	activityKindConstruction:       priorityConstruction,
 	activityKindBootstrap:          priorityBootstrap,
 	activityKindExploration:        priorityExploration,
 }

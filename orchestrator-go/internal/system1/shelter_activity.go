@@ -113,6 +113,9 @@ func (s *AgentState) applyStoreWrites(ws []htpda.StoreWrite) {
 		if v, ok := w.(shelterStore); ok {
 			s.applyShelterStore(v)
 		}
+		if v, ok := w.(constructionStore); ok {
+			s.applyConstructionStore(v)
+		}
 	}
 }
 

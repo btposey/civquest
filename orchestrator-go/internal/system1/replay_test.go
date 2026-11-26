@@ -71,6 +71,8 @@ type replayScenario struct {
 	Check func(t *testing.T, tr []replayRecord)
 	// Sink, when set, receives the FSM's playtest events (cq-gpa.5).
 	Sink EventSink
+	// Registry overrides the default engine registry (e.g. a hermetic blueprint library).
+	Registry *EngineRegistry
 }
 
 type replayRecord struct {
@@ -144,7 +146,7 @@ func summarizeIntent(in *civquestv1.AgentIntent) string {
 // runReplay executes the scenario and returns the recorded trace.
 func runReplay(t *testing.T, sc replayScenario) []replayRecord {
 	t.Helper()
-	fsm := NewAgentFSM(sc.Stage, nil)
+	fsm := NewAgentFSMWithRegistry(sc.Stage, nil, sc.Registry)
 	fsm.SetEventSink(sc.Sink)
 	st := NewAgentState()
 	if sc.Clan > 0 {

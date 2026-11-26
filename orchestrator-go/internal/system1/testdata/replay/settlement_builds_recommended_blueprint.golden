@@ -1,0 +1,9 @@
+t=100 stage=SETTLEMENT routine=PRIMARY_DUTY stack=[construction/1] intents=[Interact(PLACE_BLOCK 8,64,0 minecraft:oak_planks)]  // settlement, recommended blueprint affordable: construction starts
+t=106 stage=SETTLEMENT routine=PRIMARY_DUTY stack=[construction/1] intents=[Interact(PLACE_BLOCK 9,64,0 minecraft:oak_planks)]  // next block
+t=112 stage=SETTLEMENT routine=PRIMARY_DUTY stack=[construction/1] intents=[Interact(PLACE_BLOCK 9,64,1 minecraft:oak_planks)]  // next block
+t=118 stage=SETTLEMENT routine=PRIMARY_DUTY stack=[construction/1] intents=[Interact(PLACE_BLOCK 8,64,1 minecraft:oak_planks)]  // next block
+t=124 stage=SETTLEMENT routine=PRIMARY_DUTY stack=[construction/1] intents=[]  // next block
+t=130 stage=SETTLEMENT routine=PRIMARY_DUTY stack=[exploration/1] intents=[Navigate(x=-11.1 z=-2.4)]  // next block
+t=136 stage=SETTLEMENT routine=PRIMARY_DUTY stack=[exploration/1] intents=[]  // next block
+t=142 stage=SETTLEMENT routine=PRIMARY_DUTY stack=[exploration/1] intents=[]  // next block
+t=148 stage=SETTLEMENT routine=PRIMARY_DUTY stack=[exploration/1] intents=[]  // next block

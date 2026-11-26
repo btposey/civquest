@@ -167,6 +167,7 @@ type AgentState struct {
 	establishingNewSettlement bool
 	CabinBuilt                int // Store: blocks of the frontier cabin at ShelterPos already placed (banked by the Shelter frame on exit)
 	PavingTracker             *RoadPavingTracker
+	construction              constructionState // Store: blueprint project cursor + finished blueprints (construction_activity.go)
 
 	// taskView is the read-only value projection of the committed task (ADR-036): a task's
 	// progress is its frame Local (taskLocal) or, between starting inline and being framed, the

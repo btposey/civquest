@@ -69,6 +69,7 @@ func newManagedActivities() []waterfallActivity {
 		shelterActivity{frameBase{activityKindShelter}},
 		taskActivity{frameBase{activityKindTaskSubroutine}},
 		directiveActivity{frameBase{activityKindStrategicDirective}},
+		constructionActivity{frameBase{activityKindConstruction}},
 		bootstrapActivity{frameBase{activityKindBootstrap}},
 		explorationActivity{frameBase{activityKindExploration}},
 	}

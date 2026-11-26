@@ -145,16 +145,23 @@ func (s *ConstructionSkill) Execute(ctx *SkillContext, facts *FactGraph) ([]*civ
 		return nil, nil
 	}
 
-	targetWork := intents[idx]
+	out, advance := constructionWorkStep(ctx.Frame, quadrant, intents[idx])
+	if advance && ctx.Construction != nil {
+		ctx.Construction.Index++
+	}
+	return out, nil
+}
+
+// constructionWorkStep is the pure core of one blueprint work item: approach the voxel, clear
+// natural terrain obstructing it, or place the block. advance reports that the item is done
+// (placed, or skipped for lacking a target voxel) and the caller's index moves on.
+func constructionWorkStep(frame *civquestv1.TelemetryFrame, quadrant blueprints.Quadrant, targetWork *civquestv1.BuildBlockIntent) ([]*civquestv1.AgentIntent, bool) {
 	targetVoxel := targetWork.TargetVoxel
 	if targetVoxel == nil {
-		if ctx.Construction != nil {
-			ctx.Construction.Index++
-		}
-		return nil, nil
+		return nil, true
 	}
 
-	pos := ctx.Frame.Status.Position
+	pos := frame.Status.Position
 	dx := float64(targetVoxel.X) + 0.5 - pos.X
 	dy := float64(targetVoxel.Y) + 0.5 - pos.Y
 	dz := float64(targetVoxel.Z) + 0.5 - pos.Z
@@ -193,13 +200,13 @@ func (s *ConstructionSkill) Execute(ctx *SkillContext, facts *FactGraph) ([]*civ
 				},
 			},
 		}
-		return []*civquestv1.AgentIntent{navIntent}, nil
+		return []*civquestv1.AgentIntent{navIntent}, false
 	}
 
 	// 4. Inspect current world voxel at target to detect subterranean obstruction
 	targetBlockState := targetWork.BlockStateString
 	var existingBlockAtVoxel string
-	for _, vb := range ctx.Frame.InterestingBlocks {
+	for _, vb := range frame.InterestingBlocks {
 		if vb != nil && vb.Pos != nil &&
 			vb.Pos.X == targetVoxel.X &&
 			vb.Pos.Y == targetVoxel.Y &&
@@ -226,13 +233,13 @@ func (s *ConstructionSkill) Execute(ctx *SkillContext, facts *FactGraph) ([]*civ
 			},
 		}
 		// Do not advance progress index until block is cleared
-		return []*civquestv1.AgentIntent{digIntent}, nil
+		return []*civquestv1.AgentIntent{digIntent}, false
 	}
 
 	// 5. Build carried inventory map to resolve generic in-situ taxonomy substitutions
 	carried := make(map[string]int)
-	if ctx.Frame.Status != nil && ctx.Frame.Status.Inventory != nil {
-		for _, item := range ctx.Frame.Status.Inventory {
+	if frame.Status != nil && frame.Status.Inventory != nil {
+		for _, item := range frame.Status.Inventory {
 			if item != nil && item.Count > 0 && item.ItemId != "" {
 				norm := blueprints.NormalizeItemID(item.ItemId)
 				carried[norm] += int(item.Count)
@@ -253,13 +260,7 @@ func (s *ConstructionSkill) Execute(ctx *SkillContext, facts *FactGraph) ([]*civ
 			},
 		},
 	}
-
-	// Advance progress to next block in quadrant
-	if ctx.Construction != nil {
-		ctx.Construction.Index++
-	}
-
-	return []*civquestv1.AgentIntent{placeIntent}, nil
+	return []*civquestv1.AgentIntent{placeIntent}, true
 }
 
 // OnComplete is called when a quadrant or entire construction project finishes.
