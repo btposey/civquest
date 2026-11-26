@@ -1434,4 +1434,191 @@ public class AgentGameTest {
             manager.despawnAgent(server, "agent-gt-ladder").join();
         });
     }
+
+    // ---- cq-71l.4 coverage smoke tests -------------------------------------------------------
+
+    private static AgentEntity spawnCoverageAgent(GameTestHelper helper, AgentEntityManager manager, String id, BlockPos rel) {
+        BlockPos abs = helper.absolutePos(rel);
+        return manager.spawnAgent(helper.getLevel().getServer(), helper.getLevel(), SpawnAgentRequest.newBuilder()
+                .setAgentId(id)
+                .setDisplayName(id)
+                .setClanId("clan-ironwood")
+                .setSpawnCoords(Vec3.newBuilder().setX(abs.getX() + 0.5).setY(abs.getY()).setZ(abs.getZ() + 0.5).build())
+                .build()).join();
+    }
+
+    private static int countItem(AgentEntity agent, net.minecraft.world.item.Item item) {
+        int n = 0;
+        for (int i = 0; i < agent.getInventory().getContainerSize(); i++) {
+            ItemStack st = agent.getInventory().getItem(i);
+            if (st.is(item)) n += st.getCount();
+        }
+        return n;
+    }
+
+    @GameTest(template = "empty3x3x3")
+    public static void testCraftIntentPocketAndTable(GameTestHelper helper) {
+        MinecraftServer server = helper.getLevel().getServer();
+        AgentEntityManager manager = new AgentEntityManager();
+        AgentEntity agent = spawnCoverageAgent(helper, manager, "agent-gt-craft", new BlockPos(1, 1, 1));
+        agent.getInventory().add(new ItemStack(Items.OAK_PLANKS, 8));
+
+        // 2x2 pocket recipe: planks -> sticks
+        manager.handleIntent(server, AgentIntent.newBuilder().setAgentId("agent-gt-craft")
+                .setCraftItem(CraftItemIntent.newBuilder().setRecipeId("minecraft:stick").setBatchCount(1).build())
+                .build()).join();
+        helper.assertTrue(countItem(agent, Items.STICK) >= 2, "2x2 stick craft must yield sticks");
+
+        // 3x3 recipe without a table must not craft
+        manager.handleIntent(server, AgentIntent.newBuilder().setAgentId("agent-gt-craft")
+                .setCraftItem(CraftItemIntent.newBuilder().setRecipeId("minecraft:wooden_pickaxe").setBatchCount(1).build())
+                .build()).join();
+        helper.assertTrue(countItem(agent, Items.WOODEN_PICKAXE) == 0, "3x3 craft must fail without a crafting table");
+
+        // 3x3 recipe with a table in reach succeeds
+        helper.setBlock(new BlockPos(2, 1, 1), Blocks.CRAFTING_TABLE);
+        manager.handleIntent(server, AgentIntent.newBuilder().setAgentId("agent-gt-craft")
+                .setCraftItem(CraftItemIntent.newBuilder().setRecipeId("minecraft:wooden_pickaxe").setBatchCount(1).build())
+                .build()).join();
+        helper.assertTrue(countItem(agent, Items.WOODEN_PICKAXE) == 1, "3x3 craft must yield a pickaxe beside a crafting table");
+
+        manager.despawnAgent(server, "agent-gt-craft").join();
+        helper.succeed();
+    }
+
+    @GameTest(template = "empty3x3x3")
+    public static void testChatIntentDelivery(GameTestHelper helper) {
+        MinecraftServer server = helper.getLevel().getServer();
+        AgentEntityManager manager = new AgentEntityManager();
+        AgentEntity speaker = spawnCoverageAgent(helper, manager, "agent-gt-chat-a", new BlockPos(0, 1, 0));
+        AgentEntity listener = spawnCoverageAgent(helper, manager, "agent-gt-chat-b", new BlockPos(2, 1, 2));
+
+        manager.handleIntent(server, AgentIntent.newBuilder().setAgentId("agent-gt-chat-a")
+                .setChat(com.civquest.mod.grpc.v1.SendChatIntent.newBuilder().setMessage("hello clan").build())
+                .build()).join();
+
+        List<com.civquest.mod.grpc.v1.ChatEvent> heard = listener.pollIncomingChats();
+        helper.assertTrue(heard.stream().anyMatch(e -> "hello clan".equals(e.getMessage())),
+                "Nearby agent must receive the chat event, got " + heard.size() + " events");
+        helper.assertTrue(speaker.pollIncomingChats().stream().noneMatch(e -> "hello clan".equals(e.getMessage())),
+                "Speaker must not hear its own chat");
+
+        manager.despawnAgent(server, "agent-gt-chat-a").join();
+        manager.despawnAgent(server, "agent-gt-chat-b").join();
+        helper.succeed();
+    }
+
+    @GameTest(template = "empty3x3x3")
+    public static void testSleepInBedAndWake(GameTestHelper helper) {
+        ServerLevel level = helper.getLevel();
+        MinecraftServer server = level.getServer();
+        AgentEntityManager manager = new AgentEntityManager();
+        AgentEntity agent = spawnCoverageAgent(helper, manager, "agent-gt-sleep", new BlockPos(0, 1, 0));
+
+        net.minecraft.core.Direction facing = net.minecraft.core.Direction.SOUTH;
+        BlockPos foot = new BlockPos(1, 1, 0);
+        BlockPos head = foot.relative(facing);
+        helper.setBlock(foot, Blocks.RED_BED.defaultBlockState()
+                .setValue(net.minecraft.world.level.block.BedBlock.FACING, facing)
+                .setValue(net.minecraft.world.level.block.BedBlock.PART, net.minecraft.world.level.block.state.properties.BedPart.FOOT));
+        helper.setBlock(head, Blocks.RED_BED.defaultBlockState()
+                .setValue(net.minecraft.world.level.block.BedBlock.FACING, facing)
+                .setValue(net.minecraft.world.level.block.BedBlock.PART, net.minecraft.world.level.block.state.properties.BedPart.HEAD));
+
+        // SleepHandler requires night or thunder; thunder is deterministic regardless of the sky-darken cache.
+        level.setDayTime(14000L);
+        level.setThunderLevel(1.0f);
+        level.setRainLevel(1.0f);
+        try {
+            BlockPos absFoot = helper.absolutePos(foot);
+            manager.handleIntent(server, AgentIntent.newBuilder().setAgentId("agent-gt-sleep")
+                    .setInteractBlock(InteractBlockIntent.newBuilder()
+                            .setPos(BlockPosProto.newBuilder().setX(absFoot.getX()).setY(absFoot.getY()).setZ(absFoot.getZ()).build())
+                            .setInteractionType(InteractBlockIntent.InteractionType.SLEEP_IN_BED).build())
+                    .build()).join();
+            // No ticking here: the stale sky-darken cache reads as day and vanilla wakes sleepers on a day tick.
+            helper.assertTrue(agent.isSleeping(), "Agent must be asleep in the bed at night; night=" + level.isNight()
+                    + " thunder=" + level.isThundering() + " depth=" + agent.getMotorFSM().getStackDepth()
+                    + " top=" + agent.getMotorFSM().topMotor() + " bed=" + level.getBlockState(absFoot)
+                    + " dist=" + agent.distanceToSqr(absFoot.getX() + 0.5, absFoot.getY() + 0.5, absFoot.getZ() + 0.5));
+
+            manager.handleIntent(server, AgentIntent.newBuilder().setAgentId("agent-gt-sleep")
+                    .setInteractBlock(InteractBlockIntent.newBuilder()
+                            .setPos(BlockPosProto.newBuilder().setX(absFoot.getX()).setY(absFoot.getY()).setZ(absFoot.getZ()).build())
+                            .setInteractionType(InteractBlockIntent.InteractionType.WAKE_UP).build())
+                    .build()).join();
+            helper.assertFalse(agent.isSleeping(), "Agent must wake on WAKE_UP");
+        } finally {
+            level.setThunderLevel(0.0f);
+            level.setRainLevel(0.0f);
+        }
+        manager.despawnAgent(server, "agent-gt-sleep").join();
+        helper.succeed();
+    }
+
+    @GameTest(template = "empty3x3x3")
+    public static void testFleeReflexPreemptsMove(GameTestHelper helper) {
+        ServerLevel level = helper.getLevel();
+        MinecraftServer server = level.getServer();
+        AgentEntityManager manager = new AgentEntityManager();
+        for (int x = 0; x <= 2; x++) {
+            for (int z = 0; z <= 2; z++) {
+                helper.setBlock(new BlockPos(x, 0, z), Blocks.STONE);
+            }
+        }
+        AgentEntity agent = spawnCoverageAgent(helper, manager, "agent-gt-flee", new BlockPos(0, 1, 0));
+        Zombie zombie = helper.spawn(EntityType.ZOMBIE, new BlockPos(0, 1, 2));
+        zombie.setNoAi(true);
+
+        BlockPos far = helper.absolutePos(new BlockPos(2, 1, 2));
+        manager.handleIntent(server, AgentIntent.newBuilder().setAgentId("agent-gt-flee")
+                .setNavigate(NavigateIntent.newBuilder()
+                        .setTarget(Vec3.newBuilder().setX(far.getX() + 0.5).setY(far.getY()).setZ(far.getZ() + 0.5).build())
+                        .setSpeedMultiplier(1.0f).setArrivalTolerance(1).build())
+                .build()).join();
+        for (int i = 0; i < 3; i++) agent.tick();
+        helper.assertTrue(agent.getMotorFSM().topMotor().isPresent(), "Navigate must leave a motor frame to preempt; nav=" + agent.getNavigator().getNavigationState()
+                + " top=" + agent.getMotorFSM().topMotor() + " pos=" + agent.position() + " zombie=" + zombie.position());
+
+        agent.pollReflexNotices();
+        boolean pushed = agent.getMotorFSM().preemptWithFleeReflex(
+                Vec3.newBuilder().setX(zombie.getX()).setY(zombie.getY()).setZ(zombie.getZ()).build(), "hostile_near");
+        helper.assertTrue(pushed, "Flee reflex must preempt the routine motor frame");
+        helper.assertTrue(agent.getMotorFSM().activeReflex().filter(m -> m instanceof com.civquest.mod.actuator.motor.Flee).isPresent(),
+                "Flee must be the active reflex on top of the stack");
+        boolean notice = agent.pollReflexNotices().stream().anyMatch(n ->
+                n.getReflexType() == com.civquest.mod.grpc.v1.ReflexNotice.ReflexType.REFLEX_TYPE_FLEE && !n.getPopped());
+        helper.assertTrue(notice, "A FLEE ReflexNotice must be emitted");
+
+        zombie.discard();
+        manager.despawnAgent(server, "agent-gt-flee").join();
+        helper.succeed();
+    }
+
+    @GameTest(template = "empty3x3x3")
+    public static void testPioneerCampStructureGenerates(GameTestHelper helper) {
+        ServerLevel level = helper.getLevel();
+        var structureReg = level.registryAccess().registryOrThrow(net.minecraft.core.registries.Registries.STRUCTURE);
+        helper.assertTrue(structureReg.containsKey(com.civquest.mod.worldgen.CivQuestStructures.PIONEER_CAMPFIRE_ID),
+                "pioneer_campfire structure must be registered via datapack");
+        var tpl = level.getStructureManager().get(com.civquest.mod.worldgen.CivQuestStructures.PIONEER_CAMPFIRE_ID);
+        helper.assertTrue(tpl.isPresent(), "pioneer_campfire template must load");
+
+        BlockPos origin = helper.absolutePos(new BlockPos(0, 1, 0));
+        boolean placed = tpl.get().placeInWorld(level, origin, origin,
+                new net.minecraft.world.level.levelgen.structure.templatesystem.StructurePlaceSettings(),
+                level.getRandom(), 2);
+        helper.assertTrue(placed, "pioneer_campfire template must place in world");
+
+        var size = tpl.get().getSize();
+        boolean campfire = false;
+        for (BlockPos p : BlockPos.betweenClosed(origin, origin.offset(size.getX() - 1, size.getY() - 1, size.getZ() - 1))) {
+            if (level.getBlockState(p).is(Blocks.CAMPFIRE)) {
+                campfire = true;
+                break;
+            }
+        }
+        helper.assertTrue(campfire, "Placed camp must contain a campfire");
+        helper.succeed();
+    }
 }
