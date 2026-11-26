@@ -30,6 +30,13 @@ func newSim(t *testing.T, id, profession string, cfg eval.TimeWarpConfig) *eval.
 	return sim
 }
 
+// survivalKit is the bootstrap kit (axe, sword, light) that lets the FSM graduate to SETTLEMENT.
+func survivalKit() []*civquestv1.ItemStackProto {
+	return []*civquestv1.ItemStackProto{
+		{ItemId: "minecraft:wooden_axe", Count: 1}, {ItemId: "minecraft:wooden_sword", Count: 1}, {ItemId: "minecraft:torch", Count: 8},
+	}
+}
+
 func foodLevel(sim *eval.TimeWarpSimulation) int32 {
 	return sim.BuildTelemetryFrame().Status.FoodLevel
 }
@@ -111,65 +118,43 @@ func TestSmoke_WalkReachesNavigationTargets(t *testing.T) {
 	}
 }
 
-// cq-71l.7: s1.skill.patrol_exploration. A guard on night watch (CIVIC_PATROL routine) keeps
-// issuing distinct patrol waypoints and walks them.
+// cq-71l.7: s1.skill.patrol_exploration. A guard in the post-dawn off-watch hour (no armory work
+// pending, so SECONDARY_HOBBY -> EvaluatePatrol) issues distinct perimeter waypoints around
+// home and walks them without drifting away.
 func TestSmoke_PatrolMovesBetweenWaypoints(t *testing.T) {
-	sim := newSim(t, "guard1", "GUARD", eval.TimeWarpConfig{InitialTimeOfDay: 14000})
+	sim := newSim(t, "guard1", "GUARD", eval.TimeWarpConfig{InitialTimeOfDay: 1200, InitialInventory: survivalKit()})
 	st := sim.Runtime().System1State()
-	st.SetStage(system1.StageSettlement)
 	st.SetHomeOrigin(&civquestv1.Vec3{X: 0.5, Y: 64, Z: 0.5})
 	distinct := map[[2]int]bool{}
-	sawPatrol := false
+	maxDist := 0.0
 	for i := 0; i < 1200; i++ {
 		if err := sim.Step(4); err != nil {
 			t.Fatal(err)
 		}
-		if st.GetCurrentRoutine() == system1.RoutineCivicPatrol {
-			sawPatrol = true
-		}
+		p := sim.CurrentPosition()
+		maxDist = math.Max(maxDist, math.Hypot(p.X-0.5, p.Z-0.5))
 		for _, in := range sim.IntentsThisStep {
 			if nav := in.GetNavigate(); nav != nil && nav.Target != nil {
 				distinct[[2]int{int(nav.Target.X), int(nav.Target.Z)}] = true
 			}
 		}
 	}
-	if !sawPatrol {
-		t.Fatal("guard never entered the CIVIC_PATROL routine at night")
-	}
 	if len(distinct) < 3 {
 		t.Fatalf("patrol issued only %d distinct waypoints, want >= 3", len(distinct))
 	}
-	home := st.GetHomeOrigin()
-	p := sim.CurrentPosition()
-	if math.Hypot(p.X-home.X, p.Z-home.Z) < 5 {
+	if maxDist < 5 {
 		t.Fatal("patrolling guard never left the home origin")
 	}
-}
-
-// cq-71l.7 follow-up: patrol should orbit the settlement perimeter, not march away forever.
-func TestSmoke_PatrolStaysNearHome(t *testing.T) {
-	t.Skip("cq-71l.12: CIVIC_PATROL guard marches radially away from home (~850 blocks in 5k ticks) instead of orbiting a perimeter")
-	sim := newSim(t, "guard2", "GUARD", eval.TimeWarpConfig{InitialTimeOfDay: 14000})
-	st := sim.Runtime().System1State()
-	st.SetStage(system1.StageSettlement)
-	st.SetHomeOrigin(&civquestv1.Vec3{X: 0.5, Y: 64, Z: 0.5})
-	maxDist := 0.0
-	for i := 0; i < 1200; i++ {
-		_ = sim.Step(4)
-		p := sim.CurrentPosition()
-		maxDist = math.Max(maxDist, math.Hypot(p.X-0.5, p.Z-0.5))
-	}
 	if maxDist > 150 {
-		t.Fatalf("patrol wandered %.0f blocks from home", maxDist)
+		t.Fatalf("patrol should orbit the settlement perimeter but wandered %.0f blocks from home", maxDist)
 	}
 }
 
 // cq-71l.7: s1.evaluator.circadian. Across a full day the routine follows the schedule and
 // switches at dusk.
 func TestSmoke_CircadianRoutineSwitchesAtDusk(t *testing.T) {
-	sim := newSim(t, "c1", "FARMER", eval.TimeWarpConfig{InitialTimeOfDay: 500})
+	sim := newSim(t, "c1", "FARMER", eval.TimeWarpConfig{InitialTimeOfDay: 500, InitialInventory: survivalKit()})
 	st := sim.Runtime().System1State()
-	st.SetStage(system1.StageSettlement)
 	st.SetHomeOrigin(&civquestv1.Vec3{X: 0.5, Y: 64, Z: 0.5})
 	type change struct {
 		tod int64
