@@ -3,6 +3,7 @@ package system1
 import (
 	"testing"
 
+	"github.com/btposey/civquest/orchestrator-go/internal/blueprints"
 	civquestv1 "github.com/btposey/civquest/orchestrator-go/internal/proto/v1"
 	"github.com/btposey/civquest/orchestrator-go/internal/xdg"
 )
@@ -78,6 +79,30 @@ func TestPlaytest9_DaytimeStandstillGivesWay(t *testing.T) {
 	}
 	if events[EventStandstill] == 0 {
 		t.Errorf("no activity gave way after standing still all morning: %v", events)
+	}
+}
+
+// Play test 9: with a finished cabin elsewhere, agents stood out the night wherever work ended.
+func TestPlaytest9_FinishedCabinIsWalkedHomeToAtNight(t *testing.T) {
+	for _, stage := range []State{StageBootstrap, StageSettlement} {
+		fsm := NewAgentFSMWithRegistry(stage, nil, NewDefaultEngineRegistry())
+		st := NewAgentState()
+		cfg := xdg.DefaultAgentIdentityConfig("homer")
+		st.SetShelterPos(&civquestv1.BlockPosProto{X: 20, Y: 64, Z: 0})
+		st.SetCabinBuilt(blueprints.CabinTotalBlocks)
+		home := false
+		for tick := int64(100); tick < 400 && !home; tick += 4 {
+			res := fsm.Tick(&FSMContext{AgentID: "homer", State: st, Config: cfg,
+				Frame: makeArbiterTestFrame(tick, 14000, 20, fullSurvivalKitInv(), nil)})
+			for _, in := range res.Intents {
+				if n := in.Intent.GetNavigate(); n != nil && n.Target.X > 19 && n.Target.X < 22 {
+					home = true
+				}
+			}
+		}
+		if !home {
+			t.Errorf("stage %s: no walk home to the cabin at night", stage)
+		}
 	}
 }
 

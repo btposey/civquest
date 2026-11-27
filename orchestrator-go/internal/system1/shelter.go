@@ -167,7 +167,7 @@ func evaluateDuskNightOutpostShelterLocked(
 			return nil
 		}
 	}
-	if prog.Pos != nil && math.Hypot(pos.X-float64(prog.Pos.X), pos.Z-float64(prog.Pos.Z)) <= 32.0 {
+	if prog.Pos != nil && (isShelterComplete || math.Hypot(pos.X-float64(prog.Pos.X), pos.Z-float64(prog.Pos.Z)) <= 32.0) {
 		targetX = float64(prog.Pos.X) + 0.5
 		targetY = float64(prog.Pos.Y)
 		targetZ = float64(prog.Pos.Z) + 0.5

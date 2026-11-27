@@ -212,6 +212,9 @@ func (shelterActivity) eligible(lw *fsmWorld) bool {
 	if directiveBuildsShelter(stage, routine, ctx) && !skillIsShelterComplete(skillCtx, ctx.Facts) && !skillIsShelterOnCooldown(skillCtx, ctx.Facts) {
 		return true // a BUILD_SHELTER directive biases toward Shelter, which places the blocks
 	}
+	if skillIsShelterComplete(skillCtx, ctx.Facts) && lw.homeBound() {
+		return true // walk home: standing out the night wherever work ended helps nothing
+	}
 	if skillHasAssignedBed(skillCtx, ctx.Facts) || skillIsShelterComplete(skillCtx, ctx.Facts) || skillIsShelterOnCooldown(skillCtx, ctx.Facts) {
 		return false
 	}
@@ -308,6 +311,9 @@ func (shelterActivity) tick(lw *fsmWorld) ([]FSMIntent, bool) {
 func (a shelterActivity) run(lw *fsmWorld, local any) htpda.Step {
 	sl, _ := local.(shelterLocal)
 	if sl.complete() {
+		if home := lw.walkHome(&sl); home != nil {
+			return htpda.Step{Op: htpda.OpStay, Intents: home, Next: sl}
+		}
 		return a.exit(lw, sl, nil, true)
 	}
 	prog := sl
@@ -329,3 +335,35 @@ func (a shelterActivity) run(lw *fsmWorld, local any) htpda.Step {
 // Construction progress (blueprint quadrant block index) is a value-type Local owned by whoever
 // drives ConstructionSkill; the skill itself holds no per-agent state.
 type ConstructionLocal struct{ Index int }
+
+// homeBound: it is night, there is no bed to go to, and the cabin is elsewhere and reachable.
+func (lw *fsmWorld) homeBound() bool {
+	ctx := lw.ctx
+	return ctx != nil && ctx.State != nil && ctx.Frame != nil && ctx.Frame.Status != nil &&
+		!skillHasAssignedBed(lw.skillCtx, ctx.Facts) &&
+		(skillIsDuskOrNight(lw.skillCtx, ctx.Facts) || lw.fsm.currentRoutine == RoutineSleep) &&
+		ctx.State.awayFromCabin(ctx.Frame.Status.Position, ctx.Frame.WorldTick)
+}
+
+// walkHome is the walk to a finished cabin, sent at most every homeWalkEvery ticks while the
+// agent is home bound; nil otherwise.
+func (lw *fsmWorld) walkHome(l *shelterLocal) []*civquestv1.AgentIntent {
+	if !lw.homeBound() {
+		return nil
+	}
+	tick := lw.Tick()
+	if l.WalkTick != 0 && tick >= l.WalkTick && tick-l.WalkTick < homeWalkEvery {
+		return []*civquestv1.AgentIntent{} // under way
+	}
+	at := lw.ctx.State.GetShelterPos()
+	if at == nil {
+		return nil
+	}
+	l.WalkTick = tick
+	return []*civquestv1.AgentIntent{{AgentId: lw.agentID(), Action: &civquestv1.AgentIntent_Navigate{Navigate: &civquestv1.NavigateIntent{
+		Target:          &civquestv1.Vec3{X: float64(at.X) + 0.5, Y: float64(at.Y), Z: float64(at.Z) + 0.5},
+		SpeedMultiplier: 1.0, ArrivalTolerance: 2,
+	}}}}
+}
+
+const homeWalkEvery = int64(40)

@@ -48,6 +48,25 @@ func (s *AgentState) cabinOutOfReach(pos *civquestv1.Vec3, tick int64) bool {
 	return dx*dx+dz*dz > cabinAtSq && s.givenUpLocked(x, y, z, tick)
 }
 
+// awayFromCabin reports a known cabin near enough to walk back to at night, that the agent is
+// not at and has not given up on.
+func (s *AgentState) awayFromCabin(pos *civquestv1.Vec3, tick int64) bool {
+	if s == nil || pos == nil {
+		return false
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if s.ShelterPos == nil {
+		return false
+	}
+	x, y, z := float64(s.ShelterPos.X)+0.5, float64(s.ShelterPos.Y), float64(s.ShelterPos.Z)+0.5
+	dx, dz := pos.X-x, pos.Z-z
+	d := dx*dx + dz*dz
+	return d > cabinAtSq && d <= homeRangeSq && !s.givenUpLocked(x, y, z, tick)
+}
+
 // cabinAtSq is the squared horizontal distance within which the agent counts as at its cabin.
 const cabinAtSq = 16.0
 
+// homeRangeSq is the squared distance (96 blocks) beyond which the night is not spent walking.
+const homeRangeSq = 96.0 * 96.0
