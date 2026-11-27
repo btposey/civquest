@@ -201,6 +201,13 @@ func (fsm *AgentFSM) dispatchLocked(w *fsmWorld, ev htpda.Event) []FSMIntent {
 		for _, in := range em.Intents {
 			if in != nil {
 				if nav := in.GetNavigate(); nav != nil && nav.Target != nil {
+					// A walk to a place already given up is not sent, whoever asks (blacklist.go).
+					if w.ctx != nil && w.ctx.State != nil && !nav.IntoCell && takesFreshBearing(em.Kind) &&
+						w.ctx.State.givenUp(nav.Target.X, nav.Target.Y, nav.Target.Z, w.tick) {
+						fsm.withheld(w, em.Kind, nav)
+						w.ctx.State.wantFreshBearing("asked to walk to a place already given up")
+						continue
+					}
 					if w.ctx != nil && w.ctx.State != nil && !nav.IntoCell && takesFreshBearing(em.Kind) {
 						if scan, held := fsm.holdForScan(w, in.AgentId); held {
 							if scan != nil {

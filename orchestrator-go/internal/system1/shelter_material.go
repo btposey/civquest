@@ -118,3 +118,9 @@ func (l shelterLocal) onReceipt(rc *civquestv1.IntentReceipt) shelterLocal {
 	}
 	return l
 }
+
+// isWaterAt reports water in view at cell.
+func isWaterAt(frame *civquestv1.TelemetryFrame, cell *civquestv1.BlockPosProto) bool {
+	b := FindVisibleBlockAt(frame, cell.X, cell.Y, cell.Z)
+	return b != nil && bareID(b.BlockId) == "water"
+}

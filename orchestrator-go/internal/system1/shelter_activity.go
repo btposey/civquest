@@ -17,8 +17,12 @@ import (
 )
 
 // shelterLocal is the Shelter frame Local: the frontier-cabin build progress.
-// shelterLightTries bounds light placements that never show up.
-const shelterLightTries = 6
+// shelterLightTries bounds light placements that never show up; a light seen for
+// shelterLightStays ticks has shown up.
+const (
+	shelterLightTries = 6
+	shelterLightStays = int64(200)
+)
 
 type shelterLocal struct {
 	BuildIndex int // next cabin blueprint block to place
@@ -28,6 +32,7 @@ type shelterLocal struct {
 	Walk walkLocal
 	// LightTries counts light placements since a light was last in view.
 	LightTries int
+	LightSeen  int64 // tick a light came into view (0 none in view)
 	// Pending is one more than the blueprint index of the last block sent for placing (0 none);
 	// RetryIndex and Tries count the failed attempts at one block (shelter_material.go).
 	Pending, RetryIndex, Tries int
@@ -176,6 +181,9 @@ func (shelterActivity) eligible(lw *fsmWorld) bool {
 	}
 	if skillHasAssignedBed(skillCtx, ctx.Facts) || skillIsShelterComplete(skillCtx, ctx.Facts) || skillIsShelterOnCooldown(skillCtx, ctx.Facts) {
 		return false
+	}
+	if ctx.State.cabinOutOfReach(ctx.Frame.Status.Position, ctx.Frame.WorldTick) {
+		return false // other work until a way back may be tried again
 	}
 	if stage == StageBootstrap {
 		if !skillIsDuskOrNight(skillCtx, ctx.Facts) {

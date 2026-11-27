@@ -180,6 +180,9 @@ func evaluateDuskNightOutpostShelterLocked(
 	// Only pull toward homeOrigin / ShelterPos when carrying materials to build/light shelter,
 	// or when shelter is already complete and the agent is seeking refuge for the night.
 	distToShelter := math.Hypot(pos.X-targetX, pos.Z-targetZ)
+	if distToShelter > 4.0 && state.givenUpLocked(targetX, targetY, targetZ, frame.WorldTick) {
+		return nil // no way back was found: neither walk there nor build at it from here
+	}
 	if (hasShelterMaterials || isShelterComplete) && distToShelter > 4.0 && !isStuckOrEnclosed {
 		if navState == civquestv1.NavigationState_NAVIGATION_STATE_PATHING {
 			return nil
@@ -394,7 +397,14 @@ func evaluateDuskNightOutpostShelterLocked(
 		}
 	}
 
-	if hasNearbyLight {
+	// Only a light that stays resets the count: one placed in water shows for a moment and is
+	// washed away (play test 8: placed 625 times in a night).
+	switch {
+	case !hasNearbyLight:
+		prog.LightSeen = 0
+	case prog.LightSeen == 0 || frame.WorldTick < prog.LightSeen:
+		prog.LightSeen = frame.WorldTick
+	case frame.WorldTick-prog.LightSeen >= shelterLightStays:
 		prog.LightTries = 0
 	}
 	if !hasNearbyLight {
@@ -425,7 +435,7 @@ func evaluateDuskNightOutpostShelterLocked(
 		}
 		// A light that never appears is tried on other cells, then left: seen live, one
 		// torch was placed on the same cell 212 times.
-		if inv.hasLight && canPlace && prog.LightTries < shelterLightTries {
+		if inv.hasLight && canPlace && prog.LightTries < shelterLightTries && !frame.Status.IsInWater {
 			state.mem.lastShelterPlaceTick = frame.WorldTick
 			lightPos := &civquestv1.BlockPosProto{
 				X: cx + 1,
@@ -437,6 +447,9 @@ func evaluateDuskNightOutpostShelterLocked(
 				lightPos = cells[(prog.LightTries-1)%len(cells)]
 			}
 			prog.LightTries++
+			if isWaterAt(frame, lightPos) {
+				return nil // try the next cell
+			}
 			if prog.Pos == nil {
 				prog.Pos = &civquestv1.BlockPosProto{X: cx, Y: cy, Z: cz}
 			}

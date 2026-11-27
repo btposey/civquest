@@ -668,6 +668,9 @@ func (x *planExec) gatherMine(step plan.Step) (*civquestv1.AgentIntent, bool) {
 		if !dropWouldBeInReach(pos, b.Pos) {
 			continue // buried, or underfoot: its drop would be left in the hole
 		}
+		if x.st().givenUpLocked(float64(b.Pos.X)+0.5, float64(b.Pos.Y), float64(b.Pos.Z)+0.5, x.tick) {
+			continue // no way to it was found
+		}
 		c := [3]int32{b.Pos.X, b.Pos.Y, b.Pos.Z}
 		d := math.Sqrt(math.Pow(float64(c[0])+0.5-pos.X, 2) + math.Pow(float64(c[1])+0.5-pos.Y, 2) + math.Pow(float64(c[2])+0.5-pos.Z, 2))
 		if x.l.Target.Kind == "mine" && x.l.Target.Pos == c {

@@ -27,6 +27,15 @@ func (s *AgentState) wantFreshBearing(why string) {
 	}
 }
 
+// withheld records a walk that was not sent.
+func (fsm *AgentFSM) withheld(w *fsmWorld, kind htpda.Kind, nav *civquestv1.NavigateIntent) {
+	fsm.meter.walkGivenUp()
+	if fsm.eventSink != nil {
+		fsm.eventSink(w.tick, EventWalkGivenUp, string(kind)+" asked for a place already given up", map[string]any{
+			"activity": string(kind), "target": []float64{nav.Target.X, nav.Target.Y, nav.Target.Z}, "withheld": true})
+	}
+}
+
 // takesFreshBearing reports whether kind's walks are subject to the rule. Emergency and
 // Recover steer for themselves; an expedition's legs already survey between them, and the plan
 // hands a dead end to an expedition.
