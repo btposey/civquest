@@ -73,7 +73,33 @@ Each stage keeps the tests green and is committed separately. Levels are declare
 3. **Goal frame**: add the base frame; move choice and urgency into it and its `Supervise`; delete the self-push preemption (`system1/goal_activity.go`). The policy is still the earlier priority order, applied in one place; parked work counts for "already running".
 4. **Explicit children**: replace inline task starts and `wantExpedition` with ordinary pushes.
 5. **Shared steps**: one walking policy for every activity (`system1/walk_policy.go`): a walk sent repeatedly while the agent neither moves nor has a path is withheld and its target marked unreachable, so the owner chooses again. It is applied where intents leave the stack rather than as a separate step frame, because an activity re-aims a walk every tick (a moving animal, a nearer drop) and a frame holding one target would go stale. Shared interaction steps and send throttles remain.
-6. **Enforce and remove**: invariants strict; priority-preemption code, scratch fields and ad hoc back-offs deleted; replay baselines re-recorded with the reason noted.
+6. **Enforce and remove**: invariants strict; paths the rules refuse deleted; replay baselines re-recorded with the reason noted.
+7. **Strategic machines**: see below.
+
+## Strategic machines (stage 7)
+
+User direction, 2026-11-26. The base frame is one long-running **strategic machine**: `explore`, `settle`, `profession` or `idle` (war is deferred, cq-wt0). All four share the goal engine above; they differ in which objectives they may launch, in their daily rhythm, and in who the agent is while in them.
+
+| Machine | When | Objectives | Rhythm | Acts as |
+|---|---|---|---|---|
+| explore | no settlement | equip, provision, gather, shelter, bed, travel | day work, night rest | explorer |
+| settle | has a settlement, not yet established in it | equip, provision, gather near home, shelter, bed, build | day work, evening together, night rest | settler (a homesteader if alone) |
+| profession | has a bed or shelter there and has been settled a while | its duties, build, provision, shelter, bed | the profession's shifts | its profession |
+| idle | nothing to do for a while | provision, shelter, bed | as before | as before |
+
+**Replacing a machine.** Three sources, each with its own timing:
+
+1. *Hard milestones* apply at once: a chosen clan site or homestead ends exploring.
+2. *Morning review*: System 2 may propose a change during the night, naming what is new. At dawn code applies it if it is among the options allowed from the current machine, the machine has run at least two days, and nothing else changed that morning. A late or failed answer changes nothing.
+3. *Clan assignment* (for example a frontier explorer chosen from a surplus; the selection itself is cq-dhm).
+
+A replaced machine abandons its parked work, which banks what it knows.
+
+**Advice, not commands.** A System 2 directive is advice a machine reads when it next chooses work. It never parks or ends work under way.
+
+**Contemplation.** Night requests are spread across the night. Idle asks what to become while the body keeps a safe default, and returns to what it was if no answer comes.
+
+**Several settlements.** A clan's chosen sites are kept per site, the first being home; founding colonies and trade between them are cq-dhm.
 
 ## Consequences
 
