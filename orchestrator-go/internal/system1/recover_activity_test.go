@@ -243,6 +243,27 @@ func TestRecover_FailedStepOutTurnsToAnotherSide(t *testing.T) {
 	}
 }
 
+// cq-gey.4: spruce leaves to the ground kept agents from trees; a stuck agent breaks its way in.
+func TestRecover_BreaksFoliageInTheWay(t *testing.T) {
+	r := newRecoverRig(t, rigTarget)
+	leaves := withBlocks(blk(1, 65, 0, "minecraft:spruce_leaves"), blk(1, 64, 0, "minecraft:spruce_leaves"))
+	fx := r.stuck(110, terrainStuck(2), leaves, withPos(0.5, 64, 0.5))
+	in := fx.Intents()
+	if len(in) != 1 || in[0].GetInteractBlock() == nil || in[0].GetInteractBlock().BlockOrItemId != "minecraft:spruce_leaves" || in[0].GetInteractBlock().Pos.Y != 65 {
+		t.Fatalf("expected to break the leaves at head height, got %v", in)
+	}
+	// Head clear: the foot block next.
+	fx = r.dispatch(135, nil, htpda.Tick{}, withBlocks(blk(1, 64, 0, "minecraft:spruce_leaves")), withPos(0.5, 64, 0.5))
+	if in = fx.Intents(); len(in) != 1 || in[0].GetInteractBlock() == nil || in[0].GetInteractBlock().Pos.Y != 64 {
+		t.Fatalf("expected the foot-height leaves next, got %v", in)
+	}
+	// Way open: back to ordinary recovery.
+	fx = r.dispatch(160, nil, htpda.Tick{}, withPos(0.5, 64, 0.5))
+	if in = fx.Intents(); len(in) != 1 || in[0].GetNavigate() == nil {
+		t.Fatalf("expected a sidestep once clear, got %v", in)
+	}
+}
+
 func TestRecover_PlantsAreNotObstructions(t *testing.T) {
 	for id, want := range map[string]bool{
 		"minecraft:short_grass": false, "minecraft:tall_grass": false, "minecraft:seagrass": false,

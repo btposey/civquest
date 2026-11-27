@@ -10,7 +10,8 @@ package system1
 //	Congestion  Java says an alive entity blocks the heading (ADR-033): yield for a bounded
 //	            wait, re-issue the parent's navigation, never dig, detour or blacklist. A second
 //	            congestion result gives up as Blocked{Cause: Congestion}.
-//	Terrain     re-issue with the blocked bearing excluded: sidestep along rotating bearings.
+//	Terrain     break foliage in the way to the target (cq-gey.4), else re-issue with the
+//	            blocked bearing excluded: sidestep along rotating bearings.
 //	Enclosed    dig-out (ported from the retired unstuck.go): break overhead/step blocks,
 //	            then step up/out. Java no longer does this itself (cq-2sr.14).
 //
@@ -204,6 +205,7 @@ type recoverLocal struct {
 	NavNotBefore int64 // enclosed: a failed step-out waits before the next one (digging does not)
 	Stalled      bool  // the target has defeated StallEpisodes episodes: give up at once
 	NavSent      bool  // the intent in flight is a movement, not a dig
+	LeafBreaks   int   // foliage cleared from the way this episode
 }
 
 // moved reports that the agent is at least a block from where the episode began, in any
@@ -412,6 +414,14 @@ func (a recoverActivity) advance(lw *fsmWorld, loc recoverLocal) htpda.Step {
 		}
 		loc.Emitted = false // attempt timed out: next one (or give up)
 	}
+	// Leaves are no wall: a spruce carries them to the ground, and the way in is through them.
+	if loc.Cause == CauseTerrain && loc.HasTarget {
+		if leaf := foliageAhead(f, pos, loc.Target); leaf != nil {
+			loc.LeafBreaks++
+			loc.LastEmit, loc.Emitted, loc.NavSent = tick, true, false
+			return htpda.Step{Op: htpda.OpStay, Next: loc, Intents: []*civquestv1.AgentIntent{recoverBreak(lw.agentID(), leaf)}}
+		}
+	}
 	if loc.Attempts >= loc.maxAttempts() && loc.Cause != CauseEnclosed {
 		return a.giveUp(lw, loc)
 	}
@@ -579,6 +589,37 @@ func (loc recoverLocal) enclosedStep(agentID string, frame *civquestv1.Telemetry
 	h := crc32.ChecksumIEEE([]byte(agentID)) + uint32(loc.Attempts)*3
 	angle := base + float64(h%8)*(math.Pi/4.0)
 	return recoverNav(agentID, math.Round((pos.X+math.Cos(angle)*2.8)*10)/10, float64(by), math.Round((pos.Z+math.Sin(angle)*2.8)*10)/10, 1), true
+}
+
+// foliageAhead is a leaf block at body height within two cells towards target, looking along the
+// grid direction nearest the target first: the telemetry always lists those cells.
+func foliageAhead(f *civquestv1.TelemetryFrame, pos *civquestv1.Vec3, target [3]float64) *civquestv1.VisibleBlock {
+	dx, dz := target[0]-pos.X, target[2]-pos.Z
+	sign := func(v float64) int32 {
+		if v < 0 {
+			return -1
+		}
+		return 1
+	}
+	dirs, minor := [][2]int32{{sign(dx), 0}, {0, sign(dz)}}, math.Abs(dz)
+	if math.Abs(dz) > math.Abs(dx) {
+		dirs[0], dirs[1], minor = dirs[1], dirs[0], math.Abs(dx)
+	}
+	if minor < 1 {
+		dirs = dirs[:1] // not really that way
+	}
+	bx, by, bz := int32(math.Floor(pos.X)), int32(math.Floor(pos.Y+0.1)), int32(math.Floor(pos.Z))
+	for _, dir := range dirs {
+		for n := int32(1); n <= 2; n++ {
+			for _, dy := range []int32{1, 0} {
+				b := FindVisibleBlockAt(f, bx+dir[0]*n, by+dy, bz+dir[1]*n)
+				if b != nil && strings.HasSuffix(b.BlockId, "_leaves") {
+					return b
+				}
+			}
+		}
+	}
+	return nil
 }
 
 // turnAfterFailedStep tries the next side after a step out that went nowhere (cq-6l3.23): the
