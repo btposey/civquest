@@ -25,25 +25,30 @@ func TestExpedition_SettledAgentDoesNotStartAndFinishEveryTick(t *testing.T) {
 	}
 }
 
-// A resource trip waits until the agent has stood idle: reflection gets the first turn.
+// An equipped agent's resource trip waits until it has stood idle: reflection gets the first
+// turn. One without its survival kit goes at once (cq-gey.6).
 func TestExpedition_SettledTripWaitsForIdleness(t *testing.T) {
 	r := newExpRig(t, "settled_waiter", 4)
 	r.fsm = NewAgentFSM(StageBootstrap, nil)
 	r.fsm.currentRoutine = RoutinePrimaryDuty
 	r.st.SetCollectiveSettlementSite(0.5, 64, 0.5)
-	allowed := func(tick int64) bool {
-		frame := rf(tick, 4000)
+	kit := withInv(survivalKit()...)
+	allowed := func(tick int64, opts ...fo) bool {
+		frame := rf(tick, 4000, opts...)
 		w := &fsmWorld{fsm: r.fsm, tick: tick, skipped: map[string]bool{},
 			ctx: &FSMContext{AgentID: "settled_waiter", State: r.st, Frame: frame}}
 		_, ok := w.expeditionStart(activityKindBootstrap)
 		return ok
 	}
 	r.st.UpdateIdleTracker(100, rf(100, 4000).Status.Position, false, false)
-	if allowed(400) {
-		t.Fatal("a trip must not start after 300 idle ticks")
+	if !allowed(104) {
+		t.Fatal("an unequipped agent must go for resources at once")
 	}
-	if !allowed(700) {
-		t.Fatal("a trip must be allowed after 600 idle ticks")
+	if allowed(400, kit) {
+		t.Fatal("an equipped agent's trip must not start after 300 idle ticks")
+	}
+	if !allowed(500, kit) {
+		t.Fatal("a trip must be allowed after 400 idle ticks")
 	}
 }
 

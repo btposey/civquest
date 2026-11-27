@@ -217,10 +217,11 @@ func (k expeditionKnowledge) settledAt(pos *civquestv1.Vec3) bool {
 	return pos != nil && k.Site != nil && k.ClanSize > 1 && math.Hypot(pos.X-k.Site[0], pos.Z-k.Site[2]) <= settledSiteRadius
 }
 
-// settledTripIdleTicks: how long a settled agent stands idle before a bootstrap walk may send
-// it out for resources. It is twice the daytime-idle contemplation threshold, so System 2 gets
-// to give it something to do first.
-const settledTripIdleTicks = 600
+// settledTripIdleTicks: how long an equipped settled agent stands idle before a bootstrap walk
+// may send it out for resources. It is just past the daytime-idle contemplation threshold, so
+// System 2 gets to give it something to do first. An agent still without its survival kit does
+// not wait at all (cq-gey.6): the camp may have nothing to make one from.
+const settledTripIdleTicks = 400
 
 // idleSince reports whether the agent has been idle for at least ticks.
 func (s *AgentState) idleSince(tick, ticks int64) bool {
@@ -278,6 +279,12 @@ func (w *fsmWorld) pos() *civquestv1.Vec3 {
 }
 
 // ---- eligibility and preemption ----
+
+// equipped reports that the agent holds its survival kit.
+func (w *fsmWorld) equipped() bool {
+	f := w.Frame()
+	return f != nil && f.Status != nil && HasSurvivalKit(f.Status.Inventory)
+}
 
 // surveyBackoff is the Memory write of an expedition that gave up after repeated survey
 // timeouts: no expedition starts until Until.
@@ -1288,10 +1295,11 @@ func (w *fsmWorld) expeditionStart(origin string) (expeditionArgs, bool) {
 	if w.skipped[activityKindExpedition] || w.ctx.State.IsExpeditionActive() || !w.expeditionEligible(origin) {
 		return expeditionArgs{}, false
 	}
-	// Once settled only a resource trip (bootstrap, after standing idle) has anything to do; any
-	// other expedition would finish in the same tick and be requested again.
+	// Once settled only a resource trip (bootstrap: at once when unequipped, else after standing
+	// idle) has anything to do; any other expedition would finish in the same tick and be
+	// requested again.
 	if w.ctx.State.settledAt(w.pos()) &&
-		(origin != activityKindBootstrap || !w.ctx.State.idleSince(w.tick, settledTripIdleTicks)) {
+		(origin != activityKindBootstrap || w.equipped() && !w.ctx.State.idleSince(w.tick, settledTripIdleTicks)) {
 		return expeditionArgs{}, false
 	}
 	return expeditionArgs{Origin: origin}, true
