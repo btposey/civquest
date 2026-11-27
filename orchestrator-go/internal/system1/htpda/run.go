@@ -12,7 +12,8 @@ type run struct {
 }
 
 func (r *run) life(op string, f Frame, from Kind, result any) {
-	r.fx.Lifecycle = append(r.fx.Lifecycle, FrameEvent{Op: op, Frame: f.ID, Kind: f.Kind(), From: from, Parent: f.Parent, Depth: len(r.k.stack), Result: result})
+	r.fx.Lifecycle = append(r.fx.Lifecycle, FrameEvent{Op: op, Frame: f.ID, Kind: f.Kind(), From: from, Parent: f.Parent, Depth: len(r.k.stack), Result: result,
+		Idle: (op == LifePop || op == LifeExpire) && !f.progressed})
 }
 
 func (r *run) diag(id FrameID, kind Kind, reason string) {

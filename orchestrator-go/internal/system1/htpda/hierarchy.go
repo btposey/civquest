@@ -103,7 +103,11 @@ func (r *run) checkShape(act Activity, parent FrameID) (refuse string) {
 	if reason == "" {
 		return ""
 	}
-	r.diag(parent, act.Kind(), reason)
+	d := Diagnostic{Frame: parent, Kind: act.Kind(), Reason: reason}
+	if t := r.top(); t != nil {
+		d.Under = t.Kind()
+	}
+	r.fx.Diagnostics = append(r.fx.Diagnostics, d)
 	if r.k.opts.EnforceShape {
 		return reason
 	}

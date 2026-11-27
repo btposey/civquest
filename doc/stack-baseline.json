@@ -1,0 +1,61 @@
+{
+  "ticks": 81236,
+  "max_depth": 6,
+  "pushes_per_1000_ticks": 24.46,
+  "idle_pops_per_1000_ticks": 2.76,
+  "violations_per_1000_ticks": 9.34,
+  "violations_by_rule": {
+    "shape: base frame is not the goal": 443,
+    "shape: child is not more concrete than its parent": 306,
+    "shape: kind already on the stack": 10
+  },
+  "top_violations": {
+    "shape: base frame is not the goal|>bootstrap": 150,
+    "shape: base frame is not the goal|>exploration": 107,
+    "shape: child is not more concrete than its parent|gather>bootstrap": 106,
+    "shape: base frame is not the goal|>shelter": 78,
+    "shape: child is not more concrete than its parent|gather>task_subroutine": 53,
+    "shape: base frame is not the goal|>plan": 30,
+    "shape: child is not more concrete than its parent|navigate>gather": 27,
+    "shape: base frame is not the goal|>expedition": 25,
+    "shape: child is not more concrete than its parent|bootstrap>bed": 24,
+    "shape: base frame is not the goal|>foraging": 15,
+    "shape: child is not more concrete than its parent|navigate>foraging": 14,
+    "shape: base frame is not the goal|>task_subroutine": 13,
+    "shape: child is not more concrete than its parent|exploration>bed": 13,
+    "shape: child is not more concrete than its parent|plan>bed": 10,
+    "shape: child is not more concrete than its parent|plan>foraging": 10
+  },
+  "idle_pops_by_kind": {
+    "bootstrap": 98,
+    "bed": 49,
+    "task_subroutine": 30,
+    "foraging": 21,
+    "exploration": 9,
+    "shelter": 8,
+    "recover": 5,
+    "gather": 3,
+    "emergency": 1
+  },
+  "pushes_by_kind": {
+    "emergency": 476,
+    "bootstrap": 280,
+    "survey": 261,
+    "navigate": 232,
+    "task_subroutine": 154,
+    "exploration": 107,
+    "expedition": 101,
+    "shelter": 84,
+    "recover": 64,
+    "foraging": 55,
+    "bed": 55,
+    "plan": 41,
+    "gather": 40,
+    "wool": 25,
+    "construction": 5,
+    "dead": 4,
+    "strategic_directive": 3
+  },
+  "tests_passed": 1539,
+  "tests_failed": []
+}

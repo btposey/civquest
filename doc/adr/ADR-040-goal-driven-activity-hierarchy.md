@@ -20,8 +20,8 @@ The stack therefore records the order of interruptions. Live play on 2026-11-26 
 | Level | Role | Activities |
 |---|---|---|
 | 0 Goal | Always the base frame; the only chooser of objectives | `goal` (new) |
-| 1 Objective | Pursues one purpose by choosing tasks | equip (bootstrap, plan), provision (foraging, gathering), rest (shelter, bed, sleep), explore (expedition, exploration), build (construction), duty (patrol, armory) |
-| 2 Task | Sequences steps to one concrete result | fell a tree, collect drops, mine, hunt, fish, shear, craft |
+| 1 Objective | Pursues one purpose by choosing tasks | bootstrap, plan, foraging, shelter, bed, construction, exploration, strategic directive |
+| 2 Task | Sequences steps to one concrete result | expedition, gathering, wool, task subroutine (fell a tree, collect drops); later mine, hunt, fish, craft |
 | 3 Step | One physical job with receipts | navigate, survey, break or place a block, use an item |
 | Interrupt | May cover any frame, then returns | emergency, recover, dead |
 
@@ -66,7 +66,7 @@ If a child ends without having emitted an intent or made progress, the kernel wi
 
 ## Migration
 
-Each stage keeps the tests green and is committed separately.
+Each stage keeps the tests green and is committed separately. Levels are declared in `system1/activity_levels.go`. `scripts/stack-metrics.sh` scores any test run against the baseline in `doc/stack-baseline.json`; `scripts/stack-metrics.py` scores a live run's records.
 
 1. **Kernel mechanics** (additive): levels, invariants in report-only mode, supervision, mementos, no-progress back-off.
 2. **Measure**: run every simulation scenario and the live smoke with stack-shape assertions, and record the violations as the baseline.

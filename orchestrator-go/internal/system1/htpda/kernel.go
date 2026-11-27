@@ -35,6 +35,7 @@ type Emission struct {
 type Diagnostic struct {
 	Frame  FrameID
 	Kind   Kind
+	Under  Kind // for shape diagnostics, the frame the refused or reported push sat on
 	Reason string
 }
 
@@ -93,6 +94,7 @@ type FrameEvent struct {
 	Parent FrameID
 	Depth  int
 	Result any
+	Idle   bool // a popped frame that never emitted an intent, saw progress or launched work that did
 }
 
 // Intents flattens all emitted intents in emission order.

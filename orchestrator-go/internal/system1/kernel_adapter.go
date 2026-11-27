@@ -188,6 +188,8 @@ func (fsm *AgentFSM) dispatchLocked(w *fsmWorld, ev htpda.Event) []FSMIntent {
 	w.stackEmpty = fsm.kernel.Depth() == 0
 	fx := fsm.kernel.Dispatch(w, ev)
 	fsm.lastDiag = fx.Diagnostics
+	_, isTick := ev.(htpda.Tick)
+	fsm.meter.note(isTick, fx)
 	fsm.emitLifecycleLocked(w.tick, fx.Lifecycle)
 	if w.ctx != nil {
 		w.ctx.State.applyStoreWrites(fx.Store)
