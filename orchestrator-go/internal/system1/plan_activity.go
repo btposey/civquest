@@ -647,15 +647,26 @@ func planMineable(blockID, item string) bool {
 func (x *planExec) gatherMine(step plan.Step) (*civquestv1.AgentIntent, bool) {
 	f, pos := x.frame(), x.pos()
 	inv := f.Status.Inventory
+	// What was mined and left lying is picked up before more is dug.
+	if drop := nearbyDrop(x.st(), f, func(item string) bool { return item != "" && item == bareID(step.Item) }); drop != nil {
+		if x.dry {
+			return nil, true
+		}
+		if f.Status.NavigationState == civquestv1.NavigationState_NAVIGATION_STATE_PATHING ||
+			(x.l.LastAction != 0 && x.tick >= x.l.LastAction && x.tick-x.l.LastAction < planActionTicks) {
+			return nil, true
+		}
+		x.l.LastAction = x.tick
+		return walkToDrop(x.agent(), drop), true
+	}
 	var best *civquestv1.VisibleBlock
 	bestScore := math.MaxFloat64
-	fx, fy, fz := int32(math.Floor(pos.X)), int32(math.Floor(pos.Y)), int32(math.Floor(pos.Z))
 	for _, b := range f.InterestingBlocks {
 		if b == nil || b.Pos == nil || !planMineable(b.BlockId, step.Item) || !HasSuitableTool(inv, RequirementForBlock(b.BlockId)) {
 			continue
 		}
-		if b.Pos.X == fx && b.Pos.Z == fz && b.Pos.Y <= fy-1 {
-			continue // never under our own feet
+		if !dropWouldBeInReach(pos, b.Pos) {
+			continue // buried, or underfoot: its drop would be left in the hole
 		}
 		c := [3]int32{b.Pos.X, b.Pos.Y, b.Pos.Z}
 		d := math.Sqrt(math.Pow(float64(c[0])+0.5-pos.X, 2) + math.Pow(float64(c[1])+0.5-pos.Y, 2) + math.Pow(float64(c[2])+0.5-pos.Z, 2))

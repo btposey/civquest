@@ -619,10 +619,6 @@ func findNearestMineableStoneBlock(frame *civquestv1.TelemetryFrame, pos *civque
 	if frame == nil || pos == nil {
 		return nil, math.MaxFloat64
 	}
-	footX := int32(math.Floor(pos.X))
-	footY := int32(math.Floor(pos.Y))
-	footZ := int32(math.Floor(pos.Z))
-
 	var best *civquestv1.VisibleBlock
 	bestDistSq := math.MaxFloat64
 	for _, b := range frame.InterestingBlocks {
@@ -632,9 +628,8 @@ func findNearestMineableStoneBlock(frame *civquestv1.TelemetryFrame, pos *civque
 		if !HasSuitableTool(inventory, RequirementForBlock(b.BlockId)) {
 			continue
 		}
-		// Never mine directly underneath own feet
-		if b.Pos.X == footX && b.Pos.Z == footZ && b.Pos.Y <= footY-1 {
-			continue
+		if !dropWouldBeInReach(pos, b.Pos) {
+			continue // buried, or underfoot: its drop would be left in the hole
 		}
 		dx := float64(b.Pos.X) + 0.5 - pos.X
 		dy := float64(b.Pos.Y) + 0.5 - pos.Y
