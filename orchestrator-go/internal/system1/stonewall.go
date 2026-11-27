@@ -34,6 +34,68 @@ type stuckGuard struct {
 	mark       progressMark
 	// pockets are where recent enclosed recoveries began (climb_out.go).
 	pockets []gaveUpHere
+	// interruptions follows the work that interrupts other work.
+	interruptions map[htpda.Kind]interruption
+}
+
+const (
+	// An interruption over within thrashLife ticks was no use; thrashLimit of them inside
+	// thrashWindow ticks keep that activity from interrupting for a while.
+	thrashLife   = int64(40)
+	thrashLimit  = 3
+	thrashWindow = int64(200)
+)
+
+type interruption struct {
+	pushed, since int64
+	short         int
+}
+
+// interrupted notes that kind has been pushed over other work.
+func (w *fsmWorld) interrupted(kind htpda.Kind) {
+	if w == nil || w.fsm == nil {
+		return
+	}
+	if w.fsm.interruptions == nil {
+		w.fsm.interruptions = map[htpda.Kind]interruption{}
+	}
+	in := w.fsm.interruptions[kind]
+	in.pushed = w.tick
+	w.fsm.interruptions[kind] = in
+}
+
+// interruptionOver backs kind off when it fell straight through, or keeps ending almost as soon
+// as it begins (play test 10: pushed and popped every few frames, the work under it never moved).
+// Needs, recovery and travel end quickly for good reasons and are left alone.
+func (w *fsmWorld) interruptionOver(kind htpda.Kind, halted bool) {
+	if w == nil || w.fsm == nil {
+		return
+	}
+	switch kind {
+	case activityKindEmergency, activityKindRecover, activityKindTaskSubroutine, activityKindExpedition,
+		activityKindNavigate, activityKindSurvey:
+		return
+	}
+	in, ok := w.fsm.interruptions[kind]
+	if !ok || w.tick < in.pushed || w.tick-in.pushed > thrashLife {
+		delete(w.fsm.interruptions, kind)
+		return
+	}
+	if in.short == 0 || w.tick-in.since > thrashWindow {
+		in.short, in.since = 0, w.tick
+	}
+	in.short++
+	fellThrough := w.tick == in.pushed && !halted
+	if !fellThrough && in.short < thrashLimit {
+		w.fsm.interruptions[kind] = in
+		return
+	}
+	delete(w.fsm.interruptions, kind)
+	if w.fsm.workBackoffUntil == nil {
+		w.fsm.workBackoffUntil = map[htpda.Kind]int64{}
+	}
+	w.fsm.workBackoffUntil[kind] = w.tick + workBackoffTicks
+	w.skipped[string(kind)] = true
 }
 
 // refusal is an activity's current run of withheld walks.
@@ -96,12 +158,16 @@ func (fsm *AgentFSM) watchStandstill(w *fsmWorld, out []FSMIntent) {
 	if pos == nil || w.ctx == nil || w.ctx.Frame == nil || w.ctx.Frame.Status == nil {
 		return
 	}
+	if fsm.currentStage == StageEmergency {
+		// Not the objective's doing, and not progress either: a threat that comes and goes
+		// must not wind the watch back each time.
+		return
+	}
 	here := [3]float64{pos.X, pos.Y, pos.Z}
 	moved := math.Hypot(here[0]-fsm.mark.at[0], here[2]-fsm.mark.at[2]) >= standstillMove ||
 		math.Abs(here[1]-fsm.mark.at[1]) >= standstillMove
 	tod := w.ctx.Frame.TimeOfDay % 24000
-	meant := tod >= 11500 || w.ctx.Frame.Status.IsSleeping || fsm.currentStage == StageEmergency ||
-		fishingLineCast(w.ctx.Frame)
+	meant := tod >= 11500 || w.ctx.Frame.Status.IsSleeping || fishingLineCast(w.ctx.Frame)
 	if moved || meant || acted(out) || fsm.mark.since == 0 || w.tick < fsm.mark.since {
 		fsm.mark = progressMark{at: here, since: w.tick}
 		return

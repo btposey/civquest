@@ -136,6 +136,7 @@ func (g goalActivity) Step(w htpda.World, local any, ev htpda.Event) htpda.Step 
 			next, _ := p.Token.(candidate)
 			parked := append(append([][]htpda.Frame(nil), l.Parked...), setAside(p.Frames, w.Tick()))
 			st := htpda.Step{Op: htpda.OpPush, Child: next.Kind, Args: next.Args, Next: goalLocal{Parked: parked}}
+			lw.interrupted(next.Kind)
 			if lw != nil && lw.rescueAdvised() && fromAdvice(next) {
 				st.Memory = []htpda.MemoryWrite{rescueSpent{}}
 			}
@@ -160,8 +161,10 @@ func (g goalActivity) after(lw *fsmWorld, l goalLocal, done htpda.Kind, result a
 		lw.skipped[string(rejected.Kind)] = true
 	}
 	if n := len(l.Parked); n > 0 {
+		lw.interruptionOver(done, halted(result))
 		if _, rejected := result.(htpda.Rejected); !rejected && !halted(result) && lw != nil && lw.legacyReady() {
 			if next, ok := lw.morePressing(l.Parked[n-1]); ok {
+				lw.interrupted(next.Kind)
 				return htpda.Step{Op: htpda.OpPush, Child: next.Kind, Args: next.Args, Next: l}
 			}
 		}
@@ -327,14 +330,15 @@ func (w *fsmWorld) duringTravel(origin string, returning, leg bool) (candidate, 
 	if origin == activityKindBootstrap && !returning && !w.skipped[activityKindBootstrap] && !w.backedOff(activityKindBootstrap) &&
 		!w.stonewalled(activityKindBootstrap) &&
 		bootstrapHarvestAvailable(w.ctx) {
-		if pa := newPlanActivity(); !w.skipped[activityKindPlan] && pa.eligible(w) {
+		if pa := newPlanActivity(); !w.skipped[activityKindPlan] && !w.backedOff(activityKindPlan) &&
+			!w.stonewalled(activityKindPlan) && pa.eligible(w) {
 			if args, ok := pa.args(w); ok {
 				return candidate{Kind: activityKindPlan, Args: args}, true
 			}
 		}
 		return candidate{Kind: activityKindBootstrap}, true
 	}
-	if leg && !w.skipped[activityKindGather] && (gatherActivity{}).eligible(w) {
+	if leg && !w.skipped[activityKindGather] && !w.stonewalled(activityKindGather) && (gatherActivity{}).eligible(w) {
 		return candidate{Kind: activityKindGather}, true
 	}
 	return candidate{}, false
