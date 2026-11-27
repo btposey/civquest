@@ -100,6 +100,7 @@ cd orchestrator-go && go test -tags livellm -v ./test/integration -run TestLiveL
 ```bash
 ./scripts/live-agent-smoke.sh               # 6 real agents, 10 min, throwaway server and XDG sandbox
 ```
+- Runs on a fixed world seed (`SEED` overrides it), so results are comparable between runs; play still varies.
 - Three phases: morning, forced hunger, night. Fails on a stalled or silent brain, an unanswered chat, an action repeated without moving, a long emergency, an activity pushed and popped over and over, endless bed attempts, or an agent dying to the world (drowning, fire, falls, hunger). Simulation fixtures can differ from the live server (recipes, terrain), so run this as well.
 
 ## Architecture Overview

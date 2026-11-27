@@ -22,6 +22,7 @@ def prepareIntegrationServer = tasks.register('prepareIntegrationServer') {
     outputs.file(integrationServerDir.map { it.file('server.properties') })
     inputs.property('levelType', project.findProperty('civquest.integrationLevelType') ?: 'minecraft:flat')
     inputs.property('levelName', project.findProperty('civquest.integrationLevelName') ?: 'world')
+    inputs.property('levelSeed', project.findProperty('civquest.integrationLevelSeed') ?: '')
 
     doLast {
         def targetDir = integrationServerDir.get().asFile
@@ -34,8 +35,10 @@ def prepareIntegrationServer = tasks.register('prepareIntegrationServer') {
         // The live agent smoke (scripts/live-agent-smoke.sh) asks for generated terrain.
         def levelType = project.findProperty('civquest.integrationLevelType') ?: 'minecraft:flat'
         def levelName = project.findProperty('civquest.integrationLevelName') ?: 'world'
+        def levelSeed = project.findProperty('civquest.integrationLevelSeed') ?: ''
         new File(targetDir, 'server.properties').text = """level-type=${levelType}
 level-name=${levelName}
+level-seed=${levelSeed}
 pause-when-empty-seconds=-1
 max-tick-time=-1
 online-mode=false

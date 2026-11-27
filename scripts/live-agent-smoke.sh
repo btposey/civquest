@@ -9,6 +9,7 @@
 #
 #   scripts/live-agent-smoke.sh                 # 6 agents, 600 seconds
 #   AGENTS="able bert" DURATION=240 scripts/live-agent-smoke.sh
+#   SEED=12345 ...                              # a different world
 #   KEEP=1 ...                                  # keep the sandbox and its logs
 #
 # Chat replies are checked only when an OpenAI-compatible endpoint answers at
@@ -18,6 +19,9 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 AGENTS="${AGENTS:-able bert carl dave earl fred}"
+# Every run generates the same terrain, so runs can be compared; play within it still varies.
+# This seed spawns beside woodland, water and broken ground, which has caught real faults.
+SEED="${SEED:-6569162923784258077}"
 DURATION="${DURATION:-600}"
 LLM_URL="${CIVQUEST_LLM_BASE_URL:-http://127.0.0.1:8080/v1}"
 command -v jq >/dev/null || { echo "jq is required" >&2; exit 2; }
@@ -64,11 +68,11 @@ llm_gateway:
   model: "${MODEL:-none}"
 YAML
 
-echo "==> starting headless server (generated terrain)"
+echo "==> starting headless server (generated terrain, seed $SEED)"
 mkfifo "$FIFO"
 start_ms=$(($(date +%s) * 1000))
 ./gradlew --offline --no-daemon -Pcivquest.integrationLevelType=minecraft:normal \
-  -Pcivquest.integrationLevelName="smoke-$(date +%s)" :mod-neoforge:runIntegrationServer <"$FIFO" >"$SERVER_LOG" 2>&1 &
+  -Pcivquest.integrationLevelName="smoke-$(date +%s)" -Pcivquest.integrationLevelSeed="$SEED" :mod-neoforge:runIntegrationServer <"$FIFO" >"$SERVER_LOG" 2>&1 &
 GRADLE_PID=$!
 exec 3>"$FIFO"
 for _ in $(seq 180); do
