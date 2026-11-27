@@ -309,7 +309,6 @@ type gatherLocal struct {
 	Key        string
 	Since      int64
 	LastAction int64
-	Walk       walkLocal   // holds a felling task between starting it and its frame
 	Fishing    forageLocal // the fishing cursor while the find is a spell of fishing
 }
 
@@ -367,13 +366,14 @@ func (a gatherActivity) run(lw *fsmWorld, local any) htpda.Step {
 			Memory: []htpda.MemoryWrite{gatherGaveUp{Key: find.Key, Until: tick + gatherSkipTicks}}}
 	}
 	if find.Fell {
+		// Felling is this frame's child. A trunk is tried once: however the task ends, it
+		// is not started again straight away.
 		st := lw.ctx.State
-		st.mu.Lock()
-		p := find.Block.Pos
-		l.Walk.startTaskLocked(st, NewHarvestTreeTask(p.X, p.Y, p.Z, st.stage, tick))
-		st.mu.Unlock()
-		l.Key = ""
-		return htpda.Step{Op: htpda.OpStay, Next: l}
+		trunk := find.Block.Pos
+		task := NewHarvestTreeTask(trunk.X, trunk.Y, trunk.Z, st.Stage(), tick)
+		st.publishTask(task)
+		return htpda.Step{Op: htpda.OpPush, Child: activityKindTaskSubroutine, Args: taskStart{Task: task}, Next: gatherLocal{},
+			Memory: []htpda.MemoryWrite{gatherGaveUp{Key: find.Key, Until: tick + gatherSkipTicks}}}
 	}
 	intent, next := gatherIntent(lw.ctx.AgentID, frame, find, l)
 	var intents []*civquestv1.AgentIntent

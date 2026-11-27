@@ -17,7 +17,7 @@ var activityLevels = map[htpda.Kind]htpda.Level{
 	activityKindExpedition:         htpda.LevelTask,
 	activityKindTaskSubroutine:     htpda.LevelTask,
 	activityKindWool:               htpda.LevelTask,
-	activityKindGather:             htpda.LevelTask,
+	activityKindGather:             htpda.LevelObjective,
 	activityKindSurvey:             htpda.LevelStep,
 	activityKindNavigate:           htpda.LevelStep,
 	activityKindEmergency:          htpda.LevelInterrupt,

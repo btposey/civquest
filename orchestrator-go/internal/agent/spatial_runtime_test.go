@@ -116,6 +116,8 @@ func TestRuntime_SpatialIndexStartupIngestionAndPlacement(t *testing.T) {
 			{Pos: &civquestv1.BlockPosProto{X: 24, Y: 54, Z: 20}, BlockId: "minecraft:furnace"},
 		},
 	}
+	// A settled agent does not fell the log it sees (which would remove it from the map at once).
+	rt.System1State().SetCollectiveSettlementSite(20, 64, 20)
 	rt.HandleTelemetryFrame(frame)
 
 	logPOI, ok := si.GetPOI("poi_resource_22_64_20")
