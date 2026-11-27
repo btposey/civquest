@@ -1612,6 +1612,10 @@ func (c *CivicRegistryDB) RankCollectiveSettlementCandidates(ctx context.Context
 	if c.isClosed {
 		return nil, ErrClosed
 	}
+	sightings, err := c.siteSightingsLocked(ctx)
+	if err != nil {
+		return nil, err
+	}
 
 	rows, err := c.db.QueryContext(ctx, `
 		SELECT explorer_id, origin_x, origin_y, origin_z, sector_index,
@@ -1744,23 +1748,23 @@ func (c *CivicRegistryDB) RankCollectiveSettlementCandidates(ctx context.Context
 		avgRidge := float64(sumRidge) / nSweeps
 		avgOcc := float64(sumOcc) / nSweeps
 
-		score := math.Min(avgForest, 10.0)*3.0 +
-			math.Min(avgWater, 6.0)*3.5 +
-			math.Min(avgPlains, 12.0)*2.5 +
-			math.Min(avgStone, 6.0)*2.0 +
-			math.Min(avgStruct, 4.0)*1.5 -
-			avgRidge*2.5 -
-			avgOcc*2.0
+		features := SiteFeatures{Forest: avgForest, Water: avgWater, Plains: avgPlains, Stone: avgStone,
+			Structure: avgStruct, Ridge: avgRidge, Occluded: avgOcc}
+		for _, at := range sightings {
+			if math.Hypot(at.x-cl.centroidX, at.z-cl.centroidZ) > SiteFactorRadius {
+				continue
+			}
+			switch {
+			case at.blockID == CaveEntranceBlockID:
+				features.Cave = true
+			case at.blockID == LivestockBlockID:
+				features.Livestock = true
+			case strings.HasSuffix(at.blockID, "_ore"):
+				features.Ore = true
+			}
+		}
+		score := ScoreSite(features)
 
-		if avgForest >= 1.5 && avgPlains >= 2.0 {
-			score += 12.0
-		}
-		if avgWater >= 1.0 {
-			score += 8.0
-		}
-		if avgStone >= 1.0 {
-			score += 5.0
-		}
 		explorerCount := len(cl.explorers)
 		if explorerCount > 1 {
 			score += float64(explorerCount-1) * 5.0
@@ -1772,8 +1776,8 @@ func (c *CivicRegistryDB) RankCollectiveSettlementCandidates(ctx context.Context
 		roundedScore := math.Round(score*10) / 10
 
 		summary := fmt.Sprintf(
-			"%d explorer(s), forest=%.1f, water=%.1f, plains=%.1f, stone=%.1f, ridges=%.1f, occluded=%.1f (score %.1f)",
-			explorerCount, avgForest, avgWater, avgPlains, avgStone, avgRidge, avgOcc, roundedScore,
+			"%d explorer(s), forest=%.1f, water=%.1f, plains=%.1f, stone=%.1f, ridges=%.1f, occluded=%.1f, ore=%t, cave=%t, livestock=%t (score %.1f)",
+			explorerCount, avgForest, avgWater, avgPlains, avgStone, avgRidge, avgOcc, features.Ore, features.Cave, features.Livestock, roundedScore,
 		)
 
 		candidates = append(candidates, SettlementCandidate{

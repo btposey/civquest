@@ -10,6 +10,8 @@ import (
 )
 
 const (
+	// homesteadScore is what a lone agent asks of a site before claiming it (db.ScoreSite).
+	homesteadScore           float64 = 35.0
 	defaultSurveyNumSectors  int32   = 36
 	defaultSurveyMaxRange    float32 = 64.0
 	defaultSurveyTicksPerSec int32   = 2
@@ -452,24 +454,8 @@ func ScoreSurveySiteSuitability(report *civquestv1.HorizonSurveyReport) float64 
 			ridge++
 		}
 	}
-	score := math.Min(float64(forest), 8.0)*3.0 +
-		math.Min(float64(plains), 10.0)*2.5 +
-		math.Min(float64(water), 5.0)*3.5 +
-		math.Min(float64(stone), 5.0)*2.0 +
-		math.Min(float64(structure), 3.0)*2.0 -
-		float64(ridge)*2.0 -
-		float64(occluded)*2.0
-
-	if forest >= 2 && plains >= 2 {
-		score += 10.0
-	}
-	if water >= 1 {
-		score += 6.0
-	}
-	if stone >= 1 {
-		score += 4.0
-	}
-	return math.Round(score*10) / 10
+	return db.ScoreSite(db.SiteFeatures{Forest: float64(forest), Water: float64(water), Plains: float64(plains),
+		Stone: float64(stone), Structure: float64(structure), Ridge: float64(ridge), Occluded: float64(occluded)})
 }
 
 func countSurveyFeatures(report *civquestv1.HorizonSurveyReport) (forest, plains, water, stone, occluded, total int) {
@@ -498,7 +484,7 @@ func countSurveyFeatures(report *civquestv1.HorizonSurveyReport) (forest, plains
 	return
 }
 
-func meetsHomesteadSuitability(report *civquestv1.HorizonSurveyReport) bool {
+func meetsHomesteadSuitability(report *civquestv1.HorizonSurveyReport, nearby db.SiteFeatures) bool {
 	if report == nil || len(report.Sectors) == 0 {
 		return false
 	}
@@ -512,7 +498,10 @@ func meetsHomesteadSuitability(report *civquestv1.HorizonSurveyReport) bool {
 	if plains < 4 && water == 0 && stone == 0 {
 		return false
 	}
-	return ScoreSurveySiteSuitability(report) >= 20.0
+	score := ScoreSurveySiteSuitability(report)
+	// What has been seen near here counts as it does for a clan's choice.
+	score += db.ScoreSite(db.SiteFeatures{Ore: nearby.Ore, Cave: nearby.Cave, Livestock: nearby.Livestock})
+	return score >= homesteadScore
 }
 
 func isPrimeSettlementSite(report *civquestv1.HorizonSurveyReport) bool {

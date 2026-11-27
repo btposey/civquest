@@ -15,9 +15,10 @@ import (
 
 const (
 	// A clan selects a site that is outstanding on its own (clanSiteStrongScore), or one two
-	// explorers have surveyed that scores above zero, i.e. whose resources outweigh its ridges
-	// and blocked sight lines.
-	clanSiteStrongScore    = 35.0
+	// explorers have surveyed that reaches clanSiteSharedScore. Wooded flat ground alone falls
+	// short of that: it takes water, ore or a cave, or livestock as well (db.ScoreSite).
+	clanSiteStrongScore    = 55.0
+	clanSiteSharedScore    = 35.0
 	clanSiteMinExplorers   = 2
 	defaultSettlementClan  = "default"
 	settlementStoreTimeout = 2 * time.Second
@@ -25,7 +26,7 @@ const (
 
 // clanSiteQualifies reports whether a surveyed region is good enough to settle.
 func clanSiteQualifies(c db.SettlementCandidate) bool {
-	return c.Score >= clanSiteStrongScore || (c.ExplorerCount >= clanSiteMinExplorers && c.Score > 0)
+	return c.Score >= clanSiteStrongScore || (c.ExplorerCount >= clanSiteMinExplorers && c.Score >= clanSiteSharedScore)
 }
 
 // joinClanSite runs at a rendezvous: the agent adopts the site its clan has selected, selecting

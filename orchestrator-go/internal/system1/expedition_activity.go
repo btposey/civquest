@@ -635,7 +635,7 @@ func (a expeditionActivity) onArrived(lw *fsmWorld, loc expeditionLocal, pos *ci
 		// Solo explorer: NEVER returns to the rendezvous origin; claims a homestead directly
 		// after chaining at least 2 outbound hops (or surveying locally at the candidate site).
 		distFromSurvey := math.Hypot(pos.X-k.SurveyOrigin[0], pos.Z-k.SurveyOrigin[2])
-		if (loc.Hops >= 2 || distFromSurvey <= expeditionResurveyDist) && meetsHomesteadSuitability(k.Survey) {
+		if (loc.Hops >= 2 || distFromSurvey <= expeditionResurveyDist) && meetsHomesteadSuitability(k.Survey, lw.ctx.State.siteSightings(pos)) {
 			return a.done(lw, homesteadClaim{Pos: [3]float64{pos.X, pos.Y, pos.Z}})
 		}
 	} else if loc.Hops >= 2 || isPrimeSettlementSite(k.Survey) || (f != nil && f.Status != nil && f.Status.FoodLevel <= 8) {

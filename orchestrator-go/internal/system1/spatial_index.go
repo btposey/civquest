@@ -662,7 +662,7 @@ func (si *SpatialIndex) IngestSensoryBlocks(frame *civquestv1.TelemetryFrame, su
 			continue
 		}
 		cat, isPOI := CategorizeBlockID(b.BlockId)
-		if !isPOI {
+		if !isPOI || b.BlockId == db.CaveEntranceBlockID && si.knownNearLocked(b.BlockId, b.Pos, caveMouthSpread) {
 			continue
 		}
 
@@ -754,7 +754,9 @@ func (si *SpatialIndex) VerifyCloseRangePOIs(selfPos *civquestv1.Vec3, interesti
 
 	visitBucket := func(list []*db.AgentPOI) {
 		for _, p := range list {
-			if p == nil || !p.IsActive || strings.EqualFold(p.Category, POICategoryHazard) {
+			// Sightings of livestock and cave mouths are not blocks that can be re-checked.
+			if p == nil || !p.IsActive || strings.EqualFold(p.Category, POICategoryHazard) ||
+				p.BlockID == db.LivestockBlockID || p.BlockID == db.CaveEntranceBlockID {
 				continue
 			}
 			dx := p.X - selfPos.X

@@ -4,6 +4,7 @@ import (
 	"context"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/btposey/civquest/orchestrator-go/internal/agent"
 	"github.com/btposey/civquest/orchestrator-go/internal/db"
@@ -41,12 +42,18 @@ func newSettler(t *testing.T, res *xdg.Resolver, civic *db.CivicRegistryDB, name
 }
 
 func (s *settler) frame(x, z float64, survey *civquestv1.HorizonSurveyReport) {
+	s.see(x, z, func(f *civquestv1.TelemetryFrame) { f.HorizonSurvey = survey })
+}
+
+func (s *settler) see(x, z float64, add func(*civquestv1.TelemetryFrame)) {
 	s.tick += 50
-	s.rt.HandleTelemetryFrame(&civquestv1.TelemetryFrame{
-		WorldTick: s.tick, TimeOfDay: 3000, HorizonSurvey: survey,
+	f := &civquestv1.TelemetryFrame{
+		WorldTick: s.tick, TimeOfDay: 3000,
 		Status: &civquestv1.AgentStatus{AgentId: s.name, Health: 20, MaxHealth: 20, FoodLevel: 20,
 			Position: &civquestv1.Vec3{X: x, Y: 64, Z: z}},
-	})
+	}
+	add(f)
+	s.rt.HandleTelemetryFrame(f)
 	s.rt.DrainIntents()
 }
 
@@ -125,5 +132,74 @@ func TestSettlement_PoorGroundIsNotSelected(t *testing.T) {
 	}
 	if site, err := civic.GetClanSite(context.Background(), "pioneers"); err != nil || site != nil {
 		t.Errorf("clan site recorded: %+v %v", site, err)
+	}
+}
+
+// cq-6l3.20: wooded flat ground alone is not enough; water, ore or a cave, or livestock tips it.
+func TestSettlement_SightingsDecideWhetherWoodedGroundIsChosen(t *testing.T) {
+	cases := []struct {
+		name  string
+		water int
+		see   func(f *civquestv1.TelemetryFrame)
+		want  bool
+	}{
+		{name: "wood alone", want: false},
+		{name: "water", water: 3, want: true},
+		{name: "livestock", want: true, see: func(f *civquestv1.TelemetryFrame) {
+			f.VisibleEntities = []*civquestv1.VisibleEntity{{EntityId: 7, EntityType: "minecraft:cow", Position: &civquestv1.Vec3{X: 208, Y: 64, Z: 206}}}
+		}},
+		{name: "cave entrance", want: true, see: func(f *civquestv1.TelemetryFrame) {
+			f.InterestingBlocks = []*civquestv1.VisibleBlock{{BlockId: db.CaveEntranceBlockID, Pos: &civquestv1.BlockPosProto{X: 210, Y: 65, Z: 212}}}
+		}},
+		{name: "exposed ore", want: true, see: func(f *civquestv1.TelemetryFrame) {
+			f.InterestingBlocks = []*civquestv1.VisibleBlock{{BlockId: "minecraft:iron_ore", Pos: &civquestv1.BlockPosProto{X: 190, Y: 64, Z: 196}}}
+		}},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			res := xdg.NewResolver(xdg.WithCustomRoot(t.TempDir()))
+			civic, err := db.OpenCivicRegistryDBForClan(res, "pioneers")
+			if err != nil {
+				t.Fatalf("OpenCivicRegistryDBForClan: %v", err)
+			}
+			defer civic.Close()
+			// A clanmate has surveyed the same wooded ground.
+			peer := makeRuntimeSurveyReport(204, 64, 204, 90, 6, c.water)
+			sectors := make([]db.HorizonSector, 0, len(peer.Sectors))
+			for _, sec := range peer.Sectors {
+				sectors = append(sectors, db.HorizonSector{SectorIndex: int(sec.SectorIndex), FeatureType: sec.FeatureType, SurveyedTick: 90})
+			}
+			// Ridges make the ground plain: wood and open sectors alone score below the bar.
+			for i := 24; i < 36; i++ {
+				sectors[i].FeatureType = "RIDGE_OBSTRUCTION"
+				peer.Sectors[i].FeatureType = "RIDGE_OBSTRUCTION"
+			}
+			if err := civic.MergeExplorerHorizonSurvey(context.Background(), "bran", 204, 64, 204, 90, sectors); err != nil {
+				t.Fatalf("merging peer survey: %v", err)
+			}
+			s := newSettler(t, res, civic, "aria")
+			survey := makeRuntimeSurveyReport(200, 64, 200, 150, 6, c.water)
+			for i := 24; i < 36; i++ {
+				survey.Sectors[i].FeatureType = "RIDGE_OBSTRUCTION"
+			}
+			s.frame(200, 200, survey)
+			if c.see != nil {
+				s.see(200, 200, c.see)
+			}
+			s.rt.AgentFSM().QueueRendezvousReport("Back from the woods.")
+			s.frame(1, 1, nil)
+			deadline := time.Now().Add(2 * time.Second)
+			for c.want && !s.rt.System1State().SettlementEstablished() && time.Now().Before(deadline) {
+				// Sightings are written to the agent database in the background.
+				time.Sleep(20 * time.Millisecond)
+				s.rt.AgentFSM().QueueRendezvousReport("Back again.")
+				s.frame(1, 1, nil)
+			}
+			got := s.rt.System1State().SettlementEstablished()
+			if got != c.want {
+				ranked, _ := civic.RankCollectiveSettlementCandidates(context.Background())
+				t.Errorf("settled=%t, want %t; candidates %+v", got, c.want, ranked)
+			}
+		})
 	}
 }

@@ -195,6 +195,9 @@ func (r *AgentRuntime) ingestSpatialPOIs(frame *civquestv1.TelemetryFrame) {
 	if updatedPOIs := si.IngestSensoryBlocks(frame, currentY); len(updatedPOIs) > 0 {
 		r.persistPOIsAsync(updatedPOIs)
 	}
+	if herds := si.IngestLivestock(frame); len(herds) > 0 {
+		r.persistPOIsAsync(herds)
+	}
 	if frame.Status != nil && frame.Status.Position != nil {
 		if prunedIDs := si.VerifyCloseRangePOIs(frame.Status.Position, frame.InterestingBlocks, 3.5); len(prunedIDs) > 0 {
 			r.invalidatePOIsAsync(prunedIDs)
