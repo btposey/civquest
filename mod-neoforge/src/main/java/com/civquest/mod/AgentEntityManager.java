@@ -154,7 +154,7 @@ public class AgentEntityManager {
             if (existing.getWatchdogFSM() != null) {
                 existing.getWatchdogFSM().onAgentDespawn();
             }
-            existing.releaseForcedChunk();
+            existing.releaseHeldChunk();
             existing.discard();
             if (server != null && server.getPlayerList() != null) {
                 ClientboundPlayerInfoRemovePacket removePacket =
@@ -271,7 +271,8 @@ public class AgentEntityManager {
 
         if (level != null) {
             ChunkPos chunkPos = new ChunkPos(BlockPos.containing(x, y, z));
-            level.setChunkForced(chunkPos.x, chunkPos.z, true);
+            agent.holdChunk(chunkPos);
+            level.getChunk(chunkPos.x, chunkPos.z); // loaded before the agent enters it
             boolean added = false;
             try {
                 added = level.addFreshEntity(agent);
@@ -280,7 +281,7 @@ public class AgentEntityManager {
                 added = false;
             }
             if (!added) {
-                level.setChunkForced(chunkPos.x, chunkPos.z, false);
+                agent.releaseHeldChunk();
                 if (server != null && server.getPlayerList() != null) {
                     ClientboundPlayerInfoRemovePacket removePacket =
                             new ClientboundPlayerInfoRemovePacket(List.of(agent.getUUID()));
@@ -288,7 +289,6 @@ public class AgentEntityManager {
                 }
                 throw new IllegalStateException("Failed to add AgentEntity to level");
             }
-            agent.setForcedChunkPos(chunkPos);
         }
         if (spawnListener != null) {
             spawnListener.onEntityAdded(agent);
@@ -298,7 +298,7 @@ public class AgentEntityManager {
             if (deadAgent.getWatchdogFSM() != null) {
                 deadAgent.getWatchdogFSM().onAgentDeath();
             }
-            deadAgent.releaseForcedChunk();
+            deadAgent.releaseHeldChunk();
             agents.remove(deadAgent.getAgentId(), deadAgent);
             if (streamRegistry != null) {
                 streamRegistry.close(deadAgent.getAgentId());
@@ -314,7 +314,7 @@ public class AgentEntityManager {
             if (removedAgent.getWatchdogFSM() != null) {
                 removedAgent.getWatchdogFSM().onAgentDespawn();
             }
-            removedAgent.releaseForcedChunk();
+            removedAgent.releaseHeldChunk();
             agents.remove(removedAgent.getAgentId(), removedAgent);
             if (streamRegistry != null) {
                 streamRegistry.close(removedAgent.getAgentId());
@@ -638,7 +638,7 @@ public class AgentEntityManager {
                 if (removed.getWatchdogFSM() != null) {
                     removed.getWatchdogFSM().onAgentDespawn();
                 }
-                removed.releaseForcedChunk();
+                removed.releaseHeldChunk();
                 removed.discard();
                 if (server != null && server.getPlayerList() != null) {
                     ClientboundPlayerInfoRemovePacket removePacket =
@@ -695,6 +695,8 @@ public class AgentEntityManager {
     public void onServerTick(ServerTickEvent.Post event) {
         MinecraftServer server = event.getServer();
         if (server != null) {
+            // A teleported agent may land where nothing ticks it, so this cannot be left to it.
+            agents.values().forEach(AgentEntity::followChunk);
             tickTelemetry(server.getTickCount());
         }
     }
@@ -843,7 +845,7 @@ public class AgentEntityManager {
                 if (agent.getWatchdogFSM() != null) {
                     agent.getWatchdogFSM().onAgentDespawn();
                 }
-                agent.releaseForcedChunk();
+                agent.releaseHeldChunk();
                 agent.discard();
             } catch (Exception e) {
                 LOGGER.debug("Error discarding agent during clearAll: {}", e.getMessage());

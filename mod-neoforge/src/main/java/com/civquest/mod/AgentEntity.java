@@ -12,6 +12,7 @@ import net.minecraft.tags.FluidTags;
 import net.minecraft.core.UUIDUtil;
 import net.minecraft.network.chat.Component;
 import net.minecraft.server.level.ServerLevel;
+import net.minecraft.server.level.TicketType;
 import net.minecraft.tags.DamageTypeTags;
 import net.minecraft.tags.EntityTypeTags;
 import net.minecraft.world.damagesource.DamageSource;
@@ -41,6 +42,11 @@ import java.util.function.Consumer;
  * and permadeath lifecycle hooks.
  */
 public class AgentEntity extends FakePlayer {
+    /** Chunk ticket owned by one agent, keyed by its UUID so that agents never release each other's. */
+    public static final TicketType<UUID> CHUNK_TICKET = TicketType.create("civquest_agent", UUID::compareTo);
+    /** Radius 3 keeps entities ticking in the agent's chunk and the eight round it. */
+    public static final int CHUNK_TICKET_RADIUS = 3;
+
     private static final Logger LOGGER = LogUtils.getLogger();
     private static final double PEER_SEPARATION_RADIUS = 1.15;
     private static final double PEER_SEPARATION_STEP = 0.10;
@@ -82,7 +88,8 @@ public class AgentEntity extends FakePlayer {
     private final String clanId;
     private String skinId;
     private byte[] skinPngBytes;
-    private ChunkPos forcedChunkPos;
+    /** Centre of the chunks this agent keeps loaded; null while it holds none. */
+    private ChunkPos heldChunk;
     private StreamRegistry streamRegistry;
     private SensoryFrustumCollector sensoryCollector;
     private com.civquest.mod.actuator.IntentActuator intentActuator;
@@ -959,7 +966,7 @@ public class AgentEntity extends FakePlayer {
         }
 
         // Release forced chunk
-        releaseForcedChunk();
+        releaseHeldChunk();
 
         // Trigger unregistration / cleanup callback
         if (cleanedUp.compareAndSet(false, true)) {
@@ -984,7 +991,7 @@ public class AgentEntity extends FakePlayer {
         if (this.motorFSM != null) {
             this.motorFSM.flush();
         }
-        releaseForcedChunk();
+        releaseHeldChunk();
         if (cleanedUp.compareAndSet(false, true)) {
             if (this.removalListener != null) {
                 try {
@@ -996,25 +1003,47 @@ public class AgentEntity extends FakePlayer {
         }
     }
 
-    public void releaseForcedChunk() {
-        if (this.forcedChunkPos != null && this.level() instanceof ServerLevel serverLevel) {
-            try {
-                serverLevel.setChunkForced(this.forcedChunkPos.x, this.forcedChunkPos.z, false);
-                LOGGER.debug("Released forced chunk [{}, {}] for agent '{}'",
-                        this.forcedChunkPos.x, this.forcedChunkPos.z, agentId);
-            } catch (Exception e) {
-                LOGGER.warn("Failed to release forced chunk for agent '{}': {}", agentId, e.getMessage());
+    /**
+     * Keeps the chunks round {@code pos} loaded with entities ticking, and lets go of those held
+     * before. A real player holds such a ticket by being in the player list; a fake player does
+     * not, and the server stops ticking it as soon as it leaves ground something else keeps awake.
+     */
+    public void holdChunk(ChunkPos pos) {
+        if (pos == null || pos.equals(this.heldChunk)) {
+            return;
+        }
+        ChunkPos before = this.heldChunk;
+        this.heldChunk = pos;
+        if (this.level() instanceof ServerLevel serverLevel && serverLevel.getChunkSource() != null) {
+            serverLevel.getChunkSource().addRegionTicket(CHUNK_TICKET, pos, CHUNK_TICKET_RADIUS, getUUID());
+            if (before != null) {
+                serverLevel.getChunkSource().removeRegionTicket(CHUNK_TICKET, before, CHUNK_TICKET_RADIUS, getUUID());
             }
-            this.forcedChunkPos = null;
         }
     }
 
-    public ChunkPos getForcedChunkPos() {
-        return forcedChunkPos;
+    /** Moves the held chunks along with the agent. */
+    public void followChunk() {
+        if (this.heldChunk != null) {
+            holdChunk(chunkPosition());
+        }
     }
 
-    public void setForcedChunkPos(ChunkPos forcedChunkPos) {
-        this.forcedChunkPos = forcedChunkPos;
+    public void releaseHeldChunk() {
+        if (this.heldChunk != null && this.level() instanceof ServerLevel serverLevel && serverLevel.getChunkSource() != null) {
+            serverLevel.getChunkSource().removeRegionTicket(CHUNK_TICKET, this.heldChunk, CHUNK_TICKET_RADIUS, getUUID());
+        }
+        this.heldChunk = null;
+    }
+
+    public ChunkPos getHeldChunk() {
+        return heldChunk;
+    }
+
+    @Override
+    public void setPos(double x, double y, double z) {
+        super.setPos(x, y, z);
+        followChunk();
     }
 
     public String getAgentId() {

@@ -41,7 +41,6 @@ import net.minecraft.world.entity.monster.Zombie;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
 import net.minecraft.world.item.component.WrittenBookContent;
-import net.minecraft.world.level.ChunkPos;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.CropBlock;
 import net.minecraft.world.level.block.LecternBlock;
@@ -57,6 +56,7 @@ import java.util.List;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
 @GameTestHolder("civquest")
@@ -99,9 +99,7 @@ public class AgentGameTest {
         helper.assertTrue(agent.getHealth() == agent.getMaxHealth(), "Health must initialize to maximum");
         helper.assertFalse(agent.canUsePortal(false), "Agent cannot use portals");
 
-        ChunkPos forcedChunk = agent.getForcedChunkPos();
-        helper.assertTrue(forcedChunk != null, "Spawn chunk must be forced");
-        helper.assertTrue(level.getForcedChunks().contains(forcedChunk.toLong()), "Level must force spawn chunk");
+        helper.assertTrue(agent.chunkPosition().equals(agent.getHeldChunk()), "Agent must hold its spawn chunk");
 
         // Tick agent entity in server level
         agent.tick();
@@ -111,9 +109,40 @@ public class AgentGameTest {
         boolean despawned = manager.despawnAgent(server, "agent-gt-spawn").join();
         helper.assertTrue(despawned, "Agent must despawn cleanly");
         helper.assertTrue(manager.getAgent("agent-gt-spawn") == null, "Manager must clear despawned agent");
-        helper.assertTrue(agent.getForcedChunkPos() == null, "Forced chunk must be released after despawn");
-        helper.assertFalse(level.getForcedChunks().contains(forcedChunk.toLong()), "Level must release forced chunk");
+        helper.assertTrue(agent.getHeldChunk() == null, "Held chunk must be released after despawn");
         helper.succeed();
+    }
+
+    // cq-gey.1: agents far from any player and from spawn must keep ticking.
+    @GameTest(template = "empty3x3x3", timeoutTicks = 200)
+    public static void testAgentKeepsTickingFarFromSpawn(GameTestHelper helper) {
+        ServerLevel level = helper.getLevel();
+        MinecraftServer server = level.getServer();
+        AgentEntityManager manager = new AgentEntityManager();
+        BlockPos spawnPos = helper.absolutePos(new BlockPos(1, 1, 1));
+        AgentEntity agent = manager.spawnAgent(server, level, SpawnAgentRequest.newBuilder()
+                .setAgentId("agent-gt-wander")
+                .setDisplayName("Wanderer")
+                .setClanId("clan-ironwood")
+                .setSpawnCoords(Vec3.newBuilder()
+                        .setX(spawnPos.getX() + 0.5)
+                        .setY(spawnPos.getY())
+                        .setZ(spawnPos.getZ() + 0.5)
+                        .build())
+                .build()).join();
+        AtomicInteger ticksWhenMoved = new AtomicInteger();
+        helper.runAfterDelay(5, () -> {
+            agent.setPos(spawnPos.getX() + 640.5, spawnPos.getY(), spawnPos.getZ() + 0.5);
+            ticksWhenMoved.set(agent.tickCount);
+        });
+        helper.runAfterDelay(65, () -> {
+            int ticked = agent.tickCount - ticksWhenMoved.get();
+            boolean ticking = level.isPositionEntityTicking(agent.blockPosition());
+            manager.despawnAgent(server, "agent-gt-wander");
+            helper.assertTrue(ticking, "The chunk around a distant agent must tick entities");
+            helper.assertTrue(ticked > 40, "A distant agent must keep ticking, ticked " + ticked + " of 60");
+            helper.succeed();
+        });
     }
 
     @GameTest(template = "empty3x3x3")
@@ -157,8 +186,7 @@ public class AgentGameTest {
         AgentEntity agent = manager.spawnAgent(server, level, request).join();
         helper.assertTrue(agent != null, "Agent must spawn");
         helper.assertTrue(manager.getAgent("agent-gt-death") != null, "Agent must be registered");
-        ChunkPos forcedChunk = agent.getForcedChunkPos();
-        helper.assertTrue(forcedChunk != null, "Forced chunk must be set");
+        helper.assertTrue(agent.getHeldChunk() != null, "Agent must hold a chunk");
 
         // Kill agent with generic damage
         agent.die(level.damageSources().generic());
@@ -175,8 +203,7 @@ public class AgentGameTest {
                 "Terminal death frame must skip block scanning");
         helper.assertTrue(deathFrameRef.get().getVisibleEntitiesCount() == 0,
                 "Terminal death frame must skip entity scanning");
-        helper.assertTrue(agent.getForcedChunkPos() == null, "Forced chunk must be cleared on agent");
-        helper.assertFalse(level.getForcedChunks().contains(forcedChunk.toLong()), "Level forced chunk must be released");
+        helper.assertTrue(agent.getHeldChunk() == null, "Held chunk must be released on death");
         helper.succeed();
     }
 
