@@ -1070,6 +1070,13 @@ func NewHarvestTreeTask(tx, ty, tz int32, stage Stage, startTick int64) *TaskSub
 				},
 			}
 		},
+		// A trunk that was "done" without a swing (one far below, say) is left a while, or it
+		// is chosen again straight away.
+		OnComplete: func(state *AgentState, frame *civquestv1.TelemetryFrame, current *TaskSubroutine) {
+			if state != nil && frame != nil && current != nil && current.ActionsEmitted == 0 {
+				state.MarkTreeFailedLocked(tx, tz, frame.WorldTick)
+			}
+		},
 		OnStandFailed: func() { standGivenUp = true },
 		IsUnachievable: func(state *AgentState, frame *civquestv1.TelemetryFrame) bool {
 			if state == nil || frame == nil {
