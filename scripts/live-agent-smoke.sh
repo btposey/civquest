@@ -187,6 +187,10 @@ for a in agents:
     if beds > 15: failed.append(f"{a}: tried to sleep {beds} times")
     if food > 12 and not dead: failed.append(f"{a}: never got hungry, the hunger phase did not work")
 print(f"server: {log.count('Dropping telemetry frames')} backpressure warnings, {log.count(chr(39) + ' spoke in chat')} agent chat lines")
+# A run on treeless ground (open ocean) exercises little: say so rather than pass quietly.
+crafted = sum(1 for a in agents if any("recipe=" in e.get("summary", "") for e in by.get(a, [])))
+if crafted * 2 < len(agents):
+    print(f"NOTE: only {crafted} of {len(agents)} agents crafted anything; wood gathering and crafting were barely exercised")
 if model:
     replied = f"Agent '{chat_agent}' spoke in chat" in log
     print(f"chat: {chat_agent} {'replied' if replied else 'did NOT reply'}")
