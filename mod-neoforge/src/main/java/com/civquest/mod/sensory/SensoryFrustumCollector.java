@@ -79,6 +79,19 @@ public class SensoryFrustumCollector {
     /** Cap on surface-water cells surfaced for fishing (cq-390.4); water is otherwise not "interesting". */
     public static final int MAX_WATER_BLOCKS = 24;
 
+    /** Exposed resources an explorer can see and take (cq-6l3.15): nearest first, each capped. */
+    public static final int MAX_ORE_BLOCKS = 16;
+    public static final int MAX_STONE_BLOCKS = 12;
+    public static final int MAX_WILD_FOOD_BLOCKS = 12;
+    public static final int MAX_CAVE_ENTRANCES = 3;
+    /** Block id reported for the ceiling block at the mouth of a cave. */
+    public static final String CAVE_ENTRANCE_ID = "civquest:cave_entrance";
+    private static final int STONE_SCAN_REACH = 12;
+    private static final int STONE_SCAN_UP = 4;
+    private static final int CAVE_SCAN_HEIGHT = 6;
+    private static final int CAVE_OPENING_REACH = 4;
+    private static final int CAVE_DEPTH = 3;
+
     public static final TagKey<Block> INTERESTING_BLOCKS =
             TagKey.create(Registries.BLOCK, ResourceLocation.fromNamespaceAndPath(CivQuestMod.MOD_ID, "interesting_blocks"));
 
@@ -426,6 +439,10 @@ public class SensoryFrustumCollector {
         List<BlockPos> logCandidates = new ArrayList<>();
         List<VisibleBlock> nonLogCandidates = new ArrayList<>();
         List<BlockPos> waterCandidates = new ArrayList<>();
+        List<BlockPos> oreCandidates = new ArrayList<>();
+        List<BlockPos> stoneCandidates = new ArrayList<>();
+        List<BlockPos> wildFoodCandidates = new ArrayList<>();
+        List<BlockPos> caveCandidates = new ArrayList<>();
 
         for (int dy = -radius; dy <= radius; dy++) {
             int y = center.getY() + dy;
@@ -459,6 +476,23 @@ public class SensoryFrustumCollector {
 
                     if (isSurfaceWater(level, state, mpos)) {
                         waterCandidates.add(mpos.immutable());
+                    }
+
+                    if (isOre(state)) {
+                        if (hasOpenFace(level, mpos)) {
+                            oreCandidates.add(mpos.immutable());
+                        }
+                    } else if (isWildFood(state)) {
+                        wildFoodCandidates.add(mpos.immutable());
+                    } else if (isNaturalStone(state)) {
+                        if (dy >= 0 && dy <= STONE_SCAN_UP && Math.abs(dx) <= STONE_SCAN_REACH
+                                && Math.abs(dz) <= STONE_SCAN_REACH && hasOpenFace(level, mpos)
+                                && (state.is(Blocks.STONE) || state.is(Blocks.DEEPSLATE))) {
+                            stoneCandidates.add(mpos.immutable());
+                        }
+                        if (Math.abs(dy) <= CAVE_SCAN_HEIGHT && isCaveEntrance(level, mpos)) {
+                            caveCandidates.add(mpos.immutable());
+                        }
                     }
 
                     if (isInterestingBlock(state)) {
@@ -553,6 +587,12 @@ public class SensoryFrustumCollector {
             }
         }
 
+        // Cave mouths go first so the ceiling block keeps the cave id rather than its stone one.
+        addCaveEntrances(frameBuilder, center, caveCandidates, addedPositions);
+        addNearest(level, frameBuilder, center, oreCandidates, MAX_ORE_BLOCKS, addedPositions);
+        addNearest(level, frameBuilder, center, wildFoodCandidates, MAX_WILD_FOOD_BLOCKS, addedPositions);
+        addNearest(level, frameBuilder, center, stoneCandidates, MAX_STONE_BLOCKS, addedPositions);
+
         for (VisibleBlock nonLog : nonLogCandidates) {
             if (frameBuilder.getInterestingBlocksCount() >= MAX_INTERESTING_BLOCKS) {
                 break;
@@ -578,6 +618,112 @@ public class SensoryFrustumCollector {
                     .build();
             frameBuilder.setFarmlandSurvey(survey);
         }
+    }
+
+    private void addNearest(Level level, TelemetryFrame.Builder frameBuilder, BlockPos center, List<BlockPos> candidates,
+                            int cap, Set<BlockPos> addedPositions) {
+        candidates.sort((a, b) -> Double.compare(a.distSqr(center), b.distSqr(center)));
+        int added = 0;
+        for (BlockPos pos : candidates) {
+            if (added >= cap || frameBuilder.getInterestingBlocksCount() >= MAX_INTERESTING_BLOCKS) {
+                return;
+            }
+            if (!addedPositions.add(pos)) {
+                continue;
+            }
+            BlockState state = level.getBlockState(pos);
+            frameBuilder.addInterestingBlocks(VisibleBlock.newBuilder()
+                    .setPos(toBlockPosProto(pos))
+                    .setBlockId(BuiltInRegistries.BLOCK.getKey(state.getBlock()).toString())
+                    .setBlockStateString(formatBlockProperties(state))
+                    .build());
+            added++;
+        }
+    }
+
+    /** Reports the nearest cave mouths, one per mouth: candidates within 8 blocks of one taken are dropped. */
+    private void addCaveEntrances(TelemetryFrame.Builder frameBuilder, BlockPos center, List<BlockPos> candidates,
+                                  Set<BlockPos> addedPositions) {
+        candidates.sort((a, b) -> Double.compare(a.distSqr(center), b.distSqr(center)));
+        List<BlockPos> taken = new ArrayList<>();
+        for (BlockPos pos : candidates) {
+            if (taken.size() >= MAX_CAVE_ENTRANCES || frameBuilder.getInterestingBlocksCount() >= MAX_INTERESTING_BLOCKS) {
+                return;
+            }
+            if (taken.stream().anyMatch(t -> t.distSqr(pos) < 64.0) || !addedPositions.add(pos)) {
+                continue;
+            }
+            taken.add(pos);
+            frameBuilder.addInterestingBlocks(VisibleBlock.newBuilder()
+                    .setPos(toBlockPosProto(pos))
+                    .setBlockId(CAVE_ENTRANCE_ID)
+                    .build());
+        }
+    }
+
+    public static boolean isOre(BlockState state) {
+        return state.is(net.neoforged.neoforge.common.Tags.Blocks.ORES) || state.is(Blocks.AMETHYST_CLUSTER);
+    }
+
+    public static boolean isWildFood(BlockState state) {
+        return state.is(Blocks.SWEET_BERRY_BUSH) || state.is(Blocks.BROWN_MUSHROOM) || state.is(Blocks.RED_MUSHROOM);
+    }
+
+    private static boolean isNaturalStone(BlockState state) {
+        return state.is(net.minecraft.tags.BlockTags.BASE_STONE_OVERWORLD);
+    }
+
+    private static boolean hasOpenFace(Level level, BlockPos pos) {
+        for (net.minecraft.core.Direction dir : net.minecraft.core.Direction.values()) {
+            BlockPos side = pos.relative(dir);
+            if (level.hasChunkAt(side) && level.getBlockState(side).isAir()) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static boolean isAirAt(Level level, BlockPos pos) {
+        return level.hasChunkAt(pos) && level.getBlockState(pos).isAir();
+    }
+
+    /** Whether something solid stands above pos (leaves do not count). */
+    private static boolean isCovered(Level level, BlockPos pos) {
+        return level.getHeight(net.minecraft.world.level.levelgen.Heightmap.Types.MOTION_BLOCKING_NO_LEAVES,
+                pos.getX(), pos.getZ()) > pos.getY() + 1;
+    }
+
+    /**
+     * Whether {@code ceiling} roofs the mouth of a cave: head-high air under it, open to the sky within
+     * a few blocks one way, and running on under cover the other way. An overhang has no depth.
+     */
+    public static boolean isCaveEntrance(Level level, BlockPos ceiling) {
+        BlockPos head = ceiling.below();
+        if (!isAirAt(level, head) || !isAirAt(level, head.below()) || !isCovered(level, head)) {
+            return false;
+        }
+        for (net.minecraft.core.Direction dir : net.minecraft.core.Direction.Plane.HORIZONTAL) {
+            boolean opens = false;
+            for (int k = 1; k <= CAVE_OPENING_REACH && !opens; k++) {
+                BlockPos out = head.relative(dir, k);
+                if (!isAirAt(level, out)) {
+                    break;
+                }
+                opens = !isCovered(level, out);
+            }
+            if (!opens) {
+                continue;
+            }
+            boolean deep = true;
+            for (int k = 1; k <= CAVE_DEPTH && deep; k++) {
+                BlockPos in = head.relative(dir.getOpposite(), k);
+                deep = isAirAt(level, in) && isCovered(level, in);
+            }
+            if (deep) {
+                return true;
+            }
+        }
+        return false;
     }
 
     public static boolean isLogBlock(BlockState state) {

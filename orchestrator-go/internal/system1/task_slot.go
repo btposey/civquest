@@ -101,6 +101,8 @@ func walkCarrier(local any) (walkLocal, func(walkLocal) any, bool) {
 		return l.Walk, func(w walkLocal) any { l.Walk = w; return l }, true
 	case bedLocal:
 		return l.Walk, func(w walkLocal) any { l.Walk = w; return l }, true
+	case gatherLocal:
+		return l.Walk, func(w walkLocal) any { l.Walk = w; return l }, true
 	}
 	return walkLocal{}, nil, false
 }

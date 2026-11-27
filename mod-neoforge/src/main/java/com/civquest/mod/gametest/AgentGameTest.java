@@ -1309,6 +1309,7 @@ public class AgentGameTest {
     private static final int CAMPFIRE_ARENA_Y = 60;
     private static final int IDLE_POOL_ARENA_Y = 70;
     private static final int SURFACE_POOL_ARENA_Y = 80;
+    private static final int RESOURCE_ARENA_Y = 90;
     private static final int POOL_DEPTH = 5;
 
     /** A walled 3x3 pool, POOL_DEPTH water blocks on a stone floor, with air above. */
@@ -1331,6 +1332,44 @@ public class AgentGameTest {
         BlockPos abs = helper.absolutePos(new BlockPos(0, floorY + 1, 0));
         agent.moveTo(abs.getX() + 0.5, abs.getY(), abs.getZ() + 0.5);
         agent.setDeltaMovement(0.0, 0.0, 0.0);
+    }
+
+    // cq-6l3.15: explorers see exposed ore, stone, wild food and cave mouths; buried ore stays hidden.
+    @GameTest(template = "empty3x3x3")
+    public static void testSensesExposedResourcesAndCaveEntrance(GameTestHelper helper) {
+        AgentEntityManager manager = new AgentEntityManager();
+        int y = RESOURCE_ARENA_Y;
+        stoneFloor(helper, -6, 6, y);
+        // A tunnel three wide of solid stone with a one-wide passage, open at its west end.
+        for (int x = -2; x <= 4; x++) {
+            for (int dy = 1; dy <= 3; dy++) {
+                for (int z = 1; z <= 3; z++) {
+                    boolean passage = z == 2 && dy <= 2 && x <= 3;
+                    helper.setBlock(new BlockPos(x, y + dy, z), passage ? Blocks.AIR : Blocks.STONE);
+                }
+            }
+        }
+        BlockPos exposed = new BlockPos(2, y + 1, -3);
+        helper.setBlock(exposed, Blocks.IRON_ORE);
+        BlockPos buried = new BlockPos(-3, y, -3); // in the floor, covered on top, stone all round
+        helper.setBlock(buried.below(), Blocks.STONE);
+        helper.setBlock(buried, Blocks.GOLD_ORE);
+        helper.setBlock(buried.above(), Blocks.STONE);
+        helper.setBlock(new BlockPos(-4, y + 1, -2), Blocks.RED_MUSHROOM);
+        AgentEntity agent = spawnCoverageAgent(helper, manager, "agent-gt-resources", new BlockPos(-5, y + 1, 0));
+        TelemetryFrame frame = new SensoryFrustumCollector().collectFrame(agent, null, null);
+        java.util.Set<String> ids = new java.util.HashSet<>();
+        frame.getInterestingBlocksList().forEach(b -> ids.add(b.getBlockId()));
+        for (String want : new String[] {"minecraft:iron_ore", "minecraft:stone", "minecraft:red_mushroom",
+                SensoryFrustumCollector.CAVE_ENTRANCE_ID}) {
+            helper.assertTrue(ids.contains(want), "Explorer must see " + want + ", saw " + ids);
+        }
+        BlockPos hidden = helper.absolutePos(buried);
+        helper.assertTrue(frame.getInterestingBlocksList().stream().noneMatch(b -> b.getPos().getX() == hidden.getX()
+                && b.getPos().getY() == hidden.getY() && b.getPos().getZ() == hidden.getZ()
+                && b.getBlockId().equals("minecraft:gold_ore")), "Buried ore must stay unseen");
+        manager.despawnAgent(helper.getLevel().getServer(), "agent-gt-resources").join();
+        helper.succeed();
     }
 
     // cq-6l3: an agent with nothing to do in deep water sank and drowned.

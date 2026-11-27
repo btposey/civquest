@@ -863,6 +863,10 @@ func (a navigateActivity) Step(w htpda.World, local any, ev htpda.Event) htpda.S
 		if st, ok := lw.preemptionPush(loc.Origin, loc.Returning, loc); ok {
 			return st
 		}
+		// Explorers gather along their travels (cq-6l3.15). A survey sweep is not interrupted.
+		if !lw.skipped[activityKindGather] && (gatherActivity{}).eligible(lw) {
+			return htpda.Step{Op: htpda.OpPush, Child: activityKindGather, Next: loc}
+		}
 		dx, dz := pos.X-loc.Target[0], pos.Z-loc.Target[2]
 		if dx*dx+dz*dz <= loc.Radius*loc.Radius {
 			return htpda.Step{Op: htpda.OpPop, Result: navReached{Pos: [3]float64{pos.X, pos.Y, pos.Z}}}

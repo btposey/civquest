@@ -269,6 +269,13 @@ func (fsm *AgentFSM) applyMemoryLocked(w *fsmWorld, writes []htpda.MemoryWrite) 
 			fsm.workBackoffUntil[b.Kind] = b.Until
 			continue
 		}
+		if g, ok := wr.(gatherGaveUp); ok {
+			if fsm.gatherSkips == nil {
+				fsm.gatherSkips = map[string]int64{}
+			}
+			fsm.gatherSkips[g.Key] = g.Until
+			continue
+		}
 		if b, ok := wr.(surveyBackoff); ok {
 			fsm.surveyBackoffUntil = b.Until
 			continue

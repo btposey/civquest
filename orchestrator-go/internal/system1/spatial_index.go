@@ -558,7 +558,7 @@ func CategorizeBlockID(blockID string) (category string, isPOI bool) {
 	if strings.Contains(name, "_log") || strings.Contains(name, "stem") {
 		return POICategoryResource, true
 	}
-	if strings.Contains(name, "_ore") {
+	if strings.Contains(name, "_ore") || name == "cave_entrance" {
 		return POICategoryResource, true
 	}
 	if strings.HasSuffix(name, "_sapling") || name == "mangrove_propagule" {

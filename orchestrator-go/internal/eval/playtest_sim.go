@@ -393,8 +393,26 @@ func isInterestingSimBlock(id string) bool {
 		strings.Contains(id, "chest"), strings.Contains(id, "barrel"), strings.Contains(id, "farmland"),
 		strings.Contains(id, "wheat"), strings.Contains(id, "carrots"), strings.Contains(id, "_bed"),
 		strings.Contains(id, "door"), strings.Contains(id, "torch"), strings.Contains(id, "lectern"),
-		strings.Contains(id, "bell"), strings.Contains(id, "composter"):
+		strings.Contains(id, "bell"), strings.Contains(id, "composter"),
+		strings.Contains(id, "sweet_berry_bush"), strings.HasSuffix(id, "_mushroom"), id == "minecraft:melon", id == "minecraft:pumpkin":
 		return true
+	}
+	return false
+}
+
+// seenExposed mirrors the collector's exposed-resource scan (cq-6l3.15): ore with an open face,
+// and stone with an open face at or just above the feet nearby.
+func (s *PlaytestSim) seenExposed(k BlockPosKey, id string, feet BlockPosKey) bool {
+	ore := strings.HasSuffix(id, "_ore") || id == "minecraft:amethyst_cluster"
+	stone := (id == "minecraft:stone" || id == "minecraft:deepslate") && k.Y >= feet.Y && k.Y <= feet.Y+4 &&
+		max(k.X-feet.X, feet.X-k.X) <= 12 && max(k.Z-feet.Z, feet.Z-k.Z) <= 12
+	if !ore && !stone {
+		return false
+	}
+	for _, d := range [...][3]int32{{1, 0, 0}, {-1, 0, 0}, {0, 1, 0}, {0, -1, 0}, {0, 0, 1}, {0, 0, -1}} {
+		if s.World.Blocks[BlockPosKey{X: k.X + d[0], Y: k.Y + d[1], Z: k.Z + d[2]}] == "" {
+			return true
+		}
 	}
 	return false
 }
@@ -438,7 +456,7 @@ func (s *PlaytestSim) frameBlocks() []*civquestv1.VisibleBlock {
 	r := s.cfg.ViewRadius
 	r2 := float64(r * r)
 	for k, id := range s.World.Blocks {
-		if !isInterestingSimBlock(id) {
+		if !isInterestingSimBlock(id) && !s.seenExposed(k, id, f) {
 			continue
 		}
 		dx, dy, dz := float64(k.X-f.X), float64(k.Y-f.Y), float64(k.Z-f.Z)
@@ -796,6 +814,13 @@ func isToolGatedStone(id string) bool {
 		id == "minecraft:diorite" || id == "minecraft:granite" || id == "minecraft:sandstone"
 }
 
+// simOreDrops are the vanilla drops of ores and wild plants whose item is not the block.
+var simOreDrops = map[string]string{
+	"minecraft:coal_ore": "minecraft:coal", "minecraft:iron_ore": "minecraft:raw_iron", "minecraft:copper_ore": "minecraft:raw_copper",
+	"minecraft:gold_ore": "minecraft:raw_gold", "minecraft:diamond_ore": "minecraft:diamond",
+	"minecraft:sweet_berry_bush": "minecraft:sweet_berries",
+}
+
 func harvestDrop(id string, hasPick bool) string {
 	switch {
 	case isToolGatedStone(id):
@@ -805,11 +830,17 @@ func harvestDrop(id string, hasPick bool) string {
 		if id == "minecraft:stone" {
 			return "minecraft:cobblestone"
 		}
+		if drop := simOreDrops[id]; drop != "" {
+			return drop
+		}
 		return id
 	case strings.HasSuffix(id, "_leaves"):
 		return ""
 	case id == "minecraft:grass_block":
 		return "minecraft:dirt"
+	}
+	if drop := simOreDrops[id]; drop != "" {
+		return drop
 	}
 	return id
 }

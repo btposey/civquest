@@ -271,7 +271,8 @@ type AgentFSM struct {
 	surveyBackoffUntil int64
 	// workBackoffUntil suppresses activities that recently found nothing to do.
 	workBackoffUntil map[htpda.Kind]int64
-	planning         planningMemory // spatial Memory + banked plan (plan_memory.go, ADR-039)
+	gatherSkips      map[string]int64 // finds gathering gave up on, until a tick
+	planning         planningMemory   // spatial Memory + banked plan (plan_memory.go, ADR-039)
 	// eventSink receives playtest diagnostics (playtest_events.go); nil disables them.
 	eventSink      EventSink
 	vitalsEmitted  bool

@@ -31,8 +31,10 @@ const (
 	priorityBed = 0.62
 	// priorityPlan (cq-dcx.4): a committed plan step that can be acted on now (tool progression)
 	// outbids the ad-hoc bootstrap waterfall and exploration; behind the bed and wool plans.
-	priorityPlan        = 0.61
-	priorityBootstrap   = 0.60
+	priorityPlan      = 0.61
+	priorityBootstrap = 0.60
+	// priorityGather (cq-6l3.15): an unsettled agent takes what it passes; needs outrank it.
+	priorityGather      = 0.50
 	priorityExploration = 0.40
 )
 
@@ -51,6 +53,7 @@ var defaultPriorities = map[htpda.Kind]float64{
 	activityKindBed:                priorityBed,
 	activityKindPlan:               priorityPlan,
 	activityKindBootstrap:          priorityBootstrap,
+	activityKindGather:             priorityGather,
 	activityKindExploration:        priorityExploration,
 }
 

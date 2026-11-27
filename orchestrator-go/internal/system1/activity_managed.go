@@ -74,6 +74,7 @@ func newManagedActivities() []waterfallActivity {
 		bedActivity{frameBase{activityKindBed}},
 		newPlanActivity(),
 		bootstrapActivity{frameBase{activityKindBootstrap}},
+		gatherActivity{frameBase{activityKindGather}},
 		explorationActivity{frameBase{activityKindExploration}},
 	}
 }

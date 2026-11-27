@@ -57,6 +57,10 @@ func isExplorationActivityEligible(stage Stage, routine Routine, ctx *FSMContext
 	switch routine {
 	case RoutinePrimaryDuty, RoutineCivicPatrol, RoutineArmoryMaintenance, RoutineSecondaryHobby, RoutineSleep:
 		return true
+	case RoutineHarvestTree:
+		// A tree felled on the way (cq-6l3.15) marks the routine until the next tick; the walk
+		// it interrupted must keep its route.
+		return true
 	default:
 		return false
 	}
