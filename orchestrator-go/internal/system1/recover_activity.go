@@ -155,6 +155,8 @@ func (fsm *AgentFSM) noteStuck(target [3]float64, dist float64, tick int64) bool
 type recoverEscapeLock struct {
 	DirX, DirZ int32
 	Tick       int64
+	// Climb: a way up is being cut, which keeps the heading from one step to the next.
+	Climb bool
 	// Clear releases the lock (the agent moved: Recover popped recovered).
 	Clear bool
 }
@@ -193,6 +195,7 @@ type recoverArgs struct {
 
 type recoverLocal struct {
 	recoverArgs
+	Climb        bool // enclosed: work to a wall and cut steps up it (climb_out.go)
 	Attempts     int
 	Congestions  int
 	SawEntity    bool // blocked_by_entity seen at any point of the episode: never blacklist
@@ -309,8 +312,11 @@ func (recoverActivity) Init(w htpda.World, args any) (any, htpda.Lease) {
 		loc.Congestions = 1
 	}
 	if lw := asFSMWorld(w); lw != nil {
-		if l := lw.fsm.escapeLock; l != nil && a.Cause == CauseEnclosed && w.Tick()-l.Tick < escapeLockTTL {
-			loc.Locked, loc.DirX, loc.DirZ = true, l.DirX, l.DirZ
+		if l := lw.fsm.escapeLock; l != nil && a.Cause == CauseEnclosed && w.Tick()-l.Tick < l.ttl() {
+			loc.Locked, loc.DirX, loc.DirZ, loc.Climb = true, l.DirX, l.DirZ, l.Climb
+		}
+		if a.Cause == CauseEnclosed && lw.fsm.notePocket(lw.pos(), w.Tick()) {
+			loc.Climb = true
 		}
 		if p := lw.pos(); p != nil {
 			loc.StartPos, loc.HasStart = [3]float64{p.X, p.Y, p.Z}, true
@@ -356,14 +362,16 @@ func (a recoverActivity) onReceipt(lw *fsmWorld, loc recoverLocal, e htpda.Recei
 	case civquestv1.IntentReceipt_RECEIPT_STATUS_COMPLETED:
 		// A finished leg or dig is not a recovery by itself: a sidestep already within
 		// arrival tolerance completes without moving the agent at all.
-		if pos := lw.pos(); loc.progressed(pos) || loc.moved(pos) {
+		if pos := lw.pos(); loc.climbDone(pos) || !loc.Climb && (loc.progressed(pos) || loc.moved(pos)) {
 			return a.pop(loc, recovered{})
 		}
-		if loc.Cause == CauseEnclosed && loc.NavSent {
+		if loc.Cause == CauseEnclosed && loc.NavSent && !(loc.Climb && loc.moved(lw.pos())) {
 			// Enclosed attempts are bounded only by the lease: pace a step that goes nowhere.
 			loc.NavNotBefore = lw.Tick() + recoverTunables.AttemptTicks
 		}
-		loc.turnAfterFailedStep()
+		if !loc.Climb { // a finished step of a climb keeps its heading
+			loc.turnAfterFailedStep()
+		}
 		loc.Emitted = false
 		return a.advance(lw, loc)
 	case civquestv1.IntentReceipt_RECEIPT_STATUS_FAILED:
@@ -408,7 +416,7 @@ func (a recoverActivity) advance(lw *fsmWorld, loc recoverLocal) htpda.Step {
 		return htpda.Step{Op: htpda.OpStay, Next: loc}
 	}
 	tick := lw.Tick()
-	if loc.progressed(pos) && (loc.Attempts > 0 || loc.Cause == CauseCongestion) {
+	if (loc.climbDone(pos) || !loc.Climb && loc.progressed(pos)) && (loc.Attempts > 0 || loc.Cause == CauseCongestion) {
 		return a.pop(loc, recovered{})
 	}
 	if loc.Emitted {
@@ -483,11 +491,16 @@ func (a recoverActivity) advance(lw *fsmWorld, loc recoverLocal) htpda.Step {
 // pop ends the frame with result, keeping the enclosed dig heading for the next episode.
 func (recoverActivity) pop(loc recoverLocal, result any) htpda.Step {
 	st := htpda.Step{Op: htpda.OpPop, Result: result}
-	if _, ok := result.(recovered); ok {
+	_, ok := result.(recovered)
+	switch {
+	case loc.Locked && loc.Climb:
+		// One step up a staircase is not out of the pocket: the next episode carries on.
+		st.Memory = []htpda.MemoryWrite{recoverEscapeLock{DirX: loc.DirX, DirZ: loc.DirZ, Climb: true}}
+	case ok:
 		// The agent is moving again (the retired unstuck's movement-unlock): the heading lock
 		// is released so the next episode derives its direction afresh.
 		st.Memory = []htpda.MemoryWrite{recoverEscapeLock{Clear: true}}
-	} else if loc.Locked && loc.Cause == CauseEnclosed {
+	case loc.Locked && loc.Cause == CauseEnclosed:
 		st.Memory = []htpda.MemoryWrite{recoverEscapeLock{DirX: loc.DirX, DirZ: loc.DirZ, Tick: loc.LastDig}}
 	}
 	return st
@@ -582,10 +595,13 @@ func (loc recoverLocal) enclosedStep(agentID string, frame *civquestv1.Telemetry
 		if b := diggable(s2x, by+2, s2z); b != nil {
 			return breakAt(b)
 		}
-		return recoverNav(agentID, float64(s1x)+0.5, float64(by)+1.0, float64(s1z)+0.5, 1), true
+		return recoverStep(agentID, s1x, by+1, s1z), true
 	}
 	if b := diggable(s2x, by+1, s2z); b != nil {
 		return breakAt(b)
+	}
+	if loc.Climb {
+		return loc.towardsWall(agentID, frame, s1x, by, s1z, out)
 	}
 	// Flat walkway is open: fan out with an agent-specific rotation so peers separate.
 	base := math.Atan2(float64(dirZ), float64(dirX))

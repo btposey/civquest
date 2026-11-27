@@ -30,6 +30,13 @@ func IsDiggableObstruction(id string) bool {
 		strings.Contains(s, "stone") ||
 		strings.Contains(s, "cobblestone") ||
 		strings.Contains(s, "deepslate") ||
+		strings.Contains(s, "diorite") ||
+		strings.Contains(s, "andesite") ||
+		strings.Contains(s, "granite") ||
+		strings.Contains(s, "tuff") ||
+		strings.Contains(s, "calcite") ||
+		strings.Contains(s, "basalt") ||
+		strings.Contains(s, "terracotta") ||
 		strings.Contains(s, "sand") ||
 		strings.Contains(s, "gravel") ||
 		strings.Contains(s, "clay") ||
