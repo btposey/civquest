@@ -72,7 +72,7 @@ func scenarioReflexPreemptsMining() replayScenario {
 			{Frame: rf(105, 3000, withBlocks(treeColumn...)), Annotation: "mid-cooldown, no wander"},
 			{Frame: rf(126, 3000, withInv(item(0, "minecraft:oak_log", 1)), withBlocks(blk(3, 65, 0, "minecraft:oak_log"), blk(3, 66, 0, "minecraft:oak_log"), blk(1, 64, 1, "minecraft:birch_log"))), Annotation: "stay on locked trunk despite closer tree"},
 			{Frame: rf(135, 3000, withHP(6), withEntities(creeperAt(901, 2.5, 0.5, 2.5)), withBlocks(blk(3, 65, 0, "minecraft:oak_log"))), Reflexes: shieldNotice(135), Annotation: "creeper + low HP: emergency preempts"},
-			{Frame: rf(335, 3000, withHP(6), withEntities(creeperAt(901, 2.5, 0.5, 2.5)), withBlocks(blk(3, 65, 0, "minecraft:oak_log"))), Annotation: "200 ticks in emergency, no false timeout"},
+			{Frame: rf(335, 3000, withHP(6), withEntities(creeperAt(901, 2.5, 0.5, 2.5)), withBlocks(blk(3, 65, 0, "minecraft:oak_log"))), Annotation: "200 ticks in emergency, no false timeout; pinned, so the flight turns"},
 			{Frame: rf(350, 3000, withInv(item(0, "minecraft:oak_log", 1)), withBlocks(blk(3, 65, 0, "minecraft:oak_log"), blk(3, 66, 0, "minecraft:oak_log"))), Annotation: "threat cleared: resumes harvest on (3,65,0)"},
 		},
 		Check: func(t *testing.T, tr []replayRecord) {

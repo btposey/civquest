@@ -2,5 +2,5 @@ t=100 stage=BOOTSTRAP routine=HARVEST_TREE stack=[task_subroutine/2] intents=[In
 t=105 stage=BOOTSTRAP routine=HARVEST_TREE stack=[task_subroutine/2] intents=[]  // mid-cooldown, no wander
 t=126 stage=BOOTSTRAP routine=HARVEST_TREE stack=[task_subroutine/2] intents=[Interact(HARVEST_BREAK 3,65,0 minecraft:oak_log)]  // stay on locked trunk despite closer tree
 t=135 stage=EMERGENCY routine=EMERGENCY stack=[emergency/3] intents=[Attack(target=901 shield=false kite=false flee=true); Navigate(x=-15.5 z=0.5)]  // creeper + low HP: emergency preempts
-t=335 stage=EMERGENCY routine=EMERGENCY stack=[emergency/3] intents=[Attack(target=901 shield=false kite=false flee=true); Navigate(x=-15.5 z=0.5)]  // 200 ticks in emergency, no false timeout
+t=335 stage=EMERGENCY routine=EMERGENCY stack=[emergency/3] intents=[Attack(target=901 shield=false kite=false flee=true); Navigate(x=0.5 z=-11.5)]  // 200 ticks in emergency, no false timeout; pinned, so the flight turns
 t=350 stage=BOOTSTRAP routine=HARVEST_TREE stack=[task_subroutine/2] intents=[Interact(HARVEST_BREAK 3,65,0 minecraft:oak_log)]  // threat cleared: resumes harvest on (3,65,0)

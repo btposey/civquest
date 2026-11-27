@@ -50,6 +50,11 @@ type emergencyLocal struct {
 	// Flight is the destination of the flight under way, committed since FlightSince.
 	Flight      *civquestv1.Vec3 // immutable once set
 	FlightSince int64
+	// FlightFrom is where the agent stood when headway was last seen, at FlightMoved;
+	// FlightTurns counts the ways tried since because it was getting nowhere.
+	FlightFrom  *civquestv1.Vec3
+	FlightMoved int64
+	FlightTurns int
 	Reflexes    int // Java in-engine reflex notices routed to this frame
 	LastReflex  htpda.ReflexKind
 
@@ -134,6 +139,11 @@ const (
 	// stuck, or it stops leading away from the nearest threat.
 	flightCommitTicks = int64(80)
 	flightArrived     = 3.0
+	// A flight that has not carried the agent flightHeadway in flightStallTicks turns another
+	// way, flightTurnDist from where it stands.
+	flightStallTicks = int64(40)
+	flightHeadway    = 1.5
+	flightTurnDist   = 12.0
 )
 
 // commitFlight holds a flight to its destination: choosing afresh every few ticks swung the
@@ -150,6 +160,24 @@ func (el *emergencyLocal) commitFlight(f *civquestv1.TelemetryFrame, nav *civque
 	}
 	flat := func(a, b *civquestv1.Vec3) float64 { return math.Hypot(a.X-b.X, a.Z-b.Z) }
 	leadsAway := func(to *civquestv1.Vec3) bool { return flat(to, threat) > flat(pos, threat)+flightArrived }
+	if el.FlightFrom == nil || flat(pos, el.FlightFrom) >= flightHeadway {
+		el.FlightFrom, el.FlightMoved = cloneVec3(pos), tick
+		if el.FlightTurns > 0 && el.Flight != nil && tick-el.FlightSince >= flightCommitTicks {
+			el.FlightTurns = 0
+		}
+	} else if tick-el.FlightMoved >= flightStallTicks {
+		// Pinned: the same destination would be chosen again for ever (playtest 5).
+		offsets := [...]float64{90, -90, 135, -135, 180}
+		a := math.Atan2(pos.Z-threat.Z, pos.X-threat.X) + offsets[el.FlightTurns%len(offsets)]*math.Pi/180
+		el.FlightTurns++
+		nav.Target = &civquestv1.Vec3{X: pos.X + math.Cos(a)*flightTurnDist, Y: pos.Y, Z: pos.Z + math.Sin(a)*flightTurnDist}
+		el.Flight, el.FlightSince, el.FlightMoved = cloneVec3(nav.Target), tick, tick
+		return
+	}
+	if el.FlightTurns > 0 && el.Flight != nil && tick-el.FlightSince < flightCommitTicks && flat(el.Flight, pos) > flightArrived {
+		nav.Target = cloneVec3(el.Flight) // give the other way its turn, wherever it leads
+		return
+	}
 	if !leadsAway(nav.Target) {
 		el.Flight = nil
 		return

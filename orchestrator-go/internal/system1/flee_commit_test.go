@@ -38,3 +38,30 @@ func TestFlee_KeepsItsDestination(t *testing.T) {
 		t.Errorf("%d moves to %d different destinations in 80 ticks, want a committed flight", moves, len(targets))
 	}
 }
+
+// Playtest 5 live runs: a pinned agent was sent to the same unreachable spot until it died.
+func TestFlee_PinnedAgentTriesAnotherWay(t *testing.T) {
+	fsm := NewAgentFSMWithRegistry(StageSettlement, nil, NewDefaultEngineRegistry())
+	st := NewAgentState()
+	cfg := xdg.DefaultAgentIdentityConfig("pinned")
+	nodes := []db.MapNode{{ID: "east", X: 40, Y: 64, Z: 0, SafetyScore: 1}}
+	var targets [][2]float64
+	for tick := int64(100); tick < 320; tick += 4 {
+		frame := makeArbiterTestFrame(tick, 15000, 3, nil, nil)
+		frame.Status.Health, frame.Status.Position = 8, &civquestv1.Vec3{X: 0.5, Y: 64, Z: 0.5}
+		frame.VisibleEntities = []*civquestv1.VisibleEntity{{EntityId: 7, EntityType: "minecraft:skeleton", IsHostile: true,
+			Position: &civquestv1.Vec3{X: -8, Y: 64, Z: 0.5}, Distance: 8.5}}
+		res := fsm.Tick(&FSMContext{AgentID: "pinned", State: st, Config: cfg, Frame: frame, SafeNodes: nodes})
+		for _, in := range res.Intents {
+			if n := in.Intent.GetNavigate(); n != nil {
+				at := [2]float64{math.Round(n.Target.X), math.Round(n.Target.Z)}
+				if len(targets) == 0 || targets[len(targets)-1] != at {
+					targets = append(targets, at)
+				}
+			}
+		}
+	}
+	if len(targets) < 3 {
+		t.Errorf("an agent that cannot move kept the same way out: %v", targets)
+	}
+}
