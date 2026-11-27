@@ -62,4 +62,14 @@ public interface HorizonSurveyReportOrBuilder extends
    */
   com.civquest.mod.grpc.v1.HorizonSectorOrBuilder getSectorsOrBuilder(
       int index);
+
+  /**
+   * <pre>
+   * taken in country cold enough to snow and freeze water
+   * </pre>
+   *
+   * <code>bool frozen = 7;</code>
+   * @return The frozen.
+   */
+  boolean getFrozen();
 }

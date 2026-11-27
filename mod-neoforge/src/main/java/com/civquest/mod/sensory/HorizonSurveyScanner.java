@@ -52,6 +52,7 @@ public final class HorizonSurveyScanner {
     public static final String FEATURE_FOREST_CANOPY = "FOREST_CANOPY";
     public static final String FEATURE_STRUCTURE = "STRUCTURE";
     public static final String FEATURE_WATER = "WATER";
+    public static final String FEATURE_ICE = "ICE";
     public static final String FEATURE_STONE_OUTCROP = "STONE_OUTCROP";
     public static final String FEATURE_RIDGE_OBSTRUCTION = "RIDGE_OBSTRUCTION";
     public static final String FEATURE_OPEN_PLAINS = "OPEN_PLAINS";
@@ -239,6 +240,7 @@ public final class HorizonSurveyScanner {
         RaySample bestStructure = null;
         RaySample bestForest = null;
         RaySample bestWater = null;
+        RaySample bestIce = null;
         RaySample bestStone = null;
         RaySample bestRidge = null;
 
@@ -255,6 +257,11 @@ public final class HorizonSurveyScanner {
                 case FEATURE_FOREST_CANOPY -> {
                     if (!faceBlockedByOpaqueWall && !allRaysBlockedUnder6m) {
                         bestForest = pickCloser(bestForest, sample);
+                    }
+                }
+                case FEATURE_ICE -> {
+                    if (sample.pitchDeg <= 0.0f && !faceBlockedByOpaqueWall && !allRaysBlockedUnder6m) {
+                        bestIce = pickCloser(bestIce, sample);
                     }
                 }
                 case FEATURE_WATER -> {
@@ -294,6 +301,10 @@ public final class HorizonSurveyScanner {
         } else if (bestForest != null) {
             finalFeature = FEATURE_FOREST_CANOPY;
             definingSample = bestForest;
+        } else if (bestIce != null) {
+            // Ice outranks the water beside it: a frozen shore is a hazard, not a waterside.
+            finalFeature = FEATURE_ICE;
+            definingSample = bestIce;
         } else if (bestWater != null) {
             finalFeature = FEATURE_WATER;
             definingSample = bestWater;
@@ -387,6 +398,9 @@ public final class HorizonSurveyScanner {
         if (isForestPath(path)) {
             return FEATURE_FOREST_CANOPY;
         }
+        if (isIcePath(path)) {
+            return FEATURE_ICE;
+        }
         if (isWaterFluid) {
             return FEATURE_WATER;
         }
@@ -443,6 +457,16 @@ public final class HorizonSurveyScanner {
                 || path.contains("furnace")
                 || "barrel".equals(path)
                 || "bell".equals(path);
+    }
+
+    private static boolean isIcePath(String path) {
+        return "ice".equals(path)
+                || "packed_ice".equals(path)
+                || "blue_ice".equals(path)
+                || "frosted_ice".equals(path)
+                || "snow".equals(path)
+                || "snow_block".equals(path)
+                || "powder_snow".equals(path);
     }
 
     private static boolean isStoneOutcropPath(String path) {

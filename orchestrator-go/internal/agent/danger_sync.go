@@ -13,7 +13,7 @@ import (
 )
 
 const (
-	// dangerLearnTicks is how often the clan's dangers are read.
+	// dangerLearnTicks is how often the clan's dangers are read and the member reports in.
 	dangerLearnTicks = int64(200)
 	// dangerShareRadius merges reports of one mob kind.
 	dangerShareRadius = 16.0
@@ -51,12 +51,16 @@ func (r *AgentRuntime) syncDangers(frame *civquestv1.TelemetryFrame) {
 		return
 	default:
 	}
-	if !r.dangerBusy.CompareAndSwap(false, true) {
+	// A runtime that was handed no registry opens one only while it is running.
+	r.mu.RLock()
+	idle := r.civicRegistryDB == nil && r.status != "RUNNING"
+	r.mu.RUnlock()
+	if idle || !r.dangerBusy.CompareAndSwap(false, true) {
 		return
 	}
 	fresh := r.system1State.DrainFreshDangers()
 	r.persistMu.Lock()
-	learn := frame.WorldTick-r.dangersLearntTick >= dangerLearnTicks || frame.WorldTick < r.dangersLearntTick
+	learn := r.dangersLearntTick == 0 || frame.WorldTick-r.dangersLearntTick >= dangerLearnTicks || frame.WorldTick < r.dangersLearntTick
 	if learn {
 		r.dangersLearntTick = frame.WorldTick
 	}
@@ -75,7 +79,7 @@ func (r *AgentRuntime) syncDangers(frame *civquestv1.TelemetryFrame) {
 }
 
 func (r *AgentRuntime) exchangeDangers(fresh []system1.Danger, learn bool, tick int64) {
-	r.withCivicDB(func(civic *db.CivicRegistryDB, _ string) {
+	r.withCivicDB(func(civic *db.CivicRegistryDB, clanID string) {
 		ctx, cancel := context.WithTimeout(context.Background(), settlementStoreTimeout)
 		defer cancel()
 		for _, d := range fresh {
@@ -86,6 +90,13 @@ func (r *AgentRuntime) exchangeDangers(fresh []system1.Danger, learn bool, tick 
 		}
 		if !learn {
 			return
+		}
+		// The same pass reports to the clan that this member lives (settlement votes).
+		if clanID == "" {
+			clanID = defaultSettlementClan
+		}
+		if err := civic.MemberHeartbeat(ctx, clanID, r.agentID, tick); err != nil {
+			log.Printf("[WARN] agent %s could not report to its clan: %v", r.agentID, err)
 		}
 		spots, err := civic.ListDangers(ctx, tick-system1.DangerMemoryTicks+1)
 		if err != nil {

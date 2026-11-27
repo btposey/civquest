@@ -139,6 +139,21 @@ private static final long serialVersionUID = 0L;
     return sectors_.get(index);
   }
 
+  public static final int FROZEN_FIELD_NUMBER = 7;
+  private boolean frozen_ = false;
+  /**
+   * <pre>
+   * taken in country cold enough to snow and freeze water
+   * </pre>
+   *
+   * <code>bool frozen = 7;</code>
+   * @return The frozen.
+   */
+  @java.lang.Override
+  public boolean getFrozen() {
+    return frozen_;
+  }
+
   private byte memoizedIsInitialized = -1;
   @java.lang.Override
   public final boolean isInitialized() {
@@ -170,6 +185,9 @@ private static final long serialVersionUID = 0L;
     }
     for (int i = 0; i < sectors_.size(); i++) {
       output.writeMessage(6, sectors_.get(i));
+    }
+    if (frozen_ != false) {
+      output.writeBool(7, frozen_);
     }
     getUnknownFields().writeTo(output);
   }
@@ -204,6 +222,10 @@ private static final long serialVersionUID = 0L;
       size += com.google.protobuf.CodedOutputStream
         .computeMessageSize(6, sectors_.get(i));
     }
+    if (frozen_ != false) {
+      size += com.google.protobuf.CodedOutputStream
+        .computeBoolSize(7, frozen_);
+    }
     size += getUnknownFields().getSerializedSize();
     memoizedSize = size;
     return size;
@@ -235,6 +257,8 @@ private static final long serialVersionUID = 0L;
             other.getMaxRange())) return false;
     if (!getSectorsList()
         .equals(other.getSectorsList())) return false;
+    if (getFrozen()
+        != other.getFrozen()) return false;
     if (!getUnknownFields().equals(other.getUnknownFields())) return false;
     return true;
   }
@@ -265,6 +289,9 @@ private static final long serialVersionUID = 0L;
       hash = (37 * hash) + SECTORS_FIELD_NUMBER;
       hash = (53 * hash) + getSectorsList().hashCode();
     }
+    hash = (37 * hash) + FROZEN_FIELD_NUMBER;
+    hash = (53 * hash) + com.google.protobuf.Internal.hashBoolean(
+        getFrozen());
     hash = (29 * hash) + getUnknownFields().hashCode();
     memoizedHashCode = hash;
     return hash;
@@ -408,6 +435,7 @@ private static final long serialVersionUID = 0L;
         sectorsBuilder_.clear();
       }
       bitField0_ = (bitField0_ & ~0x00000020);
+      frozen_ = false;
       return this;
     }
 
@@ -469,6 +497,9 @@ private static final long serialVersionUID = 0L;
       if (((from_bitField0_ & 0x00000010) != 0)) {
         result.maxRange_ = maxRange_;
       }
+      if (((from_bitField0_ & 0x00000040) != 0)) {
+        result.frozen_ = frozen_;
+      }
     }
 
     @java.lang.Override
@@ -523,6 +554,9 @@ private static final long serialVersionUID = 0L;
             sectorsBuilder_.addAllMessages(other.sectors_);
           }
         }
+      }
+      if (other.getFrozen() != false) {
+        setFrozen(other.getFrozen());
       }
       this.mergeUnknownFields(other.getUnknownFields());
       onChanged();
@@ -588,6 +622,11 @@ private static final long serialVersionUID = 0L;
               }
               break;
             } // case 50
+            case 56: {
+              frozen_ = input.readBool();
+              bitField0_ |= 0x00000040;
+              break;
+            } // case 56
             default: {
               if (!super.parseUnknownField(input, extensionRegistry, tag)) {
                 done = true; // was an endgroup tag
@@ -1003,6 +1042,50 @@ private static final long serialVersionUID = 0L;
         sectors_ = null;
       }
       return sectorsBuilder_;
+    }
+
+    private boolean frozen_ ;
+    /**
+     * <pre>
+     * taken in country cold enough to snow and freeze water
+     * </pre>
+     *
+     * <code>bool frozen = 7;</code>
+     * @return The frozen.
+     */
+    @java.lang.Override
+    public boolean getFrozen() {
+      return frozen_;
+    }
+    /**
+     * <pre>
+     * taken in country cold enough to snow and freeze water
+     * </pre>
+     *
+     * <code>bool frozen = 7;</code>
+     * @param value The frozen to set.
+     * @return This builder for chaining.
+     */
+    public Builder setFrozen(boolean value) {
+
+      frozen_ = value;
+      bitField0_ |= 0x00000040;
+      onChanged();
+      return this;
+    }
+    /**
+     * <pre>
+     * taken in country cold enough to snow and freeze water
+     * </pre>
+     *
+     * <code>bool frozen = 7;</code>
+     * @return This builder for chaining.
+     */
+    public Builder clearFrozen() {
+      bitField0_ = (bitField0_ & ~0x00000040);
+      frozen_ = false;
+      onChanged();
+      return this;
     }
 
     // @@protoc_insertion_point(builder_scope:civquest.v1.HorizonSurveyReport)

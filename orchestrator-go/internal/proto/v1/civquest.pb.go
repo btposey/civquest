@@ -2794,6 +2794,7 @@ type HorizonSurveyReport struct {
 	CompletedTick int64                  `protobuf:"varint,4,opt,name=completed_tick,json=completedTick,proto3" json:"completed_tick,omitempty"`
 	MaxRange      float32                `protobuf:"fixed32,5,opt,name=max_range,json=maxRange,proto3" json:"max_range,omitempty"`
 	Sectors       []*HorizonSector       `protobuf:"bytes,6,rep,name=sectors,proto3" json:"sectors,omitempty"`
+	Frozen        bool                   `protobuf:"varint,7,opt,name=frozen,proto3" json:"frozen,omitempty"` // taken in country cold enough to snow and freeze water
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -2868,6 +2869,13 @@ func (x *HorizonSurveyReport) GetSectors() []*HorizonSector {
 		return x.Sectors
 	}
 	return nil
+}
+
+func (x *HorizonSurveyReport) GetFrozen() bool {
+	if x != nil {
+		return x.Frozen
+	}
+	return false
 }
 
 type IntentBatch struct {
@@ -4364,14 +4372,15 @@ const file_civquest_v1_civquest_proto_rawDesc = "" +
 	"\x0felevation_delta\x18\t \x01(\x02R\x0eelevationDelta\x12\x1a\n" +
 	"\boccluded\x18\n" +
 	" \x01(\bR\boccluded\x12!\n" +
-	"\fopen_horizon\x18\v \x01(\bR\vopenHorizon\"\xe0\x01\n" +
+	"\fopen_horizon\x18\v \x01(\bR\vopenHorizon\"\xf8\x01\n" +
 	"\x13HorizonSurveyReport\x12\x19\n" +
 	"\borigin_x\x18\x01 \x01(\x01R\aoriginX\x12\x19\n" +
 	"\borigin_y\x18\x02 \x01(\x01R\aoriginY\x12\x19\n" +
 	"\borigin_z\x18\x03 \x01(\x01R\aoriginZ\x12%\n" +
 	"\x0ecompleted_tick\x18\x04 \x01(\x03R\rcompletedTick\x12\x1b\n" +
 	"\tmax_range\x18\x05 \x01(\x02R\bmaxRange\x124\n" +
-	"\asectors\x18\x06 \x03(\v2\x1a.civquest.v1.HorizonSectorR\asectors\"\xe0\x01\n" +
+	"\asectors\x18\x06 \x03(\v2\x1a.civquest.v1.HorizonSectorR\asectors\x12\x16\n" +
+	"\x06frozen\x18\a \x01(\bR\x06frozen\"\xe0\x01\n" +
 	"\vIntentBatch\x12\x19\n" +
 	"\bagent_id\x18\x01 \x01(\tR\aagentId\x12\x19\n" +
 	"\bbatch_id\x18\x02 \x01(\x03R\abatchId\x12'\n" +

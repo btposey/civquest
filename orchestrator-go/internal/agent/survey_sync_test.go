@@ -207,6 +207,7 @@ func TestRuntime_RendezvousSyncMergesClanDBScoresSiteAndChats(t *testing.T) {
 	if err := civicDB.MergeExplorerHorizonSurvey(ctx, "bran", 80, 64, 80, 150, peerSectors); err != nil {
 		t.Fatalf("MergeExplorerHorizonSurvey(bran): %v", err)
 	}
+	endorse(t, civicDB, "bran", 82, 82) // the clan commits together (cq-gey.3)
 
 	cfg := xdg.DefaultAgentIdentityConfig("aria")
 	cfg.ClanID = "pioneers"

@@ -234,6 +234,37 @@ public class HorizonSurveyScannerTest {
     }
 
     @Test
+    @DisplayName("Ice beside open water returns ICE, not WATER")
+    void testIceOutranksWater() {
+        Vec3 eyePos = new Vec3(0.5, 65.62, 0.5);
+        AgentEntity agent = mockAgentAt(eyePos);
+        Level level = mock(ServerLevel.class);
+
+        BlockPos waterPos = new BlockPos(-10, 62, 0);
+        BlockPos icePos = new BlockPos(-20, 62, 0);
+        when(level.getBlockState(waterPos)).thenReturn(Blocks.WATER.defaultBlockState());
+        when(level.getBlockState(icePos)).thenReturn(Blocks.ICE.defaultBlockState());
+        when(level.getFluidState(any(BlockPos.class))).thenReturn(net.minecraft.world.level.material.Fluids.EMPTY.defaultFluidState());
+        when(level.getFluidState(waterPos)).thenReturn(Blocks.WATER.defaultBlockState().getFluidState());
+        when(level.clip(any(ClipContext.class))).thenAnswer(inv -> {
+            ClipContext ctx = inv.getArgument(0);
+            double pitch = extractPitchDeg(ctx);
+            if (Math.abs(pitch - (-18.0)) < 1.0) {
+                return new BlockHitResult(new Vec3(-10.0, 62.8, 0.5), Direction.UP, waterPos, false);
+            }
+            if (Math.abs(pitch - (-8.0)) < 1.0) {
+                return new BlockHitResult(new Vec3(-20.0, 63.0, 0.5), Direction.UP, icePos, false);
+            }
+            return BlockHitResult.miss(ctx.getTo(), Direction.EAST, BlockPos.containing(ctx.getTo()));
+        });
+
+        HorizonSector sector = HorizonSurveyScanner.scanSector(level, agent, eyePos, 9, 90.0f, 64.0f);
+
+        assertEquals(HorizonSurveyScanner.FEATURE_ICE, sector.getFeatureType());
+        assertEquals("minecraft:ice", sector.getHitBlockId());
+    }
+
+    @Test
     @DisplayName("Distant stone and coal_ore cliff returns STONE_OUTCROP")
     void testStoneAndOreOutcrop() {
         Vec3 eyePos = new Vec3(0.5, 65.62, 0.5);

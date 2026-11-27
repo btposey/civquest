@@ -280,6 +280,24 @@ func (c *CivicRegistryDB) initSchema(ctx context.Context) error {
 	CREATE INDEX IF NOT EXISTS idx_civic_edicts_clan ON civic_edicts(clan_id);
 	CREATE INDEX IF NOT EXISTS idx_civic_edicts_status ON civic_edicts(status);
 
+	CREATE TABLE IF NOT EXISTS clan_members (
+		world_id TEXT NOT NULL,
+		clan_id TEXT NOT NULL,
+		agent_id TEXT NOT NULL,
+		last_seen_tick INTEGER NOT NULL,
+		PRIMARY KEY (world_id, clan_id, agent_id)
+	);
+
+	CREATE TABLE IF NOT EXISTS clan_site_votes (
+		world_id TEXT NOT NULL,
+		clan_id TEXT NOT NULL,
+		agent_id TEXT NOT NULL,
+		x REAL NOT NULL,
+		z REAL NOT NULL,
+		voted_tick INTEGER NOT NULL DEFAULT 0,
+		PRIMARY KEY (world_id, clan_id, agent_id)
+	);
+
 	CREATE TABLE IF NOT EXISTS danger_spots (
 		world_id TEXT NOT NULL,
 		kind TEXT NOT NULL,
@@ -1650,6 +1668,7 @@ func (c *CivicRegistryDB) RankCollectiveSettlementCandidates(ctx context.Context
 		water     int
 		plains    int
 		stone     int
+		ice       int
 		structure int
 		ridge     int
 		occluded  int
@@ -1687,6 +1706,8 @@ func (c *CivicRegistryDB) RankCollectiveSettlementCandidates(ctx context.Context
 			sw.plains++
 		case "STONE_OUTCROP":
 			sw.stone++
+		case FeatureIce:
+			sw.ice++
 		case "STRUCTURE":
 			sw.structure++
 		case "RIDGE_OBSTRUCTION":
@@ -1742,12 +1763,13 @@ func (c *CivicRegistryDB) RankCollectiveSettlementCandidates(ctx context.Context
 	candidates := make([]SettlementCandidate, 0, len(clusters))
 	for _, cl := range clusters {
 		nSweeps := float64(len(cl.sweeps))
-		var sumForest, sumWater, sumPlains, sumStone, sumStruct, sumRidge, sumOcc int
+		var sumForest, sumWater, sumPlains, sumStone, sumIce, sumStruct, sumRidge, sumOcc int
 		for _, sw := range cl.sweeps {
 			sumForest += sw.forest
 			sumWater += sw.water
 			sumPlains += sw.plains
 			sumStone += sw.stone
+			sumIce += sw.ice
 			sumStruct += sw.structure
 			sumRidge += sw.ridge
 			sumOcc += sw.occluded
@@ -1761,7 +1783,7 @@ func (c *CivicRegistryDB) RankCollectiveSettlementCandidates(ctx context.Context
 		avgOcc := float64(sumOcc) / nSweeps
 
 		features := SiteFeatures{Forest: avgForest, Water: avgWater, Plains: avgPlains, Stone: avgStone,
-			Structure: avgStruct, Ridge: avgRidge, Occluded: avgOcc}
+			Structure: avgStruct, Ridge: avgRidge, Occluded: avgOcc, Ice: float64(sumIce) / nSweeps}
 		for _, at := range sightings {
 			if math.Hypot(at.x-cl.centroidX, at.z-cl.centroidZ) > SiteFactorRadius {
 				continue
@@ -1788,8 +1810,8 @@ func (c *CivicRegistryDB) RankCollectiveSettlementCandidates(ctx context.Context
 		roundedScore := math.Round(score*10) / 10
 
 		summary := fmt.Sprintf(
-			"%d explorer(s), forest=%.1f, water=%.1f, plains=%.1f, stone=%.1f, ridges=%.1f, occluded=%.1f, ore=%t, cave=%t, livestock=%t (score %.1f)",
-			explorerCount, avgForest, avgWater, avgPlains, avgStone, avgRidge, avgOcc, features.Ore, features.Cave, features.Livestock, roundedScore,
+			"%d explorer(s), ice=%.1f, forest=%.1f, water=%.1f, plains=%.1f, stone=%.1f, ridges=%.1f, occluded=%.1f, ore=%t, cave=%t, livestock=%t (score %.1f)",
+			explorerCount, features.Ice, avgForest, avgWater, avgPlains, avgStone, avgRidge, avgOcc, features.Ore, features.Cave, features.Livestock, roundedScore,
 		)
 
 		candidates = append(candidates, SettlementCandidate{

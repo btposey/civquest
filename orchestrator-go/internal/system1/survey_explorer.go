@@ -102,6 +102,16 @@ func (s *AgentState) SetClanSize(n int) {
 	s.clanSizeExplicit = true
 }
 
+// KnownClanSize returns the clan's size as last set or discovered (0 if never).
+func (s *AgentState) KnownClanSize() int {
+	if s == nil {
+		return 0
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.ClanSize
+}
+
 // SetResolvedClanSize updates ClanSize from environment/DB discovery unless explicitly overridden.
 func (s *AgentState) SetResolvedClanSize(n int) {
 	if s == nil {
@@ -431,7 +441,7 @@ func ScoreSurveySiteSuitability(report *civquestv1.HorizonSurveyReport) float64 
 	if report == nil || len(report.Sectors) == 0 {
 		return 0
 	}
-	var forest, plains, water, stone, structure, ridge, occluded int
+	var forest, plains, water, stone, structure, ridge, occluded, ice int
 	for _, sec := range report.Sectors {
 		if sec == nil {
 			continue
@@ -439,7 +449,7 @@ func ScoreSurveySiteSuitability(report *civquestv1.HorizonSurveyReport) float64 
 		if sec.Occluded {
 			occluded++
 		}
-		switch strings.ToUpper(strings.TrimSpace(sec.FeatureType)) {
+		switch db.SiteFeatureOf(sec.FeatureType, report.Frozen) {
 		case "FOREST_CANOPY":
 			forest++
 		case "OPEN_PLAINS":
@@ -452,10 +462,12 @@ func ScoreSurveySiteSuitability(report *civquestv1.HorizonSurveyReport) float64 
 			structure++
 		case "RIDGE_OBSTRUCTION":
 			ridge++
+		case db.FeatureIce:
+			ice++
 		}
 	}
 	return db.ScoreSite(db.SiteFeatures{Forest: float64(forest), Water: float64(water), Plains: float64(plains),
-		Stone: float64(stone), Structure: float64(structure), Ridge: float64(ridge), Occluded: float64(occluded)})
+		Stone: float64(stone), Structure: float64(structure), Ridge: float64(ridge), Occluded: float64(occluded), Ice: float64(ice)})
 }
 
 func countSurveyFeatures(report *civquestv1.HorizonSurveyReport) (forest, plains, water, stone, occluded, total int) {
@@ -470,7 +482,7 @@ func countSurveyFeatures(report *civquestv1.HorizonSurveyReport) (forest, plains
 		if sec.Occluded {
 			occluded++
 		}
-		switch strings.ToUpper(strings.TrimSpace(sec.FeatureType)) {
+		switch db.SiteFeatureOf(sec.FeatureType, report.Frozen) {
 		case "FOREST_CANOPY":
 			forest++
 		case "OPEN_PLAINS":

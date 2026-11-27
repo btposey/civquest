@@ -332,6 +332,7 @@ message HorizonSurveyReport {
   int64 completed_tick = 4;
   float max_range = 5;
   repeated HorizonSector sectors = 6;
+  bool frozen = 7;            // taken in country cold enough to snow and freeze water
 }
 
 // ==================== INTENTS (Agent -> Server) ====================

@@ -291,7 +291,7 @@ func protoSectorsToDB(survey *civquestv1.HorizonSurveyReport, fallbackTick int64
 			SectorIndex:    int(sec.SectorIndex),
 			BearingDeg:     float64(sec.BearingDeg),
 			HitDistance:    float64(sec.HitDistance),
-			FeatureType:    sec.FeatureType,
+			FeatureType:    db.SiteFeatureOf(sec.FeatureType, survey.Frozen),
 			HitBlockID:     sec.HitBlockId,
 			HitX:           sec.HitX,
 			HitY:           sec.HitY,

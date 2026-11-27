@@ -4,6 +4,7 @@ import com.civquest.mod.AgentEntity;
 import com.civquest.mod.grpc.v1.HorizonSector;
 import com.civquest.mod.grpc.v1.HorizonSurveyReport;
 import com.civquest.mod.grpc.v1.Vec3;
+import net.minecraft.core.BlockPos;
 
 /**
  * Narrow, lock-free view of the agent handed to {@link Motor} hooks (ADR-036 section 4).
@@ -40,6 +41,11 @@ public interface Body {
 
     /** Hands a completed horizon survey to the telemetry path. Default: dropped. */
     default void publishHorizonSurvey(HorizonSurveyReport report) {
+    }
+
+    /** Whether the country round {@code pos} is cold enough to snow and freeze water. */
+    default boolean frozenAt(BlockPos pos) {
+        return false;
     }
 
     /** True while the agent is holding a use-item action (eating, shield, bow). Default: false. */

@@ -1,6 +1,7 @@
 package com.civquest.mod.actuator.motor;
 
 import com.civquest.mod.AgentEntity;
+import net.minecraft.core.BlockPos;
 import com.civquest.mod.grpc.v1.HorizonSector;
 import com.civquest.mod.grpc.v1.HorizonSurveyReport;
 import com.civquest.mod.grpc.v1.Vec3;
@@ -69,6 +70,15 @@ public final class AgentBody implements Body {
     @Override
     public void publishHorizonSurvey(HorizonSurveyReport report) {
         agent.queueHorizonSurveyReport(report);
+    }
+
+    @Override
+    public boolean frozenAt(BlockPos pos) {
+        if (agent.level() == null) {
+            return false;
+        }
+        var biome = agent.level().getBiome(pos);
+        return biome != null && biome.value() != null && biome.value().coldEnoughToSnow(pos);
     }
 
     @Override

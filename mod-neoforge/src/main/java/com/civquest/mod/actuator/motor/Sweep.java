@@ -1,5 +1,6 @@
 package com.civquest.mod.actuator.motor;
 
+import net.minecraft.core.BlockPos;
 import com.civquest.mod.grpc.v1.HorizonSector;
 import com.civquest.mod.grpc.v1.HorizonSurveyReport;
 import com.civquest.mod.grpc.v1.Vec3;
@@ -53,6 +54,7 @@ public record Sweep(Vec3 origin, int numSectors, float maxRange, int ticksPerSec
                     .setCompletedTick(body.tick())
                     .setMaxRange(maxRange)
                     .addAllSectors(collected)
+                    .setFrozen(body.frozenAt(BlockPos.containing(origin.getX(), origin.getY(), origin.getZ())))
                     .build());
             return Outcome.done(advanced);
         }

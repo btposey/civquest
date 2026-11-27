@@ -78,18 +78,27 @@ func TestSettlement_ClanSelectsOneSiteAndMembersRememberIt(t *testing.T) {
 		t.Fatalf("before settling: %q", got)
 	}
 	first.returnWith(200, 200, 8, 4)
-	chosen, ok := first.rt.System1State().Settlement()
-	if !ok || chosen.Kind != system1.SettlementClanSite {
-		t.Fatalf("no clan site after a good survey: %+v %t", chosen, ok)
+	// One member alone does not commit the clan (cq-gey.3).
+	if st, ok := first.rt.System1State().Settlement(); ok {
+		t.Fatalf("one member settled the clan: %+v", st)
 	}
+	second := newSettler(t, res, civic, "bert")
+	second.returnWith(200, 200, 8, 4)
+	chosen, ok := second.rt.System1State().Settlement()
+	if !ok || chosen.Kind != system1.SettlementClanSite {
+		t.Fatalf("no clan site after two members agreed: %+v %t", chosen, ok)
+	}
+	first.frame(1, 1, nil)
+	first.rt.AgentFSM().QueueRendezvousReport("Back at camp.")
+	first.frame(1, 1, nil)
 	if got := first.rt.Profession(); got != "SETTLER" {
 		t.Errorf("a new member: %q", got)
 	}
 
 	// A clanmate who found somewhere even better still joins the standing site.
-	second := newSettler(t, res, civic, "bert")
-	second.returnWith(-300, -300, 10, 6)
-	if got, _ := second.rt.System1State().Settlement(); got != chosen {
+	third := newSettler(t, res, civic, "carl")
+	third.returnWith(-300, -300, 10, 6)
+	if got, _ := third.rt.System1State().Settlement(); got != chosen {
 		t.Errorf("clanmate settled %+v, clan chose %+v", got, chosen)
 	}
 
@@ -177,6 +186,7 @@ func TestSettlement_SightingsDecideWhetherWoodedGroundIsChosen(t *testing.T) {
 			if err := civic.MergeExplorerHorizonSurvey(context.Background(), "bran", 204, 64, 204, 90, sectors); err != nil {
 				t.Fatalf("merging peer survey: %v", err)
 			}
+			endorse(t, civic, "bran", 204, 204)
 			s := newSettler(t, res, civic, "aria")
 			survey := makeRuntimeSurveyReport(200, 64, 200, 150, 6, c.water)
 			for i := 24; i < 36; i++ {
@@ -201,5 +211,44 @@ func TestSettlement_SightingsDecideWhetherWoodedGroundIsChosen(t *testing.T) {
 				t.Errorf("settled=%t, want %t; candidates %+v", got, c.want, ranked)
 			}
 		})
+	}
+}
+
+// endorse makes a living clanmate who has voted for the site at (x, z).
+func endorse(t *testing.T, civic *db.CivicRegistryDB, name string, x, z float64) {
+	t.Helper()
+	ctx := context.Background()
+	if err := civic.MemberHeartbeat(ctx, "pioneers", name, 100); err != nil {
+		t.Fatalf("MemberHeartbeat: %v", err)
+	}
+	if err := civic.VoteForSite(ctx, "pioneers", name, db.ClanSite{X: x, Z: z, ChosenTick: 100}); err != nil {
+		t.Fatalf("VoteForSite: %v", err)
+	}
+}
+
+// cq-gey.3: the clan does not settle beside a registered danger, however good the ground.
+func TestSettlement_NoSiteBesideADanger(t *testing.T) {
+	res := xdg.NewResolver(xdg.WithCustomRoot(t.TempDir()))
+	civic, err := db.OpenCivicRegistryDBForClan(res, "pioneers")
+	if err != nil {
+		t.Fatalf("OpenCivicRegistryDBForClan: %v", err)
+	}
+	defer civic.Close()
+	if err := civic.PublishDanger(context.Background(), db.DangerSpot{Kind: "drowned", X: 230, Y: 62, Z: 200, SeenTick: 100}, 16); err != nil {
+		t.Fatalf("PublishDanger: %v", err)
+	}
+	first, second := newSettler(t, res, civic, "aria"), newSettler(t, res, civic, "bert")
+	first.returnWith(200, 200, 10, 6)
+	second.returnWith(200, 200, 10, 6)
+	if st, ok := second.rt.System1State().Settlement(); ok {
+		t.Fatalf("settled beside a Drowned: %+v", st)
+	}
+}
+
+func TestSettlement_Quorum(t *testing.T) {
+	for _, c := range []struct{ living, clan, want int }{{6, 6, 4}, {3, 6, 2}, {2, 6, 2}, {1, 6, 2}, {1, 1, 1}} {
+		if got := agent.SiteQuorum(c.living, c.clan); got != c.want {
+			t.Errorf("%d living of %d: need %d, want %d", c.living, c.clan, got, c.want)
+		}
 	}
 }
