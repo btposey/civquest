@@ -3,6 +3,8 @@ package system1
 import (
 	"testing"
 
+	"github.com/btposey/civquest/orchestrator-go/internal/system1/htpda"
+
 	"github.com/btposey/civquest/orchestrator-go/internal/xdg"
 )
 
@@ -51,3 +53,24 @@ func TestBed_NothingToProgressBacksOff(t *testing.T) {
 		t.Fatalf("bed plan pushed %d times, want 1..%d", got, limit)
 	}
 }
+
+// Live: an activity that popped for want of work was pushed over the running one again on the
+// next tick, hundreds of times.
+func TestWorkBackoff_NoInterruptionByAnActivityWithNothingToDo(t *testing.T) {
+	fsm := NewAgentFSM(StageBootstrap, nil)
+	fsm.currentRoutine = RoutinePrimaryDuty
+	preemptor := func() string {
+		w := &fsmWorld{fsm: fsm, tick: 100, skipped: map[string]bool{},
+			ctx: &FSMContext{AgentID: "bert", State: NewAgentState(), Frame: rf(100, 4000), Facts: NewFactGraph()}}
+		kind, _ := w.preemptorAbove(priorityGather, "")
+		return kind
+	}
+	if got := preemptor(); got != activityKindBootstrap {
+		t.Fatalf("setup: expected bootstrap to outrank gathering, got %q", got)
+	}
+	fsm.workBackoffUntil = map[htpda.Kind]int64{activityKindBootstrap: 300}
+	if got := preemptor(); got == activityKindBootstrap {
+		t.Fatal("bootstrap interrupted again while backed off")
+	}
+}
+
