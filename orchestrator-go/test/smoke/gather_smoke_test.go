@@ -110,3 +110,33 @@ func TestSmoke_GatherDuringBootstrapTripDoesNotChurn(t *testing.T) {
 		t.Errorf("bootstrap pushed %d times (%d on top of another activity) in 3 minutes", pushes, nested)
 	}
 }
+
+// Stocking up on wood during the bootstrap stage, with the tools already made: the tree is
+// felled, and a felling that ends early is not restarted over and over (seen live: 800 times).
+func TestSmoke_GatherFellsForStockDuringBootstrapWithoutChurn(t *testing.T) {
+	for _, logs := range []int32{0, 3, 8, 16} {
+		w := eval.NewBlankWorld()
+		w.FillGround(-60, -60, 60, 60, "")
+		for x := int32(-48); x <= 48; x += 12 {
+			for z := int32(-48); z <= 48; z += 12 {
+				w.AddTrunk(x+4, z+4, 4, "")
+			}
+		}
+		inv := []*civquestv1.ItemStackProto{{ItemId: "minecraft:wooden_axe", Count: 1}}
+		if logs > 0 {
+			inv = append(inv, &civquestv1.ItemStackProto{ItemId: "minecraft:oak_log", Count: logs})
+		}
+		s := harvestSim(w, inv, 20)
+		tasks := 0
+		s.FSM.SetEventSink(func(_ int64, category, _ string, d map[string]any) {
+			if category == system1.EventFrame && d["op"] == "push" && d["kind"] == "task_subroutine" {
+				tasks++
+			}
+		})
+		s.Run(3 * harvestSimMinute)
+		t.Logf("start logs=%d: tasks=%d inventory=%s", logs, tasks, s.InventorySummary())
+		if tasks > 40 {
+			t.Errorf("start logs=%d: task pushed %d times in 3 minutes", logs, tasks)
+		}
+	}
+}
