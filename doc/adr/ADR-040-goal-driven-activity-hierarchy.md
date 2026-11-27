@@ -101,6 +101,10 @@ A replaced machine abandons its parked work, which banks what it knows.
 
 **Several settlements.** A clan's chosen sites are kept per site, the first being home; founding colonies and trade between them are cq-dhm.
 
+**Committing to a site (playtest 5, cq-gey.3).** A site is claimed only when a majority of the clan's living members, and never one alone while others live, have endorsed it. Ice and frozen country count heavily against a site and cancel the value of water beside it, and no site is taken within 48 blocks of a registered danger.
+
+**Dangers (cq-gey.2).** A mob that hurts an agent, or one that lingers such as a Drowned, marks its spot for at least a game day, shared with the clan. Agents choose no targets within 20 blocks (home excepted), walk round it, and once hit keep going until clear.
+
 ## Consequences
 
 - A stack reads as goal → objective → task → step, and a log line explains why the agent is doing something.
