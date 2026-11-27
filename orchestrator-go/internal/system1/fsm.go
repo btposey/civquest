@@ -280,6 +280,8 @@ type AgentFSM struct {
 	eventSink      EventSink
 	vitalsEmitted  bool
 	lastVitalsTick int64
+	// scanAt is when a survey was last put in a walk's place (bearing.go).
+	scanAt int64
 	// What the logs last reported (diag.go).
 	seenHealth             float32
 	seenItems, seenThreats string

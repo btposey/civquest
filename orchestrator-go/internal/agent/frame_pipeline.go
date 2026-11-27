@@ -119,6 +119,7 @@ func stageSpatialAndSurvey(r *AgentRuntime, ctx *FrameContext) {
 	}
 
 	frame := ctx.Frame
+	surveyFromFeet(frame)
 	r.ingestSpatialPOIs(frame)
 	r.updateHabitTrails(frame)
 	r.processHorizonSurveyAndRendezvous(frame)

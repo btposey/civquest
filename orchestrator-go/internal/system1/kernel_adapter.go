@@ -21,6 +21,7 @@ package system1
 //     monotonic batch guard drops late/duplicate receipts before routing.
 
 import (
+	"fmt"
 	civquestv1 "github.com/btposey/civquest/orchestrator-go/internal/proto/v1"
 	"github.com/btposey/civquest/orchestrator-go/internal/system1/htpda"
 )
@@ -200,6 +201,14 @@ func (fsm *AgentFSM) dispatchLocked(w *fsmWorld, ev htpda.Event) []FSMIntent {
 		for _, in := range em.Intents {
 			if in != nil {
 				if nav := in.GetNavigate(); nav != nil && nav.Target != nil {
+					if w.ctx != nil && w.ctx.State != nil && !nav.IntoCell && takesFreshBearing(em.Kind) {
+						if scan, held := fsm.holdForScan(w, in.AgentId); held {
+							if scan != nil {
+								out = append(out, FSMIntent{Intent: scan, Frame: uint64(em.Frame)})
+							}
+							continue
+						}
+					}
 					if !fsm.walkAllowedLocked(w, em.Frame, em.Kind, nav) {
 						continue
 					}
@@ -322,6 +331,11 @@ func (fsm *AgentFSM) applyMemoryLocked(w *fsmWorld, writes []htpda.MemoryWrite) 
 				giveUps = 1
 			}
 			black, _ := w.ctx.State.RecordTargetNavigationStuck(g.Target[0], g.Target[1], g.Target[2], g.Tick, DefaultUnreachableTargetTTL, giveUps)
+			if black {
+				w.ctx.State.noteDiag(EventUnreachable, fmt.Sprintf("(%.0f, %.0f, %.0f) after failed walks", g.Target[0], g.Target[1], g.Target[2]),
+					map[string]any{"target": g.Target[:], "stalled": g.Stalled})
+				w.ctx.State.wantFreshBearing("a destination could not be reached")
+			}
 			fsm.recoverOutbox = append(fsm.recoverOutbox, RecoverGiveUp{Target: g.Target, Cause: g.Cause, Tick: g.Tick, Blacklisted: black})
 		}
 	}

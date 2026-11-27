@@ -456,10 +456,12 @@ func navigateToRecalledTreePOILocked(
 	dy := recalledTreePOI.Y + 0.5 - pos.Y
 	dz := recalledTreePOI.Z - pos.Z
 	if dx*dx+dy*dy+dz*dz <= 12.25 || (dx*dx+dz*dz <= 12.25 && math.Abs(recalledTreePOI.AccessY-pos.Y) <= 4.0) {
-		// Arrived within line-of-sight of remembered tree stand with no visible logs: prune stale POI.
+		// At the end of the leg with no logs in view: forget the sighting and look round for
+		// the next bearing. (One far above or below is given up by the walking policy.)
 		if si := state.SpatialIndexLocked(); si != nil {
 			si.RemovePOI(recalledTreePOI.POIID)
 		}
+		state.wantFreshBearing("nothing at the remembered trees")
 		return nil, false
 	}
 	if navState == civquestv1.NavigationState_NAVIGATION_STATE_STUCK {

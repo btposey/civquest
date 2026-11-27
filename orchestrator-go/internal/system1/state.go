@@ -222,8 +222,10 @@ type AgentState struct {
 	dangers      []Danger
 	freshDangers []Danger
 	// diags are log-only notes awaiting the event sink (diag.go).
-	diagMu sync.Mutex
-	diags  []diagnostic
+	// rescanWhy, when set, asks for a survey before the next walk (bearing.go).
+	rescanWhy atomic.Pointer[string]
+	diagMu    sync.Mutex
+	diags     []diagnostic
 	// strategy is the strategic machine the agent is in (strategy.go).
 	strategy     StrategyRecord
 	HomesteadPos [3]float64

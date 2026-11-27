@@ -788,6 +788,7 @@ func (a navigateActivity) Step(w htpda.World, local any, ev htpda.Event) htpda.S
 		// This frame owns its Navigate's recovery; a flank (not a long recovery) is the
 		// expedition's answer to a barrier, so the Recover budget is one attempt.
 		if args, ok := lw.recoverArgsFor(e, recoverTunables.ExpeditionAttempts); ok {
+			args.Flanks = true
 			return htpda.Step{Op: htpda.OpPush, Child: activityKindRecover, Args: args, Next: loc}
 		}
 		return htpda.Step{Op: htpda.OpStay, Next: loc}

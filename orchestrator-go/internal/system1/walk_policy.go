@@ -21,6 +21,10 @@ const (
 	walkGiveUpTicks = int64(80)
 	// Closer than this, two targets are the same one and the agent has not moved.
 	walkSameDist = 0.5
+	// A walk reported under way that has not moved the agent for this long is going nowhere.
+	walkStillTicks = int64(200)
+	// Further than this above or below, a target is not arrived at by standing under or over it.
+	walkArrivalHeight = 4.0
 )
 
 // walkWatch follows one frame's current walk.
@@ -59,7 +63,7 @@ func (fsm *AgentFSM) walkAllowedLocked(w *fsmWorld, frame htpda.FrameID, kind ht
 	here := [3]float64{pos.X, pos.Y, pos.Z}
 	pathing := w.ctx.Frame.Status.NavigationState == civquestv1.NavigationState_NAVIGATION_STATE_PATHING
 	watch, ok := fsm.walks[frame]
-	if !ok || pathing || !near(watch.target, target) || !near(watch.from, here) {
+	if !ok || !near(watch.target, target) || !near(watch.from, here) {
 		if fsm.walks == nil {
 			fsm.walks = map[htpda.FrameID]walkWatch{}
 		}
@@ -68,12 +72,20 @@ func (fsm *AgentFSM) walkAllowedLocked(w *fsmWorld, frame htpda.FrameID, kind ht
 	}
 	watch.sends++
 	fsm.walks[frame] = watch
-	if watch.sends < walkGiveUpSends || w.tick-watch.since < walkGiveUpTicks ||
-		math.Hypot(target[0]-here[0], target[2]-here[2]) <= float64(nav.ArrivalTolerance)+walkSameDist {
+	// A body that says it is pathing is given longer, but not for ever: it may be turning on
+	// the spot toward a point under its own feet.
+	waiting := watch.sends < walkGiveUpSends || w.tick-watch.since < walkGiveUpTicks
+	if pathing {
+		waiting = w.tick-watch.since < walkStillTicks
+	}
+	if waiting ||
+		(math.Hypot(target[0]-here[0], target[2]-here[2]) <= float64(nav.ArrivalTolerance)+walkSameDist &&
+			math.Abs(target[1]-here[1]) <= walkArrivalHeight) {
 		return true // standing on the target is arrival, not a failed walk
 	}
 	delete(fsm.walks, frame)
 	w.ctx.State.MarkTargetUnreachable(target[0], target[1], target[2], w.tick, DefaultUnreachableTargetTTL)
+	w.ctx.State.wantFreshBearing("a walk was going nowhere")
 	fsm.meter.walkGivenUp()
 	if fsm.eventSink != nil {
 		fsm.eventSink(w.tick, EventWalkGivenUp, fmt.Sprintf("%s after %d sends", kind, watch.sends), map[string]any{

@@ -63,7 +63,7 @@ var recoverTunables = struct {
 	ExpeditionAttempts:        1,
 	CongestionRetries:         3,
 	StallEpisodes:             4,
-	StallMemoryTicks:          600,
+	StallMemoryTicks:          2400,
 }
 
 // RecoverCause is why a Recover frame exists, derived from receipt facts only.
@@ -181,6 +181,9 @@ type recoverArgs struct {
 	Facts     htpda.MotorFacts
 	// MaxAttempts overrides the lease/attempt budget when > 0.
 	MaxAttempts int
+	// Flanks: the owner works round a single failure itself (an expedition's own walk), so
+	// one give-up is not remembered against the target.
+	Flanks bool
 	// Dig lets a terrain Recover break an adjacent diggable obstruction (staircase
 	// excavation, as the enclosed dig-out does) before sidestepping. Set by a scouting
 	// parent (exploration) whose stuck explorer should dig through a dirt wall instead of
@@ -506,7 +509,7 @@ func (a recoverActivity) giveUp(lw *fsmWorld, loc recoverLocal) htpda.Step {
 		st.Memory = append(st.Memory, spotGiveUp(lw.pos(), lw.Tick())...)
 	}
 	// An expedition flanks around one failure itself, so only a proven stall is recorded.
-	if loc.Cause != CauseCongestion && !loc.SawEntity && loc.HasTarget && (loc.Stalled || !lw.ctx.State.IsExpeditionActive()) {
+	if loc.Cause != CauseCongestion && !loc.SawEntity && loc.HasTarget && (loc.Stalled || !loc.Flanks) {
 		st.Memory = append(st.Memory, recoverGaveUp{Target: loc.Target, Cause: loc.Cause, Tick: lw.Tick(), Stalled: loc.Stalled})
 	}
 	return st

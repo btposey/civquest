@@ -28,7 +28,7 @@ var eventLevels = map[string]logging.Level{
 	system1.EventTaskEnd: logging.Info, system1.EventTaskDropped: logging.Info,
 	system1.EventDanger: logging.Info, system1.EventUnreachable: logging.Info,
 	system1.EventTreeFailed: logging.Info, system1.EventStandGiveUp: logging.Info,
-	system1.EventWalkGivenUp: logging.Info,
+	system1.EventWalkGivenUp: logging.Info, system1.EventRescan: logging.Info,
 }
 
 // DebugEvent represents a single structured JSONL event emitted during playtesting
