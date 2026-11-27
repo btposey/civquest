@@ -64,6 +64,9 @@ type Frame struct {
 	Lease  Lease
 	Band   Band
 	Parent FrameID // pushing frame; 0 for arbiter-pushed (root or preemptor)
+
+	args       any  // as passed to Init, for the no-progress back-off
+	progressed bool // the frame, or work it launched, emitted an intent or saw progress
 }
 
 // Kind returns the frame's activity kind.

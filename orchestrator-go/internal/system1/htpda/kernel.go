@@ -16,6 +16,11 @@ const (
 type Options struct {
 	MaxDepth   int // maximum stack depth; pushes beyond it are Rejected
 	MaxCascade int // maximum Step calls per Dispatch (bounds push/pop cascades)
+	// EnforceShape refuses pushes that break the hierarchy (ADR-040); false only reports them.
+	EnforceShape bool
+	// NoProgressBackoff is how many ticks a parent waits before relaunching, with the same
+	// args, a child that ended without progress; 0 disables the back-off.
+	NoProgressBackoff int64
 }
 
 // Emission is the intents one frame emitted during a step. The wiring layer
@@ -102,12 +107,13 @@ func (e Effects) Intents() []*civquestv1.AgentIntent {
 // Kernel owns one agent's activity stack. It is safe for concurrent use; each
 // Dispatch is serialized.
 type Kernel struct {
-	mu    sync.Mutex
-	stack []Frame // the ONLY activity stack, bottom first
-	next  FrameID
-	reg   *Registry
-	prio  PriorityTable
-	opts  Options
+	mu     sync.Mutex
+	stack  []Frame // the ONLY activity stack, bottom first
+	next   FrameID
+	reg    *Registry
+	prio   PriorityTable
+	opts   Options
+	cooled map[cooledKey]cooled // children that ended without progress
 }
 
 // NewKernel builds a kernel over an injected registry and priority table.

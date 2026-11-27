@@ -31,13 +31,14 @@ func (r *run) tick() {
 	for t := r.top(); t != nil && t.Lease.Expired(now) && r.budget > 0; t = r.top() {
 		r.stepTop(Expired{Deadline: t.Lease.DeadlineTick})
 	}
+	r.supervise()
 	if c, ok := Arbitrate(r.w, r.k.reg, r.k.prio); ok {
 		d := &Decision{Winner: c}
 		r.fx.Decision = d
 		if Preempts(c, r.top()) {
 			if act, reason := r.resolve(c.Bid.Kind, true); reason != "" {
 				r.diag(0, c.Bid.Kind, reason)
-			} else {
+			} else if r.checkShape(act, 0) == "" {
 				d.Pushed = true
 				d.Frame = r.push(act, c.Bid.Args, c.Bid.Band, 0)
 			}
@@ -62,6 +63,9 @@ func (r *run) routed(id FrameID, ev Event, progress bool) {
 			t.Lease.DeadlineTick = now + (l.DeadlineTick - l.StartTick)
 			t.Lease.StartTick = now
 		}
+		if progress {
+			t.progressed = true
+		}
 		r.stepTop(ev)
 	}
 }
@@ -78,6 +82,7 @@ func (r *run) cancel(ev Cancel) {
 		r.fx.Store = append(r.fx.Store, s.Store...)
 		r.fx.Memory = append(r.fx.Memory, s.Memory...)
 		r.k.stack = r.k.stack[:len(r.k.stack)-1]
+		r.forget(f.ID)
 		r.life(LifeCancel, f, "", nil)
 	}
 }
@@ -103,7 +108,7 @@ func (r *run) push(act Activity, args any, band Band, parent FrameID) FrameID {
 	}
 	r.k.next++
 	id := r.k.next
-	nf := Frame{ID: id, Act: act, Local: local, Scope: act.Scope(), Lease: lease, Band: band, Parent: parent}
+	nf := Frame{ID: id, Act: act, Local: local, Scope: act.Scope(), Lease: lease, Band: band, Parent: parent, args: args}
 	r.k.stack = append(r.k.stack, nf)
 	if r.replacing != "" {
 		r.life(LifeReplace, nf, r.replacing, nil)
@@ -131,6 +136,7 @@ func (r *run) stepTop(ev Event) {
 	s := f.Act.Step(r.w, f.Local, ev)
 	if len(s.Intents) > 0 {
 		r.fx.Emissions = append(r.fx.Emissions, Emission{Frame: f.ID, Kind: f.Kind(), Intents: s.Intents})
+		t.progressed, f.progressed = true, true
 	}
 	r.fx.Memory = append(r.fx.Memory, s.Memory...)
 	if s.Lease != nil {
@@ -151,6 +157,12 @@ func (r *run) stepTop(ev Event) {
 		t.Local = s.Next
 		r.discardStore(f, s)
 		act, reason := r.resolve(s.Child, true)
+		if reason == "" && r.backedOff(f.ID, s.Child, s.Args) {
+			reason = ReasonNoProgress
+		}
+		if reason == "" {
+			reason = r.checkShape(act, f.ID)
+		}
 		if reason != "" {
 			r.diag(f.ID, s.Child, reason)
 			r.stepTop(ChildDone{Child: s.Child, Result: Rejected{Kind: s.Child, Reason: reason}})
@@ -166,6 +178,12 @@ func (r *run) stepTop(ev Event) {
 			r.notify(f, Rejected{Kind: s.Child, Reason: reason})
 			return
 		}
+		// The replacement takes the same slot: its shape is checked against the frame below.
+		if reason := r.checkShape(act, f.Parent); reason != "" {
+			r.life(LifePop, f, "", Rejected{Kind: s.Child, Reason: reason})
+			r.notify(f, Rejected{Kind: s.Child, Reason: reason})
+			return
+		}
 		r.replacing = f.Kind()
 		r.push(act, s.Args, f.Band, f.Parent)
 	case OpPop:
@@ -174,6 +192,10 @@ func (r *run) stepTop(ev Event) {
 			r.life(LifeExpire, f, "", s.Result)
 		} else {
 			r.life(LifePop, f, "", s.Result)
+		}
+		r.coolIfIdle(f)
+		if p := r.top(); p != nil && f.progressed {
+			p.progressed = true
 		}
 		r.notify(f, s.Result)
 	default:
@@ -189,6 +211,7 @@ func (r *run) discardStore(f Frame, s Step) {
 }
 
 func (r *run) pop(store []StoreWrite) {
+	r.forget(r.k.stack[len(r.k.stack)-1].ID)
 	r.k.stack = r.k.stack[:len(r.k.stack)-1]
 	r.fx.Store = append(r.fx.Store, store...)
 }
