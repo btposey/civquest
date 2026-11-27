@@ -28,6 +28,11 @@ type shelterLocal struct {
 	Walk walkLocal
 	// LightTries counts light placements since a light was last in view.
 	LightTries int
+	// Pending is one more than the blueprint index of the last block sent for placing (0 none);
+	// RetryIndex and Tries count the failed attempts at one block (shelter_material.go).
+	Pending, RetryIndex, Tries int
+	// WalkIndex and Walks count the walks made to get within reach of one block.
+	WalkIndex, Walks int
 	// TreeLocked/TreeX/TreeZ: the trunk this frame's timber sourcing is focused on (private to
 	// the Shelter frame; the frame's existence is the lock).
 	TreeLocked   bool

@@ -273,7 +273,14 @@ func evaluateDuskNightOutpostShelterLocked(
 		}
 	}
 
-	// 2. Harvest timber when building blocks are depleted or inventory low
+	// 2. Pick up wood that was cut and left lying, then harvest more when stock is low.
+	if prog.BuildIndex < len(cabinIntents) && navState != civquestv1.NavigationState_NAVIGATION_STATE_PATHING {
+		if drop := nearbyDrop(state, frame, isLogBlockID); drop != nil &&
+			(walk.lastExploreTick == 0 || frame.WorldTick < walk.lastExploreTick || frame.WorldTick-walk.lastExploreTick >= 40) {
+			walk.lastExploreTick = frame.WorldTick
+			return walkToDrop(agentID, drop)
+		}
+	}
 	if (inv.buildingBlockCount < 16 && inv.logCount < 4) && prog.BuildIndex < len(cabinIntents) {
 		var nearestLog *civquestv1.VisibleBlock
 		bestDistSq := math.MaxFloat64
@@ -481,14 +488,28 @@ func evaluateDuskNightOutpostShelterLocked(
 			}
 		}
 
-		prog.Phase = blueprints.CabinBlockPhase(prog.BuildIndex)
-		prog.BuildIndex++
-		state.mem.lastShelterPlaceTick = frame.WorldTick
+		if voxel := target.GetTargetVoxel(); voxel != nil && prog.Pos != nil && !withinPlacingReach(pos, voxel) {
+			if navState == civquestv1.NavigationState_NAVIGATION_STATE_PATHING {
+				return nil
+			}
+			if stand, ok := prog.approach(pos, voxel); ok {
+				walk.lastExploreTick = frame.WorldTick
+				return &civquestv1.AgentIntent{AgentId: agentID, Action: &civquestv1.AgentIntent_Navigate{Navigate: &civquestv1.NavigateIntent{
+					Target: stand, SpeedMultiplier: 1.0, ArrivalTolerance: 1,
+				}}}
+			}
+		}
 
 		blockID := target.GetBlockStateString()
 		if blockID == "" {
 			blockID = inv.placeableBlockID
 		}
+		blockID = cabinBlock(blockID, frame.Status.Inventory, inv.placeableBlockID)
+
+		prog.Phase = blueprints.CabinBlockPhase(prog.BuildIndex)
+		prog.BuildIndex++
+		prog.Pending = prog.BuildIndex
+		state.mem.lastShelterPlaceTick = frame.WorldTick
 
 		return &civquestv1.AgentIntent{
 			AgentId: agentID,

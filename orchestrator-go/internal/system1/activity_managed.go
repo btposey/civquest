@@ -110,6 +110,9 @@ func stepManaged(a waterfallActivity, w htpda.World, local any, ev htpda.Event) 
 			next = n
 		}
 		next = releaseCraftOnReceipt(next, rc)
+		if sl, ok := next.(shelterLocal); ok {
+			next = sl.onReceipt(rc)
+		}
 		// The frame that owns the failing intent owns its recovery (ADR-037 §3.2). A task
 		// walking into a cell recovers by doing without it (felling.go), not by Recover,
 		// whose give-up would cost it the whole tree.
