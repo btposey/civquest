@@ -24,6 +24,9 @@ const (
 	dangerHomeExempt = 8.0
 	// A danger met again is told to the clan at most this often.
 	dangerRefreshTicks = int64(1200)
+	// Food is not sought towards a danger this near the walk's end, nor fished this near a
+	// water dweller.
+	dangerWideRadius = 48.0
 	// A detour passes this far outside the danger, its waypoint snapped to a grid so that
 	// re-sending a walk does not move it a little each time.
 	detourMargin = 6.0
@@ -156,6 +159,39 @@ func (s *AgentState) endangeredLocked(x, z float64, tick int64) bool {
 	}
 	st, settled := s.settlementLocked()
 	return !settled || math.Hypot(st.Pos[0]-x, st.Pos[2]-z) > dangerHomeExempt
+}
+
+// towardDangerLocked reports that walking from (fx, fz) to (tx, tz) closes on a danger nearby.
+func (s *AgentState) towardDangerLocked(fx, fz, tx, tz float64, tick int64) bool {
+	for _, d := range s.dangers {
+		if tick-d.Seen >= DangerMemoryTicks {
+			continue
+		}
+		if to := math.Hypot(d.X-tx, d.Z-tz); to < dangerWideRadius && to < math.Hypot(d.X-fx, d.Z-fz) {
+			return true
+		}
+	}
+	return false
+}
+
+// waterUnsafeLocked reports a water-dwelling danger near enough to make fishing foolish.
+func (s *AgentState) waterUnsafeLocked(pos *civquestv1.Vec3, tick int64) bool {
+	if s == nil || pos == nil {
+		return false
+	}
+	for _, d := range s.dangers {
+		if tick-d.Seen < DangerMemoryTicks && (d.Kind == "drowned" || d.Kind == "guardian") &&
+			math.Hypot(d.X-pos.X, d.Z-pos.Z) < dangerWideRadius {
+			return true
+		}
+	}
+	return false
+}
+
+func (s *AgentState) waterUnsafe(pos *civquestv1.Vec3, tick int64) bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.waterUnsafeLocked(pos, tick)
 }
 
 // detour returns a waypoint round the first danger the straight walk from -> to would pass

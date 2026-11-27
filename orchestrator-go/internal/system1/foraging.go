@@ -383,7 +383,8 @@ func evaluateForagingWithMemory(agentID string, frame *civquestv1.TelemetryFrame
 	// Food already within reach is always taken first; fishing only competes with a walk.
 	landInReach := (bestPrimePlant != nil && bestPrimeDist <= forageBlockReach) ||
 		(bestAnimal != nil && bestAnimalDist <= forageMeleeReach)
-	if fo, ok := evaluateFishing(agentID, frame, mem, speedMult, canSprint); ok && !landInReach && fo.utility > landUtil {
+	if fo, ok := evaluateFishing(agentID, frame, mem, speedMult, canSprint); ok && !landInReach && fo.utility > landUtil &&
+		!state.waterUnsafeLocked(pos, frame.WorldTick) {
 		return fo.intent
 	}
 
@@ -614,6 +615,17 @@ func evaluateForagingWithMemory(agentID string, frame *civquestv1.TelemetryFrame
 	} else {
 		// Default +0.9 rad turn, steered off ground the agent has already covered (cq-dcx.4).
 		mem.ExploreHeadingRad = noveltyHeading(mem.Spatial, pos.X, pos.Z, mem.ExploreHeadingRad, forageExploreStepDist, frame.WorldTick, forageHeadingOffsets)
+	}
+	// Hunger is no reason to walk back to the Drowned (playtest 5): take the first heading that
+	// does not close on a danger.
+	if state != nil {
+		for _, off := range append([]float64{0}, forageHeadingOffsets...) {
+			h := mem.ExploreHeadingRad + off
+			if !state.towardDangerLocked(pos.X, pos.Z, pos.X+math.Cos(h)*forageExploreStepDist, pos.Z+math.Sin(h)*forageExploreStepDist, frame.WorldTick) {
+				mem.ExploreHeadingRad = h
+				break
+			}
+		}
 	}
 	mem.ExploreHeadingRad = math.Atan2(math.Sin(mem.ExploreHeadingRad), math.Cos(mem.ExploreHeadingRad))
 

@@ -224,7 +224,7 @@ func bestGatherFind(agentID string, frame *civquestv1.TelemetryFrame, state *Age
 			best = f
 		}
 	}
-	if stock.wants(goodFish, "") {
+	if stock.wants(goodFish, "") && !state.waterUnsafeLocked(pos, frame.WorldTick) {
 		if d, ok := fishingSpot(frame); ok {
 			offer(&gatherFind{Key: gatherFishKey, Good: goodFish, Fish: true, Pos: [3]float64{pos.X, pos.Y, pos.Z}, Dist: d})
 		}

@@ -139,3 +139,27 @@ func TestDanger_PolarBearsCount(t *testing.T) {
 		t.Errorf("people are not registered as mob dangers: %+v", st.Dangers(100))
 	}
 }
+
+// Live: starving agents went looking for food in the water the Drowned live in, and four died.
+func TestDanger_HungerDoesNotLeadBackToTheDrowned(t *testing.T) {
+	for _, angle := range []float64{0, 1.5, 3, 4.5} {
+		st := NewAgentState()
+		dx, dz := math.Cos(angle)*50, math.Sin(angle)*50
+		st.NoteDanger(Danger{Kind: "drowned", X: dx, Y: 62, Z: dz, Seen: 100})
+		mem := newForageLocal()
+		mem.ExploreHeadingRad = angle - 0.9 // the usual turn would head straight at it
+		in := evaluateForagingWithMemory("dave", rf(200, 3000, withPos(0, 64, 0), withFood(1)), st, false, mem)
+		nav := in.GetNavigate()
+		if nav == nil {
+			t.Fatalf("angle %.1f: a starving agent still looks for food, got %v", angle, in)
+		}
+		if math.Hypot(nav.Target.X-dx, nav.Target.Z-dz) < dangerWideRadius {
+			t.Errorf("angle %.1f: exploring towards the Drowned: %v", angle, nav.Target)
+		}
+	}
+	st := NewAgentState()
+	st.NoteDanger(Danger{Kind: "drowned", X: 30, Y: 62, Z: 0, Seen: 100})
+	if !st.waterUnsafe(&civquestv1.Vec3{}, 200) || st.waterUnsafe(&civquestv1.Vec3{X: -60}, 200) {
+		t.Error("no fishing near a Drowned, fishing well away from it")
+	}
+}

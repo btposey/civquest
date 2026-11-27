@@ -73,4 +73,3 @@ func TestWorkBackoff_NoInterruptionByAnActivityWithNothingToDo(t *testing.T) {
 		t.Fatal("bootstrap interrupted again while backed off")
 	}
 }
-
