@@ -185,7 +185,14 @@ type cooled struct {
 
 // coolIfIdle remembers a child that ended without progress.
 func (r *run) coolIfIdle(f Frame) {
-	if r.k.opts.NoProgressBackoff <= 0 || f.progressed || f.Parent == 0 || LevelOf(f.Act) == LevelInterrupt {
+	if f.progressed || f.Parent == 0 || LevelOf(f.Act) == LevelInterrupt {
+		return
+	}
+	if r.idled == nil {
+		r.idled = map[cooledKey]bool{}
+	}
+	r.idled[cooledKey{f.Parent, f.Kind()}] = true
+	if r.k.opts.NoProgressBackoff <= 0 {
 		return
 	}
 	if r.k.cooled == nil {
@@ -196,6 +203,9 @@ func (r *run) coolIfIdle(f Frame) {
 
 // backedOff reports whether parent launching kind with args again must wait.
 func (r *run) backedOff(parent FrameID, kind Kind, args any) bool {
+	if r.idled[cooledKey{parent, kind}] {
+		return true // within one Dispatch nothing has changed that could help
+	}
 	c, ok := r.k.cooled[cooledKey{parent, kind}]
 	return ok && r.w.Tick() < c.until && reflect.DeepEqual(c.args, args)
 }

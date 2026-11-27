@@ -114,7 +114,8 @@ func tickTaskSubroutineActivity(stage Stage, ctx *FSMContext, skillCtx *SkillCon
 		kind = walk.task.Spec.Kind
 	}
 
-	if stage == StageBootstrap || stage == StageColonize {
+	standalone := walk != nil && walk.task != nil && walk.task.Spec.Standalone
+	if (stage == StageBootstrap || stage == StageColonize) && !standalone {
 		if kind == "harvest_tree" && stage == StageBootstrap && ctx.Facts != nil && ctx.Facts.GetBool("system2.directive_active") &&
 			(HasSurvivalKit(ctx.Frame.Status.Inventory) || !canExecuteImmediateBootstrapCraft(ctx.Frame, ctx.State)) {
 			dir, dirActive := ctx.State.ActiveStrategicDirective(ctx.Frame.WorldTick)

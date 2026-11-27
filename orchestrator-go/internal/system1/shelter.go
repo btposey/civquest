@@ -387,6 +387,9 @@ func evaluateDuskNightOutpostShelterLocked(
 		}
 	}
 
+	if hasNearbyLight {
+		prog.LightTries = 0
+	}
 	if !hasNearbyLight {
 		// Query SpatialIndex for a known campfire before placing/crafting a duplicate campfire,
 		// only when holding shelter materials or returning to a completed shelter.
@@ -413,13 +416,20 @@ func evaluateDuskNightOutpostShelterLocked(
 				}
 			}
 		}
-		if inv.hasLight && canPlace {
+		// A light that never appears is tried on other cells, then left: seen live, one
+		// torch was placed on the same cell 212 times.
+		if inv.hasLight && canPlace && prog.LightTries < shelterLightTries {
 			state.mem.lastShelterPlaceTick = frame.WorldTick
 			lightPos := &civquestv1.BlockPosProto{
 				X: cx + 1,
 				Y: cy,
 				Z: cz + 1,
 			}
+			if prog.LightTries > 0 {
+				cells := placementCells(frame, pos)
+				lightPos = cells[(prog.LightTries-1)%len(cells)]
+			}
+			prog.LightTries++
 			if prog.Pos == nil {
 				prog.Pos = &civquestv1.BlockPosProto{X: cx, Y: cy, Z: cz}
 			}

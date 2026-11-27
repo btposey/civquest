@@ -249,3 +249,26 @@ func TestBackoff_IdleChildIsNotRelaunchedAtOnce(t *testing.T) {
 		}
 	}
 }
+
+// A parent that relaunches an idle child with fresh args in the same dispatch is stopped: live,
+// one tick launched a task dozens of times.
+func TestBackoff_IdleChildIsNotRelaunchedWithinOneDispatch(t *testing.T) {
+	launches := 0
+	child := levelAct{level: LevelTask, funcAct: &funcAct{kind: "fell", step: func(World, any, Event) Step { return Step{Op: OpPop} }}}
+	goal := goalBid(levelAct{level: LevelGoal, funcAct: &funcAct{kind: "goal", step: func(_ World, local any, ev Event) Step {
+		if _, ok := ev.(Started); !ok {
+			if d, done := ev.(ChildDone); !done {
+				return Step{Next: local}
+			} else if rej, r := d.Result.(Rejected); r && rej.Reason == ReasonNoProgress {
+				return Step{Next: local}
+			}
+		}
+		launches++
+		return Step{Op: OpPush, Child: "fell", Args: launches, Next: local}
+	}}})
+	k := mustKernel(t, onlyGoal, Options{}, goal, child)
+	k.Dispatch(with(1, fakeFacts{}), Tick{})
+	if launches != 2 { // the launch and the one refused retry
+		t.Errorf("%d launches in one dispatch", launches)
+	}
+}

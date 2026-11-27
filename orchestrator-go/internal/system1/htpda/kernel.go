@@ -19,7 +19,8 @@ type Options struct {
 	// EnforceShape refuses pushes that break the hierarchy (ADR-040); false only reports them.
 	EnforceShape bool
 	// NoProgressBackoff is how many ticks a parent waits before relaunching, with the same
-	// args, a child that ended without progress; 0 disables the back-off.
+	// args, a child that ended without progress; 0 disables the wait. Within one Dispatch such
+	// a child is never relaunched, whatever its args.
 	NoProgressBackoff int64
 }
 

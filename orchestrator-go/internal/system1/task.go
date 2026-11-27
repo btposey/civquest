@@ -65,6 +65,9 @@ type TaskDescriptor struct {
 	ProgressTimeout    int64
 	MaxReceiptFailures int
 	Preemptible        bool
+	// Standalone tasks belong to the activity that launched them: no stage waterfall steps,
+	// redirects or abandons them.
+	Standalone bool
 
 	// SelectSubTarget selects the current/next concrete sub-target and navigation approach point.
 	SelectSubTarget func(state *AgentState, frame *civquestv1.TelemetryFrame, current *TaskSubroutine) (approachPos *civquestv1.Vec3, blockPos *civquestv1.BlockPosProto, targetID string, ok bool)

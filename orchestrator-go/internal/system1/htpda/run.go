@@ -9,6 +9,8 @@ type run struct {
 	stepped map[FrameID]bool
 	// replacing is the kind of the frame an OpReplace is swapping out (consumed by push).
 	replacing Kind
+	// idled lists children that ended in this Dispatch having done nothing.
+	idled map[cooledKey]bool
 }
 
 func (r *run) life(op string, f Frame, from Kind, result any) {

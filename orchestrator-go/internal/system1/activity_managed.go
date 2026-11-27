@@ -124,7 +124,10 @@ func stepManaged(a waterfallActivity, w htpda.World, local any, ev htpda.Event) 
 			return htpda.Step{Op: htpda.OpStay, Next: local}
 		}
 		local = clearStuckReceipt(local, e.Result)
-		_, rejected := e.Result.(htpda.Rejected)
+		rej, rejected := e.Result.(htpda.Rejected)
+		if rejected && rej.Reason == htpda.ReasonNoProgress {
+			return htpda.Step{Op: htpda.OpStay, Next: local} // asking again this tick cannot help
+		}
 		return runFrame(a, lw, a.resume(lw, local), !rejected)
 	case htpda.Resumed:
 		local = adoptCraftLatch(local, e.Result)

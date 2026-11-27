@@ -365,12 +365,16 @@ func (a gatherActivity) run(lw *fsmWorld, local any) htpda.Step {
 		return htpda.Step{Op: htpda.OpStay, Next: gatherLocal{},
 			Memory: []htpda.MemoryWrite{gatherGaveUp{Key: find.Key, Until: tick + gatherSkipTicks}}}
 	}
+	if find.Fell && lw.skipped[activityKindTaskSubroutine] {
+		return htpda.Step{Op: htpda.OpStay, Next: l} // a task ended this tick: start the next one later
+	}
 	if find.Fell {
 		// Felling is this frame's child. A trunk is tried once: however the task ends, it
 		// is not started again straight away.
 		st := lw.ctx.State
 		trunk := find.Block.Pos
 		task := NewHarvestTreeTask(trunk.X, trunk.Y, trunk.Z, st.Stage(), tick)
+		task.Spec.Standalone = true
 		st.publishTask(task)
 		return htpda.Step{Op: htpda.OpPush, Child: activityKindTaskSubroutine, Args: taskStart{Task: task}, Next: gatherLocal{},
 			Memory: []htpda.MemoryWrite{gatherGaveUp{Key: find.Key, Until: tick + gatherSkipTicks}}}

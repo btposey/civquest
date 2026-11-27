@@ -17,12 +17,17 @@ import (
 )
 
 // shelterLocal is the Shelter frame Local: the frontier-cabin build progress.
+// shelterLightTries bounds light placements that never show up.
+const shelterLightTries = 6
+
 type shelterLocal struct {
 	BuildIndex int // next cabin blueprint block to place
 	Phase      int // construction phase of the last placed block
 	Pos        *civquestv1.BlockPosProto
 	// Walk is the night-outpost search/exploration cursor used while sourcing materials.
 	Walk walkLocal
+	// LightTries counts light placements since a light was last in view.
+	LightTries int
 	// TreeLocked/TreeX/TreeZ: the trunk this frame's timber sourcing is focused on (private to
 	// the Shelter frame; the frame's existence is the lock).
 	TreeLocked   bool
