@@ -48,6 +48,19 @@ public final class LocalPathPlanner {
         default boolean occupiedByEntity(int x, int y, int z) {
             return false;
         }
+
+        /** Solid growth a walker can force a way through (natural leaves); it still holds weight. */
+        default boolean foliage(int x, int y, int z) {
+            return false;
+        }
+    }
+
+    /** Extra cost of a step that has to break through foliage: open ground is preferred. */
+    private static final double FOLIAGE_COST = 3.0;
+
+    /** Whether the cell stops a body. */
+    private static boolean wall(World w, int x, int y, int z) {
+        return w.solid(x, y, z) && !w.foliage(x, y, z);
     }
 
     /** A standing cell: feet block coordinates. */
@@ -90,9 +103,9 @@ public final class LocalPathPlanner {
     static int moveTarget(World w, int x, int y, int z, int dx, int dz) {
         int nx = x + dx;
         int nz = z + dz;
-        if (w.solid(nx, y, nz) || w.solid(nx, y + 1, nz)) {
+        if (wall(w, nx, y, nz) || wall(w, nx, y + 1, nz)) {
             // Possibly step up one block: need clear dest (y+1,y+2) and headroom above current cell to jump.
-            if (w.solid(nx, y + 1, nz) || w.solid(nx, y + 2, nz) || w.solid(x, y + 2, z)) {
+            if (wall(w, nx, y + 1, nz) || wall(w, nx, y + 2, nz) || wall(w, x, y + 2, z)) {
                 return Integer.MIN_VALUE;
             }
             if (w.hazard(nx, y + 1, nz) || w.hazard(nx, y, nz) || w.occupiedByEntity(nx, y + 1, nz)) {
@@ -102,7 +115,7 @@ public final class LocalPathPlanner {
         }
         // Level, drop, climbable shaft entry, or water swim: walk down the column until we find floor, climbable, or water surface.
         for (int ny = y; ny >= y - MAX_DROP; ny--) {
-            if (w.solid(nx, ny, nz) || w.solid(nx, ny + 1, nz)) {
+            if (wall(w, nx, ny, nz) || wall(w, nx, ny + 1, nz)) {
                 return Integer.MIN_VALUE;
             }
             if (w.hazard(nx, ny, nz) || w.hazard(nx, ny - 1, nz)) {
@@ -234,6 +247,9 @@ public final class LocalPathPlanner {
                     int nx = cx + dir[0];
                     int nz = cz + dir[1];
                     double stepCost = 1.0 + (ny != cy ? 0.5 : 0.0);
+                    if (w.foliage(nx, ny, nz) || w.foliage(nx, ny + 1, nz)) {
+                        stepCost += FOLIAGE_COST;
+                    }
                     if (w.water(nx, ny, nz) || w.water(nx, ny - 1, nz)) {
                         if (isDeepWater(w, nx, ny, nz)) {
                             stepCost += targetInWater ? 1.0 : 12.0;

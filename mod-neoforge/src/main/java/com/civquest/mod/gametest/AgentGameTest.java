@@ -113,6 +113,35 @@ public class AgentGameTest {
         helper.succeed();
     }
 
+    // cq-gey.4: spruces carry leaves to the ground; an agent must be able to walk in to the trunk.
+    @GameTest(template = "empty3x3x3")
+    public static void testWalksThroughLeavesToATrunk(GameTestHelper helper) {
+        MinecraftServer server = helper.getLevel().getServer();
+        AgentEntityManager manager = new AgentEntityManager();
+        stoneFloor(helper, -9, 9, LEAF_ARENA_Y);
+        BlockPos trunk = new BlockPos(4, LEAF_ARENA_Y + 1, 0);
+        for (int x = -3; x <= 3; x++) {
+            for (int z = -3; z <= 3; z++) {
+                for (int y = 0; y <= 1; y++) {
+                    helper.setBlock(trunk.offset(x, y, z), Blocks.SPRUCE_LEAVES);
+                }
+            }
+        }
+        for (int y = 0; y <= 2; y++) {
+            helper.setBlock(trunk.above(y), Blocks.SPRUCE_LOG);
+        }
+        AgentEntity agent = spawnCoverageAgent(helper, manager, "agent-gt-leaves", new BlockPos(-8, LEAF_ARENA_Y + 1, 0));
+        BlockPos to = helper.absolutePos(trunk);
+        navigateByIntent(manager, server, "agent-gt-leaves", to.getX() + 0.5, to.getY(), to.getZ() + 0.5, false, false);
+        for (int t = 0; t < 300 && !agent.getNavigator().isArrived(); t++) {
+            agent.tick();
+        }
+        double remaining = Math.hypot(agent.getX() - (to.getX() + 0.5), agent.getZ() - (to.getZ() + 0.5));
+        helper.assertTrue(remaining <= 2.5, "Agent ended " + remaining + " blocks short of the trunk at " + agent.position());
+        manager.despawnAgent(server, "agent-gt-leaves").join();
+        helper.succeed();
+    }
+
     // cq-gey.1: agents far from any player and from spawn must keep ticking.
     @GameTest(template = "empty3x3x3", timeoutTicks = 200)
     public static void testAgentKeepsTickingFarFromSpawn(GameTestHelper helper) {
@@ -1336,6 +1365,7 @@ public class AgentGameTest {
     private static final int RETREAT_ARENA_Y = 30;
     private static final int SPENT_ARENA_Y = 40;
     private static final int STEP_ARENA_Y = 50;
+    private static final int LEAF_ARENA_Y = 130;
     private static final int CAMPFIRE_ARENA_Y = 60;
     private static final int IDLE_POOL_ARENA_Y = 70;
     private static final int SURFACE_POOL_ARENA_Y = 80;

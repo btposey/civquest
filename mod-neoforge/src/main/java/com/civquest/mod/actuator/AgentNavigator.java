@@ -447,6 +447,11 @@ public class AgentNavigator {
             }
 
             @Override
+            public boolean foliage(int x, int y, int z) {
+                return isNaturalLeaves(level, new BlockPos(x, y, z));
+            }
+
+            @Override
             public boolean hazard(int x, int y, int z) {
                 return hazardCache.computeIfAbsent(LocalPathPlanner.cellKey(x, y, z),
                         k -> isBlockHazard(level, new BlockPos(x, y, z)));
@@ -741,6 +746,34 @@ public class AgentNavigator {
             }
         }
         return true;
+    }
+
+    /** Leaves that grew there; leaves a player placed are part of a build and stay. */
+    private static boolean isNaturalLeaves(Level level, BlockPos pos) {
+        if (level == null || pos == null || !level.hasChunkAt(pos)) {
+            return false;
+        }
+        BlockState state = level.getBlockState(pos);
+        return state != null && state.getBlock() instanceof net.minecraft.world.level.block.LeavesBlock
+                && !state.getValue(net.minecraft.world.level.block.LeavesBlock.PERSISTENT);
+    }
+
+    /** Breaks the leaves standing in the agent's own cell and in the next cell of its path. */
+    private void clearFoliage(Level level, Vec3 currentPos) {
+        if (this.agent == null || path.isEmpty()) {
+            return;
+        }
+        LocalPathPlanner.Cell next = path.get(0);
+        BlockPos here = BlockPos.containing(currentPos.x, currentPos.y + 0.1, currentPos.z);
+        BlockPos ahead = new BlockPos(next.x(), next.y(), next.z());
+        BlockPos[] body = next.y() > here.getY()
+                ? new BlockPos[] {here, here.above(), here.above(2), ahead, ahead.above()}
+                : new BlockPos[] {here, here.above(), ahead, ahead.above(), new BlockPos(next.x(), here.getY() + 1, next.z())};
+        for (BlockPos pos : body) {
+            if (isNaturalLeaves(level, pos)) {
+                level.destroyBlock(pos, true, this.agent);
+            }
+        }
     }
 
     static boolean isBlockWater(net.minecraft.world.level.Level level, BlockPos pos) {
@@ -1060,6 +1093,7 @@ public class AgentNavigator {
             }
             // A walled-in agent reports STUCK through getReportedNavigationState; the brain
             // decides how to dig out (ADR-037).
+            clearFoliage(level, currentPos);
         }
 
         // Desired heading toward waypoint (or straight at the target when no local path exists)
