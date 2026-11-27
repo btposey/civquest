@@ -113,7 +113,8 @@ AGENTS="able bert" DAYS=0.1 ./scripts/sandbox-playtest.sh
 - Nothing is forced (no hunger, time changes or chat) and nothing passes or fails; interrupt to stop early. `difficulty`, `view-distance` and `simulation-distance` come from the install's `server.properties` (read only; default normal, 10, 10).
 - Every run that got as far as starting the server, interrupted or not, is archived to `~/.local/share/civquest-playtests/<date>-sbN/`: `config`, `share`, `state` (agent logs, events, `server.log`), `server` (world, logs, properties), `deployed-commit.txt` (plus `uncommitted.diff` if the tree was dirty), `run.txt` and the per-agent `summary.txt`.
 - Never writes to `~/.local/share/civquest`, `~/.config/civquest` or `~/.local/state/civquest`, and does not start or stop the install's server or daemon.
-- **Limit:** no player joins, so the game spawns no mobs and gives no random block ticks (crop and sapling growth). It does not test night-time danger or farming; use a connected play test for those.
+- **No player joins:** agents count as players (cq-1ey), so mobs spawn and despawn and crops and saplings grow round each agent within the vanilla radius (128 blocks), as in a connected play test. **Limit:** phantoms never spawn for agents (cq-quf), and nothing a human does (chat, trade, gifts) happens.
+- **Load:** each agent loads and ticks chunks like a player (`view-distance`, `simulation-distance`), so agents far apart cost as much as players far apart.
 
 ## Architecture Overview
 

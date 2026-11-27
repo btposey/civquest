@@ -27,6 +27,21 @@ import com.civquest.mod.grpc.v1.VisibleBlock;
 import com.civquest.mod.grpc.v1.VisibleEntity;
 import com.google.protobuf.ByteString;
 import io.grpc.stub.StreamObserver;
+import net.minecraft.server.level.DistanceManager;
+import net.minecraft.world.effect.MobEffectInstance;
+import net.minecraft.world.effect.MobEffects;
+import net.minecraft.world.entity.Entity;
+import net.minecraft.world.entity.Mob;
+import net.minecraft.world.entity.monster.Monster;
+import net.minecraft.world.level.ChunkPos;
+import net.minecraft.world.level.GameRules;
+import net.minecraft.world.level.block.LeavesBlock;
+import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.phys.AABB;
+import java.util.ArrayList;
+import java.util.HashSet;
+import java.util.Set;
+import java.util.UUID;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.component.DataComponents;
 import net.minecraft.gametest.framework.GameTest;
@@ -99,7 +114,7 @@ public class AgentGameTest {
         helper.assertTrue(agent.getHealth() == agent.getMaxHealth(), "Health must initialize to maximum");
         helper.assertFalse(agent.canUsePortal(false), "Agent cannot use portals");
 
-        helper.assertTrue(agent.chunkPosition().equals(agent.getHeldChunk()), "Agent must hold its spawn chunk");
+        helper.assertTrue(isPlayerNear(level, agent.chunkPosition(), agent), "Agent must count as a player where it spawned");
 
         // Tick agent entity in server level
         agent.tick();
@@ -109,7 +124,8 @@ public class AgentGameTest {
         boolean despawned = manager.despawnAgent(server, "agent-gt-spawn").join();
         helper.assertTrue(despawned, "Agent must despawn cleanly");
         helper.assertTrue(manager.getAgent("agent-gt-spawn") == null, "Manager must clear despawned agent");
-        helper.assertTrue(agent.getHeldChunk() == null, "Held chunk must be released after despawn");
+        helper.assertFalse(level.players().contains(agent), "A despawned agent must leave the level's players");
+        helper.assertFalse(isPlayerNear(level, agent.chunkPosition(), agent), "A despawned agent must be released as a player");
         helper.succeed();
     }
 
@@ -304,6 +320,156 @@ public class AgentGameTest {
         });
     }
 
+    // cq-1ey: with no human connected, mobs spawn and blocks tick at random round an agent that has
+    // walked away from its spawn point, and nowhere else. A batch of its own: it changes game rules
+    // and the time of day, and no other test's agent may be near.
+    @GameTest(template = "empty3x3x3", batch = "agents_as_players", timeoutTicks = 4000)
+    public static void testSpawningAndRandomTicksFollowAnAgent(GameTestHelper helper) {
+        ServerLevel level = helper.getLevel();
+        MinecraftServer server = level.getServer();
+        AgentEntityManager manager = new AgentEntityManager();
+        BlockPos origin = helper.absolutePos(new BlockPos(1, 1, 1));
+        BlockPos site = origin.offset(3000, 0, 0);
+        BlockPos away = site.offset(0, 0, 600);
+        ChunkPos siteChunk = new ChunkPos(site);
+        ChunkPos awayChunk = new ChunkPos(away);
+        List<BlockPos> nearLeaves = leafField(siteChunk, origin.getY() + 40);
+        List<BlockPos> awayLeaves = leafField(awayChunk, origin.getY() + 40);
+
+        GameRules rules = level.getGameRules();
+        int randomTickSpeed = rules.getInt(GameRules.RULE_RANDOMTICKING);
+        boolean mobSpawning = rules.getBoolean(GameRules.RULE_DOMOBSPAWNING);
+        long dayTime = level.getDayTime();
+        Set<UUID> earlierMobs = new HashSet<>();
+        level.getAllEntities().forEach(e -> earlierMobs.add(e.getUUID()));
+        Runnable restore = () -> {
+            rules.getRule(GameRules.RULE_RANDOMTICKING).set(randomTickSpeed, server);
+            rules.getRule(GameRules.RULE_DOMOBSPAWNING).set(mobSpawning, server);
+            level.setDayTime(dayTime);
+            level.setChunkForced(awayChunk.x, awayChunk.z, false);
+            nearLeaves.forEach(p -> level.setBlock(p, Blocks.AIR.defaultBlockState(), 2));
+            awayLeaves.forEach(p -> level.setBlock(p, Blocks.AIR.defaultBlockState(), 2));
+            List<Entity> spawned = new ArrayList<>();
+            level.getAllEntities().forEach(e -> {
+                if (e instanceof Mob && !earlierMobs.contains(e.getUUID())) {
+                    spawned.add(e);
+                }
+            });
+            spawned.forEach(Entity::discard);
+        };
+        // A test that times out must not leave the rules changed for the batches after it.
+        helper.runAfterDelay(3990, restore);
+
+        rules.getRule(GameRules.RULE_RANDOMTICKING).set(200, server);
+        rules.getRule(GameRules.RULE_DOMOBSPAWNING).set(true, server);
+        level.setDayTime(18000);
+        // Loaded and ticking, but with nobody near: the control for both kinds of tick.
+        level.setChunkForced(awayChunk.x, awayChunk.z, true);
+
+        AgentEntity agent = spawnForSpawningTest(manager, server, level, "agent-gt-rover", origin);
+        agent.addEffect(new MobEffectInstance(MobEffects.DAMAGE_RESISTANCE, -1, 4));
+        helper.assertFalse(isPlayerNear(level, siteChunk, agent), "The site must start out of the agent's reach");
+        agent.setPos(site.getX() + 0.5, site.getY(), site.getZ() + 0.5);
+        helper.assertTrue(isPlayerNear(level, siteChunk, agent), "An agent must count as a player where it has gone");
+        helper.assertFalse(isPlayerNear(level, new ChunkPos(origin), agent), "and no longer where it spawned");
+
+        AtomicReference<Zombie> stray = new AtomicReference<>();
+        AtomicInteger leftAfterDespawn = new AtomicInteger();
+        helper.startSequence()
+                .thenWaitUntil(() -> helper.assertTrue(
+                        level.isPositionEntityTicking(site) && level.isPositionEntityTicking(away),
+                        "Both sites must tick"))
+                .thenExecute(() -> {
+                    nearLeaves.forEach(p -> level.setBlock(p, decayingLeaves(), 2));
+                    awayLeaves.forEach(p -> level.setBlock(p, decayingLeaves(), 2));
+                    // A monster nobody is near, as one left behind by an agent that walked on.
+                    Zombie zombie = EntityType.ZOMBIE.create(level);
+                    zombie.moveTo(away.getX() + 0.5, away.getY() + 30, away.getZ() + 0.5, 0.0f, 0.0f);
+                    level.addFreshEntity(zombie);
+                    stray.set(zombie);
+                })
+                .thenWaitUntil(() -> {
+                    helper.assertTrue(countLeaves(level, nearLeaves) < nearLeaves.size() / 2,
+                            "Leaves near the agent must decay by random ticks");
+                    helper.assertTrue(countMonsters(level, agent.blockPosition()) > 0,
+                            "Monsters must spawn near the agent at night");
+                })
+                .thenExecute(() -> {
+                    helper.assertTrue(level.shouldTickBlocksAt(awayChunk.toLong()), "The control chunk must tick blocks");
+                    helper.assertTrue(countLeaves(level, awayLeaves) == awayLeaves.size(),
+                            "Leaves far from every agent must get no random ticks");
+                    helper.assertTrue(countMonsters(level, away) == 0, "No monster may be left or spawn far from every agent");
+                    helper.assertTrue(stray.get().isRemoved(), "A monster far from every agent must despawn");
+
+                    // Agents together share their spawning area, so the global mob cap does not grow.
+                    DistanceManager distances = level.getChunkSource().chunkMap.getDistanceManager();
+                    int alone = distances.getNaturalSpawnChunkCount();
+                    AgentEntity mate = spawnForSpawningTest(manager, server, level, "agent-gt-mate", origin);
+                    mate.setPos(agent.getX(), agent.getY(), agent.getZ());
+                    int together = distances.getNaturalSpawnChunkCount();
+                    mate.setPos(site.getX() - 600.5, site.getY(), site.getZ() + 0.5);
+                    int apart = distances.getNaturalSpawnChunkCount();
+                    manager.despawnAgent(server, "agent-gt-mate").join();
+                    helper.assertTrue(together == alone, "Two agents together must count as one area: " + alone + " then " + together);
+                    helper.assertTrue(apart > together, "Agents apart must each have an area: " + together + " then " + apart);
+                    helper.assertTrue(distances.getNaturalSpawnChunkCount() == alone, "A despawned agent must give up its area");
+
+                    ChunkPos last = agent.chunkPosition();
+                    manager.despawnAgent(server, "agent-gt-rover").join();
+                    helper.assertFalse(distances.hasPlayersNearby(last.toLong()), "Nothing may stay registered for a despawned agent");
+                    leftAfterDespawn.set(countLeaves(level, nearLeaves));
+                })
+                .thenIdle(40)
+                .thenExecute(() -> {
+                    helper.assertTrue(countLeaves(level, nearLeaves) == leftAfterDespawn.get(),
+                            "Random ticks must stop when the agent is gone");
+                    restore.run();
+                })
+                .thenSucceed();
+    }
+
+    private static AgentEntity spawnForSpawningTest(AgentEntityManager manager, MinecraftServer server, ServerLevel level,
+                                                    String agentId, BlockPos pos) {
+        return manager.spawnAgent(server, level, SpawnAgentRequest.newBuilder()
+                .setAgentId(agentId)
+                .setDisplayName(agentId.substring("agent-gt-".length()))
+                .setClanId("clan-ironwood")
+                .setSpawnCoords(Vec3.newBuilder()
+                        .setX(pos.getX() + 0.5)
+                        .setY(pos.getY())
+                        .setZ(pos.getZ() + 0.5)
+                        .build())
+                .build()).join();
+    }
+
+    /** Whether the server counts {@code agent} as a player near enough to {@code chunk} to spawn mobs and tick blocks. */
+    private static boolean isPlayerNear(ServerLevel level, ChunkPos chunk, AgentEntity agent) {
+        return level.getChunkSource().chunkMap.getPlayersCloseForSpawning(chunk).contains(agent);
+    }
+
+    private static BlockState decayingLeaves() {
+        return Blocks.OAK_LEAVES.defaultBlockState().setValue(LeavesBlock.DISTANCE, 7).setValue(LeavesBlock.PERSISTENT, false);
+    }
+
+    private static List<BlockPos> leafField(ChunkPos chunk, int y) {
+        List<BlockPos> field = new ArrayList<>();
+        for (int x = 0; x < 8; x++) {
+            for (int z = 0; z < 8; z++) {
+                field.add(new BlockPos(chunk.getMinBlockX() + x * 2, y, chunk.getMinBlockZ() + z * 2));
+            }
+        }
+        return field;
+    }
+
+    private static int countLeaves(ServerLevel level, List<BlockPos> field) {
+        return (int) field.stream().filter(p -> level.getBlockState(p).is(Blocks.OAK_LEAVES)).count();
+    }
+
+    /** Monsters within the vanilla spawning radius of {@code centre}. */
+    private static int countMonsters(ServerLevel level, BlockPos centre) {
+        return level.getEntitiesOfClass(Monster.class, new AABB(centre).inflate(128.0)).size();
+    }
+
     @GameTest(template = "empty3x3x3")
     public static void testAgentPermadeathLifecycle(GameTestHelper helper) {
         ServerLevel level = helper.getLevel();
@@ -345,7 +511,7 @@ public class AgentGameTest {
         AgentEntity agent = manager.spawnAgent(server, level, request).join();
         helper.assertTrue(agent != null, "Agent must spawn");
         helper.assertTrue(manager.getAgent("agent-gt-death") != null, "Agent must be registered");
-        helper.assertTrue(agent.getHeldChunk() != null, "Agent must hold a chunk");
+        helper.assertTrue(isPlayerNear(level, agent.chunkPosition(), agent), "Agent must count as a player");
 
         // Kill agent with generic damage
         agent.die(level.damageSources().generic());
@@ -362,7 +528,8 @@ public class AgentGameTest {
                 "Terminal death frame must skip block scanning");
         helper.assertTrue(deathFrameRef.get().getVisibleEntitiesCount() == 0,
                 "Terminal death frame must skip entity scanning");
-        helper.assertTrue(agent.getHeldChunk() == null, "Held chunk must be released on death");
+        helper.assertFalse(level.players().contains(agent), "A dead agent must leave the level's players");
+        helper.assertFalse(isPlayerNear(level, agent.chunkPosition(), agent), "A dead agent must be released as a player");
         helper.succeed();
     }
 

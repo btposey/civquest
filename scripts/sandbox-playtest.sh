@@ -14,8 +14,8 @@
 # difficulty, view-distance and simulation-distance are read from your play test server's
 # server.properties when it exists (read only); otherwise normal, 10 and 10.
 #
-# No player joins this server, so the game spawns no mobs and gives no random block ticks (crop
-# and sapling growth) round the agents, unlike a play test you are connected to.
+# No player joins this server. Agents count as players, so mobs spawn and crops and saplings
+# grow round them as in a play test you are connected to. Phantoms do not (cq-quf).
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"

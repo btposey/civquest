@@ -9,10 +9,10 @@ import com.civquest.mod.sensory.SensoryFrustumCollector;
 import com.mojang.authlib.GameProfile;
 import com.mojang.logging.LogUtils;
 import net.minecraft.tags.FluidTags;
+import net.minecraft.core.SectionPos;
 import net.minecraft.core.UUIDUtil;
 import net.minecraft.network.chat.Component;
 import net.minecraft.server.level.ServerLevel;
-import net.minecraft.server.level.TicketType;
 import net.minecraft.tags.DamageTypeTags;
 import net.minecraft.tags.EntityTypeTags;
 import net.minecraft.world.damagesource.DamageSource;
@@ -21,7 +21,6 @@ import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.item.enchantment.EnchantmentHelper;
-import net.minecraft.world.level.ChunkPos;
 import net.minecraft.world.level.GameRules;
 import net.minecraft.world.level.gameevent.GameEvent;
 import net.minecraft.world.scores.Team;
@@ -42,11 +41,6 @@ import java.util.function.Consumer;
  * and permadeath lifecycle hooks.
  */
 public class AgentEntity extends FakePlayer {
-    /** Chunk ticket owned by one agent, keyed by its UUID so that agents never release each other's. */
-    public static final TicketType<UUID> CHUNK_TICKET = TicketType.create("civquest_agent", UUID::compareTo);
-    /** Radius 3 keeps entities ticking in the agent's chunk and the eight round it. */
-    public static final int CHUNK_TICKET_RADIUS = 3;
-
     private static final Logger LOGGER = LogUtils.getLogger();
     private static final double PEER_SEPARATION_RADIUS = 1.15;
     private static final double PEER_SEPARATION_STEP = 0.10;
@@ -88,8 +82,6 @@ public class AgentEntity extends FakePlayer {
     private final String clanId;
     private String skinId;
     private byte[] skinPngBytes;
-    /** Centre of the chunks this agent keeps loaded; null while it holds none. */
-    private ChunkPos heldChunk;
     private StreamRegistry streamRegistry;
     private SensoryFrustumCollector sensoryCollector;
     private com.civquest.mod.actuator.IntentActuator intentActuator;
@@ -965,9 +957,6 @@ public class AgentEntity extends FakePlayer {
             this.motorFSM.flush();
         }
 
-        // Release forced chunk
-        releaseHeldChunk();
-
         // Trigger unregistration / cleanup callback
         if (cleanedUp.compareAndSet(false, true)) {
             if (this.deathListener != null) {
@@ -991,7 +980,6 @@ public class AgentEntity extends FakePlayer {
         if (this.motorFSM != null) {
             this.motorFSM.flush();
         }
-        releaseHeldChunk();
         if (cleanedUp.compareAndSet(false, true)) {
             if (this.removalListener != null) {
                 try {
@@ -1003,47 +991,25 @@ public class AgentEntity extends FakePlayer {
         }
     }
 
-    /**
-     * Keeps the chunks round {@code pos} loaded with entities ticking, and lets go of those held
-     * before. A real player holds such a ticket by being in the player list; a fake player does
-     * not, and the server stops ticking it as soon as it leaves ground something else keeps awake.
-     */
-    public void holdChunk(ChunkPos pos) {
-        if (pos == null || pos.equals(this.heldChunk)) {
-            return;
-        }
-        ChunkPos before = this.heldChunk;
-        this.heldChunk = pos;
-        if (this.level() instanceof ServerLevel serverLevel && serverLevel.getChunkSource() != null) {
-            serverLevel.getChunkSource().addRegionTicket(CHUNK_TICKET, pos, CHUNK_TICKET_RADIUS, getUUID());
-            if (before != null) {
-                serverLevel.getChunkSource().removeRegionTicket(CHUNK_TICKET, before, CHUNK_TICKET_RADIUS, getUUID());
-            }
-        }
-    }
-
-    /** Moves the held chunks along with the agent. */
-    public void followChunk() {
-        if (this.heldChunk != null) {
-            holdChunk(chunkPosition());
-        }
-    }
-
-    public void releaseHeldChunk() {
-        if (this.heldChunk != null && this.level() instanceof ServerLevel serverLevel && serverLevel.getChunkSource() != null) {
-            serverLevel.getChunkSource().removeRegionTicket(CHUNK_TICKET, this.heldChunk, CHUNK_TICKET_RADIUS, getUUID());
-        }
-        this.heldChunk = null;
-    }
-
-    public ChunkPos getHeldChunk() {
-        return heldChunk;
-    }
-
     @Override
     public void setPos(double x, double y, double z) {
         super.setPos(x, y, z);
-        followChunk();
+        followAsPlayer();
+    }
+
+    /**
+     * Moves the server's player records to the agent. Adding an agent to a level registers it there
+     * as a player, which loads and ticks the chunks round it and lets mobs spawn and blocks tick at
+     * random nearby. Vanilla moves that registration only for a connected client (movement packets,
+     * {@code ServerPlayer.tick}), and an agent has neither: left alone it stays at the spawn point
+     * and an agent that walks away gets none of this. Removal from the level releases it.
+     */
+    private void followAsPlayer() {
+        // setPos also runs before the agent is in a level, when there is no record to move.
+        if (this.isAddedToLevel() && !this.isRemoved() && this.level() instanceof ServerLevel serverLevel
+                && !SectionPos.of(this).equals(this.getLastSectionPos())) {
+            serverLevel.getChunkSource().move(this);
+        }
     }
 
     public String getAgentId() {
