@@ -30,7 +30,7 @@ func (s *AgentState) wantFreshBearing(why string) {
 // withheld records a walk that was not sent.
 func (fsm *AgentFSM) withheld(w *fsmWorld, kind htpda.Kind, nav *civquestv1.NavigateIntent) {
 	fsm.meter.walkGivenUp()
-	if fsm.eventSink != nil {
+	if fsm.refused(w, kind) && fsm.eventSink != nil {
 		fsm.eventSink(w.tick, EventWalkGivenUp, string(kind)+" asked for a place already given up", map[string]any{
 			"activity": string(kind), "target": []float64{nav.Target.X, nav.Target.Y, nav.Target.Z}, "withheld": true})
 	}

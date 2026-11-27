@@ -189,7 +189,8 @@ func evaluatePatrolLocked(
 	}
 
 	arrived := hasActiveTarget && (distToTarget <= 2.0 || navState == civquestv1.NavigationState_NAVIGATION_STATE_ARRIVED)
-	stuck := navState == civquestv1.NavigationState_NAVIGATION_STATE_STUCK
+	stuck := navState == civquestv1.NavigationState_NAVIGATION_STATE_STUCK ||
+		hasActiveTarget && state.givenUpLocked(walk.currentExploreTarget.X, walk.currentExploreTarget.Y, walk.currentExploreTarget.Z, frame.WorldTick)
 
 	timedOut := false
 	if hasActiveTarget && !arrived && !stuck {

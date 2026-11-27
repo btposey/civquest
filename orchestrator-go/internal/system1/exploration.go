@@ -484,7 +484,8 @@ func EvaluateExploration(agentID string, frame *civquestv1.TelemetryFrame, cfg *
 	// 4. Terrain-Aware Exploration Strategies (Valleys, Ridges, Fords, Rims, Flatlands, Canopy Trailblazing)
 	if walk.currentExploreTarget == nil || navState == civquestv1.NavigationState_NAVIGATION_STATE_ARRIVED ||
 		math.Hypot(pos.X-walk.currentExploreTarget.X, pos.Z-walk.currentExploreTarget.Z) <= 2.0 {
-		if terrainIntent := EvaluateTerrainExploration(agentID, frame, pos, state, cfg, walk); terrainIntent != nil {
+		if terrainIntent := EvaluateTerrainExploration(agentID, frame, pos, state, cfg, walk); terrainIntent != nil &&
+			!walkGivenUpLocked(state, terrainIntent, frame.WorldTick) {
 			if nav := terrainIntent.GetNavigate(); nav != nil && nav.Target != nil {
 				walk.currentExploreTarget = nav.Target
 				walk.lastExploreProgressDist = math.Hypot(pos.X-nav.Target.X, pos.Z-nav.Target.Z)

@@ -1238,7 +1238,7 @@ func (w *fsmWorld) preemptorAbove(priority float64, skip string) (string, any) {
 		}
 		// One that just left for want of work does not interrupt to look again (live: bootstrap
 		// pushed over gathering and popped, every tick).
-		if w.skipped[kind] || kind == skip || w.backedOff(act.Kind()) || !strategyAllows(w.objectives(), kind) {
+		if w.skipped[kind] || kind == skip || w.backedOff(act.Kind()) || w.stonewalled(act.Kind()) || !strategyAllows(w.objectives(), kind) {
 			continue
 		}
 		// An activity already on the stack is not launched again on top of it, or a

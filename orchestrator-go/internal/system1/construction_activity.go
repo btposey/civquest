@@ -40,6 +40,7 @@ type ConstructionProgress struct {
 
 // constructionState is the AgentState slice for construction (progress + finished projects).
 type constructionState struct {
+	lights   shelterLights // light placements at the cabin that have not shown up
 	mu       sync.Mutex
 	progress *ConstructionProgress
 	built    map[string]bool

@@ -26,6 +26,12 @@ func (s *AgentState) givenUp(x, y, z float64, tick int64) bool {
 	return s.givenUpLocked(x, y, z, tick)
 }
 
+// walkGivenUpLocked reports that in is a walk to a place already given up.
+func walkGivenUpLocked(s *AgentState, in *civquestv1.AgentIntent, tick int64) bool {
+	t := in.GetNavigate().GetTarget()
+	return t != nil && s.givenUpLocked(t.X, t.Y, t.Z, tick)
+}
+
 // cabinOutOfReach reports that the walk back to the cabin site has been given up and the agent
 // is not already at it.
 func (s *AgentState) cabinOutOfReach(pos *civquestv1.Vec3, tick int64) bool {
@@ -44,3 +50,4 @@ func (s *AgentState) cabinOutOfReach(pos *civquestv1.Vec3, tick int64) bool {
 
 // cabinAtSq is the squared horizontal distance within which the agent counts as at its cabin.
 const cabinAtSq = 16.0
+

@@ -258,7 +258,7 @@ func (w *fsmWorld) bestWork() (candidate, bool) {
 			offer(candidate{Kind: activityKindExpedition, Args: expeditionArgs{Origin: activityKindStrategicDirective}, score: priorityExpedition * u})
 		}
 		for _, a := range w.fsm.managed {
-			if w.skipped[string(a.Kind())] || !strategyAllows(w.objectives(), string(a.Kind())) {
+			if w.skipped[string(a.Kind())] || w.stonewalled(a.Kind()) || !strategyAllows(w.objectives(), string(a.Kind())) {
 				continue
 			}
 			if args, ok := a.args(w); ok && a.eligible(w) {
@@ -325,6 +325,7 @@ func (w *fsmWorld) duringTravel(origin string, returning, leg bool) (candidate, 
 		return candidate{Kind: htpda.Kind(kind), Args: args}, true
 	}
 	if origin == activityKindBootstrap && !returning && !w.skipped[activityKindBootstrap] && !w.backedOff(activityKindBootstrap) &&
+		!w.stonewalled(activityKindBootstrap) &&
 		bootstrapHarvestAvailable(w.ctx) {
 		if pa := newPlanActivity(); !w.skipped[activityKindPlan] && pa.eligible(w) {
 			if args, ok := pa.args(w); ok {

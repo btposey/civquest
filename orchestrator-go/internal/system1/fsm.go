@@ -280,6 +280,7 @@ type AgentFSM struct {
 	eventSink      EventSink
 	vitalsEmitted  bool
 	lastVitalsTick int64
+	stuckGuard     // stonewall.go, climb_out.go
 	// scanAt is when a survey was last put in a walk's place (bearing.go).
 	scanAt int64
 	// What the logs last reported (diag.go).

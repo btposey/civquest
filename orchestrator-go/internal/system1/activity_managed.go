@@ -154,7 +154,7 @@ func runFrame(a waterfallActivity, lw *fsmWorld, local any, searchPreemptors boo
 	if lw.ctx.State != nil {
 		lw.ctx.State.SetActiveActivityKind(string(a.Kind()))
 	}
-	if a.ended(local) || !a.eligible(lw) {
+	if a.ended(local) || !a.eligible(lw) || lw.stonewalled(a.Kind()) {
 		lw.handOffPendingTask(local)
 		return a.exit(lw, local, nil, false)
 	}

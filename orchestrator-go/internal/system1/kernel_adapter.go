@@ -225,6 +225,7 @@ func (fsm *AgentFSM) dispatchLocked(w *fsmWorld, ev htpda.Event) []FSMIntent {
 					}
 					fsm.navTargets[em.Frame] = [3]float64{nav.Target.X, nav.Target.Y, nav.Target.Z}
 				}
+				fsm.served(em.Kind)
 				out = append(out, FSMIntent{Intent: in, Frame: uint64(em.Frame), Priority: em.Kind == activityKindEmergency || isEatIntent(in)})
 			}
 		}
@@ -404,6 +405,7 @@ func (fsm *AgentFSM) tickActivitiesLocked(ctx *FSMContext, reg *EngineRegistry, 
 	for i := 0; i < maxRefill && w.refill && fsm.kernel.Depth() == 0; i++ {
 		out = append(out, fsm.dispatchLocked(w, htpda.Tick{})...)
 	}
+	fsm.watchStandstill(w, out)
 	return out
 }
 

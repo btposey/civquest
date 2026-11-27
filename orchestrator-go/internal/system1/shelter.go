@@ -484,6 +484,12 @@ func evaluateDuskNightOutpostShelterLocked(
 				return nil // already stepping back
 			}
 			stepBackPos := blueprints.CalculateCabinStepBack(pos, targetVoxel, prog.Pos)
+			if state.givenUpLocked(stepBackPos.X, pos.Y, stepBackPos.Z, frame.WorldTick) {
+				// There is no getting out of this block's way: pass it over (play test 9).
+				prog.BuildIndex++
+				prog.Phase = cabinPhase(prog.BuildIndex)
+				return nil
+			}
 			walk.lastExploreTick = frame.WorldTick
 			return &civquestv1.AgentIntent{
 				AgentId: agentID,
@@ -505,7 +511,7 @@ func evaluateDuskNightOutpostShelterLocked(
 			if navState == civquestv1.NavigationState_NAVIGATION_STATE_PATHING || prog.approachUnderWay(frame.WorldTick) {
 				return nil
 			}
-			if stand, ok := prog.approach(pos, voxel); ok {
+			if stand, ok := prog.approach(pos, voxel); ok && !state.givenUpLocked(stand.X, stand.Y, stand.Z, frame.WorldTick) {
 				prog.WalkTick = frame.WorldTick
 				walk.lastExploreTick = frame.WorldTick
 				return &civquestv1.AgentIntent{AgentId: agentID, Action: &civquestv1.AgentIntent_Navigate{Navigate: &civquestv1.NavigateIntent{

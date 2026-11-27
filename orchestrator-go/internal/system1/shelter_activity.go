@@ -86,8 +86,28 @@ func cabinPhase(built int) int {
 
 // shelterStore is the Store effect a Shelter frame emits when it ends.
 type shelterStore struct {
-	Pos   *civquestv1.BlockPosProto
-	Built int
+	Pos    *civquestv1.BlockPosProto
+	Built  int
+	Lights shelterLights
+}
+
+// shelterLights counts the light placements that have not shown up at the cabin site At. It
+// outlives the frame, or each new frame places the same torches all over again.
+type shelterLights struct {
+	At    lightPos3
+	Tries int
+}
+
+type lightPos3 struct {
+	X, Y, Z int32
+	Set     bool
+}
+
+func lightSite(p *civquestv1.BlockPosProto) lightPos3 {
+	if p == nil {
+		return lightPos3{}
+	}
+	return lightPos3{X: p.X, Y: p.Y, Z: p.Z, Set: true}
 }
 
 // newShelterLocal seeds a Local from the durable store (call without s.mu held).
@@ -96,7 +116,10 @@ func newShelterLocal(s *AgentState) shelterLocal {
 		return shelterLocal{}
 	}
 	built := s.GetCabinBuilt()
-	return shelterLocal{BuildIndex: built, Phase: cabinPhase(built), Pos: s.GetShelterPos()}
+	l := shelterLocal{BuildIndex: built, Phase: cabinPhase(built), Pos: s.GetShelterPos()}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return l.withLights(s.construction.lights)
 }
 
 // seedShelterLocalLocked is newShelterLocal for callers already holding s.mu.
@@ -105,11 +128,18 @@ func seedShelterLocalLocked(s *AgentState) shelterLocal {
 	if s.ShelterPos != nil {
 		l.Pos = &civquestv1.BlockPosProto{X: s.ShelterPos.X, Y: s.ShelterPos.Y, Z: s.ShelterPos.Z}
 	}
+	return l.withLights(s.construction.lights)
+}
+
+func (l shelterLocal) withLights(v shelterLights) shelterLocal {
+	if v.At == lightSite(l.Pos) {
+		l.LightTries = v.Tries
+	}
 	return l
 }
 
 func (l shelterLocal) storeWrite() htpda.StoreWrite {
-	return shelterStore{Pos: l.Pos, Built: l.BuildIndex}
+	return shelterStore{Pos: l.Pos, Built: l.BuildIndex, Lights: shelterLights{At: lightSite(l.Pos), Tries: l.LightTries}}
 }
 
 // applyShelterStore applies a Shelter frame's Store effect to the durable store.
@@ -118,6 +148,9 @@ func (s *AgentState) applyShelterStore(w shelterStore) {
 		s.SetShelterPos(w.Pos)
 	}
 	s.SetCabinBuilt(w.Built)
+	s.mu.Lock()
+	s.construction.lights = w.Lights
+	s.mu.Unlock()
 }
 
 // applyStoreWrites applies kernel Store effects (applied only on frame exit).
