@@ -116,3 +116,26 @@ func TestDanger_FollowsAMovingMob(t *testing.T) {
 		t.Errorf("an older report displaced a newer sighting: %+v", got)
 	}
 }
+
+// Live: polar bears killed two agents that did not treat them as a danger.
+func TestDanger_PolarBearsCount(t *testing.T) {
+	st := NewAgentState()
+	bear := &civquestv1.VisibleEntity{EntityId: 5, EntityType: "minecraft:polar_bear", Position: &civquestv1.Vec3{X: 30, Y: 63, Z: 0}}
+	observeDangers(&FSMContext{State: st, Frame: rf(100, 3000, withPos(0, 64, 0), withEntities(bear))})
+	if !st.IsTargetUnreachable(30, 63, 2, 200) {
+		t.Error("ground beside a polar bear should be avoided")
+	}
+	st = NewAgentState()
+	f := rf(100, 3000, withPos(10, 64, 10))
+	f.LastDamageTaken = &civquestv1.DamageEvent{SourceType: civquestv1.DamageSourceType_DAMAGE_SOURCE_TYPE_MOB, AttackerName: "Goat", AttackerEntityId: 6, DamageAmount: 2}
+	observeDangers(&FSMContext{State: st, Frame: f})
+	if len(st.Dangers(100)) != 1 {
+		t.Errorf("any mob that does harm is a danger: %+v", st.Dangers(100))
+	}
+	f.LastDamageTaken = &civquestv1.DamageEvent{SourceType: civquestv1.DamageSourceType_DAMAGE_SOURCE_TYPE_PLAYER, AttackerName: "pbots", DamageAmount: 2}
+	st = NewAgentState()
+	observeDangers(&FSMContext{State: st, Frame: f})
+	if len(st.Dangers(100)) != 0 {
+		t.Errorf("people are not registered as mob dangers: %+v", st.Dangers(100))
+	}
+}

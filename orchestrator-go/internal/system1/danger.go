@@ -40,7 +40,7 @@ type Danger struct {
 
 // lingers reports mobs that stay about the place they were seen.
 func lingers(kind string) bool {
-	for _, k := range []string{"drowned", "guardian", "witch", "pillager", "vindicator", "evoker", "ravager", "warden"} {
+	for _, k := range []string{"drowned", "polar_bear", "guardian", "witch", "pillager", "vindicator", "evoker", "ravager", "warden"} {
 		if strings.Contains(kind, k) {
 			return true
 		}
@@ -206,7 +206,9 @@ func observeDangers(ctx *FSMContext) {
 		ctx.State.NoteDanger(Danger{Kind: kind, X: at.X, Y: at.Y, Z: at.Z, Seen: f.WorldTick})
 	}
 	for _, e := range f.VisibleEntities {
-		if e != nil && e.Position != nil && IsHostile(e) && lingers(mobKind(e.EntityType)) {
+		// A polar bear is registered on sight although it only attacks when it chooses to.
+		if e != nil && e.Position != nil && lingers(mobKind(e.EntityType)) &&
+			(IsHostile(e) || mobKind(e.EntityType) == "polar_bear") {
 			note(mobKind(e.EntityType), e.Position)
 		}
 	}
@@ -214,14 +216,19 @@ func observeDangers(ctx *FSMContext) {
 	if hit == nil || IsPassiveOrEnvironmentalDamage(hit) {
 		return
 	}
+	// Anything that is not a person and does harm is a danger, hostile by nature or not.
+	byMob := hit.SourceType == civquestv1.DamageSourceType_DAMAGE_SOURCE_TYPE_MOB ||
+		hit.SourceType == civquestv1.DamageSourceType_DAMAGE_SOURCE_TYPE_ARROW
 	for _, e := range f.VisibleEntities {
-		if e != nil && e.Position != nil && e.EntityId == hit.AttackerEntityId && IsHostile(e) {
+		if e != nil && e.Position != nil && e.EntityId == hit.AttackerEntityId && (IsHostile(e) || byMob && !isPlayerEntity(e)) {
 			note(mobKind(e.EntityType), e.Position)
 			return
 		}
 	}
-	// Unseen attacker: mark where the blow landed, if its name is a mob's.
-	if kind := mobKind(hit.AttackerName); kind != "" && IsHostile(&civquestv1.VisibleEntity{EntityType: kind}) {
+	// Unseen attacker: mark where the blow landed, if it was a mob's.
+	if kind := mobKind(hit.AttackerName); kind != "" && (byMob || IsHostile(&civquestv1.VisibleEntity{EntityType: kind})) {
 		note(kind, f.Status.Position)
 	}
 }
+
+func isPlayerEntity(e *civquestv1.VisibleEntity) bool { return mobKind(e.EntityType) == "player" }
