@@ -14,8 +14,7 @@ package system1
 //   - the default verdict is the reflex's own panic assessment at the start tick (confidence,
 //     HP and gear), and it is then held regardless of how confidence moves.
 //   - hysteresis: a held "fight" escalates to "flee" at most once, when HP falls to
-//     engagementFleeFloorRatio of max (below the 0.35 entry panic threshold), or a creeper
-//     starts hissing. A held "flee" never reverts to fight inside the engagement.
+//     engagementFleeFloorRatio of max, or a creeper starts hissing. A held "flee" never reverts to fight inside the engagement.
 //   - a System 2 directive (ENGAGE_THREAT / EVADE_THREAT) issued while the engagement is live
 //     overrides the default once; the survival escalations above still win. The reflex never
 //     waits for the midbrain: with no directive the default stands.
@@ -25,8 +24,10 @@ import "fmt"
 const (
 	// engagementIdleTicks: ticks without a target before the engagement is over (design budget, ~2s).
 	engagementIdleTicks = int64(40)
-	// engagementFleeFloorRatio: single fight->flee escalation floor (design budget).
-	engagementFleeFloorRatio = 0.20
+	// engagementFleeFloorRatio: single fight->flee escalation floor (design budget), the same
+	// share of health at which a fight is not started: a live run showed an agent fighting
+	// down to 2.5 with a wooden sword under the old floor of 0.20.
+	engagementFleeFloorRatio = LowHPThresholdRatio
 
 	// Directive actions the midbrain may issue to steer a live engagement.
 	DirectiveActionEngageThreat = "ENGAGE_THREAT"
