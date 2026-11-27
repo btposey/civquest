@@ -358,6 +358,7 @@ func (a recoverActivity) onReceipt(lw *fsmWorld, loc recoverLocal, e htpda.Recei
 			// Enclosed attempts are bounded only by the lease: pace a step that goes nowhere.
 			loc.NavNotBefore = lw.Tick() + recoverTunables.AttemptTicks
 		}
+		loc.turnAfterFailedStep()
 		loc.Emitted = false
 		return a.advance(lw, loc)
 	case civquestv1.IntentReceipt_RECEIPT_STATUS_FAILED:
@@ -367,6 +368,7 @@ func (a recoverActivity) onReceipt(lw *fsmWorld, loc recoverLocal, e htpda.Recei
 			reason = lw.receipt.GetFailureReason()
 		}
 		if isStuckReceipt(e.Status, e.Facts, reason) {
+			loc.turnAfterFailedStep()
 			if loc.Cause == CauseEnclosed {
 				loc.NavNotBefore = lw.Tick() + recoverTunables.AttemptTicks
 			} else {
@@ -577,6 +579,15 @@ func (loc recoverLocal) enclosedStep(agentID string, frame *civquestv1.Telemetry
 	h := crc32.ChecksumIEEE([]byte(agentID)) + uint32(loc.Attempts)*3
 	angle := base + float64(h%8)*(math.Pi/4.0)
 	return recoverNav(agentID, math.Round((pos.X+math.Cos(angle)*2.8)*10)/10, float64(by), math.Round((pos.Z+math.Sin(angle)*2.8)*10)/10, 1), true
+}
+
+// turnAfterFailedStep tries the next side after a step out that went nowhere (cq-6l3.23): the
+// same step would be chosen again for ever.
+func (loc *recoverLocal) turnAfterFailedStep() {
+	if loc.Locked && loc.NavSent {
+		loc.DirX, loc.DirZ = -loc.DirZ, loc.DirX
+		loc.NavSent = false
+	}
 }
 
 // recoverEscapeDir picks the cardinal escape direction: the blocked heading, or the cardinal

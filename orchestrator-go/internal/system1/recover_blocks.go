@@ -20,6 +20,10 @@ func IsDiggableObstruction(id string) bool {
 	if idx := strings.Index(s, ":"); idx != -1 {
 		s = s[idx+1:]
 	}
+	switch {
+	case s == "grass" || strings.HasSuffix(s, "short_grass") || strings.HasSuffix(s, "tall_grass") || strings.Contains(s, "seagrass"):
+		return false // walked through, never in the way and nothing to step onto
+	}
 	return strings.HasSuffix(s, "_ore") ||
 		strings.Contains(s, "dirt") ||
 		strings.Contains(s, "grass") ||

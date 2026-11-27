@@ -1433,3 +1433,27 @@ func TestFSM_FreshAdviceDoesNotInterruptAWorkingTask(t *testing.T) {
 		t.Fatal("the working harvest task must carry on")
 	}
 }
+
+// cq-507.7: advice asked for because the agent stood idle replaces the task it found stuck, but
+// does not go on dropping the tasks started after it.
+func TestFSM_RescueAdviceDropsOnlyTheTaskItFound(t *testing.T) {
+	for _, c := range []struct {
+		name    string
+		started int64
+		kept    bool
+	}{{"found under way", 100, false}, {"started afterwards", 202, true}} {
+		fsm := NewAgentFSM(StageBootstrap, nil)
+		state := NewAgentState()
+		cfg := xdg.DefaultAgentIdentityConfig("carl")
+		cfg.Profession = "EXPLORER"
+		fsm.StartTask(state, NewHarvestTreeTask(-46, 86, -8, StageBootstrap, c.started))
+		state.SetStrategicDirective(DirectiveActionScoutFrontier, "east", "SCOUT_FRONTIER", 200, 6200)
+		state.MarkDirectiveRescue()
+		fsm.Tick(&FSMContext{AgentID: "carl", State: state, Config: cfg, Frame: rf(204, 4000,
+			withPos(-40.5, 86, -7.5), withBlocks(blk(-46, 86, -8, "minecraft:oak_log")))})
+		_, kind, _, _ := state.ActiveTaskInfo()
+		if got := kind == "harvest_tree"; got != c.kept {
+			t.Errorf("%s: harvest kept=%t, want %t", c.name, got, c.kept)
+		}
+	}
+}

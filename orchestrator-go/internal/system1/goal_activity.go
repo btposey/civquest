@@ -301,6 +301,12 @@ func (w *fsmWorld) morePressing(frames []htpda.Frame) (candidate, bool) {
 		if p := pendingTaskOf(top.Local); p != nil && w.taskEligible(p) {
 			floor = max(floor, priorityTask)
 		}
+		// Rescue advice outranks the work the agent is stuck in, up to a task; needs still win.
+		if floor <= priorityTask && w.rescueAdvised() && !w.onStack(activityKindExpedition) {
+			if _, ok := w.directiveExpeditionBid(); ok {
+				return candidate{Kind: activityKindExpedition, Args: expeditionArgs{Origin: activityKindStrategicDirective}}, true
+			}
+		}
 		defer w.withoutAdvice()()
 		if kind, args := w.preemptorAbove(floor, ""); kind != "" {
 			return candidate{Kind: htpda.Kind(kind), Args: args}, true
@@ -344,13 +350,17 @@ func (w *fsmWorld) withoutAdvice() func() {
 	return func() { w.ctx.IgnoreAdvice = was }
 }
 
+// DESIGN BUDGET (cq-507.7): long enough for a slow model answer and the work it asks for to be
+// launched; after it, unspent rescue advice is ordinary advice.
+const rescueWindowTicks = int64(1200)
+
 // rescueAdvised reports an unspent rescue directive.
 func (w *fsmWorld) rescueAdvised() bool {
 	if w.ctx == nil || w.ctx.State == nil {
 		return false
 	}
 	dir, ok := w.ctx.State.ActiveStrategicDirective(w.Tick())
-	return ok && dir.Rescue
+	return ok && dir.Rescue && w.Tick()-dir.IssuedTick <= rescueWindowTicks
 }
 
 // fromAdvice reports work that exists only because the directive asked for it.

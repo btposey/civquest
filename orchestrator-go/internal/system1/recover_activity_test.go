@@ -218,6 +218,42 @@ func TestRecover_EnclosedDigsOutThenStepsUp(t *testing.T) {
 	}
 }
 
+// cq-6l3.23: a step up that goes nowhere is not repeated; the dig-out turns to another side.
+func TestRecover_FailedStepOutTurnsToAnotherSide(t *testing.T) {
+	r := newRecoverRig(t, rigTarget)
+	// Steps on two sides: a block at foot height to the south and to the east.
+	steps := withBlocks(blk(0, 64, 1, "minecraft:dirt"), blk(1, 64, 0, "minecraft:dirt"))
+	at := withPos(0.5, 64, 0.5)
+	seen := map[[2]float64]bool{}
+	fx := r.stuck(110, enclosedStuck(0), steps, at)
+	for tick := int64(110); tick < 200; tick += 5 {
+		if in := fx.Intents(); len(in) == 1 && in[0].GetNavigate() != nil {
+			tg := in[0].GetNavigate().Target
+			seen[[2]float64{tg.X, tg.Z}] = true
+			// The motor reports arrival without having moved the agent.
+			top, _ := r.k.Top()
+			rc := &civquestv1.IntentReceipt{Status: civquestv1.IntentReceipt_RECEIPT_STATUS_COMPLETED, FrameId: uint64(top.ID)}
+			fx = r.dispatch(tick+2, rc, htpda.Receipt{Frame: top.ID, Status: rc.Status}, steps, at)
+			continue
+		}
+		fx = r.dispatch(tick, nil, htpda.Tick{}, steps, at)
+	}
+	if len(seen) < 2 {
+		t.Fatalf("every attempt went to the same place: %v", seen)
+	}
+}
+
+func TestRecover_PlantsAreNotObstructions(t *testing.T) {
+	for id, want := range map[string]bool{
+		"minecraft:short_grass": false, "minecraft:tall_grass": false, "minecraft:seagrass": false,
+		"minecraft:grass_block": true, "minecraft:dirt": true,
+	} {
+		if got := IsDiggableObstruction(id); got != want {
+			t.Errorf("%s: obstruction=%t, want %t", id, got, want)
+		}
+	}
+}
+
 func TestRecover_ExpeditionNavigateDoesNotBlacklist(t *testing.T) {
 	r := newExpRig(t, "scout", 2)
 	r.step(110)

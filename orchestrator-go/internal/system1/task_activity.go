@@ -129,7 +129,8 @@ func tickTaskSubroutineActivity(stage Stage, ctx *FSMContext, skillCtx *SkillCon
 			ctx.Facts.GetBool("system2.directive_active") &&
 			(HasSurvivalKit(ctx.Frame.Status.Inventory) || !canExecuteImmediateBootstrapCraft(ctx.Frame, ctx.State)) {
 			if dir, ok := ctx.State.ActiveStrategicDirective(ctx.Frame.WorldTick); ok && dir.Action != DirectiveActionGatherTimber &&
-				(dir.Rescue || taskStalled(walk.task, ctx.Frame.WorldTick)) &&
+				// Rescue drops only what was under way when it was asked for, never a later task.
+				(dir.Rescue && walk.task.StartedTick <= dir.IssuedTick || taskStalled(walk.task, ctx.Frame.WorldTick)) &&
 				(dir.Action == DirectiveActionScoutFrontier || dir.Action == DirectiveActionMineStone ||
 					dir.Action == DirectiveActionSocialize || dir.Action == DirectiveActionBuildShelter ||
 					dir.Action == DirectiveActionForageFood && NeedsForaging(ctx.Frame)) {
