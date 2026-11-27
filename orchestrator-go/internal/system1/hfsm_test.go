@@ -157,6 +157,7 @@ func TestTwoTierHFSM_StageTransitions(t *testing.T) {
 func TestTwoTierHFSM_CircadianRoutineProgression(t *testing.T) {
 	fsm := NewAgentFSM(StageSettlement, nil)
 	state := NewAgentState()
+	consecrateSettlement(state)
 	state.SetStage(StageSettlement)
 	cfg := &xdg.AgentIdentityConfig{
 		Name:           "elena",
@@ -256,6 +257,7 @@ func TestTwoTierHFSM_CircadianRoutineProgression(t *testing.T) {
 func TestTwoTierHFSM_CivicPatrolRoutine(t *testing.T) {
 	fsm := NewAgentFSM(StageSettlement, nil)
 	state := NewAgentState()
+	consecrateSettlement(state)
 	state.SetStage(StageSettlement)
 	state.SetCivicPatrolActive(true) // Agent assigned to perimeter sentry watch
 
@@ -880,6 +882,7 @@ func BenchmarkTwoTierHFSM_ShiftWorkAndPDA(b *testing.B) {
 func TestTwoTierHFSM_ArmoryMaintenanceRoutine(t *testing.T) {
 	fsm := NewAgentFSM(StageSettlement, nil)
 	state := NewAgentState()
+	consecrateSettlement(state)
 	state.SetAssignedBed(&civquestv1.BlockPosProto{X: 0, Y: 64, Z: 0})
 	state.SetStageAndRoutine(StageSettlement, RoutineArmoryMaintenance)
 

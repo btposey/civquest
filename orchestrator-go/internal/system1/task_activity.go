@@ -107,6 +107,13 @@ func (taskActivity) tick(lw *fsmWorld) ([]FSMIntent, bool) {
 	return tickTaskSubroutineActivity(lw.fsm.currentStage, lw.ctx, lw.skillCtx, lw.reg)
 }
 
+// taskStallTicks without progress, or repeated failures, make a task stalled.
+const taskStallTicks = int64(200)
+
+func taskStalled(t *TaskSubroutine, tick int64) bool {
+	return t.ConsecutiveFailures >= 2 || tick-t.LastProgressTick >= taskStallTicks
+}
+
 func tickTaskSubroutineActivity(stage Stage, ctx *FSMContext, skillCtx *SkillContext, reg *EngineRegistry) ([]FSMIntent, bool) {
 	walk := skillCtx.Walk
 	kind := ""
@@ -116,25 +123,18 @@ func tickTaskSubroutineActivity(stage Stage, ctx *FSMContext, skillCtx *SkillCon
 
 	standalone := walk != nil && walk.task != nil && walk.task.Spec.Standalone
 	if (stage == StageBootstrap || stage == StageColonize) && !standalone {
-		if kind == "harvest_tree" && stage == StageBootstrap && ctx.Facts != nil && ctx.Facts.GetBool("system2.directive_active") &&
+		// Advice is read when choosing work, but it may rescue work that has stopped getting
+		// anywhere: a stalled harvest is dropped for a directive that asks for something else.
+		if kind == "harvest_tree" && stage == StageBootstrap && walk.task != nil && ctx.Facts != nil &&
+			ctx.Facts.GetBool("system2.directive_active") &&
 			(HasSurvivalKit(ctx.Frame.Status.Inventory) || !canExecuteImmediateBootstrapCraft(ctx.Frame, ctx.State)) {
-			dir, dirActive := ctx.State.ActiveStrategicDirective(ctx.Frame.WorldTick)
-			task := walk.task
-			if dirActive && task != nil && dir.Action != DirectiveActionGatherTimber &&
-				(dir.Action == DirectiveActionScoutFrontier ||
-					dir.Action == DirectiveActionMineStone ||
-					dir.Action == DirectiveActionSocialize ||
-					dir.Action == DirectiveActionBuildShelter ||
-					(dir.Action == DirectiveActionForageFood && NeedsForaging(ctx.Frame))) {
-				isStuckOrStalled := ctx.Frame.Status.NavigationState == civquestv1.NavigationState_NAVIGATION_STATE_STUCK ||
-					task.ConsecutiveFailures > 0 ||
-					(ctx.Frame.WorldTick >= task.LastProgressTick && ctx.Frame.WorldTick-task.LastProgressTick >= 40)
-				if dir.IssuedTick >= task.StartedTick || isStuckOrStalled {
-					// The directive (a bid source) outranks this stale task: drop the task and
-					// let the arbiter pick the activity the directive biases toward.
-					walk.clearTask(ctx.State)
-					return nil, true
-				}
+			if dir, ok := ctx.State.ActiveStrategicDirective(ctx.Frame.WorldTick); ok && dir.Action != DirectiveActionGatherTimber &&
+				(dir.Rescue || taskStalled(walk.task, ctx.Frame.WorldTick)) &&
+				(dir.Action == DirectiveActionScoutFrontier || dir.Action == DirectiveActionMineStone ||
+					dir.Action == DirectiveActionSocialize || dir.Action == DirectiveActionBuildShelter ||
+					dir.Action == DirectiveActionForageFood && NeedsForaging(ctx.Frame)) {
+				walk.clearTask(ctx.State)
+				return nil, true
 			}
 		}
 

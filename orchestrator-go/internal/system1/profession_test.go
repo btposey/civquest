@@ -7,8 +7,11 @@ import (
 	"github.com/btposey/civquest/orchestrator-go/internal/xdg"
 )
 
-// consecrateSettlement selects a clan site at the origin.
-func consecrateSettlement(st *AgentState) { st.SetCollectiveSettlementSite(0.5, 64, 0.5) }
+// consecrateSettlement makes the agent an established member of a settlement at the origin.
+func consecrateSettlement(st *AgentState) {
+	st.SetCollectiveSettlementSite(0.5, 64, 0.5)
+	st.AssignStrategy(StrategyProfession, 0)
+}
 
 // cq-6l3.12: no professions before a settlement; every agent is an explorer until then.
 func TestProfession_ExplorerUntilSettlementEstablished(t *testing.T) {

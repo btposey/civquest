@@ -1,9 +1,9 @@
 package system1
 
-// Professions begin with a settlement (cq-6l3.12, cq-6l3.14). A settlement is the site a clan
-// has selected, or the homestead a lone agent has claimed. Until then every agent explores and
-// gathers, whatever profession it is configured for; a lone agent then becomes a homesteader.
-// A campfire or bed on its own is not a settlement.
+// Professions come with an established place in a settlement (cq-6l3.12, cq-6l3.14, cq-507.7).
+// A settlement is the site a clan has selected, or the homestead a lone agent has claimed; a
+// campfire or bed on its own is not one. Which trade an agent follows depends on its strategy
+// (strategy.go).
 
 import (
 	"strings"
@@ -14,6 +14,7 @@ import (
 const (
 	professionExplorer    = "EXPLORER"
 	professionHomesteader = "HOMESTEADER"
+	professionSettler     = "SETTLER"
 )
 
 // Settlement kinds, as stored in db.SettlementClaim.
@@ -70,21 +71,30 @@ func (s *AgentState) SettlementEstablished() bool {
 // travelsTheWild reports whether an agent of this profession gathers across unmapped country,
 // so it surveys rather than walking straight at an unverified distant sighting.
 func travelsTheWild(profession string) bool {
-	return isExplorerProfession(profession) || strings.EqualFold(strings.TrimSpace(profession), professionHomesteader)
+	return isExplorerProfession(profession) || strings.EqualFold(strings.TrimSpace(profession), professionHomesteader) ||
+		strings.EqualFold(strings.TrimSpace(profession), professionSettler)
 }
 
-// EffectiveIdentity returns the identity behaviour and speech must use: an explorer before a
-// settlement, a homesteader on the agent's own homestead, otherwise cfg itself. cfg is never
+// EffectiveIdentity returns the identity behaviour and speech must use, which follows the
+// strategy: an explorer while exploring, a settler while making a home, and the configured
+// profession once established. A lone agent is a homesteader on its own homestead. cfg is never
 // modified.
 func EffectiveIdentity(state *AgentState, cfg *xdg.AgentIdentityConfig) *xdg.AgentIdentityConfig {
 	if cfg == nil {
 		return nil
 	}
 	want := professionExplorer
-	switch st, ok := state.Settlement(); {
-	case ok && st.Kind == SettlementHomestead:
+	st, settled := state.Settlement()
+	switch strategy := state.BaseStrategy(); {
+	case strategy == StrategyExplore:
+		if isExplorerProfession(cfg.Profession) {
+			return cfg
+		}
+	case settled && st.Kind == SettlementHomestead:
 		want = professionHomesteader
-	case ok, isExplorerProfession(cfg.Profession):
+	case strategy == StrategySettle:
+		want = professionSettler
+	default:
 		return cfg
 	}
 	cp := *cfg

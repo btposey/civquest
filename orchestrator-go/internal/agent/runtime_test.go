@@ -22,6 +22,7 @@ import (
 	"github.com/btposey/civquest/orchestrator-go/internal/bridge"
 	"github.com/btposey/civquest/orchestrator-go/internal/db"
 	civquestv1 "github.com/btposey/civquest/orchestrator-go/internal/proto/v1"
+	"github.com/btposey/civquest/orchestrator-go/internal/system1"
 	"github.com/btposey/civquest/orchestrator-go/internal/system2"
 	"github.com/btposey/civquest/orchestrator-go/internal/xdg"
 	"google.golang.org/grpc"
@@ -2551,6 +2552,7 @@ func TestRuntime_System2_ClanChroniclerBookSynthesis(t *testing.T) {
 
 	// Professions apply only once a settlement exists (cq-6l3.12).
 	rt.System1State().SetCollectiveSettlementSite(0, 64, 0)
+	rt.System1State().AssignStrategy(system1.StrategyProfession, 0)
 
 	runErrCh := make(chan error, 1)
 	go func() {
@@ -2836,6 +2838,7 @@ func TestRuntime_AgrarianSharecroppingAndSpecialization(t *testing.T) {
 
 	// Career transitions need a settlement (cq-6l3.14).
 	rt.System1State().SetCollectiveSettlementSite(10, 64, 10)
+	rt.System1State().AssignStrategy(system1.StrategyProfession, 0)
 
 	runErrCh := make(chan error, 1)
 	go func() {
@@ -3705,6 +3708,9 @@ func TestRuntime_Phase3IntentBatchAndReceiptFlow(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed creating runtime: %v", err)
 	}
+	// The evening gathering belongs to established members (cq-507.7).
+	rt.System1State().SetCollectiveSettlementSite(0, 64, 0)
+	rt.System1State().AssignStrategy(system1.StrategyProfession, 0)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -3912,6 +3918,11 @@ func TestRuntime_PioneerGenesisAndNucleationLifecycle(t *testing.T) {
 		t.Errorf("a campfire alone unlocked %q", prof)
 	}
 	rtSpecialized.System1State().SetCollectiveSettlementSite(12, 64, 12)
+	// A member settles first, and takes up the trade once established (cq-507.7).
+	if prof := rtSpecialized.Profession(); prof != "SETTLER" {
+		t.Errorf("a new member should be a settler, got %q", prof)
+	}
+	rtSpecialized.System1State().AssignStrategy(system1.StrategyProfession, 100)
 	if prof := rtSpecialized.Profession(); prof != "FARMER" {
 		t.Errorf("expected profession unlocked to FARMER once the clan site is chosen, got %q", prof)
 	}

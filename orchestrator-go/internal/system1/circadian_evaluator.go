@@ -52,6 +52,7 @@ func (e *CircadianEvaluator) Evaluate(ctx *EvaluatorContext, graph *FactGraph) e
 		routine = ComputeCircadianRoutine(tod, weather, ctx.Config, state)
 	}
 	if state != nil {
+		routine = rhythm(state.BaseStrategy(), routine)
 		routine = gateBootstrapCircadianRoutine(state.Stage(), routine, state, isStateShelterOrBedSatisfied(state))
 	}
 

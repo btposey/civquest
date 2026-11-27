@@ -251,30 +251,36 @@ func scenarioTaskSurvivesEmergency() replayScenario {
 
 // 8
 func scenarioDirectivePreference() replayScenario {
+	at := func(tick int64) *civquestv1.TelemetryFrame {
+		return rf(tick, 4000, withPos(-40.5, 86, -7.5), withBlocks(blk(-46, 86, -8, "minecraft:oak_log")))
+	}
+	hasTask := func(st *AgentState) string { return fmt.Sprintf("hasTask=%t", st.HasActiveTask()) }
 	return replayScenario{
 		Name: "directive_preference_over_stale_task", Stage: StageBootstrap, Profession: "EXPLORER",
 		Steps: []replayStep{
-			{Frame: rf(100, 4000, withPos(-40.5, 86, -7.5), withBlocks(blk(-46, 86, -8, "minecraft:oak_log"))),
-				StartTask: NewHarvestTreeTask(-46, 86, -8, StageBootstrap, 100), Annotation: "harvest_tree committed, no directive"},
-			{Frame: rf(204, 4000, withPos(-40.5, 86, -7.5), withBlocks(blk(-46, 86, -8, "minecraft:oak_log"))),
+			{Frame: at(100), StartTask: NewHarvestTreeTask(-46, 86, -8, StageBootstrap, 100), Annotation: "harvest_tree committed, no directive"},
+			{Frame: at(204),
 				Directive: &replayDirective{Action: DirectiveActionScoutFrontier, Target: "eastern forest", Goal: "SCOUT_FRONTIER: pivot", IssuedTick: 200, ExpiresAt: 6200},
-				Probe:     func(st *AgentState) string { return fmt.Sprintf("hasTask=%t", st.HasActiveTask()) }, Annotation: "fresh scout directive preempts older task"},
-			{Frame: rf(210, 4000, withPos(-40.5, 86, -7.5), withBlocks(blk(-46, 86, -8, "minecraft:oak_log"))),
-				Probe: func(st *AgentState) string { return fmt.Sprintf("hasTask=%t", st.HasActiveTask()) }, Annotation: "directive continues"},
+				Probe:     hasTask, Annotation: "fresh advice does not interrupt the task (cq-507.7)"},
+			{Frame: at(210), Probe: hasTask, Annotation: "still working"},
+			{Frame: at(420), Probe: hasTask, Annotation: "the task has stopped getting anywhere: the advice replaces it"},
 			// cq-aik.31: the survey holds silently while Java sweeps (36 sectors x 2 ticks); it is
 			// bounded by its 120-tick lease and ends in a report (next scenario) or a re-survey.
-			{Frame: rf(250, 4000, withPos(-40.5, 86, -7.5), withBlocks(blk(-46, 86, -8, "minecraft:oak_log"))), Annotation: "sweep in progress: holding, lease not expired"},
-			{Frame: rf(325, 4000, withPos(-40.5, 86, -7.5), withBlocks(blk(-46, 86, -8, "minecraft:oak_log"))), Annotation: "lease (120) expired without a report: bounded re-survey, not idle"},
+			{Frame: at(470), Annotation: "sweep in progress: holding, lease not expired"},
+			{Frame: at(545), Annotation: "lease (120) expired without a report: bounded re-survey, not idle"},
 		},
 		Check: func(t *testing.T, tr []replayRecord) {
-			if !hasIntentPrefix(tr[1], "Survey(") {
-				t.Fatalf("expected directive survey intent: %s", tr[1])
+			if hasIntentPrefix(tr[1], "Survey(") || hasIntentPrefix(tr[2], "Survey(") {
+				t.Fatalf("fresh advice interrupted a working task: %s / %s", tr[1], tr[2])
 			}
-			if len(tr[3].Intents) != 0 || tr[3].Top != activityKindSurvey {
-				t.Fatalf("survey must hold inside its lease: %s", tr[3])
+			if !hasIntentPrefix(tr[3], "Survey(") {
+				t.Fatalf("expected the advice to rescue the stalled task: %s", tr[3])
 			}
-			if !hasIntentPrefix(tr[4], "Survey(") {
-				t.Fatalf("an expired survey lease must re-survey (bounded wait): %s", tr[4])
+			if len(tr[4].Intents) != 0 || tr[4].Top != activityKindSurvey {
+				t.Fatalf("survey must hold inside its lease: %s", tr[4])
+			}
+			if !hasIntentPrefix(tr[5], "Survey(") {
+				t.Fatalf("an expired survey lease must re-survey (bounded wait): %s", tr[5])
 			}
 		},
 	}

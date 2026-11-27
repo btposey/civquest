@@ -336,7 +336,7 @@ func (gatherActivity) find(lw *fsmWorld) *gatherFind {
 	f := ctx.Frame
 	if len(f.IncomingChats) > 0 || f.PendingTrade != nil || ctx.IsDuskOrNight() ||
 		f.Status.FoodLevel <= foragingFedFoodLevel || !woolSafe(f) || hasSurvivalPreemption(f) ||
-		lw.backedOff(activityKindGather) || ctx.State.SettlementEstablished() {
+		lw.backedOff(activityKindGather) || !gathersHere(ctx.State, f.Status.Position) {
 		return nil
 	}
 	return bestGatherFind(ctx.AgentID, f, ctx.State, func(key string) bool {
@@ -345,6 +345,18 @@ func (gatherActivity) find(lw *fsmWorld) *gatherFind {
 		}
 		return lw.gatherSkipped(key)
 	})
+}
+
+// gathersHere: explorers take what they pass; settlers stock up around their settlement.
+func gathersHere(state *AgentState, pos *civquestv1.Vec3) bool {
+	switch state.BaseStrategy() {
+	case StrategyExplore:
+		return true
+	case StrategySettle:
+		st, ok := state.Settlement()
+		return ok && pos != nil && math.Hypot(pos.X-st.Pos[0], pos.Z-st.Pos[2]) <= gatherNearHome
+	}
+	return false
 }
 
 func (a gatherActivity) run(lw *fsmWorld, local any) htpda.Step {

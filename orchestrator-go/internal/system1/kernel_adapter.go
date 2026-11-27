@@ -143,7 +143,8 @@ func unwrapFSMIntents(in []FSMIntent) []*civquestv1.AgentIntent {
 // newActivityKernel builds the per-agent kernel: every activity owns its Propose; the weights
 // come from the PriorityTable (activity_priorities.go).
 func newActivityKernel(managed []waterfallActivity) *htpda.Kernel {
-	acts := []htpda.Activity{goalActivity{}, emergencyActivity{}, deadActivity{}, expeditionActivity{}, surveyActivity{}, navigateActivity{}, recoverActivity{}}
+	acts := []htpda.Activity{goalActivity{StrategyExplore}, goalActivity{StrategySettle}, goalActivity{StrategyProfession},
+		goalActivity{StrategyIdle}, emergencyActivity{}, deadActivity{}, expeditionActivity{}, surveyActivity{}, navigateActivity{}, recoverActivity{}}
 	for _, m := range managed {
 		acts = append(acts, m)
 	}
@@ -292,6 +293,22 @@ func (fsm *AgentFSM) applyMemoryLocked(w *fsmWorld, writes []htpda.MemoryWrite) 
 			l := l
 			l.Tick = w.tick
 			fsm.escapeLock = &l
+			continue
+		}
+		if _, ok := wr.(rescueSpent); ok {
+			if w.ctx.State != nil {
+				w.ctx.State.spendRescue()
+			}
+			continue
+		}
+		if p, ok := wr.(idlePause); ok {
+			if w.ctx.State != nil {
+				if p.Enter {
+					w.ctx.State.enterIdle()
+				} else {
+					w.ctx.State.leaveIdle()
+				}
+			}
 			continue
 		}
 		if g, ok := wr.(gaveUpHere); ok {

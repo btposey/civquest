@@ -319,7 +319,11 @@ func TestPlaytest2_06_SettlementPlacesRecommendedBlueprintByDay(t *testing.T) {
 	s := eval.NewPlaytestSim(eval.PlaytestSimConfig{
 		Profession: "BUILDER", Stage: system1.StageSettlement, World: w, Registry: hutRegistry(),
 		Start: eval.SimVec{X: 3.5, Y: 64, Z: 3.5}, Inventory: inv, TimeOfDay: 1000,
-		Setup: func(st *system1.AgentState) { st.SetHomeOrigin(&civquestv1.Vec3{X: 0.5, Y: 64, Z: 0.5}) },
+		Setup: func(st *system1.AgentState) {
+			st.SetHomeOrigin(&civquestv1.Vec3{X: 0.5, Y: 64, Z: 0.5})
+			st.SetCollectiveSettlementSite(0.5, 64, 0.5) // building belongs to a settlement (cq-507.7)
+			st.AssignStrategy(system1.StrategyProfession, 0)
+		},
 	})
 	s.Run(2 * simTicksPerMinute)
 

@@ -59,7 +59,7 @@ func runnableDirective(frame *civquestv1.TelemetryFrame, state *AgentState) (Str
 
 // directiveAction returns the runnable, stage-eligible directive's action ("" when none).
 func directiveAction(stage Stage, routine Routine, ctx *FSMContext) (StrategicDirectiveState, bool) {
-	if ctx == nil || ctx.State == nil || ctx.Frame == nil || ctx.Frame.Status == nil ||
+	if ctx == nil || ctx.IgnoreAdvice || ctx.State == nil || ctx.Frame == nil || ctx.Frame.Status == nil ||
 		!isStrategicDirectiveEligible(stage, routine, ctx) {
 		return StrategicDirectiveState{}, false
 	}

@@ -82,7 +82,7 @@ User direction, 2026-11-26. The base frame is one long-running **strategic machi
 
 | Machine | When | Objectives | Rhythm | Acts as |
 |---|---|---|---|---|
-| explore | no settlement | equip, provision, gather, shelter, bed, travel | day work, night rest | explorer |
+| explore | no settlement | equip, provision, gather, shelter, bed, travel | day work, evening camp, night rest | explorer |
 | settle | has a settlement, not yet established in it | equip, provision, gather near home, shelter, bed, build | day work, evening together, night rest | settler (a homesteader if alone) |
 | profession | has a bed or shelter there and has been settled a while | its duties, build, provision, shelter, bed | the profession's shifts | its profession |
 | idle | nothing to do for a while | provision, shelter, bed | as before | as before |

@@ -2342,6 +2342,9 @@ func (r *AgentRuntime) dispatchContemplation(frame *civquestv1.TelemetryFrame) {
 		// 1. Update goals thread-safely and publish System 1 executable directive (ADR-031)
 		r.UpdateGoals(resp.ImmediateGoal, resp.ShortTermGoal, resp.LongTermGoal)
 		r.applyContemplationDirective(resp, frame.WorldTick)
+		if triggerReason == "daytime_idle" {
+			r.system1State.MarkDirectiveRescue()
+		}
 
 		// 2. Update trade valuations in agentDB and runtime cache
 		if len(resp.TradeAdjustments) > 0 && agentDB != nil {

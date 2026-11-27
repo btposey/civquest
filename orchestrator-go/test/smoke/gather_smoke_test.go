@@ -50,9 +50,26 @@ func TestSmoke_ExplorerGathersAlongTheWay(t *testing.T) {
 	assertStayedDry(t, s)
 }
 
+// A settler stocks up around its new home, and not far from it (cq-507.7).
+func TestSmoke_SettlerStocksUpNearHomeOnly(t *testing.T) {
+	for _, c := range []struct {
+		home  float64
+		takes bool
+	}{{0.5, true}, {300.5, false}} {
+		s := harvestSim(findsWorld(), travellerKit(), 18)
+		s.State.SetCollectiveSettlementSite(c.home, 64, 0.5)
+		s.State.AssignStrategy(system1.StrategySettle, 0)
+		s.Run(2 * harvestSimMinute)
+		got := s.ItemCount("minecraft:raw_iron")+s.ItemCount("minecraft:sweet_berries") > 0
+		if got != c.takes {
+			t.Errorf("home at x=%.0f: gathered=%t want %t (%s)", c.home, got, c.takes, s.InventorySummary())
+		}
+	}
+}
+
 func TestSmoke_SettledAgentDoesNotStockpileInPassing(t *testing.T) {
 	s := harvestSim(findsWorld(), travellerKit(), 18)
-	s.State.SetCollectiveSettlementSite(0.5, 64, 0.5)
+	consecrate(s.State) // an established member of a settlement
 	s.Run(2 * harvestSimMinute)
 	if n := s.ItemCount("minecraft:raw_iron") + s.ItemCount("minecraft:sweet_berries"); n != 0 || s.Fauna().Casts != 0 {
 		t.Errorf("a settled agent gathered in passing: casts=%d inventory=%s", s.Fauna().Casts, s.InventorySummary())

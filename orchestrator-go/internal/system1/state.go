@@ -125,6 +125,9 @@ type StrategicDirectiveState struct {
 	ImmediateGoal string `json:"immediate_goal,omitempty"`
 	IssuedTick    int64  `json:"issued_tick"`
 	ExpiresTick   int64  `json:"expires_tick"`
+	// Rescue marks advice asked for because the agent was standing idle: unlike other advice it
+	// may interrupt work under way, until the work it asks for has been launched.
+	Rescue bool `json:"rescue,omitempty"`
 }
 
 type receiptSlot struct {
@@ -214,7 +217,9 @@ type AgentState struct {
 	ClanSize         int
 	RendezvousOrigin *[3]float64 // nil = the home origin (resolved when an expedition starts)
 	HomesteadClaimed bool
-	HomesteadPos     [3]float64
+	// strategy is the strategic machine the agent is in (strategy.go).
+	strategy     StrategyRecord
+	HomesteadPos [3]float64
 	// Collective clan settlement site chosen at rendezvous (durable knowledge).
 	CollectiveSiteChosen bool
 	CollectiveSitePos    [3]float64
@@ -1275,6 +1280,26 @@ func (s *AgentState) SetStrategicDirective(action, target, immediateGoal string,
 		ImmediateGoal: strings.TrimSpace(immediateGoal),
 		IssuedTick:    issuedTick,
 		ExpiresTick:   expiresTick,
+	}
+}
+
+// MarkDirectiveRescue marks the current directive as the answer to a stalled agent.
+func (s *AgentState) MarkDirectiveRescue() {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.strategicDirective != nil {
+		s.strategicDirective.Rescue = true
+	}
+}
+
+func (s *AgentState) spendRescue() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.strategicDirective != nil {
+		s.strategicDirective.Rescue = false
 	}
 }
 

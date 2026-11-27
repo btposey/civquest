@@ -36,6 +36,9 @@ type FSMContext struct {
 	CivicDB        *db.CivicRegistryDB
 	Facts          *FactGraph
 	Registry       *EngineRegistry
+	// IgnoreAdvice hides System 2's directive while the base frame looks for something pressing
+	// enough to interrupt: advice is read when choosing work, never to interrupt it.
+	IgnoreAdvice bool
 }
 
 func resolveContextRegistry(ctx *FSMContext) *EngineRegistry {

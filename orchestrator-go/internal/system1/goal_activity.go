@@ -1,15 +1,41 @@
 package system1
 
-// The goal frame (ADR-040): the base of every agent's activity stack and the only place that
-// chooses between activities. It picks work when it has none, and while work is under way it
-// supervises: when something more pressing turns up it parks the whole subtree, intact, does
-// the pressing thing, and resumes. No activity launches a sibling or itself.
+// The base frame (ADR-040): the strategic machine (strategy.go) at the bottom of every agent's
+// activity stack, and the only place that chooses between activities. It picks work when it has
+// none, and while work is under way it supervises: when something more pressing turns up it parks
+// the whole subtree, intact, does the pressing thing, and resumes. No activity launches a sibling
+// or itself. When the strategy changes, the machine replaces itself with the new one.
 //
-// Stage 3 keeps the earlier priority order (activity_priorities.go) as the goal's policy.
+// The order of pressing needs (activity_priorities.go) is shared by the machines.
 
 import "github.com/btposey/civquest/orchestrator-go/internal/system1/htpda"
 
-const activityKindGoal = "goal"
+const (
+	activityKindExplore    = "strategy_explore"
+	activityKindSettle     = "strategy_settle"
+	activityKindProfession = "strategy_profession"
+	activityKindIdle       = "strategy_idle"
+)
+
+var strategyKinds = map[Strategy]htpda.Kind{
+	StrategyExplore: activityKindExplore, StrategySettle: activityKindSettle,
+	StrategyProfession: activityKindProfession, StrategyIdle: activityKindIdle,
+}
+
+func isStrategyKind(kind htpda.Kind) bool {
+	for _, k := range strategyKinds {
+		if k == kind {
+			return true
+		}
+	}
+	return false
+}
+
+// switchStrategy is the Park token of a base frame whose strategy has changed.
+type switchStrategy struct{}
+
+// idlePause is the Memory write that enters or leaves the idle pause.
+type idlePause struct{ Enter bool }
 
 // candidate is work the goal could launch.
 type candidate struct {
@@ -22,35 +48,57 @@ type candidate struct {
 type goalLocal struct {
 	// Parked holds the work set aside, oldest first; immutable, extend and shrink by copy.
 	Parked [][]htpda.Frame
+	// IdleSince is the first tick this machine found nothing to do (0: busy).
+	IdleSince int64
 }
 
 // parkedWork is implemented by locals that hold frames which are no longer on the kernel stack.
 func (l goalLocal) parkedWork() [][]htpda.Frame { return l.Parked }
 
-type goalActivity struct{}
+type goalActivity struct{ strategy Strategy }
 
 var (
 	_ htpda.Activity   = goalActivity{}
 	_ htpda.Supervisor = goalActivity{}
 )
 
-func (goalActivity) Kind() htpda.Kind                         { return activityKindGoal }
+func (g goalActivity) Kind() htpda.Kind                       { return strategyKinds[g.strategy] }
 func (goalActivity) Scope() htpda.Scope                       { return htpda.ScopeMotor }
 func (goalActivity) Level() htpda.Level                       { return htpda.LevelGoal }
 func (goalActivity) Init(htpda.World, any) (any, htpda.Lease) { return goalLocal{}, htpda.Lease{} }
 
-// Propose puts the goal under an empty stack; every other band outranks it, so it never
-// interrupts anything.
-func (goalActivity) Propose(w htpda.World) htpda.Bid {
-	if frameIsDead(w.Frame()) {
+// Propose puts the agent's current machine under an empty stack; every other band outranks it,
+// so it never interrupts anything.
+func (g goalActivity) Propose(w htpda.World) htpda.Bid {
+	lw := asFSMWorld(w)
+	if frameIsDead(w.Frame()) || lw == nil || lw.strategy() != g.strategy {
 		return htpda.Bid{}
 	}
-	return htpda.Bid{Band: htpda.BandIdle, Utility: 1, Reason: "goal"}
+	return htpda.Bid{Band: htpda.BandIdle, Utility: 1, Reason: "strategy"}
 }
 
-// Supervise parks the work under way when something more pressing has turned up.
-func (goalActivity) Supervise(w htpda.World, _ any, _ htpda.Kind) htpda.Verdict {
+func (w *fsmWorld) strategy() Strategy {
+	if w.ctx == nil || w.ctx.State == nil {
+		return StrategyExplore
+	}
+	return w.ctx.State.Strategy()
+}
+
+// objectives is the strategy whose objectives apply: an idle pause keeps its resumed one's.
+func (w *fsmWorld) objectives() Strategy {
+	if w.ctx == nil || w.ctx.State == nil {
+		return StrategyExplore
+	}
+	return w.ctx.State.BaseStrategy()
+}
+
+// Supervise parks the work under way when something more pressing has turned up, or when the
+// strategy has changed under it.
+func (g goalActivity) Supervise(w htpda.World, _ any, _ htpda.Kind) htpda.Verdict {
 	lw := asFSMWorld(w)
+	if lw != nil && lw.strategy() != g.strategy {
+		return htpda.Verdict{Park: true, Reason: "strategy changed", Token: switchStrategy{}}
+	}
 	if lw == nil || !lw.legacyReady() {
 		return htpda.Verdict{}
 	}
@@ -65,14 +113,33 @@ func (goalActivity) Supervise(w htpda.World, _ any, _ htpda.Kind) htpda.Verdict 
 func (g goalActivity) Step(w htpda.World, local any, ev htpda.Event) htpda.Step {
 	lw := asFSMWorld(w)
 	l := htpda.LocalAs[goalLocal](local)
-	switch e := ev.(type) {
+	switch ev.(type) {
 	case htpda.Cancel, htpda.Expired:
 		return g.abandon(w, l)
+	}
+	if p, ok := ev.(htpda.ChildDone); ok {
+		if parked, isParked := p.Result.(htpda.Parked); isParked {
+			if _, change := parked.Token.(switchStrategy); change {
+				l.Parked = append(append([][]htpda.Frame(nil), l.Parked...), parked.Frames)
+			}
+		}
+	}
+	if lw != nil && lw.strategy() != g.strategy {
+		// Replaced: work set aside for the old strategy banks what it knows and ends.
+		st := g.abandon(w, l)
+		st.Op, st.Child = htpda.OpReplace, strategyKinds[lw.strategy()]
+		return st
+	}
+	switch e := ev.(type) {
 	case htpda.ChildDone:
 		if p, ok := e.Result.(htpda.Parked); ok {
 			next, _ := p.Token.(candidate)
 			parked := append(append([][]htpda.Frame(nil), l.Parked...), setAside(p.Frames, w.Tick()))
-			return htpda.Step{Op: htpda.OpPush, Child: next.Kind, Args: next.Args, Next: goalLocal{Parked: parked}}
+			st := htpda.Step{Op: htpda.OpPush, Child: next.Kind, Args: next.Args, Next: goalLocal{Parked: parked}}
+			if lw != nil && lw.rescueAdvised() && fromAdvice(next) {
+				st.Memory = []htpda.MemoryWrite{rescueSpent{}}
+			}
+			return st
 		}
 		return g.after(lw, l, e.Child, e.Result)
 	case htpda.Resumed:
@@ -115,11 +182,33 @@ func resumeParked(l goalLocal, done htpda.Kind, result any) htpda.Step {
 		Next: goalLocal{Parked: l.Parked[: n-1 : n-1]}}
 }
 
-func (goalActivity) choose(lw *fsmWorld, l goalLocal) htpda.Step {
-	if lw != nil {
-		if next, ok := lw.bestWork(); ok {
-			return htpda.Step{Op: htpda.OpPush, Child: next.Kind, Args: next.Args, Next: l}
+func (g goalActivity) choose(lw *fsmWorld, l goalLocal) htpda.Step {
+	if lw == nil || !lw.legacyReady() {
+		return htpda.Step{Op: htpda.OpStay, Next: l}
+	}
+	tick := lw.Tick()
+	next, found := lw.bestWork()
+	if g.strategy == StrategyIdle {
+		// Idle ends when work appears, or when no advice has come in time. The machine it
+		// resumes launches the work.
+		if found || l.IdleSince != 0 && tick-l.IdleSince >= idleLimitTicks {
+			return htpda.Step{Op: htpda.OpStay, Next: l, Memory: []htpda.MemoryWrite{idlePause{}}}
 		}
+		if l.IdleSince == 0 {
+			l.IdleSince = tick
+		}
+		return htpda.Step{Op: htpda.OpStay, Next: l}
+	}
+	if found {
+		l.IdleSince = 0
+		return htpda.Step{Op: htpda.OpPush, Child: next.Kind, Args: next.Args, Next: l}
+	}
+	if l.IdleSince == 0 {
+		l.IdleSince = tick
+	}
+	if tick-l.IdleSince >= idleAfterTicks {
+		l.IdleSince = 0
+		return htpda.Step{Op: htpda.OpStay, Next: l, Memory: []htpda.MemoryWrite{idlePause{Enter: true}}}
 	}
 	return htpda.Step{Op: htpda.OpStay, Next: l}
 }
@@ -169,7 +258,7 @@ func (w *fsmWorld) bestWork() (candidate, bool) {
 			offer(candidate{Kind: activityKindExpedition, Args: expeditionArgs{Origin: activityKindStrategicDirective}, score: priorityExpedition * u})
 		}
 		for _, a := range w.fsm.managed {
-			if w.skipped[string(a.Kind())] {
+			if w.skipped[string(a.Kind())] || !strategyAllows(w.objectives(), string(a.Kind())) {
 				continue
 			}
 			if args, ok := a.args(w); ok && a.eligible(w) {
@@ -212,6 +301,7 @@ func (w *fsmWorld) morePressing(frames []htpda.Frame) (candidate, bool) {
 		if p := pendingTaskOf(top.Local); p != nil && w.taskEligible(p) {
 			floor = max(floor, priorityTask)
 		}
+		defer w.withoutAdvice()()
 		if kind, args := w.preemptorAbove(floor, ""); kind != "" {
 			return candidate{Kind: htpda.Kind(kind), Args: args}, true
 		}
@@ -224,6 +314,7 @@ func (w *fsmWorld) morePressing(frames []htpda.Frame) (candidate, bool) {
 // above the expedition's own priority; for a bootstrap trip, timber within reach (the plan
 // takes it when its next step is actionable, cq-dcx.4); and, on a leg, a find worth taking.
 func (w *fsmWorld) duringTravel(origin string, returning, leg bool) (candidate, bool) {
+	defer w.withoutAdvice()()
 	if kind, args := w.preemptorAbove(expeditionPriority, origin); kind != "" {
 		return candidate{Kind: htpda.Kind(kind), Args: args}, true
 	}
@@ -242,6 +333,37 @@ func (w *fsmWorld) duringTravel(origin string, returning, leg bool) (candidate, 
 	return candidate{}, false
 }
 
+// withoutAdvice hides System 2's directive until the returned func is called. Advice asked for
+// because the agent was standing idle stays visible: it may interrupt until acted on.
+func (w *fsmWorld) withoutAdvice() func() {
+	if w.ctx == nil || w.rescueAdvised() {
+		return func() {}
+	}
+	was := w.ctx.IgnoreAdvice
+	w.ctx.IgnoreAdvice = true
+	return func() { w.ctx.IgnoreAdvice = was }
+}
+
+// rescueAdvised reports an unspent rescue directive.
+func (w *fsmWorld) rescueAdvised() bool {
+	if w.ctx == nil || w.ctx.State == nil {
+		return false
+	}
+	dir, ok := w.ctx.State.ActiveStrategicDirective(w.Tick())
+	return ok && dir.Rescue
+}
+
+// fromAdvice reports work that exists only because the directive asked for it.
+func fromAdvice(c candidate) bool {
+	if a, ok := c.Args.(expeditionArgs); ok {
+		return a.Origin == activityKindStrategicDirective
+	}
+	return c.Kind == activityKindStrategicDirective
+}
+
+// rescueSpent is the Memory write of a rescue directive that has interrupted.
+type rescueSpent struct{}
+
 // taskEligible reports whether the pending task could be framed now.
 func (w *fsmWorld) taskEligible(p *taskStart) bool {
 	was := w.pending
@@ -258,7 +380,7 @@ type parkedHolder interface{ parkedWork() [][]htpda.Frame }
 func logicalFrames(stack []htpda.Frame) []htpda.Frame {
 	var out []htpda.Frame
 	for _, f := range stack {
-		if f.Kind() != activityKindGoal {
+		if !isStrategyKind(f.Kind()) {
 			out = append(out, f)
 		}
 		if h, ok := f.Local.(parkedHolder); ok {

@@ -6,6 +6,10 @@ package system1
 import "github.com/btposey/civquest/orchestrator-go/internal/system1/htpda"
 
 var activityLevels = map[htpda.Kind]htpda.Level{
+	activityKindExplore:            htpda.LevelGoal,
+	activityKindSettle:             htpda.LevelGoal,
+	activityKindProfession:         htpda.LevelGoal,
+	activityKindIdle:               htpda.LevelGoal,
 	activityKindStrategicDirective: htpda.LevelObjective,
 	activityKindForaging:           htpda.LevelObjective,
 	activityKindShelter:            htpda.LevelObjective,

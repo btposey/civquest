@@ -1,5 +1,6 @@
 t=100 stage=BOOTSTRAP routine=HARVEST_TREE stack=[task_subroutine/1] intents=[Navigate(x=-45.5 z=-7.5)]  // harvest_tree committed, no directive
-t=204 stage=BOOTSTRAP routine=PRIMARY_DUTY stack=[survey/2] intents=[Survey(sectors=36)] probe={hasTask=false}  // fresh scout directive preempts older task
-t=210 stage=BOOTSTRAP routine=PRIMARY_DUTY stack=[survey/2] intents=[] probe={hasTask=false}  // directive continues
-t=250 stage=BOOTSTRAP routine=PRIMARY_DUTY stack=[survey/2] intents=[]  // sweep in progress: holding, lease not expired
-t=325 stage=BOOTSTRAP routine=PRIMARY_DUTY stack=[survey/2] intents=[Survey(sectors=36)]  // lease (120) expired without a report: bounded re-survey, not idle
+t=204 stage=BOOTSTRAP routine=HARVEST_TREE stack=[task_subroutine/1] intents=[Navigate(x=-45.5 z=-7.5)] probe={hasTask=true}  // fresh advice does not interrupt the task (cq-507.7)
+t=210 stage=BOOTSTRAP routine=HARVEST_TREE stack=[task_subroutine/1] intents=[] probe={hasTask=true}  // still working
+t=420 stage=BOOTSTRAP routine=PRIMARY_DUTY stack=[survey/2] intents=[Survey(sectors=36)] probe={hasTask=false}  // the task has stopped getting anywhere: the advice replaces it
+t=470 stage=BOOTSTRAP routine=PRIMARY_DUTY stack=[survey/2] intents=[]  // sweep in progress: holding, lease not expired
+t=545 stage=BOOTSTRAP routine=PRIMARY_DUTY stack=[survey/2] intents=[Survey(sectors=36)]  // lease (120) expired without a report: bounded re-survey, not idle

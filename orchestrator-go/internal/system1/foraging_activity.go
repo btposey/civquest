@@ -92,7 +92,7 @@ func (l forageLocal) clone() forageLocal {
 // directiveForcesForaging reports whether an active FORAGE_FOOD directive makes foraging
 // eligible even when not hungry (the directive is a bid source, not an executor).
 func directiveForcesForaging(stage Stage, routine Routine, ctx *FSMContext) bool {
-	if ctx == nil || ctx.State == nil || ctx.Frame == nil || ctx.Frame.Status == nil {
+	if ctx == nil || ctx.IgnoreAdvice || ctx.State == nil || ctx.Frame == nil || ctx.Frame.Status == nil {
 		return false
 	}
 	dir, ok := ctx.State.ActiveStrategicDirective(ctx.Frame.WorldTick)

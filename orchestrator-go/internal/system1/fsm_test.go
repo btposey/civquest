@@ -25,6 +25,8 @@ func TestFSM_StateTransitions(t *testing.T) {
 
 	state := NewAgentState()
 
+	consecrateSettlement(state)
+
 	// 1. In Bootstrap, with survival kit (axe, sword, torch) in daylight -> transitions to SETTLEMENT
 	ctx := &FSMContext{
 		AgentID: "fsm_test_agent",
@@ -303,6 +305,7 @@ func TestFSM_CriticalHungerNoThrashing(t *testing.T) {
 func TestFSM_SteadyStateExploreUtilitySynchronization(t *testing.T) {
 	fsm := NewAgentFSM(StateExplore, nil)
 	state := NewAgentState()
+	consecrateSettlement(state)
 	cfg := &xdg.AgentIdentityConfig{}
 	state.SetAssignedBed(&civquestv1.BlockPosProto{X: 10, Y: 64, Z: 10})
 
@@ -934,6 +937,7 @@ func TestFSM_NonPreemptibleTaskClearedOnEmergency(t *testing.T) {
 func TestFSM_MacroRoutineTransitionsEmitFlushPeriphery(t *testing.T) {
 	fsm := NewAgentFSM(StageSettlement, nil)
 	state := NewAgentState()
+	consecrateSettlement(state)
 
 	makeCtx := func(tick, tod int64) *FSMContext {
 		return &FSMContext{
@@ -1266,6 +1270,7 @@ func TestFSM_BootstrapNightWithLogsBuildsShelterAndGatesCircadianOnceComplete(t 
 	t.Run("Night tod=16000 with logs still crafts planks and builds shelter", func(t *testing.T) {
 		fsm := NewAgentFSM(StageBootstrap, nil)
 		state := NewAgentState()
+		consecrateSettlement(state)
 		state.SetRecipeGraph(newTestRecipeGraph())
 		cfg := xdg.DefaultAgentIdentityConfig("earl")
 		cfg.Profession = "EXPLORER"
@@ -1301,6 +1306,7 @@ func TestFSM_BootstrapNightWithLogsBuildsShelterAndGatesCircadianOnceComplete(t 
 	t.Run("IsShelterComplete unlocks normal circadian TavernSocial and Sleep routines in BOOTSTRAP", func(t *testing.T) {
 		fsm := NewAgentFSM(StageBootstrap, nil)
 		state := NewAgentState()
+		consecrateSettlement(state)
 		state.SetCabinBuilt(blueprints.CabinTotalBlocks)
 		cfg := xdg.DefaultAgentIdentityConfig("earl")
 		cfg.Profession = "EXPLORER"
@@ -1354,6 +1360,7 @@ func TestFSM_BootstrapNightWithLogsBuildsShelterAndGatesCircadianOnceComplete(t 
 	t.Run("HasAssignedBed unlocks normal circadian Sleep and emits SLEEP_IN_BED in BOOTSTRAP", func(t *testing.T) {
 		fsm := NewAgentFSM(StageBootstrap, nil)
 		state := NewAgentState()
+		consecrateSettlement(state)
 		state.SetAssignedBed(&civquestv1.BlockPosProto{X: 1, Y: 64, Z: 0})
 		cfg := xdg.DefaultAgentIdentityConfig("earl")
 
@@ -1384,7 +1391,7 @@ func TestFSM_BootstrapNightWithLogsBuildsShelterAndGatesCircadianOnceComplete(t 
 	})
 }
 
-func TestFSM_BootstrapFreshSystem2DirectivePreemptsHarvestTree(t *testing.T) {
+func TestFSM_FreshAdviceDoesNotInterruptAWorkingTask(t *testing.T) {
 	fsm := NewAgentFSM(StageBootstrap, nil)
 	state := NewAgentState()
 	cfg := xdg.DefaultAgentIdentityConfig("carl")
@@ -1416,10 +1423,13 @@ func TestFSM_BootstrapFreshSystem2DirectivePreemptsHarvestTree(t *testing.T) {
 		},
 	})
 
-	if len(res.Intents) == 0 || res.Intents[0].Intent.GetSurveyHorizon() == nil {
-		t.Fatalf("expected fresh SCOUT_FRONTIER directive to preempt harvest_tree and emit SurveyHorizonIntent, got %+v", res.Intents)
+	// cq-507.7: System 2 advice never interrupts work under way (the user: no fickleness).
+	for _, in := range res.Intents {
+		if in.Intent.GetSurveyHorizon() != nil {
+			t.Fatalf("fresh advice interrupted the harvest: %+v", res.Intents)
+		}
 	}
-	if state.HasActiveTask() {
-		t.Fatalf("expected stale harvest_tree task to be cleared upon System 2 directive preemption")
+	if !state.HasActiveTask() {
+		t.Fatal("the working harvest task must carry on")
 	}
 }

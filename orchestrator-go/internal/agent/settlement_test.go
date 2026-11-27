@@ -82,8 +82,8 @@ func TestSettlement_ClanSelectsOneSiteAndMembersRememberIt(t *testing.T) {
 	if !ok || chosen.Kind != system1.SettlementClanSite {
 		t.Fatalf("no clan site after a good survey: %+v %t", chosen, ok)
 	}
-	if got := first.rt.Profession(); got != "FARMER" {
-		t.Errorf("after settling: %q", got)
+	if got := first.rt.Profession(); got != "SETTLER" {
+		t.Errorf("a new member: %q", got)
 	}
 
 	// A clanmate who found somewhere even better still joins the standing site.

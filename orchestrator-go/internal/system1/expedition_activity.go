@@ -1228,7 +1228,7 @@ func (w *fsmWorld) preemptorAbove(priority float64, skip string) (string, any) {
 		if k, a, ok := bid(prio - 1e-9); ok && eu >= prio {
 			return k, a
 		}
-		if w.skipped[kind] || kind == skip {
+		if w.skipped[kind] || kind == skip || !strategyAllows(w.objectives(), kind) {
 			continue
 		}
 		// An activity already on the stack is not launched again on top of it, or a

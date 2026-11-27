@@ -211,6 +211,7 @@ func TestAgentFSM_Tick_FactsIntegration(t *testing.T) {
 	// Verify that AgentFSM.Tick populates ctx.Facts if nil, and SettlementStateHandler uses it
 	fsm := NewAgentFSM(StageSettlement, nil)
 	state := NewAgentState()
+	consecrateSettlement(state)
 	state.SetStageAndRoutine(StageSettlement, RoutineArmoryMaintenance)
 	state.SetArmoryMaintenanceNeeded(true)
 

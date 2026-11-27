@@ -547,6 +547,7 @@ func (fsm *AgentFSM) Tick(ctx *FSMContext) FSMResult {
 		if ctx.State != nil && ctx.State.bedReg() != nil {
 			ctx.State.ensureOwnBed(ctx.AgentID, ctx.Frame)
 		}
+		fsm.advanceStrategy(ctx)
 		configured := ctx.Config
 		ctx.Config = EffectiveIdentity(ctx.State, configured)
 		defer func() { ctx.Config = configured }()
@@ -873,6 +874,9 @@ func computeStageCircadianRoutine(
 	ctx *FSMContext,
 ) Routine {
 	routine := ComputeCircadianRoutine(tod, weather, cfg, state)
+	if state != nil {
+		routine = rhythm(state.BaseStrategy(), routine)
+	}
 	shelterSatisfied := isStateShelterOrBedSatisfied(state)
 	if !shelterSatisfied && ctx != nil {
 		shelterSatisfied = ctx.HasAssignedBed() || ctx.IsShelterComplete()
