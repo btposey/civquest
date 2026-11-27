@@ -275,6 +275,9 @@ func (w *fsmWorld) recoverArgsFor(ev htpda.Receipt, budget int) (recoverArgs, bo
 	if t, ok := w.fsm.navTargets[ev.Frame]; ok {
 		a.Target, a.HasTarget = t, true
 	}
+	if a.Cause != CauseCongestion && w.fsm.boxedIn(w.pos(), w.Tick()) {
+		a.Cause, a.Dig = CauseEnclosed, true
+	}
 	return a, true
 }
 
@@ -487,6 +490,9 @@ func (recoverActivity) blocked(loc recoverLocal, pos *civquestv1.Vec3) recoverBl
 // involved and no expedition (which flanks instead of blacklisting) writes Memory.
 func (a recoverActivity) giveUp(lw *fsmWorld, loc recoverLocal) htpda.Step {
 	st := a.pop(loc, a.blocked(loc, lw.pos()))
+	if loc.Cause != CauseCongestion && !loc.SawEntity {
+		st.Memory = append(st.Memory, spotGiveUp(lw.pos(), lw.Tick())...)
+	}
 	// An expedition flanks around one failure itself, so only a proven stall is recorded.
 	if loc.Cause != CauseCongestion && !loc.SawEntity && loc.HasTarget && (loc.Stalled || !lw.ctx.State.IsExpeditionActive()) {
 		st.Memory = append(st.Memory, recoverGaveUp{Target: loc.Target, Cause: loc.Cause, Tick: lw.Tick(), Stalled: loc.Stalled})

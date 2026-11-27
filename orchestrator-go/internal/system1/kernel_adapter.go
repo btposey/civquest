@@ -294,6 +294,10 @@ func (fsm *AgentFSM) applyMemoryLocked(w *fsmWorld, writes []htpda.MemoryWrite) 
 			fsm.escapeLock = &l
 			continue
 		}
+		if g, ok := wr.(gaveUpHere); ok {
+			fsm.noteSpot(g)
+			continue
+		}
 		if g, ok := wr.(recoverGaveUp); ok {
 			giveUps := recoverTunables.TerrainGiveUpsToBlacklist
 			if g.Stalled {
