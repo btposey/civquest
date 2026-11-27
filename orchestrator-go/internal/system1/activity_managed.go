@@ -110,8 +110,10 @@ func stepManaged(a waterfallActivity, w htpda.World, local any, ev htpda.Event) 
 			next = n
 		}
 		next = releaseCraftOnReceipt(next, rc)
-		// The frame that owns the failing intent owns its recovery (ADR-037 §3.2).
-		if args, ok := lw.recoverArgsFor(e, 0); ok {
+		// The frame that owns the failing intent owns its recovery (ADR-037 §3.2). A task
+		// walking into a cell recovers by doing without it (felling.go), not by Recover,
+		// whose give-up would cost it the whole tree.
+		if args, ok := lw.recoverArgsFor(e, 0); ok && !walkingIntoCell(local) {
 			args.Dig = args.Dig || scoutDigAllowed(local)
 			return htpda.Step{Op: htpda.OpPush, Child: activityKindRecover, Args: args, Next: next}
 		}

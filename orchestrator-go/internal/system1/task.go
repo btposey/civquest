@@ -3,6 +3,7 @@ package system1
 import (
 	"fmt"
 	"math"
+	"slices"
 	"strings"
 
 	"github.com/btposey/civquest/orchestrator-go/internal/db"
@@ -95,6 +96,9 @@ type TaskDescriptor struct {
 
 	// OnFail is invoked when transitioning to TaskPhaseFailed.
 	OnFail func(state *AgentState, frame *civquestv1.TelemetryFrame, current *TaskSubroutine, reason string)
+
+	// OnStandFailed is told that the cell a "stand:" sub-target names could not be walked into.
+	OnStandFailed func()
 }
 
 // TaskStepResult represents the output of a single TaskSubroutine evaluation tick.
@@ -237,6 +241,9 @@ func (t *TaskSubroutine) TickWithReceipt(agentID string, state *AgentState, fram
 				maxArrival := reach + float64(tol) + 1.0
 				withinArrival := (t.ActiveApproachPos == nil && t.ActiveSubTarget == nil) || distSq <= maxArrival*maxArrival
 				movedCloser := t.ApproachBestDistSq > 0 && distSq <= t.ApproachBestDistSq-1.0
+				if cell := standCell(t); cell != nil {
+					withinArrival, movedCloser = standingIn(frame.Status.Position, cell), false
+				}
 				if prevLastNavTick > 0 && (withinArrival || movedCloser) {
 					t.ConsecutiveFailures = 0
 					t.LastProgressTick = frame.WorldTick
@@ -259,6 +266,10 @@ func (t *TaskSubroutine) TickWithReceipt(agentID string, state *AgentState, fram
 		case civquestv1.IntentReceipt_RECEIPT_STATUS_FAILED:
 			t.LastActionTick = 0
 			t.LastNavigateTick = 0
+			if standCell(t) != nil {
+				t.giveUpStand(frame.WorldTick)
+				break
+			}
 			t.ConsecutiveFailures++
 			if t.Metadata == nil {
 				t.Metadata = make(map[string]string)
@@ -349,6 +360,11 @@ func (t *TaskSubroutine) TickWithReceipt(agentID string, state *AgentState, fram
 		}
 	}
 
+	if cell := standCell(t); cell != nil && !standingIn(frame.Status.Position, cell) &&
+		frame.WorldTick-t.LastProgressTick >= standGiveUpTicks {
+		t.giveUpStand(frame.WorldTick)
+	}
+
 	// 4. EVALUATE: select or advance sub-target
 	needsRefresh := t.Phase == "" || t.Phase == TaskPhaseEvaluate || t.ActiveApproachPos == nil
 	if !needsRefresh && t.Spec.NeedsSubTargetRefresh != nil {
@@ -408,6 +424,9 @@ func (t *TaskSubroutine) TickWithReceipt(agentID string, state *AgentState, fram
 			t.ActiveSubTarget = cloneBlockPos(blockPos)
 			t.ActiveTargetID = targetID
 			t.ApproachBestDistSq = distanceSqToSubTarget(frame.Status.Position, approachPos, blockPos)
+			if standCell(t) != nil && prevTargetID != targetID {
+				t.LastProgressTick = frame.WorldTick // the walk's own time budget starts now
+			}
 		}
 		t.Phase = TaskPhaseApproach
 	}
@@ -427,13 +446,17 @@ func (t *TaskSubroutine) TickWithReceipt(agentID string, state *AgentState, fram
 		inReach = vertical.ReachableAABB(vertical.Vec3{X: pos.X, Y: pos.Y, Z: pos.Z}, vertical.DefaultEyeHeight, reach,
 			vertical.Cell{X: int(t.ActiveSubTarget.X), Y: int(t.ActiveSubTarget.Y), Z: int(t.ActiveSubTarget.Z)})
 	}
+	stand := standCell(t)
+	if stand != nil {
+		inReach = standingIn(pos, stand)
+	}
 	if t.Phase != TaskPhasePrepare && t.Phase != TaskPhaseAct && !inReach {
 		t.Phase = TaskPhaseApproach
 		navState := frame.Status.NavigationState
 		if navState == civquestv1.NavigationState_NAVIGATION_STATE_PATHING {
 			return TaskStepResult{Phase: TaskPhaseApproach, Active: true}
 		}
-		if navState == civquestv1.NavigationState_NAVIGATION_STATE_STUCK &&
+		if navState == civquestv1.NavigationState_NAVIGATION_STATE_STUCK && stand == nil &&
 			t.LastNavigateTick > 0 && frame.WorldTick >= t.LastNavigateTick {
 			if frame.WorldTick-t.LastNavigateTick < 80 {
 				return TaskStepResult{Phase: TaskPhaseApproach, Active: true}
@@ -470,6 +493,9 @@ func (t *TaskSubroutine) TickWithReceipt(agentID string, state *AgentState, fram
 			if tolerance <= 0 {
 				tolerance = 2
 			}
+			if stand != nil {
+				tolerance = 1
+			}
 			navIntent := &civquestv1.AgentIntent{
 				AgentId: agentID,
 				Action: &civquestv1.AgentIntent_Navigate{
@@ -481,6 +507,7 @@ func (t *TaskSubroutine) TickWithReceipt(agentID string, state *AgentState, fram
 						},
 						SpeedMultiplier:  1.0,
 						ArrivalTolerance: tolerance,
+						IntoCell:         stand != nil,
 					},
 				},
 			}
@@ -766,7 +793,7 @@ func NewHarvestTreeTask(tx, ty, tz int32, stage Stage, startTick int64) *TaskSub
 	}
 	const treeReach = 4.5
 	const harvestTimeoutTicks = int64(150)
-	var planted bool
+	var planted, standGivenUp bool
 	var woodFamily string
 
 	spec := TaskDescriptor{
@@ -808,6 +835,12 @@ func NewHarvestTreeTask(tx, ty, tz int32, stage Stage, startTick int64) *TaskSub
 				}
 			}
 
+			if !standGivenUp {
+				if _, ok := walkUnderTrunk(frame, tx, ty, tz, treeReach, woodFamily); ok {
+					return false
+				}
+			}
+
 			// All reachable logs have been cleared. Check if autonomous sapling replanting is pending:
 			if !planted {
 				saplingID := findSaplingInInventory(frame, state)
@@ -825,6 +858,9 @@ func NewHarvestTreeTask(tx, ty, tz int32, stage Stage, startTick int64) *TaskSub
 			// Sapling plant target does not need refresh while active
 			if strings.HasPrefix(current.ActiveTargetID, "plant:") || isSaplingItemID(current.ActiveTargetID) {
 				return false
+			}
+			if cell := standCell(current); cell != nil {
+				return standingIn(frame.GetStatus().GetPosition(), cell)
 			}
 			// Refresh if active block disappeared (broken!) or if a reachable block exists while active is out of reach
 			curBlock := FindVisibleBlockAt(frame, current.ActiveSubTarget.X, current.ActiveSubTarget.Y, current.ActiveSubTarget.Z)
@@ -860,11 +896,11 @@ func NewHarvestTreeTask(tx, ty, tz int32, stage Stage, startTick int64) *TaskSub
 					}
 				}
 			}
-			// Bottom-up from the ground (the agent stands under the trunk); top-down
-			// felling is only for an agent already elevated on a ladder/scaffold
-			// (cq-3a0). Logs beyond reach from the ground are simply left.
-			elevated := frame != nil && frame.Status != nil && frame.Status.Position != nil &&
-				frame.Status.Position.Y > float64(ty)+1.0
+			// Bottom-up from the ground (felling.go); top-down felling is only for an agent
+			// already up on a ladder or scaffold (cq-3a0). Logs beyond reach from underneath
+			// are left.
+			pos := frame.GetStatus().GetPosition()
+			elevated := pos != nil && pos.Y > float64(ty)+fellingElevated
 			isTallMode := isTall && elevated
 			if current != nil && elevated {
 				if isTall {
@@ -873,9 +909,28 @@ func NewHarvestTreeTask(tx, ty, tz int32, stage Stage, startTick int64) *TaskSub
 					isTallMode = true
 				}
 			}
+			nearTrunk := pos != nil && math.Hypot(float64(tx)+0.5-pos.X, float64(tz)+0.5-pos.Z) <= 2.5
 
-			var chosen *civquestv1.VisibleBlock
-			if len(reachableLogs) > 0 {
+			var chosen, low *civquestv1.VisibleBlock
+			if !elevated {
+				low = bottomLog(frame, tx, ty, tz, woodFamily)
+				// A bottom log out of reach from beside the trunk is not chased.
+				if low != nil && nearTrunk && !slices.Contains(reachableLogs, low) {
+					low = nil
+				}
+				if low == nil && !standGivenUp {
+					if cell, ok := walkUnderTrunk(frame, tx, ty, tz, treeReach, woodFamily); ok {
+						approach := &civquestv1.Vec3{X: float64(cell.X) + 0.5, Y: float64(cell.Y), Z: float64(cell.Z) + 0.5}
+						if current != nil {
+							current.Metadata[fellingUnderKey] = "true"
+						}
+						return approach, cell, underTrunkTarget, true
+					}
+				}
+			}
+			if low != nil {
+				chosen = low
+			} else if len(reachableLogs) > 0 {
 				if isTallMode {
 					// Tall tree: top-down felling strategy.
 					// Select highest reachable log/branch first (descending from apex downward).
@@ -906,10 +961,8 @@ func NewHarvestTreeTask(tx, ty, tz int32, stage Stage, startTick int64) *TaskSub
 					}
 				}
 			} else if totalInCluster > 0 {
-				underTrunk := frame != nil && frame.Status != nil && frame.Status.Position != nil &&
-					math.Hypot(float64(tx)+0.5-frame.Status.Position.X, float64(tz)+0.5-frame.Status.Position.Z) <= 2.5
 				switch {
-				case !elevated && underTrunk:
+				case !elevated && nearTrunk:
 					// Already standing under the trunk: the rest is out of reach; leave it (ladders: cq-3a0).
 				case isTallMode && apexLog != nil:
 					chosen = apexLog
@@ -954,7 +1007,7 @@ func NewHarvestTreeTask(tx, ty, tz int32, stage Stage, startTick int64) *TaskSub
 			return nil, nil, "", false
 		},
 		BuildActIntent: func(agentID string, state *AgentState, frame *civquestv1.TelemetryFrame, current *TaskSubroutine) *civquestv1.AgentIntent {
-			if current == nil || current.ActiveSubTarget == nil {
+			if current == nil || current.ActiveSubTarget == nil || standCell(current) != nil {
 				return nil
 			}
 			if state != nil && frame != nil {
@@ -1017,6 +1070,7 @@ func NewHarvestTreeTask(tx, ty, tz int32, stage Stage, startTick int64) *TaskSub
 				},
 			}
 		},
+		OnStandFailed: func() { standGivenUp = true },
 		IsUnachievable: func(state *AgentState, frame *civquestv1.TelemetryFrame) bool {
 			if state == nil || frame == nil {
 				return false

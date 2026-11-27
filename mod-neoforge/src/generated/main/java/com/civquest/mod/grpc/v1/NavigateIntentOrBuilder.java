@@ -53,4 +53,14 @@ public interface NavigateIntentOrBuilder extends
    * @return The arrivalTolerance.
    */
   int getArrivalTolerance();
+
+  /**
+   * <pre>
+   * Arrive only at the centre of the target's own cell (standing under a trunk); tolerance is ignored.
+   * </pre>
+   *
+   * <code>bool into_cell = 7;</code>
+   * @return The intoCell.
+   */
+  boolean getIntoCell();
 }

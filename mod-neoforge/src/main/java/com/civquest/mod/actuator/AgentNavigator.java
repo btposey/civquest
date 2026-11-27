@@ -94,6 +94,9 @@ public class AgentNavigator {
     private boolean allowBreak = false;
     private boolean allowPlace = false;
     private int arrivalTolerance = 1;
+    private boolean intoCell;
+    /** How close to the centre of its cell an {@code into_cell} walk must end. */
+    private static final double CELL_CENTRE_TOLERANCE = 0.3;
     private int stuckTicks = 0;
     /** ADR-037: last tick an alive entity (ADR-033) blocked the heading; distinguishes congestion from terrain. */
     private long lastEntityBlockedTick = Long.MIN_VALUE;
@@ -154,7 +157,8 @@ public class AgentNavigator {
                 intent.getSprint(),
                 intent.getAllowBreakBlocks(),
                 intent.getAllowPlaceScaffolding(),
-                intent.getArrivalTolerance());
+                intent.getArrivalTolerance(),
+                intent.getIntoCell());
     }
 
     public void navigate(double x, double y, double z,
@@ -163,6 +167,17 @@ public class AgentNavigator {
                          boolean allowBreak,
                          boolean allowPlace,
                          int arrivalTolerance) {
+        navigate(x, y, z, speedMultiplier, sprint, allowBreak, allowPlace, arrivalTolerance, false);
+    }
+
+    /** As above; with {@code intoCell} only the centre of the target's own cell counts as arrived. */
+    public void navigate(double x, double y, double z,
+                         float speedMultiplier,
+                         boolean sprint,
+                         boolean allowBreak,
+                         boolean allowPlace,
+                         int arrivalTolerance,
+                         boolean intoCell) {
         if (!Double.isFinite(x) || !Double.isFinite(y) || !Double.isFinite(z)
                 || Math.abs(x) > 30000000.0 || Math.abs(z) > 30000000.0
                 || y < -64.0 || y > 320.0) {
@@ -176,6 +191,7 @@ public class AgentNavigator {
         this.allowBreak = allowBreak;
         this.allowPlace = allowPlace;
         this.arrivalTolerance = arrivalTolerance > 0 ? arrivalTolerance : 1;
+        this.intoCell = intoCell;
         this.stuckTicks = 0;
         this.lastEntityBlockedTick = Long.MIN_VALUE;
         this.stuckByEntity = false;
@@ -197,7 +213,7 @@ public class AgentNavigator {
         syncRotationFromAgent();
         this.navigationState = NavigationState.NAVIGATION_STATE_PATHING;
 
-        if (BARITONE_PRESENT) {
+        if (BARITONE_PRESENT && !intoCell) {
             this.usingBaritone = tryStartBaritone(x, y, z, this.arrivalTolerance);
         } else {
             this.usingBaritone = false;
@@ -1050,7 +1066,7 @@ public class AgentNavigator {
                 ? ((dy < 0) ? Math.max(1.35, (double) this.arrivalTolerance) : Math.max(1.0, (double) this.arrivalTolerance))
                 : Math.max(3.5, (double) this.arrivalTolerance + 1.5);
         double arrivalYAllowance = resolveArrivalYAllowance(level, onClimbable, dy, baseYAllowance);
-        if (horizontalDist <= (double) this.arrivalTolerance && Math.abs(dy) <= arrivalYAllowance) {
+        if (arrivedAt(currentPos, horizontalDist) && Math.abs(dy) <= arrivalYAllowance) {
             finishArrival();
             return;
         }
@@ -1485,7 +1501,7 @@ public class AgentNavigator {
                 ? Math.max(1.0, (double) this.arrivalTolerance)
                 : Math.max(2.0, (double) this.arrivalTolerance);
         double postYAllowance = resolveArrivalYAllowance(level, onClimbable, postDy, basePostYAllowance);
-        if (postH <= (double) this.arrivalTolerance && Math.abs(postDy) <= postYAllowance) {
+        if (arrivedAt(postPos, postH) && Math.abs(postDy) <= postYAllowance) {
             finishArrival();
             return;
         }
@@ -1585,6 +1601,14 @@ public class AgentNavigator {
             }
         }
         return baseAllowance;
+    }
+
+    private boolean arrivedAt(Vec3 pos, double horizontalDist) {
+        if (!this.intoCell) {
+            return horizontalDist <= (double) this.arrivalTolerance;
+        }
+        return Mth.floor(pos.x) == Mth.floor(this.targetCoords.x) && Mth.floor(pos.z) == Mth.floor(this.targetCoords.z)
+                && horizontalDist <= CELL_CENTRE_TOLERANCE;
     }
 
     private void finishArrival() {

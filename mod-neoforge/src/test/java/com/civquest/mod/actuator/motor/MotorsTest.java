@@ -45,7 +45,7 @@ class MotorsTest {
         when(nav.isPathing()).thenReturn(true);
         Outcome out = move().onEnter(body);
         assertFalse(out.finished());
-        verify(nav).navigate(5.0, 64.0, 5.0, 1.5f, true, false, true, 2);
+        verify(nav).navigate(5.0, 64.0, 5.0, 1.5f, true, false, true, 2, false);
     }
 
     @Test
@@ -89,7 +89,7 @@ class MotorsTest {
         assertSame(m, m.onSuspend(body));
         verify(nav).stop();
         m.onResume(body);
-        verify(nav).navigate(5.0, 64.0, 5.0, 1.5f, true, false, true, 2);
+        verify(nav).navigate(5.0, 64.0, 5.0, 1.5f, true, false, true, 2, false);
         m.onExit(body);
         verify(nav, times(2)).stop();
     }

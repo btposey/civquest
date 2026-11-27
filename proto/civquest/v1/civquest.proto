@@ -373,6 +373,8 @@ message NavigateIntent {
   bool allow_break_blocks = 4;
   bool allow_place_scaffolding = 5;
   int32 arrival_tolerance = 6;
+  // Arrive only at the centre of the target's own cell (standing under a trunk); tolerance is ignored.
+  bool into_cell = 7;
 }
 
 message AttackIntent {

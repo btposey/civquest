@@ -142,6 +142,71 @@ public class AgentGameTest {
         helper.succeed();
     }
 
+    // cq-xce: a trunk is felled bottom to top, the bottom two logs from beside it and the rest from
+    // underneath; only the leaves in the way of the walk are broken.
+    @GameTest(template = "empty3x3x3")
+    public static void testFellsATrunkFromUnderneath(GameTestHelper helper) {
+        MinecraftServer server = helper.getLevel().getServer();
+        AgentEntityManager manager = new AgentEntityManager();
+        stoneFloor(helper, -8, 8, FELL_ARENA_Y);
+        BlockPos trunk = new BlockPos(0, FELL_ARENA_Y + 1, 0);
+        for (int x = -2; x <= 2; x++) {
+            for (int z = -2; z <= 2; z++) {
+                for (int y = 0; y <= 1; y++) {
+                    helper.setBlock(trunk.offset(x, y, z), Blocks.SPRUCE_LEAVES);
+                }
+            }
+        }
+        for (int y = 0; y <= 5; y++) {
+            helper.setBlock(trunk.above(y), Blocks.SPRUCE_LOG);
+        }
+        AgentEntity agent = spawnCoverageAgent(helper, manager, "agent-gt-fell", new BlockPos(-4, FELL_ARENA_Y + 1, 0));
+        BlockPos base = helper.absolutePos(trunk);
+
+        breakAndWait(helper, manager, server, agent, base);
+        breakAndWait(helper, manager, server, agent, base.above());
+
+        manager.handleIntent(server, AgentIntent.newBuilder().setAgentId("agent-gt-fell")
+                .setNavigate(com.civquest.mod.grpc.v1.NavigateIntent.newBuilder()
+                        .setTarget(Vec3.newBuilder().setX(base.getX() + 0.5).setY(base.getY()).setZ(base.getZ() + 0.5))
+                        .setSpeedMultiplier(1.0f)
+                        .setArrivalTolerance(1)
+                        .setIntoCell(true))
+                .build()).join();
+        // The walk ends by itself and the navigator is stopped, so the position is the evidence.
+        for (int t = 0; t < 300; t++) {
+            agent.tick();
+        }
+        double off = Math.hypot(agent.getX() - (base.getX() + 0.5), agent.getZ() - (base.getZ() + 0.5));
+        helper.assertTrue(agent.blockPosition().equals(base) && off <= 0.35,
+                "Agent must stand under the trunk, was " + off + " off at " + agent.position());
+
+        for (int y = 2; y <= 5; y++) {
+            breakAndWait(helper, manager, server, agent, base.above(y));
+        }
+        // The far side of the leaf skirt was never in the way.
+        for (int z = -2; z <= 2; z++) {
+            for (int y = 0; y <= 1; y++) {
+                helper.assertBlockPresent(Blocks.SPRUCE_LEAVES, trunk.offset(2, y, z));
+            }
+        }
+        manager.despawnAgent(server, "agent-gt-fell").join();
+        helper.succeed();
+    }
+
+    private static void breakAndWait(GameTestHelper helper, AgentEntityManager manager, MinecraftServer server,
+            AgentEntity agent, BlockPos at) {
+        manager.handleIntent(server, AgentIntent.newBuilder().setAgentId(agent.getAgentId())
+                .setInteractBlock(InteractBlockIntent.newBuilder()
+                        .setPos(BlockPosProto.newBuilder().setX(at.getX()).setY(at.getY()).setZ(at.getZ()))
+                        .setInteractionType(InteractBlockIntent.InteractionType.HARVEST_BREAK))
+                .build()).join();
+        for (int t = 0; t < 200 && !helper.getLevel().getBlockState(at).isAir(); t++) {
+            agent.tick();
+        }
+        helper.assertTrue(helper.getLevel().getBlockState(at).isAir(), "Log at " + at + " must break from " + agent.position());
+    }
+
     // cq-gey.1: agents far from any player and from spawn must keep ticking.
     @GameTest(template = "empty3x3x3", timeoutTicks = 200)
     public static void testAgentKeepsTickingFarFromSpawn(GameTestHelper helper) {
@@ -1366,6 +1431,7 @@ public class AgentGameTest {
     private static final int SPENT_ARENA_Y = 40;
     private static final int STEP_ARENA_Y = 50;
     private static final int LEAF_ARENA_Y = 130;
+    private static final int FELL_ARENA_Y = 145;
     private static final int CAMPFIRE_ARENA_Y = 60;
     private static final int IDLE_POOL_ARENA_Y = 70;
     private static final int SURFACE_POOL_ARENA_Y = 80;

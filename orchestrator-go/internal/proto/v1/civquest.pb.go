@@ -3244,8 +3244,10 @@ type NavigateIntent struct {
 	AllowBreakBlocks      bool                   `protobuf:"varint,4,opt,name=allow_break_blocks,json=allowBreakBlocks,proto3" json:"allow_break_blocks,omitempty"`
 	AllowPlaceScaffolding bool                   `protobuf:"varint,5,opt,name=allow_place_scaffolding,json=allowPlaceScaffolding,proto3" json:"allow_place_scaffolding,omitempty"`
 	ArrivalTolerance      int32                  `protobuf:"varint,6,opt,name=arrival_tolerance,json=arrivalTolerance,proto3" json:"arrival_tolerance,omitempty"`
-	unknownFields         protoimpl.UnknownFields
-	sizeCache             protoimpl.SizeCache
+	// Arrive only at the centre of the target's own cell (standing under a trunk); tolerance is ignored.
+	IntoCell      bool `protobuf:"varint,7,opt,name=into_cell,json=intoCell,proto3" json:"into_cell,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *NavigateIntent) Reset() {
@@ -3318,6 +3320,13 @@ func (x *NavigateIntent) GetArrivalTolerance() int32 {
 		return x.ArrivalTolerance
 	}
 	return 0
+}
+
+func (x *NavigateIntent) GetIntoCell() bool {
+	if x != nil {
+		return x.IntoCell
+	}
+	return false
 }
 
 type AttackIntent struct {
@@ -4409,14 +4418,15 @@ const file_civquest_v1_civquest_proto_rawDesc = "" +
 	"\x0eplace_signpost\x18\r \x01(\v2 .civquest.v1.PlaceSignpostIntentH\x00R\rplaceSignpost\x12U\n" +
 	"\x12transfer_container\x18\x0e \x01(\v2$.civquest.v1.TransferContainerIntentH\x00R\x11transferContainer\x12I\n" +
 	"\x0esurvey_horizon\x18\x0f \x01(\v2 .civquest.v1.SurveyHorizonIntentH\x00R\rsurveyHorizonB\b\n" +
-	"\x06action\"\x91\x02\n" +
+	"\x06action\"\xae\x02\n" +
 	"\x0eNavigateIntent\x12)\n" +
 	"\x06target\x18\x01 \x01(\v2\x11.civquest.v1.Vec3R\x06target\x12)\n" +
 	"\x10speed_multiplier\x18\x02 \x01(\x02R\x0fspeedMultiplier\x12\x16\n" +
 	"\x06sprint\x18\x03 \x01(\bR\x06sprint\x12,\n" +
 	"\x12allow_break_blocks\x18\x04 \x01(\bR\x10allowBreakBlocks\x126\n" +
 	"\x17allow_place_scaffolding\x18\x05 \x01(\bR\x15allowPlaceScaffolding\x12+\n" +
-	"\x11arrival_tolerance\x18\x06 \x01(\x05R\x10arrivalTolerance\"\xb4\x01\n" +
+	"\x11arrival_tolerance\x18\x06 \x01(\x05R\x10arrivalTolerance\x12\x1b\n" +
+	"\tinto_cell\x18\a \x01(\bR\bintoCell\"\xb4\x01\n" +
 	"\fAttackIntent\x12(\n" +
 	"\x10target_entity_id\x18\x01 \x01(\x05R\x0etargetEntityId\x12!\n" +
 	"\fraise_shield\x18\x02 \x01(\bR\vraiseShield\x12,\n" +

@@ -306,7 +306,7 @@ func scenarioBootstrapGatherCraft() replayScenario {
 		Name: "bootstrap_gather_then_craft", Stage: StageBootstrap, Profession: "EXPLORER",
 		Steps: []replayStep{
 			{Frame: rf(100, 3000, withBlocks(treeColumn...)), Setup: graph, Annotation: "empty inventory: gather logs"},
-			{Frame: rf(126, 3000, withInv(item(0, "minecraft:oak_log", 2)), withBlocks(blk(3, 66, 0, "minecraft:oak_log"))), Annotation: "some logs, keep gathering"},
+			{Frame: rf(126, 3000, withPos(3.5, 64, 0.5), withInv(item(0, "minecraft:oak_log", 2)), withBlocks(blk(3, 66, 0, "minecraft:oak_log"))), Annotation: "some logs, keep gathering from underneath the trunk"},
 			{Frame: rf(150, 3000, withInv(item(0, "minecraft:oak_log", 6))), Annotation: "enough logs: craft step"},
 			{Frame: rf(175, 3000, withInv(item(0, "minecraft:oak_planks", 12))), Annotation: "planks: next craft step"},
 			{Frame: rf(200, 3000, withInv(item(0, "minecraft:oak_planks", 8), item(1, "minecraft:stick", 4))), Annotation: "planks+sticks: tool craft or table"},
@@ -512,8 +512,8 @@ func scenarioSleepBedUnreachableBlacklists() replayScenario {
 	}
 }
 
-// cq-gpa.9: a 9-log trunk worked from directly beside it is felled bottom-up up
-// to the eye's real reach (y+6); the top two logs are left (ladders: cq-3a0).
+// cq-gpa.9 and cq-xce: a 9-log trunk is felled bottom-up: the bottom two logs from beside it,
+// the rest from underneath up to the eye's reach (y+6); the top two are left (cq-3a0).
 func scenarioNineLogTrunkHarvestedToReach() replayScenario {
 	trunk := func(from, to int32) []*civquestv1.VisibleBlock {
 		var out []*civquestv1.VisibleBlock
@@ -522,25 +522,31 @@ func scenarioNineLogTrunkHarvestedToReach() replayScenario {
 		}
 		return out
 	}
-	at := withPos(1.5, 64, 0.5)
+	beside, under := withPos(1.5, 64, 0.5), withPos(0.5, 64, 0.5)
 	return replayScenario{
 		Name: "nine_log_trunk_harvested_to_eye_reach", Stage: StageBootstrap, Profession: "EXPLORER",
 		Steps: []replayStep{
-			{Frame: rf(100, 3000, at, withBlocks(trunk(64, 72)...)), Annotation: "all nine present: break bottom log y=64"},
-			{Frame: rf(125, 3000, at, withBlocks(trunk(65, 72)...)), Annotation: "bottom-up: y=65"},
-			{Frame: rf(150, 3000, at, withBlocks(trunk(68, 72)...)), Annotation: "y=68 (old feet-centre reach stopped at y+4=68)"},
-			{Frame: rf(175, 3000, at, withBlocks(trunk(69, 72)...)), Annotation: "y=69 now reachable (eye reach)"},
-			{Frame: rf(200, 3000, at, withBlocks(trunk(70, 72)...)), Annotation: "y=70 = y+6, last reachable log"},
-			{Frame: rf(225, 3000, at, withBlocks(trunk(71, 72)...)), Annotation: "only y=71,72 left: out of reach, left standing"},
+			{Frame: rf(100, 3000, beside, withBlocks(trunk(64, 72)...)), Annotation: "all nine present: break bottom log y=64"},
+			{Frame: rf(125, 3000, beside, withBlocks(trunk(65, 72)...)), Annotation: "second log y=65"},
+			{Frame: rf(150, 3000, beside, withBlocks(trunk(66, 72)...)), Annotation: "bottom two cleared: walk into the space under the trunk"},
+			{Frame: rf(175, 3000, under, withBlocks(trunk(66, 72)...)), Annotation: "underneath: y=66, straight up"},
+			{Frame: rf(200, 3000, under, withBlocks(trunk(67, 72)...)), Annotation: "y=67"},
+			{Frame: rf(225, 3000, under, withBlocks(trunk(68, 72)...)), Annotation: "y=68"},
+			{Frame: rf(250, 3000, under, withBlocks(trunk(69, 72)...)), Annotation: "y=69"},
+			{Frame: rf(275, 3000, under, withBlocks(trunk(70, 72)...)), Annotation: "y=70 = y+6, last reachable log"},
+			{Frame: rf(300, 3000, under, withBlocks(trunk(71, 72)...)), Annotation: "only y=71,72 left: out of reach, left standing"},
 		},
 		Check: func(t *testing.T, tr []replayRecord) {
-			for i, y := range []int{64, 65, 68, 69, 70} {
+			for i, y := range map[int]int{0: 64, 1: 65, 3: 66, 4: 67, 5: 68, 6: 69, 7: 70} {
 				if !hasIntentPrefix(tr[i], fmt.Sprintf("Interact(HARVEST_BREAK 0,%d,0", y)) {
 					t.Fatalf("step %d: expected HARVEST_BREAK at y=%d: %s", i, y, tr[i])
 				}
 			}
-			if hasIntentPrefix(tr[5], "Interact(HARVEST_BREAK") {
-				t.Fatalf("y=71/72 are out of reach and must not be targeted: %s", tr[5])
+			if !hasIntentPrefix(tr[2], "Navigate(x=0.5 z=0.5") {
+				t.Fatalf("expected the walk under the trunk: %s", tr[2])
+			}
+			if hasIntentPrefix(tr[8], "Interact(HARVEST_BREAK") {
+				t.Fatalf("y=71/72 are out of reach and must not be targeted: %s", tr[8])
 			}
 		},
 	}

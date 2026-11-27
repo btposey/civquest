@@ -228,7 +228,8 @@ func evaluateBootstrapGoalsLocked(
 			hasTimberForKit := invCheck.logCount >= 6 ||
 				(!invCheck.hasAxe && (invCheck.planksCount >= 3 || invCheck.stickCount >= 2 || invCheck.hasCraftingTable)) ||
 				(walk.task.Phase == TaskPhaseApproach && (invCheck.logCount >= 1 || invCheck.planksCount >= 1 || invCheck.stickCount >= 1) && (!invCheck.hasAxe || !invCheck.hasSword))
-			if hasTimberForKit && canExecuteImmediateBootstrapCraftLocked(frame, state) {
+			// A tree being felled from underneath is finished first (felling.go).
+			if hasTimberForKit && !fellingFromUnder(walk.task, frame) && canExecuteImmediateBootstrapCraftLocked(frame, state) {
 				preemptForCraft = true
 				walk.clearTask(state)
 			}

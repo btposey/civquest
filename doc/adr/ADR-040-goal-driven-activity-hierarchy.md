@@ -105,6 +105,8 @@ A replaced machine abandons its parked work, which banks what it knows.
 
 **Dangers (cq-gey.2).** A mob that hurts an agent, or one that lingers such as a Drowned, marks its spot for at least a game day, shared with the clan. Agents choose no targets within 20 blocks (home excepted), walk round it, and once hit keep going until clear.
 
+**Felling a tree (user, 2026-11-27, cq-xce).** The harvest task works bottom to top: it breaks the two lowest trunk logs from beside the tree, walks into the space they left (`NavigateIntent.into_cell`: arrived only at the centre of that cell), and takes the rest looking straight up, as far as six blocks above the base. Leaves are broken only by that walk, and only those in its way. A trunk that cannot be walked under within 100 ticks, or whose walk fails, is worked from outside; that failure does not push Recover, whose give-up would abandon the tree. Once the agent has started underneath, it finishes the tree before crafting.
+
 ## Consequences
 
 - A stack reads as goal → objective → task → step, and a log line explains why the agent is doing something.

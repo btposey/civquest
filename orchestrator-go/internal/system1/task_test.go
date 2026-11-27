@@ -447,16 +447,25 @@ func TestHarvestTreeTask_NineLogTrunkBottomUpThenLeavesUnreachable(t *testing.T)
 	logs := nineLogTrunk(tx, tz, ty, 9)
 	var order []int32
 	tick := int64(100)
+	pos := &civquestv1.Vec3{X: 1.5, Y: 64, Z: 0.5}
+	walkedUnderWith := 0
 	for len(logs) > 0 {
 		frame := &civquestv1.TelemetryFrame{
 			WorldTick: tick,
 			Status: &civquestv1.AgentStatus{
-				Position:        &civquestv1.Vec3{X: 1.5, Y: 64, Z: 0.5},
+				Position:        pos,
 				NavigationState: civquestv1.NavigationState_NAVIGATION_STATE_IDLE,
 			},
 			InterestingBlocks: logs,
 		}
 		res := rigStep(state, "agent", frame)
+		if nav := res.Intent.GetNavigate(); nav.GetIntoCell() {
+			// The bottom two logs are gone: the agent goes under the trunk.
+			walkedUnderWith = len(order)
+			pos = &civquestv1.Vec3{X: nav.Target.X, Y: nav.Target.Y, Z: nav.Target.Z}
+			tick += 21
+			continue
+		}
 		ib := res.Intent.GetInteractBlock()
 		if ib == nil {
 			break
@@ -474,11 +483,14 @@ func TestHarvestTreeTask_NineLogTrunkBottomUpThenLeavesUnreachable(t *testing.T)
 			t.Fatalf("harvest order %v, want bottom-up %v", order, want)
 		}
 	}
+	if walkedUnderWith != 2 {
+		t.Fatalf("expected the walk under the trunk after two logs, got after %d", walkedUnderWith)
+	}
 	// y=71,72 remain, out of reach: the task completes and leaves them (ladders are cq-3a0).
 	frame := &civquestv1.TelemetryFrame{
 		WorldTick: tick + 100,
 		Status: &civquestv1.AgentStatus{
-			Position: &civquestv1.Vec3{X: 1.5, Y: 64, Z: 0.5},
+			Position: pos,
 		},
 		InterestingBlocks: logs,
 	}

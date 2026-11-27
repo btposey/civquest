@@ -9,7 +9,12 @@ import com.civquest.mod.grpc.v1.Vec3;
  * parameterised per frame, stopped on suspend/exit and re-armed from this record on resume.
  */
 public record Move(Vec3 target, float speed, boolean sprint, boolean allowBreak, boolean allowPlace,
-                   int arrivalTolerance) implements Motor {
+                   int arrivalTolerance, boolean intoCell) implements Motor {
+    public Move(Vec3 target, float speed, boolean sprint, boolean allowBreak, boolean allowPlace,
+                int arrivalTolerance) {
+        this(target, speed, sprint, allowBreak, allowPlace, arrivalTolerance, false);
+    }
+
     @Override
     public Outcome onEnter(Body body) {
         AgentEntity agent = body.agent();
@@ -71,7 +76,8 @@ public record Move(Vec3 target, float speed, boolean sprint, boolean allowBreak,
     }
 
     private void arm(AgentNavigator nav) {
-        nav.navigate(target.getX(), target.getY(), target.getZ(), speed, sprint, allowBreak, allowPlace, arrivalTolerance);
+        nav.navigate(target.getX(), target.getY(), target.getZ(), speed, sprint, allowBreak, allowPlace, arrivalTolerance,
+                intoCell);
     }
 
     private static void stop(Body body) {

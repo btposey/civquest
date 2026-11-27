@@ -43,6 +43,7 @@ func routeRoundDanger(w *fsmWorld, kind htpda.Kind, nav *civquestv1.NavigateInte
 	to := [3]float64{nav.Target.X, nav.Target.Y, nav.Target.Z}
 	if via, ok := w.ctx.State.detour([3]float64{pos.X, pos.Y, pos.Z}, to, w.tick); ok {
 		nav.Target = &civquestv1.Vec3{X: via[0], Y: via[1], Z: via[2]}
+		nav.IntoCell = false // a waypoint is passed, not stood in
 	}
 }
 

@@ -12,6 +12,7 @@ public class NavigateHandler implements IntentHandler {
     public Motor create(AgentEntity agent, AgentIntent intent) {
         NavigateIntent nav = intent.getNavigate();
         return new Move(nav.hasTarget() ? nav.getTarget() : null, nav.getSpeedMultiplier(), nav.getSprint(),
-                nav.getAllowBreakBlocks(), nav.getAllowPlaceScaffolding(), nav.getArrivalTolerance());
+                nav.getAllowBreakBlocks(), nav.getAllowPlaceScaffolding(), nav.getArrivalTolerance(),
+                nav.getIntoCell());
     }
 }

@@ -1,5 +1,5 @@
 t=100 stage=BOOTSTRAP routine=HARVEST_TREE stack=[task_subroutine/2] intents=[Interact(HARVEST_BREAK 3,64,0 minecraft:oak_log)]  // empty inventory: gather logs
-t=126 stage=BOOTSTRAP routine=HARVEST_TREE stack=[task_subroutine/2] intents=[Interact(HARVEST_BREAK 3,66,0 minecraft:oak_log)]  // some logs, keep gathering
+t=126 stage=BOOTSTRAP routine=HARVEST_TREE stack=[task_subroutine/2] intents=[Interact(HARVEST_BREAK 3,66,0 minecraft:oak_log)]  // some logs, keep gathering from underneath the trunk
 t=150 stage=BOOTSTRAP routine=PRIMARY_DUTY stack=[plan/1] intents=[Craft(minecraft:oak_planks x1)]  // enough logs: craft step
 t=175 stage=BOOTSTRAP routine=PRIMARY_DUTY stack=[plan/1] intents=[Craft(minecraft:stick x1)]  // planks: next craft step
 t=200 stage=BOOTSTRAP routine=PRIMARY_DUTY stack=[plan/1] intents=[Craft(minecraft:crafting_table x1)]  // planks+sticks: tool craft or table

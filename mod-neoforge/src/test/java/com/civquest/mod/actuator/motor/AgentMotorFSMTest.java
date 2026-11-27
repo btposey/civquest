@@ -410,7 +410,7 @@ public class AgentMotorFSMTest {
         }
         assertEquals(0, fsm.getStackDepth());
         assertEquals(protoTarget, ((Move) fsm.topMotor().orElseThrow()).target());
-        verify(mockNavigator, times(2)).navigate(50.5, 64.0, -25.5, 1.2f, true, true, false, 2); // enter + resume
+        verify(mockNavigator, times(2)).navigate(50.5, 64.0, -25.5, 1.2f, true, true, false, 2, false); // enter + resume
     }
 
     private static void tickOutCombat(AgentMotorFSM fsm) {

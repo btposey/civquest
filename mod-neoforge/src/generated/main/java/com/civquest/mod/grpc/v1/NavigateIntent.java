@@ -124,6 +124,21 @@ private static final long serialVersionUID = 0L;
     return arrivalTolerance_;
   }
 
+  public static final int INTO_CELL_FIELD_NUMBER = 7;
+  private boolean intoCell_ = false;
+  /**
+   * <pre>
+   * Arrive only at the centre of the target's own cell (standing under a trunk); tolerance is ignored.
+   * </pre>
+   *
+   * <code>bool into_cell = 7;</code>
+   * @return The intoCell.
+   */
+  @java.lang.Override
+  public boolean getIntoCell() {
+    return intoCell_;
+  }
+
   private byte memoizedIsInitialized = -1;
   @java.lang.Override
   public final boolean isInitialized() {
@@ -155,6 +170,9 @@ private static final long serialVersionUID = 0L;
     }
     if (arrivalTolerance_ != 0) {
       output.writeInt32(6, arrivalTolerance_);
+    }
+    if (intoCell_ != false) {
+      output.writeBool(7, intoCell_);
     }
     getUnknownFields().writeTo(output);
   }
@@ -189,6 +207,10 @@ private static final long serialVersionUID = 0L;
       size += com.google.protobuf.CodedOutputStream
         .computeInt32Size(6, arrivalTolerance_);
     }
+    if (intoCell_ != false) {
+      size += com.google.protobuf.CodedOutputStream
+        .computeBoolSize(7, intoCell_);
+    }
     size += getUnknownFields().getSerializedSize();
     memoizedSize = size;
     return size;
@@ -220,6 +242,8 @@ private static final long serialVersionUID = 0L;
         != other.getAllowPlaceScaffolding()) return false;
     if (getArrivalTolerance()
         != other.getArrivalTolerance()) return false;
+    if (getIntoCell()
+        != other.getIntoCell()) return false;
     if (!getUnknownFields().equals(other.getUnknownFields())) return false;
     return true;
   }
@@ -249,6 +273,9 @@ private static final long serialVersionUID = 0L;
         getAllowPlaceScaffolding());
     hash = (37 * hash) + ARRIVAL_TOLERANCE_FIELD_NUMBER;
     hash = (53 * hash) + getArrivalTolerance();
+    hash = (37 * hash) + INTO_CELL_FIELD_NUMBER;
+    hash = (53 * hash) + com.google.protobuf.Internal.hashBoolean(
+        getIntoCell());
     hash = (29 * hash) + getUnknownFields().hashCode();
     memoizedHashCode = hash;
     return hash;
@@ -396,6 +423,7 @@ private static final long serialVersionUID = 0L;
       allowBreakBlocks_ = false;
       allowPlaceScaffolding_ = false;
       arrivalTolerance_ = 0;
+      intoCell_ = false;
       return this;
     }
 
@@ -451,6 +479,9 @@ private static final long serialVersionUID = 0L;
       if (((from_bitField0_ & 0x00000020) != 0)) {
         result.arrivalTolerance_ = arrivalTolerance_;
       }
+      if (((from_bitField0_ & 0x00000040) != 0)) {
+        result.intoCell_ = intoCell_;
+      }
       result.bitField0_ |= to_bitField0_;
     }
 
@@ -483,6 +514,9 @@ private static final long serialVersionUID = 0L;
       }
       if (other.getArrivalTolerance() != 0) {
         setArrivalTolerance(other.getArrivalTolerance());
+      }
+      if (other.getIntoCell() != false) {
+        setIntoCell(other.getIntoCell());
       }
       this.mergeUnknownFields(other.getUnknownFields());
       onChanged();
@@ -542,6 +576,11 @@ private static final long serialVersionUID = 0L;
               bitField0_ |= 0x00000020;
               break;
             } // case 48
+            case 56: {
+              intoCell_ = input.readBool();
+              bitField0_ |= 0x00000040;
+              break;
+            } // case 56
             default: {
               if (!super.parseUnknownField(input, extensionRegistry, tag)) {
                 done = true; // was an endgroup tag
@@ -836,6 +875,50 @@ private static final long serialVersionUID = 0L;
     public Builder clearArrivalTolerance() {
       bitField0_ = (bitField0_ & ~0x00000020);
       arrivalTolerance_ = 0;
+      onChanged();
+      return this;
+    }
+
+    private boolean intoCell_ ;
+    /**
+     * <pre>
+     * Arrive only at the centre of the target's own cell (standing under a trunk); tolerance is ignored.
+     * </pre>
+     *
+     * <code>bool into_cell = 7;</code>
+     * @return The intoCell.
+     */
+    @java.lang.Override
+    public boolean getIntoCell() {
+      return intoCell_;
+    }
+    /**
+     * <pre>
+     * Arrive only at the centre of the target's own cell (standing under a trunk); tolerance is ignored.
+     * </pre>
+     *
+     * <code>bool into_cell = 7;</code>
+     * @param value The intoCell to set.
+     * @return This builder for chaining.
+     */
+    public Builder setIntoCell(boolean value) {
+
+      intoCell_ = value;
+      bitField0_ |= 0x00000040;
+      onChanged();
+      return this;
+    }
+    /**
+     * <pre>
+     * Arrive only at the centre of the target's own cell (standing under a trunk); tolerance is ignored.
+     * </pre>
+     *
+     * <code>bool into_cell = 7;</code>
+     * @return This builder for chaining.
+     */
+    public Builder clearIntoCell() {
+      bitField0_ = (bitField0_ & ~0x00000040);
+      intoCell_ = false;
       onChanged();
       return this;
     }
