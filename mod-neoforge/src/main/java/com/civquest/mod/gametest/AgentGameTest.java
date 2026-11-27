@@ -207,6 +207,45 @@ public class AgentGameTest {
         helper.assertTrue(helper.getLevel().getBlockState(at).isAir(), "Log at " + at + " must break from " + agent.position());
     }
 
+    // cq-d23: a walk to mid-air ends on the ground under it, and a walk to a point buried under the
+    // agent's own feet ends at once instead of turning the body round and round.
+    @GameTest(template = "empty3x3x3")
+    public static void testWalkFindsGroundAndDoesNotSpin(GameTestHelper helper) {
+        MinecraftServer server = helper.getLevel().getServer();
+        AgentEntityManager manager = new AgentEntityManager();
+        stoneFloor(helper, -6, 6, GROUND_ARENA_Y);
+        for (int x = -6; x <= 6; x++) {
+            for (int z = -6; z <= 6; z++) {
+                helper.setBlock(new BlockPos(x, GROUND_ARENA_Y - 1, z), Blocks.STONE);
+                helper.setBlock(new BlockPos(x, GROUND_ARENA_Y - 2, z), Blocks.STONE);
+            }
+        }
+        AgentEntity agent = spawnCoverageAgent(helper, manager, "agent-gt-ground", new BlockPos(-4, GROUND_ARENA_Y + 1, 0));
+
+        BlockPos air = helper.absolutePos(new BlockPos(4, GROUND_ARENA_Y + 7, 0));
+        navigateByIntent(manager, server, "agent-gt-ground", air.getX() + 0.5, air.getY(), air.getZ() + 0.5, false, false);
+        for (int t = 0; t < 300; t++) {
+            agent.tick();
+        }
+        double off = Math.hypot(agent.getX() - (air.getX() + 0.5), agent.getZ() - (air.getZ() + 0.5));
+        helper.assertTrue(off <= 1.5, "Walk to mid-air must end under it, ended " + off + " off at " + agent.position());
+
+        BlockPos buried = helper.absolutePos(new BlockPos(0, 0, 0)).atY(agent.blockPosition().getY() - 3);
+        buried = new BlockPos(agent.blockPosition().getX(), buried.getY(), agent.blockPosition().getZ());
+        navigateByIntent(manager, server, "agent-gt-ground", buried.getX() + 0.5, buried.getY(), buried.getZ() + 0.5, false, false);
+        float turned = 0f;
+        float yaw = agent.getYRot();
+        for (int t = 0; t < 100; t++) {
+            agent.tick();
+            turned += Math.abs(net.minecraft.util.Mth.wrapDegrees(agent.getYRot() - yaw));
+            yaw = agent.getYRot();
+        }
+        helper.assertTrue(turned < 360f, "A walk to a point underfoot must not spin the agent, turned " + turned);
+        helper.assertTrue(!agent.getNavigator().isPathing(), "A walk to a point underfoot must end");
+        manager.despawnAgent(server, "agent-gt-ground").join();
+        helper.succeed();
+    }
+
     // cq-gey.1: agents far from any player and from spawn must keep ticking.
     @GameTest(template = "empty3x3x3", timeoutTicks = 200)
     public static void testAgentKeepsTickingFarFromSpawn(GameTestHelper helper) {
@@ -1432,6 +1471,7 @@ public class AgentGameTest {
     private static final int STEP_ARENA_Y = 50;
     private static final int LEAF_ARENA_Y = 130;
     private static final int FELL_ARENA_Y = 145;
+    private static final int GROUND_ARENA_Y = 165;
     private static final int CAMPFIRE_ARENA_Y = 60;
     private static final int IDLE_POOL_ARENA_Y = 70;
     private static final int SURFACE_POOL_ARENA_Y = 80;

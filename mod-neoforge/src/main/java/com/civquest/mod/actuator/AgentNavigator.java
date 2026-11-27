@@ -95,6 +95,8 @@ public class AgentNavigator {
     private boolean allowPlace = false;
     private int arrivalTolerance = 1;
     private boolean intoCell;
+    /** The target's column was not loaded yet, so its ground is still to be found. */
+    private boolean groundPending;
     /** How close to the centre of its cell an {@code into_cell} walk must end. */
     private static final double CELL_CENTRE_TOLERANCE = 0.3;
     private int stuckTicks = 0;
@@ -186,6 +188,8 @@ public class AgentNavigator {
         }
 
         this.targetCoords = new Vec3(x, y, z);
+        this.groundPending = !intoCell;
+        resolveGround();
         this.speedMultiplier = speedMultiplier > 0.0f ? speedMultiplier : 1.0;
         this.sprint = sprint;
         this.allowBreak = allowBreak;
@@ -1049,6 +1053,9 @@ public class AgentNavigator {
 
     private void tickNative() {
         navTick++;
+        if (this.groundPending && navTick % REPLAN_INTERVAL == 0) {
+            resolveGround();
+        }
         Vec3 currentPos = getPosition();
         double dx = this.targetCoords.x - currentPos.x;
         double dy = this.targetCoords.y - currentPos.y;
@@ -1133,7 +1140,9 @@ public class AgentNavigator {
         double hx = aimX - currentPos.x;
         double hz = aimZ - currentPos.z;
         double hlen = Math.sqrt(hx * hx + hz * hz);
-        float desiredYaw = hlen > 0.05 ? (float) (Mth.atan2(hz, hx) * (180.0 / Math.PI)) - 90.0F : headYaw;
+        // A point all but straight above or below gives no heading: chasing it spins the body.
+        boolean noHeading = hlen <= 0.05 || (path.isEmpty() && hlen < 0.7 && Math.abs(dy) > 1.5);
+        float desiredYaw = noHeading ? headYaw : (float) (Mth.atan2(hz, hx) * (180.0 / Math.PI)) - 90.0F;
         float yawDiff = LookSmoothing.wrap(desiredYaw - headYaw);
 
         // Rotation: head leads (eased, rate limited, dead-band), body trails, pitch low-passed.
@@ -1601,6 +1610,50 @@ public class AgentNavigator {
             }
         }
         return baseAllowance;
+    }
+
+    /** Moves a target nobody could stand at or beside onto the ground in its column. */
+    private void resolveGround() {
+        Level level = this.agent != null ? this.agent.level() : null;
+        if (level == null || this.targetCoords == null || !this.groundPending) {
+            return;
+        }
+        BlockPos wanted = BlockPos.containing(this.targetCoords.x, this.targetCoords.y, this.targetCoords.z);
+        if (!level.hasChunkAt(wanted)) {
+            return;
+        }
+        this.groundPending = false;
+        BlockPos ground = TargetGround.resolve(groundCells(level), wanted);
+        if (!ground.equals(wanted)) {
+            LOGGER.debug("Walk target {} has no footing; walking to {}", wanted, ground);
+            this.targetCoords = new Vec3(this.targetCoords.x, ground.getY(), this.targetCoords.z);
+        }
+    }
+
+    private TargetGround.Cells groundCells(Level level) {
+        return new TargetGround.Cells() {
+            @Override
+            public boolean solid(BlockPos p) {
+                return isBlockSolid(level, p) && !isNaturalLeaves(level, p);
+            }
+
+            @Override
+            public boolean holds(BlockPos p) {
+                return isBlockWater(level, p) || isBlockClimbable(level, p);
+            }
+
+            @Override
+            public boolean hazard(BlockPos p) {
+                return isBlockHazard(level, p);
+            }
+
+            @Override
+            public boolean natural(BlockPos p) {
+                BlockState state = level.getBlockState(p);
+                return state != null && (state.is(net.minecraft.tags.BlockTags.LOGS)
+                        || state.is(net.minecraft.tags.BlockTags.LEAVES));
+            }
+        };
     }
 
     private boolean arrivedAt(Vec3 pos, double horizontalDist) {

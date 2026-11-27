@@ -797,7 +797,8 @@ public class AgentNavigatorTest {
         }).when(agent).setDeltaMovement(any(Vec3.class));
 
         AgentNavigator navigator = new AgentNavigator(agent);
-        navigator.navigate(20.5, 72.0, 0.5, 1.0f, false, false, false, 1);
+        // into_cell asks for exactly this point; an ordinary walk would now be moved to the ground.
+        navigator.navigate(20.5, 72.0, 0.5, 1.0f, false, false, false, 1, true);
 
         // 1. Multiple ticks on ground with dy = 8.0 > 1.0 -> zero horizontal speed and never vy = 0.42
         for (int i = 0; i < 5; i++) {
@@ -871,7 +872,7 @@ public class AgentNavigatorTest {
         // (within arrivalRange 1.5 at horizontalDist=1.05, speedMultiplier=0.5 -> moveSpeed=0.049 <= 0.05, unreachable y=70 -> path.isEmpty())
         when(agent.getYRot()).thenReturn(-90.0f);
         AgentNavigator navSlow = new AgentNavigator(agent);
-        navSlow.navigate(1.55, 70.0, 0.5, 0.5f, false, false, false, 1);
+        navSlow.navigate(1.55, 70.0, 0.5, 0.5f, false, false, false, 1, true);
         navSlow.tick();
         assertNotEquals(0.42, appliedDelta.get().y, 1e-4,
                 "Must not jump when moveSpeed <= 0.05 even with stepUpOneBlock ahead");
