@@ -223,8 +223,11 @@ if crafted * 2 < len(agents):
     print(f"NOTE: only {crafted} of {len(agents)} agents crafted anything; wood gathering and crafting were barely exercised")
 if model:
     replied = f"Agent '{chat_agent}' spoke in chat" in log
-    print(f"chat: {chat_agent} {'replied' if replied else 'did NOT reply'}")
-    if not replied: failed.append(f"{chat_agent}: no chat reply")
+    if chat_agent in deaths:
+        print(f"chat: {chat_agent} died before it could be asked, chat not checked")
+    else:
+        print(f"chat: {chat_agent} {'replied' if replied else 'did NOT reply'}")
+        if not replied: failed.append(f"{chat_agent}: no chat reply")
 else:
     print("chat: skipped (no model endpoint)")
 print(f"phases (UTC): start {start_iso}, hunger {hungry_iso}, night {night_iso}, end {end_iso}")
