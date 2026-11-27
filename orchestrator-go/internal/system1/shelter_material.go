@@ -16,6 +16,9 @@ const (
 	shelterPlaceReach = 5.8
 	// cabinStand is how far from the cabin's centre the builder stands outside its walls.
 	cabinStand = 3.5
+	// shelterApproachTicks is the time one walk to a block is given before another counts:
+	// the body takes a few frames even to report that it is walking.
+	shelterApproachTicks = int64(60)
 	// shelterPlaceTries bounds the attempts at one block before the build goes on without it.
 	shelterPlaceTries = 3
 )
@@ -51,6 +54,11 @@ func isFillerBlock(id string) bool {
 func withinPlacingReach(pos *civquestv1.Vec3, b *civquestv1.BlockPosProto) bool {
 	dx, dy, dz := float64(b.X)+0.5-pos.X, float64(b.Y)+0.5-pos.Y, float64(b.Z)+0.5-pos.Z
 	return math.Sqrt(dx*dx+dy*dy+dz*dz) <= shelterPlaceReach
+}
+
+// approachUnderWay reports whether the last walk toward the current block still has time.
+func (l *shelterLocal) approachUnderWay(tick int64) bool {
+	return l.Walks > 0 && l.WalkIndex == l.BuildIndex && tick >= l.WalkTick && tick-l.WalkTick < shelterApproachTicks
 }
 
 // approach is where to walk to reach voxel: the closest spot round the outside of the walls

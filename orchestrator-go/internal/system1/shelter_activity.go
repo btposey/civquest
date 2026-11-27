@@ -33,6 +33,7 @@ type shelterLocal struct {
 	Pending, RetryIndex, Tries int
 	// WalkIndex and Walks count the walks made to get within reach of one block.
 	WalkIndex, Walks int
+	WalkTick         int64
 	// TreeLocked/TreeX/TreeZ: the trunk this frame's timber sourcing is focused on (private to
 	// the Shelter frame; the frame's existence is the lock).
 	TreeLocked   bool

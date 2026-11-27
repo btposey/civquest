@@ -489,10 +489,11 @@ func evaluateDuskNightOutpostShelterLocked(
 		}
 
 		if voxel := target.GetTargetVoxel(); voxel != nil && prog.Pos != nil && !withinPlacingReach(pos, voxel) {
-			if navState == civquestv1.NavigationState_NAVIGATION_STATE_PATHING {
+			if navState == civquestv1.NavigationState_NAVIGATION_STATE_PATHING || prog.approachUnderWay(frame.WorldTick) {
 				return nil
 			}
 			if stand, ok := prog.approach(pos, voxel); ok {
+				prog.WalkTick = frame.WorldTick
 				walk.lastExploreTick = frame.WorldTick
 				return &civquestv1.AgentIntent{AgentId: agentID, Action: &civquestv1.AgentIntent_Navigate{Navigate: &civquestv1.NavigateIntent{
 					Target: stand, SpeedMultiplier: 1.0, ArrivalTolerance: 1,
