@@ -56,8 +56,8 @@ func TestStrategy_ExploreSettleProfessionCycle(t *testing.T) {
 	}
 }
 
-// A morning review may evict a strategy only with news, after it has run, once a morning, and
-// only for an allowed choice.
+// A morning review may evict a strategy only with news from the night just past, after the
+// strategy has run, and only for an allowed choice.
 func TestStrategy_MorningReviewIsNotFickle(t *testing.T) {
 	member := func() *AgentState {
 		st := NewAgentState()
@@ -65,48 +65,57 @@ func TestStrategy_MorningReviewIsNotFickle(t *testing.T) {
 		st.AssignStrategy(StrategyProfession, 0)
 		return st
 	}
-	morning := int64(1000)
+	const night, dawn = int64(14000), int64(24500)
 	cases := []struct {
-		name         string
-		proposeAt    int64
-		to           Strategy
-		reason       string
-		at, time     int64
-		wantStrategy Strategy
+		name      string
+		nights    int64 // whole days before the proposal's night
+		to        Strategy
+		reason    string
+		lateBy    int64 // ticks after that night's dawn at which the answer arrives
+		looksAt   int64 // time of day, in the following day, at which the review is looked for
+		wantAfter Strategy
 	}{
-		{"accepted in the morning", 2 * day, StrategyExplore, "surplus food and a new valley", 3*day + morning, morning, StrategyExplore},
-		{"waits for morning", 2 * day, StrategyExplore, "news", 2*day + 14000, 14000, StrategyProfession},
-		{"no reason", 2 * day, StrategyExplore, "  ", 3*day + morning, morning, StrategyProfession},
-		{"too soon", 100, StrategyExplore, "news", day + morning, morning, StrategyProfession},
-		{"not an allowed choice", 2 * day, StrategyIdle, "news", 3*day + morning, morning, StrategyProfession},
+		{"accepted at dawn", 2, StrategySettle, "the storehouse burned down", 0, dawn, StrategySettle},
+		{"waits for dawn", 2, StrategySettle, "news", 0, night + 2000, StrategyProfession},
+		{"no reason", 2, StrategySettle, "  ", 0, dawn, StrategyProfession},
+		{"too soon", 0, StrategySettle, "news", 0, dawn, StrategyProfession},
+		{"not an allowed choice", 2, StrategyExplore, "a new valley", 0, dawn, StrategyProfession},
+		{"arrived after dawn", 2, StrategySettle, "news", 11000, dawn + 24000, StrategyProfession},
 	}
 	for _, c := range cases {
 		st := member()
-		st.ProposeStrategy(c.to, c.reason, c.proposeAt)
-		st.advanceStrategy(c.at, c.time, true)
-		if got := st.Strategy(); got != c.wantStrategy {
-			t.Errorf("%s: %s, want %s", c.name, got, c.wantStrategy)
+		start := c.nights * day
+		st.advanceStrategy(start+night, night, true)
+		if c.lateBy == 0 {
+			st.ProposeStrategy(c.to, c.reason, start+night)
+		}
+		if c.looksAt >= dawn {
+			st.advanceStrategy(start+dawn, dawn%day, true)
+		}
+		if c.lateBy > 0 {
+			st.ProposeStrategy(c.to, c.reason, start+dawn+500)
+			st.advanceStrategy(start+day+night, night, true)
+			st.advanceStrategy(start+2*day+500, 500, true)
+		} else if c.looksAt < dawn {
+			st.advanceStrategy(start+c.looksAt, c.looksAt, true)
+		}
+		if got := st.Strategy(); got != c.wantAfter {
+			t.Errorf("%s: %s, want %s", c.name, got, c.wantAfter)
 		}
 	}
-	// One review a morning: a second proposal the same day is left for tomorrow.
-	st := member()
-	st.ProposeStrategy(StrategyIdle, "news", 2*day)
-	st.advanceStrategy(3*day+100, 100, true)
-	st.ProposeStrategy(StrategyExplore, "more news", 3*day+200)
-	st.advanceStrategy(3*day+300, 300, true)
-	if st.Strategy() != StrategyProfession {
-		t.Errorf("a second review the same morning changed the strategy to %s", st.Strategy())
-	}
-	// A chosen frontier trip is not undone by the settlement milestone.
-	st = member()
-	st.ProposeStrategy(StrategyExplore, "frontier", 2*day)
-	st.advanceStrategy(3*day+100, 100, true)
-	st.advanceStrategy(3*day+200, 200, true)
+}
+
+// A frontier explorer is the clan's assignment: the settlement milestone leaves it alone.
+func TestStrategy_AssignedFrontierExplorerStaysOut(t *testing.T) {
+	st := NewAgentState()
+	st.SetCollectiveSettlementSite(0.5, 64, 0.5)
+	st.AssignStrategy(StrategyExplore, 100)
+	st.advanceStrategy(100+professionMaxWaitTicks, 3000, true)
 	if st.Strategy() != StrategyExplore {
 		t.Errorf("frontier exploration was undone: %s", st.Strategy())
 	}
 	if got := st.AllowedStrategies(); !slices.Equal(got, []Strategy{StrategySettle}) {
-		t.Errorf("a frontier explorer may return home, allowed %v", got)
+		t.Errorf("a frontier explorer may propose coming home, allowed %v", got)
 	}
 }
 

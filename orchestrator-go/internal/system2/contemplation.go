@@ -87,9 +87,12 @@ type PersonalVitals struct {
 
 // PersonalProfile captures the agent's identity, personality, condition, and inventory.
 type PersonalProfile struct {
-	AgentID           string             `json:"agent_id"`
-	ClanID            string             `json:"clan_id"`
-	Profession        string             `json:"profession"`
+	AgentID    string `json:"agent_id"`
+	ClanID     string `json:"clan_id"`
+	Profession string `json:"profession"`
+	// Strategy is the agent's long-running strategy; StrategyOptions what it may change to.
+	Strategy          string             `json:"strategy,omitempty"`
+	StrategyOptions   []string           `json:"strategy_options,omitempty"`
 	SecondaryHobby    string             `json:"secondary_hobby,omitempty"`
 	SleepSystemPrompt string             `json:"sleep_system_prompt,omitempty"`
 	Traits            map[string]float64 `json:"traits,omitempty"`
@@ -179,6 +182,13 @@ func (l *StrategicLedger) Personal() PersonalProfile {
 	return l.PersonalProfile
 }
 
+// StrategyProposal suggests replacing the agent's long-running strategy; it is weighed the next
+// morning, not obeyed.
+type StrategyProposal struct {
+	Strategy string `json:"strategy"`
+	Reason   string `json:"reason"`
+}
+
 // StrategicContemplationResponse is the structured LLM JSON output from nighttime strategic reflection.
 type StrategicContemplationResponse struct {
 	ImmediateGoal    string                     `json:"immediate_goal"`
@@ -189,6 +199,7 @@ type StrategicContemplationResponse struct {
 	TradeAdjustments []TradeValuationAdjustment `json:"trade_adjustments"`
 	CivicProposals   []string                   `json:"civic_proposals"`
 	Rationale        string                     `json:"rationale"`
+	StrategyProposal *StrategyProposal          `json:"strategy_proposal,omitempty"`
 }
 
 // AssembleStrategicLedger queries and aggregates sensory, economic, intelligence, and diplomatic state
@@ -523,6 +534,15 @@ func (s *ContemplationService) Contemplate(ctx context.Context, ledger *Strategi
 			DefaultContemplationPrompt(agentName, prof, clanID), string(ledgerJSON), contemplationOutputSchemaInstruction)
 	}
 
+	if options := ledger.PersonalProfile.StrategyOptions; len(options) > 0 {
+		sysPrompt += fmt.Sprintf(`
+
+[LONG-RUNNING STRATEGY]
+You are following the %s strategy, and staying with it is normally right. Only if something new since you last reflected makes another clearly better, add to your JSON:
+"strategy_proposal": {"strategy": "one of: %s", "reason": "what is new"}
+Otherwise leave strategy_proposal out.`, ledger.PersonalProfile.Strategy, strings.Join(options, ", "))
+	}
+
 	if hs := strings.TrimSpace(ledger.HorizonSurveySummary); hs != "" {
 		sysPrompt += "\n\n[LATEST HORIZON SURVEY]\n" + hs
 	}
@@ -546,6 +566,19 @@ func (s *ContemplationService) Contemplate(ctx context.Context, ledger *Strategi
 
 	sanitizeContemplationResponse(&resp, ledger)
 	return &resp, nil
+}
+
+// sanitizeStrategyProposal drops a proposal that gives no news or names a strategy not on offer.
+func sanitizeStrategyProposal(p *StrategyProposal, ledger *StrategicLedger) *StrategyProposal {
+	if p == nil || ledger == nil || strings.TrimSpace(p.Reason) == "" {
+		return nil
+	}
+	for _, option := range ledger.PersonalProfile.StrategyOptions {
+		if strings.EqualFold(strings.TrimSpace(p.Strategy), option) {
+			return &StrategyProposal{Strategy: option, Reason: strings.TrimSpace(p.Reason)}
+		}
+	}
+	return nil
 }
 
 // sanitizeContemplationResponse normalizes and validates goals, trade adjustments, and memories.
@@ -586,6 +619,7 @@ func sanitizeContemplationResponse(resp *StrategicContemplationResponse, ledger 
 	}
 
 	resp.Directive = NormalizeDirective(resp.Directive, resp.ImmediateGoal, prof)
+	resp.StrategyProposal = sanitizeStrategyProposal(resp.StrategyProposal, ledger)
 
 	var sanitizedAdjustments []TradeValuationAdjustment
 	for _, adj := range resp.TradeAdjustments {

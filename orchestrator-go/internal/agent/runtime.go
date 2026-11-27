@@ -184,7 +184,9 @@ type AgentRuntime struct {
 	permadeathResult *PermadeathResult
 
 	// System 1 Reflexes and Shared State
+	persistMu       sync.Mutex         // guards the saved copies below
 	savedSettlement system1.Settlement // last settlement written to the agent database
+	savedStrategy   db.StrategyRow     // last strategy written to the agent database
 	system1State    *system1.AgentState
 	agentFSM        *system1.AgentFSM
 	memoryPipeline  *memory.Pipeline
@@ -392,6 +394,7 @@ func NewRuntime(cfg Config) (*AgentRuntime, error) {
 	runtime.loadTradeValuations()
 	runtime.loadSpatialPOIs()
 	runtime.loadSettlement()
+	runtime.loadStrategy()
 
 	return runtime, nil
 }
@@ -2165,7 +2168,9 @@ func (r *AgentRuntime) dispatchContemplation(frame *civquestv1.TelemetryFrame) {
 		currentDay = (frame.WorldTick - 23999) / 24000
 	}
 
-	nightReady := (isBedtimeHours || isSleeping) && r.system1State.LastContemplatedDay() < currentDay
+	// Night requests are spread out, so that a clan going to bed together does not queue on one model.
+	myHour := isBedtimeHours && tod >= contemplationHour(r.agentID)
+	nightReady := (myHour || isSleeping && !isBedtimeHours) && r.system1State.LastContemplatedDay() < currentDay
 
 	inEmergency := (fsm != nil && fsm.CurrentStage() == system1.StageEmergency) ||
 		r.system1State.Stage() == system1.StageEmergency
@@ -2287,6 +2292,8 @@ func (r *AgentRuntime) dispatchContemplation(frame *civquestv1.TelemetryFrame) {
 		var prof system2.PersonalProfile
 		prof.AgentID = agentID
 		prof.ClanID = clanID
+		prof.Strategy = string(r.system1State.BaseStrategy())
+		prof.StrategyOptions = r.strategyOptions()
 		if agentCfg != nil {
 			prof.Profession = agentCfg.Profession
 			prof.SecondaryHobby = agentCfg.SecondaryHobby
@@ -2342,6 +2349,7 @@ func (r *AgentRuntime) dispatchContemplation(frame *civquestv1.TelemetryFrame) {
 		// 1. Update goals thread-safely and publish System 1 executable directive (ADR-031)
 		r.UpdateGoals(resp.ImmediateGoal, resp.ShortTermGoal, resp.LongTermGoal)
 		r.applyContemplationDirective(resp, frame.WorldTick)
+		r.proposeStrategy(resp.StrategyProposal, frame.WorldTick)
 		if triggerReason == "daytime_idle" {
 			r.system1State.MarkDirectiveRescue()
 		}

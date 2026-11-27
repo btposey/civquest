@@ -55,7 +55,52 @@ func (a *AgentDB) LoadSettlementClaim(ctx context.Context) (*SettlementClaim, er
 	return &c, nil
 }
 
-// ClanSite is the site a clan selected for its settlement.
+// StrategyRow is the strategic machine an agent was in.
+type StrategyRow struct {
+	Kind, Resume string
+	Since        int64
+	Chosen       bool
+}
+
+// SaveStrategy stores the agent's strategy, replacing the earlier one.
+func (a *AgentDB) SaveStrategy(ctx context.Context, s StrategyRow) error {
+	a.mapWriteMu.Lock()
+	defer a.mapWriteMu.Unlock()
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+	if a.isClosed {
+		return ErrClosed
+	}
+	_, err := a.mapDB.ExecContext(ctx, `
+		INSERT INTO strategy_state (id, kind, resume, since, chosen) VALUES (1, ?, ?, ?, ?)
+		ON CONFLICT(id) DO UPDATE SET kind = excluded.kind, resume = excluded.resume, since = excluded.since, chosen = excluded.chosen;`,
+		s.Kind, s.Resume, s.Since, s.Chosen)
+	if err != nil {
+		return fmt.Errorf("saving strategy: %w", err)
+	}
+	return nil
+}
+
+// LoadStrategy returns the stored strategy, or nil when there is none.
+func (a *AgentDB) LoadStrategy(ctx context.Context) (*StrategyRow, error) {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+	if a.isClosed {
+		return nil, ErrClosed
+	}
+	var s StrategyRow
+	err := a.mapDB.QueryRowContext(ctx, `SELECT kind, resume, since, chosen FROM strategy_state WHERE id = 1;`).
+		Scan(&s.Kind, &s.Resume, &s.Since, &s.Chosen)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("loading strategy: %w", err)
+	}
+	return &s, nil
+}
+
+// ClanSite is a site a clan selected for a settlement.
 type ClanSite struct {
 	X, Y, Z    float64
 	Score      float64
@@ -63,7 +108,7 @@ type ClanSite struct {
 	ChosenTick int64
 }
 
-// ClaimClanSite records site as the clan's selection unless one exists, and returns the
+// ClaimClanSite records site as the clan's home unless it has one, and returns the
 // selection that stands: the first claim wins, so every member settles in the same place.
 // created reports whether this call made it.
 func (c *CivicRegistryDB) ClaimClanSite(ctx context.Context, clanID string, site ClanSite) (standing ClanSite, created bool, err error) {
@@ -75,8 +120,8 @@ func (c *CivicRegistryDB) ClaimClanSite(ctx context.Context, clanID string, site
 		return ClanSite{}, false, ErrClosed
 	}
 	res, err := c.db.ExecContext(ctx, `
-		INSERT INTO clan_site (world_id, clan_id, x, y, z, score, chosen_by, chosen_tick) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-		ON CONFLICT(world_id, clan_id) DO NOTHING;`,
+		INSERT INTO clan_sites (world_id, clan_id, site_no, x, y, z, score, chosen_by, chosen_tick) VALUES (?, ?, 0, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT(world_id, clan_id, site_no) DO NOTHING;`,
 		c.worldID, clanID, site.X, site.Y, site.Z, site.Score, site.ChosenBy, site.ChosenTick)
 	if err != nil {
 		return ClanSite{}, false, fmt.Errorf("claiming clan site: %w", err)
@@ -95,7 +140,7 @@ func (c *CivicRegistryDB) ClaimClanSite(ctx context.Context, clanID string, site
 	return *got, n > 0, nil
 }
 
-// GetClanSite returns the clan's selected site, or nil when it has not chosen one.
+// GetClanSite returns the clan's home site, or nil when it has not chosen one.
 func (c *CivicRegistryDB) GetClanSite(ctx context.Context, clanID string) (*ClanSite, error) {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
@@ -108,7 +153,7 @@ func (c *CivicRegistryDB) GetClanSite(ctx context.Context, clanID string) (*Clan
 func (c *CivicRegistryDB) clanSiteLocked(ctx context.Context, clanID string) (*ClanSite, error) {
 	var s ClanSite
 	err := c.db.QueryRowContext(ctx,
-		`SELECT x, y, z, score, chosen_by, chosen_tick FROM clan_site WHERE world_id = ? AND clan_id = ?;`, c.worldID, clanID).
+		`SELECT x, y, z, score, chosen_by, chosen_tick FROM clan_sites WHERE world_id = ? AND clan_id = ? AND site_no = 0;`, c.worldID, clanID).
 		Scan(&s.X, &s.Y, &s.Z, &s.Score, &s.ChosenBy, &s.ChosenTick)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil

@@ -28,7 +28,11 @@ const (
 	idleAfterTicks         = int64(600)   // nothing to do this long turns idle
 	idleLimitTicks         = int64(600)   // idle gives up waiting for advice after this long
 	morningEndsAt          = int64(6000)
-	gatherNearHome         = 48.0
+	eveningFromTick        = int64(12000)
+	// proposalFreshTicks is how old a proposal may be at dawn: one that arrived after the
+	// previous dawn is late, and changes nothing.
+	proposalFreshTicks = int64(18000)
+	gatherNearHome     = 48.0
 )
 
 // StrategyProposal is a change System 2 suggested, to be weighed in the morning.
@@ -45,9 +49,10 @@ type StrategyRecord struct {
 	// Resume is what idle returns to; "" unless Kind is idle.
 	Resume Strategy
 	// Chosen marks a strategy picked by review or assignment: milestones leave it alone.
-	Chosen      bool
-	ReviewedDay int64
-	Proposal    *StrategyProposal
+	Chosen bool
+	// Evening notes that the day has turned to evening since the last dawn review.
+	Evening  bool
+	Proposal *StrategyProposal
 }
 
 // base is the strategy under any idle pause.
@@ -123,7 +128,7 @@ func (s *AgentState) RestoreStrategy(r StrategyRecord) {
 func (s *AgentState) AssignStrategy(to Strategy, tick int64) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.strategy = StrategyRecord{Kind: to, Since: tick, Chosen: true, ReviewedDay: s.strategy.ReviewedDay}
+	s.strategy = StrategyRecord{Kind: to, Since: tick, Chosen: true, Evening: s.strategy.Evening}
 }
 
 // ProposeStrategy records a suggested change for the next morning review.
@@ -142,22 +147,22 @@ func (s *AgentState) AllowedStrategies() []Strategy {
 	return allowedFrom(s.strategyLocked().base(), settled)
 }
 
+// Exploring the frontier from a settlement is the clan's assignment (AssignStrategy), not
+// something an agent talks itself into.
 func allowedFrom(from Strategy, settled bool) []Strategy {
 	switch {
 	case !settled:
 		return nil
-	case from == StrategyExplore:
+	case from == StrategyExplore, from == StrategyProfession:
 		return []Strategy{StrategySettle}
 	case from == StrategySettle:
 		return []Strategy{StrategyProfession}
-	case from == StrategyProfession:
-		return []Strategy{StrategySettle, StrategyExplore}
 	}
 	return nil
 }
 
-// advanceStrategy applies milestones and the morning review for one tick. homeReady reports a
-// bed or finished shelter.
+// advanceStrategy applies milestones and the dawn review for one tick. homeReady reports a bed
+// or finished shelter.
 func (s *AgentState) advanceStrategy(tick, timeOfDay int64, homeReady bool) (StrategyChange, bool) {
 	if s == nil {
 		return StrategyChange{}, false
@@ -167,13 +172,25 @@ func (s *AgentState) advanceStrategy(tick, timeOfDay int64, homeReady bool) (Str
 	if s.strategy.Kind == "" {
 		s.strategy = s.strategyLocked()
 		s.strategy.Since = tick
-		s.strategy.ReviewedDay = tick / 24000
 	}
 	r := &s.strategy
+	tod := ((timeOfDay % 24000) + 24000) % 24000
+	dawn := r.Evening && tod < morningEndsAt
+	switch {
+	case dawn:
+		r.Evening = false
+	case tod >= eveningFromTick:
+		r.Evening = true
+	}
+	// A proposal is weighed at one dawn and spent, whatever the verdict.
+	var proposal *StrategyProposal
+	if dawn {
+		proposal, r.Proposal = r.Proposal, nil
+	}
 	from := r.base()
 	_, settled := s.settlementLocked()
 	replace := func(to Strategy, why string, chosen bool) (StrategyChange, bool) {
-		*r = StrategyRecord{Kind: to, Since: tick, Chosen: chosen, ReviewedDay: r.ReviewedDay, Proposal: r.Proposal}
+		*r = StrategyRecord{Kind: to, Since: tick, Chosen: chosen, Evening: r.Evening, Proposal: r.Proposal}
 		return StrategyChange{From: from, To: to, Why: why}, true
 	}
 	switch {
@@ -181,25 +198,17 @@ func (s *AgentState) advanceStrategy(tick, timeOfDay int64, homeReady bool) (Str
 		return replace(StrategyExplore, "no settlement", false)
 	case settled && from == StrategyExplore && !r.Chosen:
 		return replace(StrategySettle, "settlement established", false)
-	case from == StrategySettle && !r.Chosen && settled &&
+	case settled && from == StrategySettle &&
 		(homeReady && tick-r.Since >= professionTenureTicks || tick-r.Since >= professionMaxWaitTicks):
 		return replace(StrategyProfession, "established in the settlement", false)
 	}
-	day := tick / 24000
-	if r.Proposal == nil || ((timeOfDay%24000)+24000)%24000 >= morningEndsAt || day <= r.ReviewedDay {
-		return StrategyChange{}, false
-	}
-	// One review a morning, and the proposal is spent whatever the verdict.
-	p := *r.Proposal
-	r.Proposal, r.ReviewedDay = nil, day
-	if strings.TrimSpace(p.Reason) == "" || tick-r.Since < reviewTenureTicks {
+	if proposal == nil || strings.TrimSpace(proposal.Reason) == "" ||
+		tick-proposal.Tick > proposalFreshTicks || tick-r.Since < reviewTenureTicks {
 		return StrategyChange{}, false
 	}
 	for _, ok := range allowedFrom(from, settled) {
-		if ok == p.Strategy {
-			change, done := replace(p.Strategy, "morning review: "+p.Reason, true)
-			r.ReviewedDay = day
-			return change, done
+		if ok == proposal.Strategy {
+			return replace(proposal.Strategy, "morning review: "+proposal.Reason, true)
 		}
 	}
 	return StrategyChange{}, false

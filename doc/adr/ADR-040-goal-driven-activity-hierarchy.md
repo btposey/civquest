@@ -90,12 +90,12 @@ User direction, 2026-11-26. The base frame is one long-running **strategic machi
 **Replacing a machine.** Three sources, each with its own timing:
 
 1. *Hard milestones* apply at once: a chosen clan site or homestead ends exploring.
-2. *Morning review*: System 2 may propose a change during the night, naming what is new. At dawn code applies it if it is among the options allowed from the current machine, the machine has run at least two days, and nothing else changed that morning. A late or failed answer changes nothing.
+2. *Morning review*: System 2 may propose a change during the night, naming what is new. At the next dawn code weighs it once: it applies if it is among the options allowed from the current machine (settle ↔ profession, and a frontier explorer may come home) and the machine has run at least two days. A proposal that arrives after dawn expires before the next one, and a failed answer changes nothing.
 3. *Clan assignment* (for example a frontier explorer chosen from a surplus; the selection itself is cq-dhm).
 
 A replaced machine abandons its parked work, which banks what it knows.
 
-**Advice, not commands.** A System 2 directive is advice a machine reads when it next chooses work. It never parks or ends work under way.
+**Advice, not commands.** A System 2 directive is advice a machine reads when it next chooses work; it does not park or end work that is getting somewhere. Two exceptions keep a stuck agent rescuable: advice asked for because the agent stood idle may interrupt until the work it asks for starts, and a bootstrap harvest that has stalled (two failures, or no progress for 200 ticks) may be dropped for it.
 
 **Contemplation.** Night requests are spread across the night. Idle asks what to become while the body keeps a safe default, and returns to what it was if no answer comes.
 

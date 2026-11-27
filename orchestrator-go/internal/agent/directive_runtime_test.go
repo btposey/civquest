@@ -173,8 +173,8 @@ func TestRuntime_DaytimeIdleContemplation_TriggersAndPreservesNighttime(t *testi
 
 	// 4. Nighttime on Day 0 still fires normally!
 	_ = mockSvc.SendFrame(&civquestv1.TelemetryFrame{
-		WorldTick: 14000,
-		TimeOfDay: 14000,
+		WorldTick: 18000, // past every agent's staggered hour
+		TimeOfDay: 18000,
 		Status: &civquestv1.AgentStatus{
 			AgentId:         "aria_idle",
 			Health:          20,

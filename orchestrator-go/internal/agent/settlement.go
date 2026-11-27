@@ -95,9 +95,10 @@ func (r *AgentRuntime) loadSettlement() {
 	r.savedSettlement = st
 }
 
-// persistSettlement writes the agent's settlement when it has changed. It is called from the
-// frame pipeline only, which owns savedSettlement after construction.
+// persistSettlement writes the agent's settlement when it has changed.
 func (r *AgentRuntime) persistSettlement() {
+	r.persistMu.Lock()
+	defer r.persistMu.Unlock()
 	st, ok := r.system1State.Settlement()
 	if !ok || st == r.savedSettlement || r.agentDB == nil {
 		return

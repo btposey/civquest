@@ -294,6 +294,13 @@ func (a *AgentDB) migrateMapDB(ctx context.Context) error {
 			y REAL NOT NULL,
 			z REAL NOT NULL
 		);`,
+		`CREATE TABLE IF NOT EXISTS strategy_state (
+			id INTEGER PRIMARY KEY CHECK (id = 1),
+			kind TEXT NOT NULL,
+			resume TEXT NOT NULL DEFAULT '',
+			since INTEGER NOT NULL DEFAULT 0,
+			chosen INTEGER NOT NULL DEFAULT 0
+		);`,
 		`CREATE TABLE IF NOT EXISTS horizon_sectors (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
 			origin_x REAL,
