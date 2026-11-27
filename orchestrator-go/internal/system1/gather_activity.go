@@ -19,6 +19,7 @@ import (
 const (
 	activityKindGather = "gather"
 	gatherFishKey      = "fishing"
+	gatherNoFelling    = "felling" // asked of skipped: a task below already owns the motor
 
 	// DESIGN BUDGET (cq-6l3.15): radius, reach and stock targets are first guesses to tune in play.
 	gatherRadius        = 12.0
@@ -266,7 +267,7 @@ func bestGatherFind(agentID string, frame *civquestv1.TelemetryFrame, state *Age
 		offer(&gatherFind{Key: fmt.Sprintf("block:%d,%d,%d", b.Pos.X, b.Pos.Y, b.Pos.Z), Good: good, Block: b,
 			Pos: [3]float64{float64(b.Pos.X) + 0.5, float64(b.Pos.Y), float64(b.Pos.Z) + 0.5}, Dist: blockDistance(pos, b)})
 	}
-	if stock.wants(goodLog, "") {
+	if !skipped(gatherNoFelling) && stock.wants(goodLog, "") {
 		if trunk, _ := findNearestTreeTrunk(agentID, frame, pos, state); trunk != nil {
 			offer(&gatherFind{Key: fmt.Sprintf("trunk:%d,%d", trunk.Pos.X, trunk.Pos.Z), Good: goodLog, Block: trunk, Fell: true,
 				Pos: [3]float64{float64(trunk.Pos.X) + 0.5, float64(trunk.Pos.Y), float64(trunk.Pos.Z) + 0.5}, Dist: blockDistance(pos, trunk)})
@@ -339,7 +340,12 @@ func (gatherActivity) find(lw *fsmWorld) *gatherFind {
 		lw.backedOff(activityKindGather) || ctx.State.SettlementEstablished() {
 		return nil
 	}
-	return bestGatherFind(ctx.AgentID, f, ctx.State, lw.gatherSkipped)
+	return bestGatherFind(ctx.AgentID, f, ctx.State, func(key string) bool {
+		if key == gatherNoFelling {
+			return lw.onStack(activityKindTaskSubroutine)
+		}
+		return lw.gatherSkipped(key)
+	})
 }
 
 func (a gatherActivity) run(lw *fsmWorld, local any) htpda.Step {

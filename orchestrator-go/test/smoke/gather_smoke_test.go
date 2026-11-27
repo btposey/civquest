@@ -7,6 +7,7 @@ import (
 
 	"github.com/btposey/civquest/orchestrator-go/internal/eval"
 	civquestv1 "github.com/btposey/civquest/orchestrator-go/internal/proto/v1"
+	"github.com/btposey/civquest/orchestrator-go/internal/system1"
 )
 
 func travellerKit() []*civquestv1.ItemStackProto {
@@ -76,5 +77,36 @@ func TestSmoke_GatherGivesUpOnAnUnbreakableFind(t *testing.T) {
 	}
 	if hits == 0 || hits > 15 {
 		t.Errorf("break attempts on an unbreakable ore = %d, want 1..15", hits)
+	}
+}
+
+// An agent still short of its first tools, out looking for timber, passes a find: gathering must
+// not launch the bootstrap activity again on top of itself (seen live: 600 pushes in 10 minutes).
+func TestSmoke_GatherDuringBootstrapTripDoesNotChurn(t *testing.T) {
+	w := eval.NewBlankWorld()
+	w.FillGround(-60, -60, 60, 60, "")
+	for x := int32(-48); x <= 48; x += 8 {
+		for z := int32(-48); z <= 48; z += 8 {
+			w.Blocks[eval.BlockPosKey{X: x + 3, Y: 64, Z: z + 3}] = "minecraft:sweet_berry_bush"
+		}
+	}
+	s := harvestSim(w, nil, 20)
+	pushes, nested := 0, 0
+	s.FSM.SetEventSink(func(_ int64, category, _ string, d map[string]any) {
+		if category != system1.EventFrame || d["op"] != "push" || d["kind"] != "bootstrap" {
+			return
+		}
+		pushes++
+		if d["parent"] != nil {
+			nested++
+		}
+	})
+	s.Run(3 * harvestSimMinute)
+	t.Logf("pushes=%d nested=%d", pushes, nested)
+	if s.ItemCount("minecraft:sweet_berries") == 0 {
+		t.Fatalf("scenario did not gather anything on the trip: %s", s.InventorySummary())
+	}
+	if pushes > 40 {
+		t.Errorf("bootstrap pushed %d times (%d on top of another activity) in 3 minutes", pushes, nested)
 	}
 }

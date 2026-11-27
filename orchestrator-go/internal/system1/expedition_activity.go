@@ -1270,6 +1270,12 @@ func (w *fsmWorld) preemptorAbove(priority float64, skip string) (string, any) {
 		if w.skipped[kind] || kind == skip {
 			continue
 		}
+		// An activity already on the stack is not launched again on top of it, or a
+		// low-priority frame above it (gathering on a bootstrap trip) would relaunch it every
+		// tick. A task handed over by the stepping frame is a new task, so it still frames.
+		if w.onStack(kind) && !(kind == activityKindTaskSubroutine && w.pending != nil) {
+			continue
+		}
 		if prio <= priority {
 			break
 		}
@@ -1288,6 +1294,19 @@ func (w *fsmWorld) preemptorAbove(priority float64, skip string) (string, any) {
 		return k, a
 	}
 	return "", nil
+}
+
+// onStack reports whether a frame of kind is on the activity stack (inside a Step only).
+func (w *fsmWorld) onStack(kind string) bool {
+	if w.fsm == nil || w.fsm.kernel == nil {
+		return false
+	}
+	for _, f := range w.fsm.kernel.FramesInStep() {
+		if string(f.Kind()) == kind {
+			return true
+		}
+	}
+	return false
 }
 
 // PlanExpeditionTarget returns the first-hop target an expedition would choose from the state's
