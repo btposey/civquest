@@ -22,7 +22,7 @@ const (
 	dangerMergeRadius = 16.0
 	// The ground right round home is never off limits: an agent must be able to get home.
 	dangerHomeExempt = 8.0
-	// A sighting refreshes a registered danger (and is shared again) at most this often.
+	// A danger met again is told to the clan at most this often.
 	dangerRefreshTicks = int64(1200)
 	// A detour passes this far outside the danger, its waypoint snapped to a grid so that
 	// re-sending a walk does not move it a little each time.
@@ -35,6 +35,7 @@ type Danger struct {
 	Kind    string // mob type without namespace, e.g. "drowned"
 	X, Y, Z float64
 	Seen    int64
+	shared  int64 // when this agent last told the clan
 }
 
 // lingers reports mobs that stay about the place they were seen.
@@ -55,22 +56,27 @@ func mobKind(entityType string) string {
 	return strings.ReplaceAll(t, " ", "_")
 }
 
-// NoteDanger registers d, or refreshes the matching danger. It reports whether the register
-// changed enough to be worth telling the clan.
+// NoteDanger registers d, or moves and refreshes the matching danger: mobs walk. It reports
+// whether the clan should be told.
 func (s *AgentState) NoteDanger(d Danger) bool {
 	if s == nil || d.Kind == "" {
 		return false
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if !s.noteDangerLocked(d) {
+	i := s.noteDangerLocked(d)
+	at := &s.dangers[i]
+	if at.shared != 0 && d.Seen-at.shared < dangerRefreshTicks {
 		return false
 	}
-	s.freshDangers = append(s.freshDangers, d)
+	at.shared = d.Seen
+	s.freshDangers = append(s.freshDangers, *at)
 	return true
 }
 
-func (s *AgentState) noteDangerLocked(d Danger) bool {
+// noteDangerLocked records d and returns its place in the register. An older report never
+// displaces a newer one.
+func (s *AgentState) noteDangerLocked(d Danger) int {
 	kept := s.dangers[:0]
 	for _, old := range s.dangers {
 		if d.Seen-old.Seen < DangerMemoryTicks {
@@ -80,15 +86,15 @@ func (s *AgentState) noteDangerLocked(d Danger) bool {
 	s.dangers = kept
 	for i, old := range s.dangers {
 		if old.Kind == d.Kind && math.Hypot(old.X-d.X, old.Z-d.Z) <= dangerMergeRadius {
-			if d.Seen-old.Seen < dangerRefreshTicks {
-				return false
+			if d.Seen >= old.Seen {
+				d.shared = old.shared
+				s.dangers[i] = d
 			}
-			s.dangers[i] = d
-			return true
+			return i
 		}
 	}
 	s.dangers = append(s.dangers, d)
-	return true
+	return len(s.dangers) - 1
 }
 
 // MergeDangers takes in dangers the clan reported; they are not reported back.

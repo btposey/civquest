@@ -98,3 +98,21 @@ func TestDanger_HitAgentKeepsFleeingWhenTheAttackerDropsFromSight(t *testing.T) 
 		t.Errorf("clear of the danger, the emergency should end")
 	}
 }
+
+// A Drowned that swims on is registered where it is now, not where it was first seen.
+func TestDanger_FollowsAMovingMob(t *testing.T) {
+	st := NewAgentState()
+	if !st.NoteDanger(Danger{Kind: "drowned", X: 0, Z: 0, Seen: 100}) {
+		t.Fatal("a new danger is told to the clan")
+	}
+	if st.NoteDanger(Danger{Kind: "drowned", X: 14, Z: 0, Seen: 300}) {
+		t.Error("the clan was told again too soon")
+	}
+	if got := st.Dangers(300); len(got) != 1 || got[0].X != 14 {
+		t.Errorf("register %+v, want the new position", got)
+	}
+	st.MergeDangers([]Danger{{Kind: "drowned", X: 0, Z: 0, Seen: 100}})
+	if got := st.Dangers(300); got[0].X != 14 {
+		t.Errorf("an older report displaced a newer sighting: %+v", got)
+	}
+}
