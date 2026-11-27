@@ -106,6 +106,11 @@ public class InteractHandler implements IntentHandler {
                     return false;
                 }
 
+                // A torch or the like put into fluid is washed away at once: refuse it.
+                if (isWashedAway(level, pos, current, blockState)) {
+                    return false;
+                }
+
                 // Never place an unsupported block (a floating ladder, torch, etc.): the state's own
                 // survival rule (ladder: solid face behind FACING) must hold at the target cell.
                 if (!blockState.canSurvive(level, pos)) {
@@ -186,6 +191,12 @@ public class InteractHandler implements IntentHandler {
         }
     }
 
+    /** Whether {@code placed} has no body and the cell holds fluid, which would carry it off. */
+    private static boolean isWashedAway(Level level, BlockPos pos, BlockState current, BlockState placed) {
+        return current.getFluidState() != null && !current.getFluidState().isEmpty()
+                && !placed.blocksMotion() && placed.getCollisionShape(level, pos).isEmpty();
+    }
+
     /**
      * Human-readable reason a PLACE_BLOCK at the intent's cell just failed (re-derives the checks; the world is
      * unchanged by a failed placement). Blank when no specific cause is identified.
@@ -208,6 +219,9 @@ public class InteractHandler implements IntentHandler {
         BlockState state = resolver.apply(agent, intent.getBlockOrItemId());
         if (state == null) {
             return "unknown block state " + intent.getBlockOrItemId();
+        }
+        if (isWashedAway(level, pos, level.getBlockState(pos), state)) {
+            return "place target is under water";
         }
         if (!state.canSurvive(level, pos)) {
             return "no solid support for " + intent.getBlockOrItemId() + " at target (attach face is not solid)";

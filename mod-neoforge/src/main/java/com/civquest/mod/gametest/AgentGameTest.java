@@ -246,6 +246,32 @@ public class AgentGameTest {
         helper.succeed();
     }
 
+    // cq-j0e.3: a torch put into water is washed away at once, so the placement is refused.
+    @GameTest(template = "empty3x3x3")
+    public static void testTorchIsNotPlacedIntoWater(GameTestHelper helper) {
+        MinecraftServer server = helper.getLevel().getServer();
+        AgentEntityManager manager = new AgentEntityManager();
+        BlockPos pond = new BlockPos(2, 1, 1);
+        helper.setBlock(pond.below(), Blocks.STONE);
+        helper.setBlock(pond, Blocks.WATER);
+        AgentEntity agent = spawnCoverageAgent(helper, manager, "agent-gt-torch", new BlockPos(0, 1, 1));
+        agent.getInventory().add(new ItemStack(Items.TORCH, 2));
+        BlockPos at = helper.absolutePos(pond);
+        manager.handleIntent(server, AgentIntent.newBuilder().setAgentId("agent-gt-torch")
+                .setInteractBlock(InteractBlockIntent.newBuilder()
+                        .setPos(BlockPosProto.newBuilder().setX(at.getX()).setY(at.getY()).setZ(at.getZ()))
+                        .setInteractionType(InteractBlockIntent.InteractionType.PLACE_BLOCK)
+                        .setBlockOrItemId("minecraft:torch"))
+                .build()).join();
+        for (int t = 0; t < 10; t++) {
+            agent.tick();
+        }
+        helper.assertBlockPresent(Blocks.WATER, pond);
+        helper.assertTrue(countItem(agent, Items.TORCH) == 2, "The torch must stay in the inventory");
+        manager.despawnAgent(server, "agent-gt-torch").join();
+        helper.succeed();
+    }
+
     // cq-gey.1: agents far from any player and from spawn must keep ticking.
     @GameTest(template = "empty3x3x3", timeoutTicks = 200)
     public static void testAgentKeepsTickingFarFromSpawn(GameTestHelper helper) {
