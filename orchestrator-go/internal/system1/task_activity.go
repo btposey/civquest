@@ -204,14 +204,11 @@ func (a taskActivity) run(lw *fsmWorld, local any) htpda.Step {
 	}
 	want := walk.wantExpedition
 	walk.wantExpedition = false
-	if args, ok := lw.expeditionStart(origin); ok && want {
-		// A task waterfall asked for an expedition (e.g. a finished harvest with no timber in
-		// sight): it replaces a finished task frame, or runs over a task that is still active.
-		if next == nil {
-			return htpda.Step{Op: htpda.OpReplace, Child: activityKindExpedition, Args: args, Intents: intents}
-		}
-		return htpda.Step{Op: htpda.OpPush, Child: activityKindExpedition, Args: args, Intents: intents,
-			Next: taskLocal{Task: next, Receipt: unconsumed, LastStepTick: lw.tick, Walk: walk}}
+	if args, ok := lw.expeditionStart(origin); ok && want && next == nil {
+		// A task waterfall asked for an expedition (a finished harvest with no timber in
+		// sight): it takes the finished task's place. A task still active carries on; an
+		// expedition is not its child.
+		return htpda.Step{Op: htpda.OpReplace, Child: activityKindExpedition, Args: args, Intents: intents}
 	}
 	if next == nil {
 		step := popFrame(lw, a.kind, intents, len(intents) > 0 || !a.fallThrough(lw))
