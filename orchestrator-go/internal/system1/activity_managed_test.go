@@ -193,11 +193,12 @@ func TestActivityArbiter_UnifiedSelectionAndSkillRegistry(t *testing.T) {
 		if len(res.Intents) == 0 {
 			t.Fatalf("expected bootstrap intent")
 		}
-		if fsm.ActiveActivityKind() != activityKindBootstrap {
-			t.Fatalf("expected active bootstrap activity, got %v", fsm.ActiveActivityKind())
+		// The harvest bootstrap started runs as its child in the same tick.
+		if kinds := stackKinds(fsm); len(kinds) != 2 || kinds[0] != activityKindBootstrap || kinds[1] != activityKindTaskSubroutine {
+			t.Fatalf("expected a harvest task under bootstrap, got %v", kinds)
 		}
-		if st.ActiveActivityKind() != activityKindBootstrap {
-			t.Fatalf("expected state kind bootstrap, got %q", st.ActiveActivityKind())
+		if st.ActiveActivityKind() != activityKindTaskSubroutine {
+			t.Fatalf("expected state kind task_subroutine, got %q", st.ActiveActivityKind())
 		}
 	})
 

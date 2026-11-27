@@ -739,8 +739,8 @@ func TestFSM_TreeHarvestPDAPushEmergencyPreemptAndResume(t *testing.T) {
 	if res0.Routine != RoutineHarvestTree {
 		t.Fatalf("expected Routine=%s when tree harvest commits, got %s", RoutineHarvestTree, res0.Routine)
 	}
-	if fsm.ActiveActivityKind() != activityKindBootstrap {
-		t.Fatalf("expected bootstrap frame to commit the harvest task inline, got top=%q", fsm.ActiveActivityKind())
+	if fsm.ActiveActivityKind() != activityKindTaskSubroutine {
+		t.Fatalf("expected the harvest task framed at once, got top=%q", fsm.ActiveActivityKind())
 	}
 	if locked, tx, tz := treeOf(fsmTask(fsm)); !locked || tx != 3 || tz != 0 {
 		t.Fatalf("expected locked trunk (3,0), got locked=%v (%d,%d)", locked, tx, tz)

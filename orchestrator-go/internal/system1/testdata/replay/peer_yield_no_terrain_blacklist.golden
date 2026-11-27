@@ -1,5 +1,5 @@
-t=100 stage=BOOTSTRAP routine=HARVEST_TREE stack=[bootstrap/1] intents=[Interact(HARVEST_BREAK 3,64,0 minecraft:oak_log)] probe={unreachable(3.5,64,0.5)=false}  // commit to trunk
-t=110 stage=BOOTSTRAP routine=HARVEST_TREE stack=[recover/2] intents=[] probe={unreachable(3.5,64,0.5)=false}  // peer occupies trunk: stuck receipt with blocked_by_entity -> Recover(congestion) yields
+t=100 stage=BOOTSTRAP routine=HARVEST_TREE stack=[task_subroutine/2] intents=[Interact(HARVEST_BREAK 3,64,0 minecraft:oak_log)] probe={unreachable(3.5,64,0.5)=false}  // commit to trunk
+t=110 stage=BOOTSTRAP routine=HARVEST_TREE stack=[recover/3] intents=[] probe={unreachable(3.5,64,0.5)=false}  // peer occupies trunk: stuck receipt with blocked_by_entity -> Recover(congestion) yields
 t=135 stage=BOOTSTRAP routine=HARVEST_TREE stack=[task_subroutine/2] intents=[Interact(HARVEST_BREAK 3,64,0 minecraft:oak_log)] probe={unreachable(3.5,64,0.5)=false}  // yield elapsed (20 ticks): Recover pops Recovered, parent re-emits
 t=140 stage=BOOTSTRAP routine=HARVEST_TREE stack=[recover/3] intents=[] probe={unreachable(3.5,64,0.5)=false}  // peer still there: a fresh Recover(congestion) yields again, still no blacklist
 t=150 stage=BOOTSTRAP routine=HARVEST_TREE stack=[recover/3] intents=[] probe={unreachable(3.5,64,0.5)=false}  // peer leaves; the yield continues, no terrain blacklist at any step

@@ -264,8 +264,7 @@ func evaluateDirectiveGatherTimber(
 	targetLog, recalledTreePOI := findNearestTreeTrunk(agentID, frame, pos, state)
 	if targetLog != nil {
 		treeTask := NewHarvestTreeTask(targetLog.Pos.X, targetLog.Pos.Y, targetLog.Pos.Z, state.stage, frame.WorldTick)
-		walk.startTaskLocked(state, treeTask)
-		stepRes := walk.stepTaskLocked(agentID, state, frame)
+		stepRes := walk.launchTaskLocked(agentID, state, frame, treeTask)
 		if stepRes.Active {
 			return stepRes.Intent
 		}

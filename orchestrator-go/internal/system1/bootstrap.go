@@ -245,8 +245,7 @@ func evaluateBootstrapGoalsLocked(
 				if targetPos != nil {
 					if drop := findNearestDroppedWoodItem(frame, targetPos.X, targetPos.Z); drop != nil {
 						collectTask := NewCollectItemsTask(targetPos.X, targetPos.Y, targetPos.Z, state.stage, frame.WorldTick)
-						walk.startTaskLocked(state, collectTask)
-						collectRes := walk.stepTaskLocked(agentID, state, frame)
+						collectRes := walk.launchTaskLocked(agentID, state, frame, collectTask)
 						if collectRes.Active {
 							return collectRes.Intent
 						}
@@ -407,8 +406,7 @@ func evaluateBootstrapGoalsLocked(
 		targetLog, recalledTreePOI := findNearestTreeTrunk(agentID, frame, pos, state)
 		if targetLog != nil {
 			treeTask := NewHarvestTreeTask(targetLog.Pos.X, targetLog.Pos.Y, targetLog.Pos.Z, state.stage, frame.WorldTick)
-			walk.startTaskLocked(state, treeTask)
-			stepRes := walk.stepTaskLocked(agentID, state, frame)
+			stepRes := walk.launchTaskLocked(agentID, state, frame, treeTask)
 			if stepRes.Active {
 				return stepRes.Intent
 			}

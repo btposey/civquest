@@ -186,7 +186,9 @@ func (a planActivity) run(lw *fsmWorld, local any) htpda.Step {
 		return out
 	}
 	x := planExec{lw: lw, l: &l, facts: facts, table: table, mem: mem, tick: tick}
+	l.Walk.deferTask = !l.Walk.hasTask()
 	in, working := x.act(step)
+	l.Walk.deferTask = false
 	st.mu.Unlock()
 
 	if !working {
@@ -595,8 +597,7 @@ func (x *planExec) gatherTree() (*civquestv1.AgentIntent, bool) {
 	}
 	t.Attempts = 1
 	x.l.Target = t
-	x.l.Walk.startTaskLocked(st, NewHarvestTreeTask(t.Pos[0], t.Pos[1], t.Pos[2], st.stage, x.tick))
-	res := x.l.Walk.stepTaskLocked(x.agent(), st, x.frame())
+	res := x.l.Walk.launchTaskLocked(x.agent(), st, x.frame(), NewHarvestTreeTask(t.Pos[0], t.Pos[1], t.Pos[2], st.stage, x.tick))
 	return res.Intent, true
 }
 

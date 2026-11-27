@@ -1,5 +1,5 @@
-t=100 stage=BOOTSTRAP routine=HARVEST_TREE stack=[bootstrap/1] intents=[Interact(HARVEST_BREAK 3,64,0 minecraft:oak_log)] probe={unreachable(3.5,64,0.5)=false}  // commit to trunk
-t=110 stage=BOOTSTRAP routine=HARVEST_TREE stack=[recover/2] intents=[Navigate(x=-3.5 z=0.5)] probe={unreachable(3.5,64,0.5)=false}  // terrain stuck receipt 1: Recover(terrain) sidesteps
+t=100 stage=BOOTSTRAP routine=HARVEST_TREE stack=[task_subroutine/2] intents=[Interact(HARVEST_BREAK 3,64,0 minecraft:oak_log)] probe={unreachable(3.5,64,0.5)=false}  // commit to trunk
+t=110 stage=BOOTSTRAP routine=HARVEST_TREE stack=[recover/3] intents=[Navigate(x=-3.5 z=0.5)] probe={unreachable(3.5,64,0.5)=false}  // terrain stuck receipt 1: Recover(terrain) sidesteps
 t=215 stage=BOOTSTRAP routine=HARVEST_TREE stack=[task_subroutine/2] intents=[Interact(HARVEST_BREAK 3,64,0 minecraft:oak_log)] probe={unreachable(3.5,64,0.5)=false}  // lease expired: give-up 1 (one failure, not yet blacklisted)
 t=225 stage=BOOTSTRAP routine=HARVEST_TREE stack=[recover/3] intents=[Navigate(x=-3.5 z=0.5)] probe={unreachable(3.5,64,0.5)=false}  // terrain stuck receipt 2: Recover(terrain) again
 t=330 stage=BOOTSTRAP routine=PRIMARY_DUTY stack=[survey/3] intents=[Survey(sectors=36)] probe={unreachable(3.5,64,0.5)=true}  // lease expired: give-up 2 blacklists the target

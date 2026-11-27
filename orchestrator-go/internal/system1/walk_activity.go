@@ -15,13 +15,19 @@ func runWalkFrame(a waterfallActivity, lw *fsmWorld, walk walkLocal, wrap func(w
 	prog := walk
 	prog.wantExpedition = false
 	prog.spatial = lw.spatial()
+	prog.deferTask = !prog.hasTask()
 	lw.skillCtx.Walk = &prog
 	fi, done := a.tick(lw)
 	lw.skillCtx.Walk = nil
+	launched := prog.deferTask && prog.hasTask()
+	prog.deferTask = false
 	prog.spatial = spatialmem.Snapshot{}
 	intents := unwrapFSMIntents(fi)
 	want := prog.wantExpedition
 	prog.wantExpedition = false
+	if launched {
+		return htpda.Step{Op: htpda.OpStay, Intents: intents, Next: wrap(prog)} // runFrame frames the task
+	}
 	if want {
 		if args, ok := lw.expeditionStart(string(a.Kind())); ok {
 			return htpda.Step{Op: htpda.OpPush, Child: activityKindExpedition, Args: args, Next: wrap(prog), Intents: intents}

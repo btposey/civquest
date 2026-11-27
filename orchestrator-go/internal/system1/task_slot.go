@@ -54,6 +54,17 @@ func (w *walkLocal) startTaskLocked(state *AgentState, t *TaskSubroutine) {
 	state.publishTask(t)
 }
 
+// launchTaskLocked commits a new task and, unless the stepping frame hands its tasks to
+// children, runs its first step at once. A deferred task runs in its own frame this same tick,
+// so its intents and receipts belong to the frame that owns it.
+func (w *walkLocal) launchTaskLocked(agentID string, state *AgentState, frame *civquestv1.TelemetryFrame, t *TaskSubroutine) TaskStepResult {
+	w.startTaskLocked(state, t)
+	if w.deferTask {
+		return TaskStepResult{Active: true}
+	}
+	return w.stepTaskLocked(agentID, state, frame)
+}
+
 // stepTaskLocked advances the owned task one tick (state.mu held), dropping it when done.
 func (w *walkLocal) stepTaskLocked(agentID string, state *AgentState, frame *civquestv1.TelemetryFrame) TaskStepResult {
 	if w == nil || w.task == nil {

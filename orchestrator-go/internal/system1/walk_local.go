@@ -30,6 +30,8 @@ type walkLocal struct {
 	// wantExpedition is the walk's request to push an expedition over its frame; the activity
 	// Step consumes it (it is a step result, not progress).
 	wantExpedition bool
+	// deferTask is set while a frame that launches tasks as children is stepping.
+	deferTask bool
 	// Acted records that the frame has emitted at least one intent.
 	Acted bool
 

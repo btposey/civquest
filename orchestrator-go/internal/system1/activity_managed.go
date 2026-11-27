@@ -157,7 +157,19 @@ func runFrame(a waterfallActivity, lw *fsmWorld, local any, searchPreemptors boo
 			return htpda.Step{Op: htpda.OpPush, Child: activityKindTaskSubroutine, Args: *p, Next: withoutPendingTask(local)}
 		}
 	}
-	return a.run(lw, local)
+	return lw.frameLaunchedTask(a.run(lw, local))
+}
+
+// frameLaunchedTask pushes the task a step just committed as the frame's child, so it runs in
+// its own frame this same tick. A frame whose task ended this tick waits for the next one.
+func (w *fsmWorld) frameLaunchedTask(step htpda.Step) htpda.Step {
+	if step.Op != htpda.OpStay || w.skipped[activityKindTaskSubroutine] {
+		return step
+	}
+	if p := pendingTaskOf(step.Next); p != nil && w.taskEligible(p) {
+		step.Op, step.Child, step.Args, step.Next = htpda.OpPush, activityKindTaskSubroutine, *p, withoutPendingTask(step.Next)
+	}
+	return step
 }
 
 // executeRegisteredSkill runs the registry's skill name (or fallback) when its preconditions hold.

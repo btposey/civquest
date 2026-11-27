@@ -1,4 +1,4 @@
 t=204 stage=BOOTSTRAP routine=PRIMARY_DUTY stack=[survey/2] intents=[Survey(sectors=36)]  // scout directive: survey 1
 t=325 stage=BOOTSTRAP routine=PRIMARY_DUTY stack=[survey/2] intents=[Survey(sectors=36)]  // no report, lease expired: survey 2
 t=446 stage=BOOTSTRAP routine=PRIMARY_DUTY stack=[-/0] intents=[]  // no report again: expedition gives up (backoff), nothing held
-t=475 stage=BOOTSTRAP routine=HARVEST_TREE stack=[bootstrap/1] intents=[Navigate(x=-45.5 z=-7.5)]  // agent is working again (harvest) while the directive stays active
+t=475 stage=BOOTSTRAP routine=HARVEST_TREE stack=[task_subroutine/2] intents=[Navigate(x=-45.5 z=-7.5)]  // agent is working again (harvest) while the directive stays active

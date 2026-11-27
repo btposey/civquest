@@ -1,4 +1,4 @@
-t=100 stage=BOOTSTRAP routine=HARVEST_TREE stack=[bootstrap/1] intents=[Interact(HARVEST_BREAK 3,64,0 minecraft:oak_log)] probe={taskFailures=0}  // pre-task receipt batch 1 carried in
+t=100 stage=BOOTSTRAP routine=HARVEST_TREE stack=[task_subroutine/2] intents=[Interact(HARVEST_BREAK 3,64,0 minecraft:oak_log)] probe={taskFailures=0}  // pre-task receipt batch 1 carried in
 t=110 stage=BOOTSTRAP routine=HARVEST_TREE stack=[task_subroutine/2] intents=[] probe={taskFailures=0}  // task issued batch 2
 t=135 stage=EMERGENCY routine=EMERGENCY stack=[emergency/3] intents=[Attack(target=901 shield=false kite=false flee=true); Navigate(x=-15.5 z=0.5)] probe={taskFailures=0}  // reflex preempts; batch 3 PREEMPTED_BY_REFLEX
 t=350 stage=BOOTSTRAP routine=HARVEST_TREE stack=[task_subroutine/2] intents=[Interact(HARVEST_BREAK 3,64,0 minecraft:oak_log)] probe={taskFailures=0}  // cleared; redelivered PREEMPTED batch 3 does not abort the task

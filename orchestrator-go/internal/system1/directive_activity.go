@@ -168,11 +168,14 @@ func isStrategicDirectiveEligible(stage Stage, routine Routine, ctx *FSMContext)
 // run is one step of the strategic_directive frame.
 func (a directiveActivity) run(lw *fsmWorld, local any) htpda.Step {
 	prog, _ := local.(directiveLocal)
+	prog.Walk.deferTask = !prog.Walk.hasTask()
 	lw.skillCtx.Directive = &prog
 	fi, _ := a.tick(lw)
 	lw.skillCtx.Directive = nil
+	launched := prog.Walk.deferTask && prog.Walk.hasTask()
+	prog.Walk.deferTask = false
 	intents := unwrapFSMIntents(fi)
-	if len(intents) == 0 && (!directiveWaiting(prog, lw.ctx.Frame) || !lw.holds()) {
+	if len(intents) == 0 && !launched && (!directiveWaiting(prog, lw.ctx.Frame) || !lw.holds()) {
 		// Nothing to do and nothing in flight: normal activities run this tick.
 		return popFrame(lw, a.kind, nil, false)
 	}
