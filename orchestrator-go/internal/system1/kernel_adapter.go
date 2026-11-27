@@ -151,7 +151,8 @@ func newActivityKernel(managed []waterfallActivity) *htpda.Kernel {
 	if err != nil {
 		panic("system1: invalid activity registry: " + err.Error())
 	}
-	return htpda.NewKernel(reg, activityPriorityTable(), htpda.Options{})
+	// Shape rules are enforced (ADR-040): a sideways, shallower or recursive push is refused.
+	return htpda.NewKernel(reg, activityPriorityTable(), htpda.Options{EnforceShape: true})
 }
 
 // ---- AgentFSM wiring (callers hold fsm.mu) ----
