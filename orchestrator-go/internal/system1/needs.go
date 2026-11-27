@@ -213,6 +213,8 @@ func EvaluateHunger(agentID string, frame *civquestv1.TelemetryFrame, state *Age
 		shouldEat = true
 	} else if frame.Status.Health > 0 && float64(frame.Status.Health) <= LowHPThresholdRatio*maxHP && foodLevel < 20 {
 		shouldEat = true
+	} else if float64(frame.Status.Health) < maxHP && frame.Status.Health > 0 && foodLevel < healingFoodLevel {
+		shouldEat = true // wounds close only on a nearly full stomach (cq-gey.5)
 	} else if restingOrIdle && foodLevel < 14 {
 		shouldEat = true
 	}
@@ -456,16 +458,29 @@ func EvaluateSleep(agentID string, frame *civquestv1.TelemetryFrame, state *Agen
 	return nil
 }
 
-// NeedsForaging returns true when the agent is hungry (FoodLevel <= 12) and has no
-// edible food in inventory, meaning System 1 must forage or hunt for food.
+const (
+	// healingFoodLevel is the food level below which Minecraft restores no health.
+	healingFoodLevel = int32(18)
+	// woundedHealthRatio: an agent this hurt goes looking for food so that it can heal.
+	woundedHealthRatio = float32(0.6)
+)
+
+// NeedsForaging returns true when the agent has no edible food and is hungry (FoodLevel <= 12),
+// or badly wounded and not fed enough to heal.
 func NeedsForaging(frame *civquestv1.TelemetryFrame) bool {
 	if frame == nil || frame.Status == nil {
 		return false
 	}
-	if frame.Status.FoodLevel > 12 {
+	st := frame.Status
+	maxHP := st.MaxHealth
+	if maxHP <= 0 {
+		maxHP = 20
+	}
+	wounded := st.Health > 0 && st.Health <= woundedHealthRatio*maxHP
+	if st.FoodLevel > 12 && !(wounded && st.FoodLevel < healingFoodLevel) {
 		return false
 	}
-	_, _, hasFood := FindOptimalFood(frame.Status.Inventory)
+	_, _, hasFood := FindOptimalFood(st.Inventory)
 	return !hasFood
 }
 
