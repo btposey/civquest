@@ -103,6 +103,18 @@ cd orchestrator-go && go test -tags livellm -v ./test/integration -run TestLiveL
 - Runs on a fixed world seed (`SEED` overrides it), so results are comparable between runs; play still varies.
 - Three phases: morning, forced hunger, night. Fails on a stalled or silent brain, an unanswered chat, an action repeated without moving, a long emergency, an activity pushed and popped over and over, endless bed attempts, or an agent dying to the world (drowning, fire, falls, hunger). Simulation fixtures can differ from the live server (recipes, terrain), so run this as well.
 
+### Sandbox Play Test (watch agents play, without touching the install)
+```bash
+./scripts/sandbox-playtest.sh               # 6 agents, 1 in-game day (about 20 min), user's world seed
+DAYS=3 ./scripts/sandbox-playtest.sh        # length in in-game days (24000 world ticks each; fractions allowed)
+AGENTS="able bert" DAYS=0.1 ./scripts/sandbox-playtest.sh
+```
+- Same throwaway server and XDG sandbox as the smoke (`scripts/lib/live-sandbox.sh`), but in its own game directory: world, agents, clan records and server config are new every run. `SEED` overrides the seed.
+- Nothing is forced (no hunger, time changes or chat) and nothing passes or fails; interrupt to stop early. `difficulty`, `view-distance` and `simulation-distance` come from the install's `server.properties` (read only; default normal, 10, 10).
+- Every run that got as far as starting the server, interrupted or not, is archived to `~/.local/share/civquest-playtests/<date>-sbN/`: `config`, `share`, `state` (agent logs, events, `server.log`), `server` (world, logs, properties), `deployed-commit.txt` (plus `uncommitted.diff` if the tree was dirty), `run.txt` and the per-agent `summary.txt`.
+- Never writes to `~/.local/share/civquest`, `~/.config/civquest` or `~/.local/state/civquest`, and does not start or stop the install's server or daemon.
+- **Limit:** no player joins, so the game spawns no mobs and gives no random block ticks (crop and sapling growth). It does not test night-time danger or farming; use a connected play test for those.
+
 ## Architecture Overview
 
 _Add a brief overview of your project architecture_

@@ -12,7 +12,18 @@ java {
     }
 }
 
-def integrationServerDir = layout.buildDirectory.dir('integration-server')
+// The sandbox play test (scripts/sandbox-playtest.sh) runs in a game directory of its own, so that
+// nothing left in the shared one reaches it.
+def integrationRunDir = project.findProperty('civquest.integrationRunDir')
+def integrationServerDir = integrationRunDir
+        ? layout.dir(providers.provider { file(integrationRunDir) })
+        : layout.buildDirectory.dir('integration-server')
+// Written to server.properties only when given.
+def integrationPlaySettings = [
+    'difficulty'         : project.findProperty('civquest.integrationDifficulty') ?: '',
+    'view-distance'      : project.findProperty('civquest.integrationViewDistance') ?: '',
+    'simulation-distance': project.findProperty('civquest.integrationSimulationDistance') ?: '',
+]
 
 def prepareIntegrationServer = tasks.register('prepareIntegrationServer') {
     description = 'Prepares isolated sandbox directory, eula.txt, and server.properties for headless integration server'
@@ -23,6 +34,7 @@ def prepareIntegrationServer = tasks.register('prepareIntegrationServer') {
     inputs.property('levelType', project.findProperty('civquest.integrationLevelType') ?: 'minecraft:flat')
     inputs.property('levelName', project.findProperty('civquest.integrationLevelName') ?: 'world')
     inputs.property('levelSeed', project.findProperty('civquest.integrationLevelSeed') ?: '')
+    inputs.property('playSettings', integrationPlaySettings)
 
     doLast {
         def targetDir = integrationServerDir.get().asFile
@@ -32,7 +44,7 @@ def prepareIntegrationServer = tasks.register('prepareIntegrationServer') {
 
         new File(targetDir, 'eula.txt').text = "eula=true\n"
 
-        // The live agent smoke (scripts/live-agent-smoke.sh) asks for generated terrain.
+        // The sandbox runs (scripts/lib/live-sandbox.sh) ask for generated terrain.
         def levelType = project.findProperty('civquest.integrationLevelType') ?: 'minecraft:flat'
         def levelName = project.findProperty('civquest.integrationLevelName') ?: 'world'
         def levelSeed = project.findProperty('civquest.integrationLevelSeed') ?: ''
@@ -44,7 +56,7 @@ max-tick-time=-1
 online-mode=false
 sync-chunk-writes=false
 server-port=0
-"""
+""" + integrationPlaySettings.findAll { it.value }.collect { "${it.key}=${it.value}\n" }.join('')
     }
 }
 
@@ -91,7 +103,7 @@ neoForge {
             systemProperty 'java.awt.headless', 'true'
             systemProperty 'neoforge.enabledGameTestNamespaces', 'civquest'
             jvmArguments.addAll('-Xms1024m', '-Xmx2048m')
-            gameDirectory = project.layout.buildDirectory.dir('integration-server')
+            gameDirectory = integrationServerDir
         }
     }
 
