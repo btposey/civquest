@@ -7,7 +7,7 @@ import argparse, collections, json, sys
 
 
 def score(records, tests):
-    ticks, depth = 0, 0
+    ticks, depth, given_up = 0, 0, 0
     push, idle, viol = collections.Counter(), collections.Counter(), collections.Counter()
     for line in open(records, errors="replace"):
         try:
@@ -16,6 +16,7 @@ def score(records, tests):
             continue
         ticks += r.get("ticks", 0)
         depth = max(depth, r.get("depth", 0))
+        given_up += r.get("given_up", 0)
         push.update(r.get("push", []))
         idle.update(r.get("idle", []))
         viol.update(r.get("violations", []))
@@ -26,6 +27,7 @@ def score(records, tests):
     out = {
         "ticks": ticks,
         "max_depth": depth,
+        "walks_given_up": given_up,
         "pushes_per_1000_ticks": per_k(sum(push.values())),
         "idle_pops_per_1000_ticks": per_k(sum(idle.values())),
         "violations_per_1000_ticks": per_k(sum(viol.values())),
@@ -61,7 +63,7 @@ def main():
             json.dump(s, f, indent=2)
             f.write("\n")
     base = json.load(open(a.compare)) if a.compare else {}
-    rows = ["ticks", "max_depth", "pushes_per_1000_ticks", "idle_pops_per_1000_ticks", "violations_per_1000_ticks", "tests_passed"]
+    rows = ["ticks", "max_depth", "pushes_per_1000_ticks", "idle_pops_per_1000_ticks", "violations_per_1000_ticks", "walks_given_up", "tests_passed"]
     print(f"{'measure':34}{'baseline':>12}{'now':>12}")
     for k in rows:
         if k in s:

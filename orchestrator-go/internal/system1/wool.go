@@ -102,10 +102,13 @@ func NeedsWool(agentID string, frame *civquestv1.TelemetryFrame, state *AgentSta
 }
 
 // woolTargets returns the nearest viable sheep and wool drop in range.
-func woolTargets(frame *civquestv1.TelemetryFrame) (sheep, drop *civquestv1.VisibleEntity, sheepDist, dropDist float64) {
+func woolTargets(frame *civquestv1.TelemetryFrame, state *AgentState) (sheep, drop *civquestv1.VisibleEntity, sheepDist, dropDist float64) {
 	pos := frame.Status.Position
 	sheepDist, dropDist = math.MaxFloat64, math.MaxFloat64
 	for _, e := range frame.VisibleEntities {
+		if e != nil && e.Position != nil && state.IsTargetUnreachable(e.Position.X, e.Position.Y, e.Position.Z, frame.WorldTick) {
+			continue
+		}
 		switch {
 		case isWoolSheep(e):
 			if d := entityDistance(pos, e); d <= woolSeekRadius && d < sheepDist {
@@ -143,7 +146,7 @@ func EvaluateWool(agentID string, frame *civquestv1.TelemetryFrame, state *Agent
 		mem = &woolLocal{}
 	}
 	navState := frame.Status.NavigationState
-	sheep, drop, sheepDist, dropDist := woolTargets(frame)
+	sheep, drop, sheepDist, dropDist := woolTargets(frame, state)
 
 	navigate := func(key string, p *civquestv1.Vec3, tolerance int32) *civquestv1.AgentIntent {
 		if navState == civquestv1.NavigationState_NAVIGATION_STATE_PATHING && mem.LastTargetKey == key {
@@ -217,7 +220,7 @@ func (woolActivity) eligible(lw *fsmWorld) bool {
 	if !inspectBootstrapInventory(inv).hasAxe && !hasInventoryItem(inv, "shears") {
 		return false
 	}
-	sheep, drop, _, _ := woolTargets(ctx.Frame)
+	sheep, drop, _, _ := woolTargets(ctx.Frame, ctx.State)
 	return (sheep != nil || drop != nil) && NeedsWool(ctx.AgentID, ctx.Frame, ctx.State)
 }
 

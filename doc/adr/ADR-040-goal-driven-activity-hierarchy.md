@@ -72,7 +72,7 @@ Each stage keeps the tests green and is committed separately. Levels are declare
 2. **Measure**: run every simulation scenario and the live smoke with stack-shape assertions, and record the violations as the baseline.
 3. **Goal frame**: add the base frame; move choice and urgency into it and its `Supervise`; delete the self-push preemption (`system1/goal_activity.go`). The policy is still the earlier priority order, applied in one place; parked work counts for "already running".
 4. **Explicit children**: replace inline task starts and `wantExpedition` with ordinary pushes.
-5. **Shared steps**: foraging, gathering, wool, bed and plan use the same navigate and interact steps, with one stuck and throttle policy.
+5. **Shared steps**: one walking policy for every activity (`system1/walk_policy.go`): a walk sent repeatedly while the agent neither moves nor has a path is withheld and its target marked unreachable, so the owner chooses again. It is applied where intents leave the stack rather than as a separate step frame, because an activity re-aims a walk every tick (a moving animal, a nearer drop) and a frame holding one target would go stale. Shared interaction steps and send throttles remain.
 6. **Enforce and remove**: invariants strict; priority-preemption code, scratch fields and ad hoc back-offs deleted; replay baselines re-recorded with the reason noted.
 
 ## Consequences

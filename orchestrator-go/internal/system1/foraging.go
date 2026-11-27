@@ -287,7 +287,8 @@ func evaluateForagingWithMemory(agentID string, frame *civquestv1.TelemetryFrame
 	var bestDrop *civquestv1.VisibleEntity
 	bestDropDist := math.MaxFloat64
 	for _, e := range frame.VisibleEntities {
-		if !isFoodDropEntity(e) || e.Position == nil {
+		if !isFoodDropEntity(e) || e.Position == nil ||
+			state != nil && state.IsTargetUnreachableLocked(e.Position.X, e.Position.Y, e.Position.Z, frame.WorldTick) {
 			continue
 		}
 		d := entityDistance(pos, e)
@@ -357,7 +358,8 @@ func evaluateForagingWithMemory(agentID string, frame *civquestv1.TelemetryFrame
 	var bestAnimal *civquestv1.VisibleEntity
 	bestAnimalDist := math.MaxFloat64
 	for _, e := range frame.VisibleEntities {
-		if !isPassiveFoodAnimal(e) {
+		if !isPassiveFoodAnimal(e) ||
+			state != nil && e.Position != nil && state.IsTargetUnreachableLocked(e.Position.X, e.Position.Y, e.Position.Z, frame.WorldTick) {
 			continue
 		}
 		d := entityDistance(pos, e)

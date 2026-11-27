@@ -41,9 +41,13 @@ type stackRecord struct {
 	Idle       []string `json:"idle,omitempty"`       // popped having done nothing
 	Violations []string `json:"violations,omitempty"` // "reason|under>kind"
 	Depth      int      `json:"depth,omitempty"`      // deepest stack seen
+	GivenUp    int      `json:"given_up,omitempty"`   // walks stopped for going nowhere
 }
 
 type stackMeter struct{ pending stackRecord }
+
+// walkGivenUp counts a walk the walking policy stopped.
+func (m *stackMeter) walkGivenUp() { m.pending.GivenUp++ }
 
 // note folds one dispatch into the pending record.
 func (m *stackMeter) note(tick bool, fx htpda.Effects) {
@@ -69,7 +73,7 @@ func (m *stackMeter) note(tick bool, fx htpda.Effects) {
 		}
 	}
 	p := m.pending
-	if p.Push == nil && p.Idle == nil && p.Violations == nil && p.Ticks < meterFlushTicks {
+	if p.Push == nil && p.Idle == nil && p.Violations == nil && p.GivenUp == 0 && p.Ticks < meterFlushTicks {
 		return
 	}
 	if line, err := json.Marshal(p); err == nil {

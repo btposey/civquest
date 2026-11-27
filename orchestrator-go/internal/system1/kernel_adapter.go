@@ -198,6 +198,9 @@ func (fsm *AgentFSM) dispatchLocked(w *fsmWorld, ev htpda.Event) []FSMIntent {
 		for _, in := range em.Intents {
 			if in != nil {
 				if nav := in.GetNavigate(); nav != nil && nav.Target != nil {
+					if !fsm.walkAllowedLocked(w, em.Frame, em.Kind, nav) {
+						continue
+					}
 					if fsm.navTargets == nil {
 						fsm.navTargets = map[htpda.FrameID][3]float64{}
 					}
@@ -233,7 +236,7 @@ func (fsm *AgentFSM) noteOrphanStuckLocked(w *fsmWorld, ev htpda.Receipt) {
 
 // pruneNavTargetsLocked drops navigation targets of frames no longer on the stack.
 func (fsm *AgentFSM) pruneNavTargetsLocked() {
-	if len(fsm.navTargets) == 0 || fsm.kernel == nil {
+	if len(fsm.navTargets) == 0 && len(fsm.walks) == 0 || fsm.kernel == nil {
 		return
 	}
 	live := map[htpda.FrameID]bool{}
@@ -243,6 +246,11 @@ func (fsm *AgentFSM) pruneNavTargetsLocked() {
 	for id := range fsm.navTargets {
 		if !live[id] {
 			delete(fsm.navTargets, id)
+		}
+	}
+	for id := range fsm.walks {
+		if !live[id] {
+			delete(fsm.walks, id)
 		}
 	}
 }
