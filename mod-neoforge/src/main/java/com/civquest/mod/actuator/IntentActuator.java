@@ -21,6 +21,7 @@ import com.civquest.mod.actuator.motor.Lease;
 import com.civquest.mod.actuator.motor.Motor;
 import com.civquest.mod.actuator.motor.Sleep;
 import com.civquest.mod.actuator.motor.UseItem;
+import com.civquest.mod.actuator.motor.Move;
 import com.civquest.mod.grpc.v1.AgentIntent;
 import com.civquest.mod.grpc.v1.AgentIntent.ActionCase;
 import com.civquest.mod.grpc.v1.AttackIntent;
@@ -149,6 +150,10 @@ public class IntentActuator {
         }
 
         synchronized (inbox) {
+            if (isCombatOrder(motorIntents)) {
+                actuateCombatOrder(agent, fsm, inbox, batch, motorIntents);
+                return;
+            }
             if (hasChat && motorIntents.isEmpty()) {
                 if (!fsm.hasBatchFrames()) {
                     complete(fsm, batch, batch.getIntentsCount());
@@ -177,6 +182,54 @@ public class IntentActuator {
             inbox.pending.addLast(queued);
             pump(agent, fsm, inbox);
         }
+    }
+
+    /** An attack together with a walk: fight on the move. */
+    private static boolean isCombatOrder(List<AgentIntent> intents) {
+        return intents.stream().anyMatch(AgentIntent::hasAttack) && intents.stream().anyMatch(AgentIntent::hasNavigate);
+    }
+
+    /**
+     * A combat order is carried out at once: the blows land now and the ordered walk replaces whatever
+     * the agent was doing. Queued behind a strike's three-second engagement, flights started late and
+     * new ones waited behind it, so agents barely moved while being attacked (cq-6l3.19). The ordered
+     * walk owns movement, so the attack's own flight or kiting is switched off.
+     */
+    private void actuateCombatOrder(AgentEntity agent, AgentMotorFSM fsm, Inbox inbox, IntentBatch batch,
+                                    List<AgentIntent> intents) {
+        List<AgentIntent> rest = new ArrayList<>();
+        AgentIntent walk = null;
+        for (AgentIntent intent : intents) {
+            if (intent.hasNavigate()) {
+                walk = intent;
+            }
+            if (!intent.hasAttack()) {
+                rest.add(intent);
+            }
+        }
+        for (AgentIntent intent : intents) {
+            if (intent.hasAttack()) {
+                fsm.markSequenceProcessed(intent.getSequenceId());
+                attack.actuateAttack(agent, intent.getAttack().toBuilder()
+                        .setFleeImmediately(false).setKeepDistanceKite(false).build());
+            }
+        }
+        IntentBatch remaining = batch.toBuilder().clearIntents().addAllIntents(rest).build();
+        if (walk != null && isAlreadyWalkingTo(fsm, walk)) {
+            complete(fsm, batch, batch.getIntentsCount()); // the walk under way carries on
+            return;
+        }
+        inbox.pending.clear();
+        fsm.flush();
+        inbox.pending.addLast(remaining);
+        pump(agent, fsm, inbox);
+    }
+
+    private static boolean isAlreadyWalkingTo(AgentMotorFSM fsm, AgentIntent walk) {
+        com.civquest.mod.grpc.v1.Vec3 to = walk.getNavigate().getTarget();
+        return fsm.topMotor().filter(m -> m instanceof Move move && move.target() != null
+                && Math.abs(move.target().getX() - to.getX()) < 0.5 && Math.abs(move.target().getZ() - to.getZ()) < 0.5)
+                .isPresent();
     }
 
     /** Admission while a batch is in flight: dedupe surveys, coalesce navigates, inline pocket crafts, else queue. */

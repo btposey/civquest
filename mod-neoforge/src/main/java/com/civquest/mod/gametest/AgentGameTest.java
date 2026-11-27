@@ -7,6 +7,9 @@ import com.civquest.mod.actuator.AgentNavigator;
 import com.civquest.mod.actuator.BlockBreaker;
 import com.civquest.mod.actuator.LookSmoothing;
 import com.civquest.mod.sensory.SensoryFrustumCollector;
+import com.civquest.mod.actuator.IntentActuator;
+import com.civquest.mod.actuator.intent.AttackHandler;
+import com.civquest.mod.grpc.v1.IntentBatch;
 import com.civquest.mod.grpc.v1.AgentIntent;
 import com.civquest.mod.grpc.v1.AttackIntent;
 import com.civquest.mod.grpc.v1.BlockPosProto;
@@ -1310,6 +1313,7 @@ public class AgentGameTest {
     private static final int IDLE_POOL_ARENA_Y = 70;
     private static final int SURFACE_POOL_ARENA_Y = 80;
     private static final int RESOURCE_ARENA_Y = 90;
+    private static final int FLIGHT_ARENA_Y = 100;
     private static final int POOL_DEPTH = 5;
 
     /** A walled 3x3 pool, POOL_DEPTH water blocks on a stone floor, with air above. */
@@ -1370,6 +1374,50 @@ public class AgentGameTest {
                 && b.getBlockId().equals("minecraft:gold_ore")), "Buried ore must stay unseen");
         manager.despawnAgent(helper.getLevel().getServer(), "agent-gt-resources").join();
         helper.succeed();
+    }
+
+    private static boolean headingTo(AgentEntity agent, BlockPos cell) {
+        net.minecraft.world.phys.Vec3 to = agent.getNavigator().getTargetCoords();
+        return to != null && Math.abs(to.x - (cell.getX() + 0.5)) < 0.5 && Math.abs(to.z - (cell.getZ() + 0.5)) < 0.5;
+    }
+
+    // cq-6l3.19: a combat order moves the agent at once, a new one redirects it at once, and the
+    // attack's own flight never overrides the ordered walk.
+    @GameTest(template = "empty3x3x3")
+    public static void testCombatOrderWalksAtOnce(GameTestHelper helper) {
+        MinecraftServer server = helper.getLevel().getServer();
+        AgentEntityManager manager = new AgentEntityManager();
+        stoneFloor(helper, -9, 9, FLIGHT_ARENA_Y);
+        AgentEntity agent = spawnCoverageAgent(helper, manager, "agent-gt-flight", new BlockPos(0, FLIGHT_ARENA_Y + 1, 0));
+        Zombie zombie = helper.spawnWithNoFreeWill(EntityType.ZOMBIE, new BlockPos(-2, FLIGHT_ARENA_Y + 1, 0));
+        BlockPos first = helper.absolutePos(new BlockPos(0, FLIGHT_ARENA_Y + 1, 8));
+        BlockPos second = helper.absolutePos(new BlockPos(8, FLIGHT_ARENA_Y + 1, 0));
+        IntentActuator actuator = new IntentActuator();
+        net.minecraft.world.phys.Vec3 start = agent.position();
+        actuator.submitBatch(agent, combatOrder(1, zombie.getId(), first));
+        helper.assertTrue(headingTo(agent, first), "The ordered walk must start at once, heading "
+                + agent.getNavigator().getTargetCoords() + " not " + first);
+        for (int t = 0; t < 10; t++) {
+            agent.tick();
+            actuator.tick(agent);
+        }
+        helper.assertTrue(agent.position().distanceTo(start) > 0.5, "Agent must be moving, at " + agent.position());
+        actuator.submitBatch(agent, combatOrder(2, zombie.getId(), first));
+        helper.assertTrue(headingTo(agent, first), "The same order keeps the walk, heading " + agent.getNavigator().getTargetCoords());
+        actuator.submitBatch(agent, combatOrder(3, zombie.getId(), second));
+        helper.assertTrue(headingTo(agent, second), "A new order redirects at once, heading "
+                + agent.getNavigator().getTargetCoords() + " not " + second);
+        manager.despawnAgent(server, "agent-gt-flight").join();
+        helper.succeed();
+    }
+
+    private static IntentBatch combatOrder(long batch, int targetId, BlockPos to) {
+        return IntentBatch.newBuilder().setBatchId(batch)
+                .addIntents(AgentIntent.newBuilder().setAttack(
+                        AttackIntent.newBuilder().setTargetEntityId(targetId).setFleeImmediately(true)))
+                .addIntents(AgentIntent.newBuilder().setNavigate(NavigateIntent.newBuilder().setArrivalTolerance(1)
+                        .setTarget(Vec3.newBuilder().setX(to.getX() + 0.5).setY(to.getY()).setZ(to.getZ() + 0.5))))
+                .build();
     }
 
     // cq-6l3: an agent with nothing to do in deep water sank and drowned.

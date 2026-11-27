@@ -4,6 +4,7 @@ import com.civquest.mod.actuator.motor.*;
 import com.civquest.mod.grpc.v1.AgentIntent;
 import com.civquest.mod.AgentEntity;
 import com.civquest.mod.grpc.v1.AttackIntent;
+import com.civquest.mod.grpc.v1.NavigationState;
 import com.mojang.logging.LogUtils;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.util.Mth;
@@ -98,8 +99,13 @@ public class AttackHandler implements IntentHandler {
             }
         }
 
-        // 3. Flee / Kite reflex movement
-        if ((intent.getFleeImmediately() || intent.getKeepDistanceKite()) && intent.getTargetEntityId() > 0 && agent.level() != null) {
+        // 3. Flee / Kite reflex movement. A flight already under way keeps its destination: steering it
+        // away again every few ticks left the agent replanning and barely moving.
+        boolean walking = agent.getNavigator() != null
+                && agent.getNavigator().getNavigationState() == NavigationState.NAVIGATION_STATE_PATHING;
+        boolean steer = agent.getNavigator() != null
+                && (intent.getKeepDistanceKite() || intent.getFleeImmediately() && !walking);
+        if (steer && intent.getTargetEntityId() > 0 && agent.level() != null) {
             Entity target = agent.level().getEntity(intent.getTargetEntityId());
             if (target != null) {
                 double dx = agent.getX() - target.getX();

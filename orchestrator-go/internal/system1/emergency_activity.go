@@ -15,6 +15,8 @@ package system1
 // PriorityTable row and routine; no per-stage handler dispatches work.
 
 import (
+	"math"
+
 	"strings"
 
 	civquestv1 "github.com/btposey/civquest/orchestrator-go/internal/proto/v1"
@@ -45,8 +47,11 @@ type emergencyLocal struct {
 	EnteredTick    int64
 	LastFleeTarget *civquestv1.Vec3
 	LastFleeTick   int64
-	Reflexes       int // Java in-engine reflex notices routed to this frame
-	LastReflex     htpda.ReflexKind
+	// Flight is the destination of the flight under way, committed since FlightSince.
+	Flight      *civquestv1.Vec3 // immutable once set
+	FlightSince int64
+	Reflexes    int // Java in-engine reflex notices routed to this frame
+	LastReflex  htpda.ReflexKind
 
 	Drowning        bool  // latched until drowningResolved
 	Burning         bool  // latched until the agent stops burning
@@ -114,6 +119,7 @@ func (emergencyActivity) Step(w htpda.World, local any, ev htpda.Event) htpda.St
 		intents := el.reflexIntents(lw.ctx, w.Tick())
 		for _, in := range intents {
 			if nav := in.GetNavigate(); nav != nil && nav.Target != nil {
+				el.commitFlight(lw.ctx.Frame, nav, w.Tick())
 				el.LastFleeTarget = nav.Target
 				el.LastFleeTick = w.Tick()
 			}
@@ -121,6 +127,53 @@ func (emergencyActivity) Step(w htpda.World, local any, ev htpda.Event) htpda.St
 		return htpda.Step{Op: htpda.OpStay, Intents: intents, Next: el}
 	}
 	return htpda.Step{Op: htpda.OpStay, Next: el}
+}
+
+const (
+	// A flight keeps its destination this long unless it is reached, the body reports itself
+	// stuck, or it stops leading away from the nearest threat.
+	flightCommitTicks = int64(80)
+	flightArrived     = 3.0
+)
+
+// commitFlight holds a flight to its destination: choosing afresh every few ticks swung the
+// agent between safe spots while its attacker kept up (cq-6l3.19). Walks towards the threat
+// (engaging it) and walks with no threat in view are left as chosen.
+func (el *emergencyLocal) commitFlight(f *civquestv1.TelemetryFrame, nav *civquestv1.NavigateIntent, tick int64) {
+	if f == nil || f.Status == nil || f.Status.Position == nil {
+		return
+	}
+	pos := f.Status.Position
+	threat := nearestHostile(f)
+	if threat == nil {
+		return
+	}
+	flat := func(a, b *civquestv1.Vec3) float64 { return math.Hypot(a.X-b.X, a.Z-b.Z) }
+	leadsAway := func(to *civquestv1.Vec3) bool { return flat(to, threat) > flat(pos, threat)+flightArrived }
+	if !leadsAway(nav.Target) {
+		el.Flight = nil
+		return
+	}
+	if el.Flight != nil && tick-el.FlightSince < flightCommitTicks && flat(el.Flight, pos) > flightArrived && leadsAway(el.Flight) &&
+		f.Status.NavigationState != civquestv1.NavigationState_NAVIGATION_STATE_STUCK {
+		nav.Target = cloneVec3(el.Flight)
+		return
+	}
+	el.Flight, el.FlightSince = cloneVec3(nav.Target), tick
+}
+
+// nearestHostile is the position of the closest hostile in view, or nil.
+func nearestHostile(f *civquestv1.TelemetryFrame) *civquestv1.Vec3 {
+	var best *civquestv1.Vec3
+	bestD := math.MaxFloat64
+	for _, e := range f.VisibleEntities {
+		if e != nil && e.Position != nil && IsHostile(e) {
+			if d := entityDistance(f.Status.Position, e); d < bestD {
+				best, bestD = e.Position, d
+			}
+		}
+	}
+	return best
 }
 
 func (el emergencyLocal) result(tick int64) emergencyResult {
