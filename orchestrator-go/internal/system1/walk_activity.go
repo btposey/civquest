@@ -67,4 +67,4 @@ func (w *fsmWorld) craftPending(walk *walkLocal) bool {
 // holds reports whether the stepping frame is the stack base: only a base frame holds (stays)
 // when it has nothing to emit; a frame pushed over another one yields so the frame beneath it
 // is not starved.
-func (w *fsmWorld) holds() bool { return w.fsm.kernel.DepthInStep() <= 1 }
+func (w *fsmWorld) holds() bool { return len(w.activitiesInStep()) <= 1 }

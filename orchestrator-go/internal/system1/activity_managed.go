@@ -79,19 +79,8 @@ func newManagedActivities() []waterfallActivity {
 	}
 }
 
-// proposeManaged is the shared Propose gate: waterfall bids only win on an empty stack (equal
-// band never preempts; priority preemption is the running frame's self-push).
-func proposeManaged(a waterfallActivity, w htpda.World) htpda.Bid {
-	lw := asFSMWorld(w)
-	if !lw.stackEmpty || !lw.legacyReady() || lw.skipped[string(a.Kind())] {
-		return htpda.Bid{}
-	}
-	args, ok := a.args(lw)
-	if !ok || !a.eligible(lw) {
-		return htpda.Bid{}
-	}
-	return htpda.Bid{Band: htpda.BandCommitted, Utility: 1, Args: args, Reason: "eligible"}
-}
+// proposeManaged: activities do not bid for the stack; the goal frame launches them.
+func proposeManaged(waterfallActivity, htpda.World) htpda.Bid { return htpda.Bid{} }
 
 // popFrame pops the stepping frame; skipped keeps it from re-bidding this tick.
 func popFrame(lw *fsmWorld, kind htpda.Kind, intents []*civquestv1.AgentIntent, halt bool) htpda.Step {
@@ -162,14 +151,10 @@ func runFrame(a waterfallActivity, lw *fsmWorld, local any, searchPreemptors boo
 		return a.exit(lw, local, nil, false)
 	}
 	if searchPreemptors {
-		lw.pending = pendingTaskOf(local)
-		child, args := lw.preemptorAbove(activityPriority(string(a.Kind())), "")
-		lw.pending = nil
-		if child != "" {
-			if child == activityKindTaskSubroutine {
-				local = withoutPendingTask(local) // handed to the task frame as Init args
-			}
-			return htpda.Step{Op: htpda.OpPush, Child: htpda.Kind(child), Args: args, Next: local}
+		// A task the walk started inline becomes this frame's child. Anything more pressing
+		// than the frame itself is the goal's business (goal_activity.go).
+		if p := pendingTaskOf(local); p != nil && lw.taskEligible(p) {
+			return htpda.Step{Op: htpda.OpPush, Child: activityKindTaskSubroutine, Args: *p, Next: withoutPendingTask(local)}
 		}
 	}
 	return a.run(lw, local)

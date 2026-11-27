@@ -7,12 +7,11 @@ package system1
 //     Legacy activities additionally reach the FSMContext through it; that back door is
 //     the transitional bridge that beads cq-2sr.7/.8/.9 remove as each activity's progress
 //     moves into its frame Local.
+//   - the goal frame (goal_activity.go, ADR-040): the base, and the only chooser
 //   - waterfall activities (activity_managed.go): foraging, shelter, task_subroutine,
 //     strategic_directive, bootstrap, exploration (each an htpda.Activity).
-//     Priority preemption between them is a self-push (OpPush of the higher-priority
-//     eligible activity over the running frame); the legacy fall-through-on-empty quirk is a
-//     non-halting pop (ChildDone/Resumed re-runs the parent, an emptied stack is refilled
-//     by a re-dispatched Tick).
+//     The goal frame parks and resumes them; a non-halting pop lets it choose again in the
+//     same tick.
 //   - task_subroutine: a TaskSubroutine's progress is its frame Local (taskLocal); a task a
 //     waterfall starts inline is held by that frame's walk cursor until it is pushed as the
 //     task frame's Init args (AgentState keeps only a value projection, taskView).
@@ -56,11 +55,6 @@ type fsmWorld struct {
 	// pending is the unframed task start held by the stepping frame's walk cursor, offered to
 	// the task activity's Propose/args while that frame searches for preemptors.
 	pending *taskStart
-	// stackEmpty is the stack state at the start of the current Dispatch (when the arbiter
-	// runs). Legacy bids are all BandCommitted and can only win on an empty stack (equal band
-	// never preempts; priority preemption is the running frame's self-push), so Propose
-	// skips the eligibility predicates otherwise.
-	stackEmpty bool
 	// planProbe caches this tick's read-only evaluation of the plan's next step (plan_activity.go).
 	planProbe *planProbe
 }
@@ -149,7 +143,7 @@ func unwrapFSMIntents(in []FSMIntent) []*civquestv1.AgentIntent {
 // newActivityKernel builds the per-agent kernel: every activity owns its Propose; the weights
 // come from the PriorityTable (activity_priorities.go).
 func newActivityKernel(managed []waterfallActivity) *htpda.Kernel {
-	acts := []htpda.Activity{emergencyActivity{}, deadActivity{}, expeditionActivity{}, surveyActivity{}, navigateActivity{}, recoverActivity{}}
+	acts := []htpda.Activity{goalActivity{}, emergencyActivity{}, deadActivity{}, expeditionActivity{}, surveyActivity{}, navigateActivity{}, recoverActivity{}}
 	for _, m := range managed {
 		acts = append(acts, m)
 	}
@@ -185,7 +179,6 @@ func (fsm *AgentFSM) dispatchLocked(w *fsmWorld, ev htpda.Event) []FSMIntent {
 		fsm.kernel = newActivityKernel(fsm.managed)
 	}
 	w.refill = false
-	w.stackEmpty = fsm.kernel.Depth() == 0
 	fx := fsm.kernel.Dispatch(w, ev)
 	fsm.lastDiag = fx.Diagnostics
 	_, isTick := ev.(htpda.Tick)
@@ -244,7 +237,7 @@ func (fsm *AgentFSM) pruneNavTargetsLocked() {
 		return
 	}
 	live := map[htpda.FrameID]bool{}
-	for _, f := range fsm.kernel.Frames() {
+	for _, f := range fsm.activities() {
 		live[f.ID] = true
 	}
 	for id := range fsm.navTargets {
@@ -393,7 +386,7 @@ func (fsm *AgentFSM) syncAfterDispatchLocked(ctx *FSMContext) {
 	if ctx == nil || ctx.State == nil || fsm.kernel == nil {
 		return
 	}
-	frames := fsm.kernel.Frames()
+	frames := fsm.activities()
 	t := topTaskOf(frames)
 	if t == nil && taskActive(fsm.startedTask) {
 		t = fsm.startedTask

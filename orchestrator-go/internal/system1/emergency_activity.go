@@ -300,7 +300,7 @@ func (fsm *AgentFSM) onEmergencyEntryLocked(ctx *FSMContext) {
 	if ctx == nil || ctx.State == nil || fsm.kernel == nil {
 		return
 	}
-	frames := fsm.kernel.Frames()
+	frames := fsm.activities()
 	for _, f := range frames {
 		var t *TaskSubroutine
 		if tl, ok := f.Local.(taskLocal); ok {

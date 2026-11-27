@@ -32,8 +32,6 @@ func pusher(kind Kind, level Level, results *[]any) levelAct {
 				*results = append(*results, e.Result)
 			}
 			return Step{Next: local}
-		case Cancel:
-			return Step{Op: OpPop, Result: "memento:" + string(kind)}
 		case Started, Tick:
 			if child := w.Facts().GetString(string(kind) + ".child"); child != "" {
 				return Step{Op: OpPush, Child: Kind(child), Next: local}
@@ -111,17 +109,54 @@ func TestShape_SidewaysArbiterPushAndNonGoalBaseAreViolations(t *testing.T) {
 	}
 }
 
+// supervised: the goal sets explore aside at night, rests, and takes it up again.
 func supervised(results *[]any, critical func() bool) *Kernel {
-	goal := goalBid(pusher("goal", LevelGoal, results))
+	var parked []Frame
+	goal := levelAct{level: LevelGoal, funcAct: &funcAct{kind: "goal", propose: func(World) Bid { return Bid{Band: BandCommitted, Utility: 1} },
+		step: func(w World, local any, ev Event) Step {
+			switch e := ev.(type) {
+			case Started:
+				return Step{Op: OpPush, Child: "explore"}
+			case ChildDone:
+				if results != nil {
+					*results = append(*results, e.Result)
+				}
+				if p, ok := e.Result.(Parked); ok {
+					parked = p.Frames
+					return Step{Op: OpPush, Child: "rest"}
+				}
+				if e.Child == "rest" {
+					return Step{Op: OpResume, Resume: parked, Child: "rest", Result: "rested"}
+				}
+			}
+			return Step{}
+		}}}
 	goal.supervise = func(w World, _ any, child Kind) Verdict {
 		if child == "explore" && w.Facts().GetBool("night") {
-			return Verdict{Recall: true, Reason: "night"}
+			return Verdict{Park: true, Reason: "night", Token: "rest"}
 		}
 		return Verdict{}
 	}
-	walk := pusher("walk", LevelStep, nil)
+	explore := levelAct{level: LevelObjective, funcAct: &funcAct{kind: "explore", step: func(_ World, local any, ev Event) Step {
+		if _, ok := ev.(Started); ok {
+			return Step{Op: OpPush, Child: "walk", Next: "route"}
+		}
+		return Step{Next: local}
+	}}}
+	walk := levelAct{level: LevelStep, funcAct: &funcAct{kind: "walk", step: func(w World, local any, ev Event) Step {
+		if e, ok := ev.(ChildDone); ok && results != nil {
+			*results = append(*results, e.Result)
+		}
+		return Step{Next: local}
+	}}}
 	walk.critical = critical
-	reg, err := NewRegistry(goal, pusher("explore", LevelObjective, nil), walk,
+	rest := levelAct{level: LevelTask, funcAct: &funcAct{kind: "rest", step: func(w World, local any, ev Event) Step {
+		if w.Facts().GetBool("rested") {
+			return Step{Op: OpPop}
+		}
+		return Step{Next: local}
+	}}}
+	reg, err := NewRegistry(goal, explore, walk, rest,
 		levelAct{level: LevelInterrupt, funcAct: &funcAct{kind: "emergency", propose: gatedBid("threat", BandEmergency)}})
 	if err != nil {
 		panic(err)
@@ -129,44 +164,45 @@ func supervised(results *[]any, critical func() bool) *Kernel {
 	return NewKernel(reg, PriorityTable{AnyStage: {"goal": 1, "emergency": 2}}, Options{EnforceShape: true})
 }
 
-func TestSupervise_ParentRecallsItsSubtreeAndGetsTheMemento(t *testing.T) {
+func TestSupervise_ParentParksASubtreeAndResumesItIntact(t *testing.T) {
 	var results []any
 	k := supervised(&results, nil)
-	facts := fakeFacts{"goal.child": "explore", "explore.child": "walk"}
+	facts := fakeFacts{}
 	k.Dispatch(with(1, facts), Tick{})
-	delete(facts, "goal.child")
+	before := k.Frames()
 	facts["night"] = true
-	fx := k.Dispatch(with(5, facts), Tick{})
-	if !slices.Equal(kinds(k.Frames()), []Kind{"goal"}) {
-		t.Fatalf("stack after recall: %v", kinds(k.Frames()))
+	k.Dispatch(with(5, facts), Tick{})
+	if !slices.Equal(kinds(k.Frames()), []Kind{"goal", "rest"}) {
+		t.Fatalf("stack after parking: %v", kinds(k.Frames()))
 	}
-	if len(results) != 1 {
-		t.Fatalf("results %v", results)
+	got, ok := results[0].(Parked)
+	if !ok || got.Child != "explore" || got.Reason != "night" || got.Token != "rest" || !slices.Equal(kinds(got.Frames), []Kind{"explore", "walk"}) {
+		t.Fatalf("parked = %+v", results[0])
 	}
-	got, ok := results[0].(Recalled)
-	if !ok || got.Child != "explore" || got.Reason != "night" || got.Memento != "memento:explore" {
-		t.Errorf("recalled = %+v", results[0])
+	delete(facts, "night")
+	facts["rested"] = true
+	k.Dispatch(with(9, facts), Tick{})
+	after := k.Frames()
+	if !slices.Equal(kinds(after), []Kind{"goal", "explore", "walk"}) {
+		t.Fatalf("stack after resuming: %v", kinds(after))
 	}
-	var cancelled []Kind
-	for _, l := range fx.Lifecycle {
-		if l.Op == LifeCancel {
-			cancelled = append(cancelled, l.Kind)
-		}
+	if after[1].ID != before[1].ID || after[1].Local != "route" || after[2].ID != before[2].ID {
+		t.Errorf("resumed frames lost identity or locals: %+v", after[1:])
 	}
-	if !slices.Equal(cancelled, []Kind{"walk", "explore"}) {
-		t.Errorf("cancel order %v, want top first", cancelled)
+	if results[len(results)-1] != "rested" {
+		t.Errorf("the restored top did not receive the result: %v", results)
 	}
 }
 
-func TestSupervise_CriticalSectionsAndInterruptsAreNotRecalled(t *testing.T) {
+func TestSupervise_CriticalSectionsAndInterruptsAreNotParked(t *testing.T) {
 	busy := true
 	k := supervised(nil, func() bool { return busy })
-	facts := fakeFacts{"goal.child": "explore", "explore.child": "walk"}
+	facts := fakeFacts{}
 	k.Dispatch(with(1, facts), Tick{})
 	facts["night"] = true
 	k.Dispatch(with(5, facts), Tick{})
 	if k.Depth() != 3 {
-		t.Fatalf("recalled during a critical section: %v", kinds(k.Frames()))
+		t.Fatalf("parked during a critical section: %v", kinds(k.Frames()))
 	}
 	busy = false
 	delete(facts, "night")
@@ -175,7 +211,7 @@ func TestSupervise_CriticalSectionsAndInterruptsAreNotRecalled(t *testing.T) {
 	facts["night"] = true
 	k.Dispatch(with(13, facts), Tick{})
 	if !slices.Equal(kinds(k.Frames()), []Kind{"goal", "explore", "walk", "emergency"}) {
-		t.Errorf("recalled under an interrupt: %v", kinds(k.Frames()))
+		t.Errorf("parked under an interrupt: %v", kinds(k.Frames()))
 	}
 }
 

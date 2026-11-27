@@ -379,28 +379,6 @@ func (w *fsmWorld) ineligiblePop(child bool) htpda.Step {
 	return htpda.Step{Op: htpda.OpPop, Result: legacyResult{Halt: false}}
 }
 
-// preemptionPush returns the push of the highest-priority eligible legacy activity above an
-// expedition (foraging, shelter, task, directive), excluding the activity that started it.
-// A bootstrap-started expedition also yields to bootstrap itself while timber is in reach
-// (harvesting wins over exploring) unless it is on its return leg; the expedition keeps its
-// Local underneath and resumes when the harvest is done.
-func (w *fsmWorld) preemptionPush(origin string, returning bool, next any) (htpda.Step, bool) {
-	if kind, args := w.preemptorAbove(expeditionPriority, origin); kind != "" {
-		return htpda.Step{Op: htpda.OpPush, Child: htpda.Kind(kind), Args: args, Next: next}, true
-	}
-	if origin == activityKindBootstrap && !returning && !w.skipped[activityKindBootstrap] && !w.backedOff(activityKindBootstrap) &&
-		bootstrapHarvestAvailable(w.ctx) {
-		// The tool-progression plan takes the harvest when its next step is actionable (cq-dcx.4).
-		if pa := newPlanActivity(); !w.skipped[activityKindPlan] && pa.eligible(w) {
-			if args, ok := pa.args(w); ok {
-				return htpda.Step{Op: htpda.OpPush, Child: activityKindPlan, Args: args, Next: next}, true
-			}
-		}
-		return htpda.Step{Op: htpda.OpPush, Child: activityKindBootstrap, Next: next}, true
-	}
-	return htpda.Step{}, false
-}
-
 // ---- Expedition ----
 
 type expeditionActivity struct{}
@@ -410,19 +388,8 @@ var _ htpda.Activity = expeditionActivity{}
 func (expeditionActivity) Kind() htpda.Kind   { return activityKindExpedition }
 func (expeditionActivity) Scope() htpda.Scope { return htpda.ScopeMotor }
 
-// Propose bids for a SCOUT_FRONTIER directive (the directive is a bid source). Bootstrap and
-// exploration walks push an expedition as a Step result instead (walkLocal.wantExpedition).
-func (expeditionActivity) Propose(w htpda.World) htpda.Bid {
-	lw := asFSMWorld(w)
-	if lw == nil || !lw.stackEmpty || !lw.legacyReady() {
-		return htpda.Bid{}
-	}
-	u, ok := lw.directiveExpeditionBid()
-	if !ok {
-		return htpda.Bid{}
-	}
-	return htpda.Bid{Band: htpda.BandCommitted, Utility: u, Args: expeditionArgs{Origin: activityKindStrategicDirective}, Reason: "scout_frontier directive"}
-}
+// Propose abstains: the goal frame launches expeditions, a SCOUT_FRONTIER directive's included.
+func (expeditionActivity) Propose(htpda.World) htpda.Bid { return htpda.Bid{} }
 
 func (expeditionActivity) Init(w htpda.World, args any) (any, htpda.Lease) {
 	a, _ := args.(expeditionArgs)
@@ -767,9 +734,6 @@ func (a surveyActivity) Step(w htpda.World, local any, ev htpda.Event) htpda.Ste
 			return htpda.Step{Op: htpda.OpPop, Result: SurveyReport{Report: k.Survey, Tick: k.SurveyTick}}
 		}
 		loc.LastStep = lw.tick
-		if st, ok := lw.preemptionPush(loc.Origin, loc.Returning, loc); ok {
-			return st
-		}
 	}
 	return htpda.Step{Op: htpda.OpStay, Next: loc}
 }
@@ -860,13 +824,6 @@ func (a navigateActivity) Step(w htpda.World, local any, ev htpda.Event) htpda.S
 			return htpda.Step{Op: htpda.OpStay, Next: loc}
 		}
 		loc.LastStep = lw.tick
-		if st, ok := lw.preemptionPush(loc.Origin, loc.Returning, loc); ok {
-			return st
-		}
-		// Explorers gather along their travels (cq-6l3.15). A survey sweep is not interrupted.
-		if !lw.skipped[activityKindGather] && (gatherActivity{}).eligible(lw) {
-			return htpda.Step{Op: htpda.OpPush, Child: activityKindGather, Next: loc}
-		}
 		dx, dz := pos.X-loc.Target[0], pos.Z-loc.Target[2]
 		if dx*dx+dz*dz <= loc.Radius*loc.Radius {
 			return htpda.Step{Op: htpda.OpPop, Result: navReached{Pos: [3]float64{pos.X, pos.Y, pos.Z}}}
@@ -1197,7 +1154,7 @@ func (fsm *AgentFSM) publishStackKindsLocked(ctx *FSMContext) {
 	if ctx == nil || ctx.State == nil || fsm.kernel == nil {
 		return
 	}
-	frames := fsm.kernel.Frames()
+	frames := fsm.activities()
 	kinds := make([]string, 0, len(frames))
 	for _, f := range frames {
 		kinds = append(kinds, string(f.Kind()))
@@ -1239,7 +1196,7 @@ func (fsm *AgentFSM) ExpeditionStatus() (active bool, hops, flanks int, returnin
 	if fsm.kernel == nil {
 		return
 	}
-	for _, f := range fsm.kernel.Frames() {
+	for _, f := range fsm.activities() {
 		if f.Kind() == activityKindExpedition {
 			l := htpda.LocalAs[expeditionLocal](f.Local)
 			return true, l.Hops, l.FlankCount(), l.Returning
@@ -1301,7 +1258,7 @@ func (w *fsmWorld) onStack(kind string) bool {
 	if w.fsm == nil || w.fsm.kernel == nil {
 		return false
 	}
-	for _, f := range w.fsm.kernel.FramesInStep() {
+	for _, f := range w.activitiesInStep() {
 		if string(f.Kind()) == kind {
 			return true
 		}

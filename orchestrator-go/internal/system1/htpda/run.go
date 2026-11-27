@@ -199,6 +199,10 @@ func (r *run) stepTop(ev Event) {
 			p.progressed = true
 		}
 		r.notify(f, s.Result)
+	case OpResume:
+		t.Local = s.Next
+		r.discardStore(f, s)
+		r.resume(f, s)
 	default:
 		r.diag(f.ID, f.Kind(), ReasonBadOp)
 		t.Local = s.Next

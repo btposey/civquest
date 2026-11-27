@@ -8,7 +8,11 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
-(cd "$ROOT/orchestrator-go" && CIVQUEST_STACK_METRICS="$WORK/records.jsonl" go test -count=1 -json ./... >"$WORK/tests.json" 2>&1) || true
+# Concurrency tests tick one agent from many goroutines in random order, so their launch counts
+# vary from run to run: they are run for pass or fail, but not measured.
+NOISY='ConcurrentSafety'
+(cd "$ROOT/orchestrator-go" && CIVQUEST_STACK_METRICS="$WORK/records.jsonl" go test -count=1 -json -skip "$NOISY" ./... >"$WORK/tests.json" 2>&1) || true
+(cd "$ROOT/orchestrator-go" && go test -count=1 -json -run "$NOISY" ./... >>"$WORK/tests.json" 2>&1) || true
 touch "$WORK/records.jsonl"
 args=("$WORK/records.jsonl" --tests "$WORK/tests.json")
 [ -f "$ROOT/doc/stack-baseline.json" ] && args+=(--compare "$ROOT/doc/stack-baseline.json")

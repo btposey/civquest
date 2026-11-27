@@ -287,15 +287,9 @@ var _ htpda.Activity = recoverActivity{}
 func (recoverActivity) Kind() htpda.Kind   { return activityKindRecover }
 func (recoverActivity) Scope() htpda.Scope { return htpda.ScopeMotor }
 
-// Propose bids only for an orphan stuck receipt (see noteOrphanStuckLocked); every framed
-// intent is recovered by the frame that owns it pushing Recover (OpPush), never by the arbiter.
-func (recoverActivity) Propose(w htpda.World) htpda.Bid {
-	lw := asFSMWorld(w)
-	if lw == nil || lw.fsm == nil || lw.fsm.orphan == nil || w.Tick()-lw.fsm.orphanTick > recoverTunables.AttemptTicks {
-		return htpda.Bid{}
-	}
-	return htpda.Bid{Band: htpda.BandCommitted, Utility: 1, Args: *lw.fsm.orphan, Reason: "orphan stuck receipt"}
-}
+// Propose abstains: a framed intent is recovered by the frame that owns it pushing Recover,
+// and an orphan stuck receipt is picked up by the goal frame (bestWork).
+func (recoverActivity) Propose(htpda.World) htpda.Bid { return htpda.Bid{} }
 
 func (recoverActivity) Init(w htpda.World, args any) (any, htpda.Lease) {
 	a, _ := args.(recoverArgs)

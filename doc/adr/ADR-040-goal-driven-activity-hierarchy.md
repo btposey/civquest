@@ -40,21 +40,21 @@ Only the top frame is stepped, so a parent needs a way to react while its child 
 
 ```go
 type Supervisor interface {
-    // Supervise is pure. Recall ends the subtree above this frame.
-    Supervise(w World, local any, child Kind) Verdict // Keep | Recall{Reason}
+    // Supervise is pure. Park sets aside the subtree above this frame.
+    Supervise(w World, local any, child Kind) Verdict // Keep | Park{Reason, Token}
 }
 ```
 
-The first frame that answers `Recall` has its subtree cancelled from the top down and receives `ChildDone{Recalled}`; it then chooses again. This one mechanism covers urgency (night falls, the agent grows hungry) and opportunity (ore comes into view while travelling). A child never needs to know what might outrank it.
+The first frame that answers `Park` has its subtree set aside, intact, and receives `ChildDone{Parked}`; it then does something else. This one mechanism covers urgency (night falls, the agent grows hungry) and opportunity (ore comes into view while travelling). A child never needs to know what might outrank it.
 
 Commitment rules:
 
-- A parent recalls only for a different, strictly more pressing choice.
+- A parent parks only for a different, strictly more pressing choice.
 - A child may declare a short critical section (a craft awaiting its inventory change) during which only an interrupt covers it.
 
-### 3. A recalled child can be resumed
+### 3. Parked work is resumed intact
 
-A cancelled frame returns a **memento**: a value holding what it needs to carry on (an expedition's destination, a plan's progress). The parent keeps it in its own Local and passes it back as `Init` args. Progress stays frame-local; no mailbox on shared state.
+`Parked` carries the frames themselves, locals included. The parent keeps them in its own Local and returns them with `OpResume`, and the restored top frame receives the result of the work done in the meantime. Progress stays frame-local; nothing is serialised or rebuilt.
 
 ### 4. One rule against churn
 
@@ -68,9 +68,9 @@ If a child ends without having emitted an intent or made progress, the kernel wi
 
 Each stage keeps the tests green and is committed separately. Levels are declared in `system1/activity_levels.go`. `scripts/stack-metrics.sh` scores any test run against the baseline in `doc/stack-baseline.json`; `scripts/stack-metrics.py` scores a live run's records.
 
-1. **Kernel mechanics** (additive): levels, invariants in report-only mode, supervision, mementos, no-progress back-off.
+1. **Kernel mechanics** (additive): levels, invariants in report-only mode, supervision, park and resume, no-progress back-off.
 2. **Measure**: run every simulation scenario and the live smoke with stack-shape assertions, and record the violations as the baseline.
-3. **Goal frame**: add the base frame; move choice and urgency into its `Propose`-equivalent and `Supervise`; delete `preemptorAbove` and `preemptionPush`.
+3. **Goal frame**: add the base frame; move choice and urgency into it and its `Supervise`; delete the self-push preemption (`system1/goal_activity.go`). The policy is still the earlier priority order, applied in one place; parked work counts for "already running".
 4. **Explicit children**: replace inline task starts and `wantExpedition` with ordinary pushes.
 5. **Shared steps**: foraging, gathering, wool, bed and plan use the same navigate and interact steps, with one stuck and throttle policy.
 6. **Enforce and remove**: invariants strict; priority-preemption code, scratch fields and ad hoc back-offs deleted; replay baselines re-recorded with the reason noted.

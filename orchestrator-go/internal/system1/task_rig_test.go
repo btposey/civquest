@@ -57,5 +57,5 @@ func treeOf(t *TaskSubroutine) (locked bool, x, z int32) {
 func fsmTask(fsm *AgentFSM) *TaskSubroutine {
 	fsm.mu.RLock()
 	defer fsm.mu.RUnlock()
-	return topTaskOf(fsm.kernel.Frames())
+	return topTaskOf(fsm.activities())
 }

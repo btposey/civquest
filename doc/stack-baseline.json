@@ -1,16 +1,16 @@
 {
-  "ticks": 81236,
+  "ticks": 74267,
   "max_depth": 6,
-  "pushes_per_1000_ticks": 24.46,
-  "idle_pops_per_1000_ticks": 2.76,
-  "violations_per_1000_ticks": 9.34,
+  "pushes_per_1000_ticks": 26.96,
+  "idle_pops_per_1000_ticks": 3.02,
+  "violations_per_1000_ticks": 10.17,
   "violations_by_rule": {
-    "shape: base frame is not the goal": 443,
+    "shape: base frame is not the goal": 439,
     "shape: child is not more concrete than its parent": 306,
     "shape: kind already on the stack": 10
   },
   "top_violations": {
-    "shape: base frame is not the goal|>bootstrap": 150,
+    "shape: base frame is not the goal|>bootstrap": 146,
     "shape: base frame is not the goal|>exploration": 107,
     "shape: child is not more concrete than its parent|gather>bootstrap": 106,
     "shape: base frame is not the goal|>shelter": 78,
@@ -38,13 +38,13 @@
     "emergency": 1
   },
   "pushes_by_kind": {
-    "emergency": 476,
-    "bootstrap": 280,
-    "survey": 261,
+    "emergency": 479,
+    "survey": 278,
+    "bootstrap": 276,
     "navigate": 232,
     "task_subroutine": 154,
     "exploration": 107,
-    "expedition": 101,
+    "expedition": 100,
     "shelter": 84,
     "recover": 64,
     "foraging": 55,

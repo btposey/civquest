@@ -91,6 +91,7 @@ const (
 	OpPop               // pop self; Result goes to the parent as ChildDone (or Resumed)
 	OpPush              // push Child over self; self suspended with Next as its locals
 	OpReplace           // pop self and push Child in the same slot (same Parent, no notify)
+	OpResume            // restore the parked subtree Resume over self; self suspended with Next
 )
 
 func (o Op) String() string {
@@ -103,6 +104,8 @@ func (o Op) String() string {
 		return "push"
 	case OpReplace:
 		return "replace"
+	case OpResume:
+		return "resume"
 	}
 	return "op?"
 }
@@ -124,10 +127,13 @@ type Step struct {
 	Op      Op
 	Child   Kind // OpPush / OpReplace
 	Args    any  // OpPush / OpReplace, passed to the child's Init
-	Result  any  // OpPop
-	Store   []StoreWrite
-	Memory  []MemoryWrite
-	Lease   *Lease // optional renewal / new deadline for this frame
+	Result  any  // OpPop; OpResume: the ChildDone result the restored top frame receives
+	// Resume is the subtree to restore (OpResume), as received in Parked; Child then names the
+	// work that ran in its place.
+	Resume []Frame
+	Store  []StoreWrite
+	Memory []MemoryWrite
+	Lease  *Lease // optional renewal / new deadline for this frame
 }
 
 // Activity is stateless behaviour; one value per Kind is registered.

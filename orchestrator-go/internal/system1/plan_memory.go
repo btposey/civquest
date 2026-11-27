@@ -131,7 +131,7 @@ func (fsm *AgentFSM) ActivityDepth() int {
 	if fsm.kernel == nil {
 		return 0
 	}
-	return fsm.kernel.Depth()
+	return len(fsm.activities())
 }
 
 // spatial returns the spatial memory snapshot visible to this tick's steps.

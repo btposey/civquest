@@ -371,7 +371,7 @@ func (fsm *AgentFSM) ActivityFrames() []ActivityFrameView {
 	if fsm.kernel == nil {
 		return nil
 	}
-	frames := fsm.kernel.Frames()
+	frames := fsm.activities()
 	out := make([]ActivityFrameView, 0, len(frames))
 	for _, f := range frames {
 		out = append(out, ActivityFrameView{ID: uint64(f.ID), Kind: string(f.Kind()), Band: uint8(f.Band), Parent: uint64(f.Parent), StartTick: f.Lease.StartTick})
@@ -389,8 +389,8 @@ func (fsm *AgentFSM) ActiveActivityKind() string {
 	if fsm.kernel == nil {
 		return ""
 	}
-	if top, ok := fsm.kernel.Top(); ok {
-		return string(top.Kind())
+	if frames := fsm.activities(); len(frames) > 0 {
+		return string(frames[len(frames)-1].Kind())
 	}
 	return ""
 }

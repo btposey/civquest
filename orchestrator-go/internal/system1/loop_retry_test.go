@@ -48,8 +48,8 @@ func TestBootstrap_IdleHarvestPushBacksOff(t *testing.T) {
 			ctx: &FSMContext{AgentID: "harvester", State: st, Frame: frame}}
 	}
 	push := func(tick int64) bool {
-		s, ok := world(tick).preemptionPush(activityKindBootstrap, false, nil)
-		return ok && (s.Child == activityKindBootstrap || s.Child == activityKindPlan)
+		c, ok := world(tick).duringTravel(activityKindBootstrap, false, true)
+		return ok && (c.Kind == activityKindBootstrap || c.Kind == activityKindPlan)
 	}
 	if !push(100) {
 		t.Fatal("setup: a trunk in view must start a harvest")
@@ -59,7 +59,7 @@ func TestBootstrap_IdleHarvestPushBacksOff(t *testing.T) {
 		t.Fatalf("an idle frame must pop, got %v", step.Op)
 	}
 	fsm.applyMemoryLocked(world(100), step.Memory)
-	if s, ok := world(104).preemptionPush(activityKindBootstrap, false, nil); ok && s.Child == activityKindBootstrap {
+	if c, ok := world(104).duringTravel(activityKindBootstrap, false, true); ok && c.Kind == activityKindBootstrap {
 		t.Fatal("bootstrap pushed again straight after finding nothing to do")
 	}
 	if world(100 + workBackoffTicks).backedOff(activityKindBootstrap) {

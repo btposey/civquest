@@ -8,6 +8,8 @@ import "github.com/btposey/civquest/orchestrator-go/internal/system1/htpda"
 
 // Priority weights per activity kind, highest first.
 const (
+	// priorityGoal only has to be positive: the goal bids in the lowest band (goal_activity.go).
+	priorityGoal      = 0.01
 	priorityEmergency = 1.00
 	priorityDead      = 1.00
 	// priorityRecover is the weight of the orphan-stuck Recover root bid (ADR-037); framed
@@ -40,6 +42,7 @@ const (
 
 // defaultPriorities is the stage-independent priority row (read-only).
 var defaultPriorities = map[htpda.Kind]float64{
+	activityKindGoal:               priorityGoal,
 	activityKindEmergency:          priorityEmergency,
 	activityKindDead:               priorityDead,
 	activityKindRecover:            priorityRecover,

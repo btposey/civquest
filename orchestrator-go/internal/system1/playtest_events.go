@@ -57,7 +57,7 @@ func (fsm *AgentFSM) emitLifecycleLocked(tick int64, evs []htpda.FrameEvent) {
 		if e.Result != nil {
 			d["result"] = describeResult(e.Result)
 		}
-		if f := fsm.kernel.Frames(); len(f) > 0 {
+		if f := fsm.activities(); len(f) > 0 {
 			d["top"] = string(f[len(f)-1].Kind())
 		}
 		sum := fmt.Sprintf("%s %s", e.Op, e.Kind)
@@ -129,8 +129,8 @@ func (fsm *AgentFSM) emitVitalsLocked(ctx *FSMContext, tick int64) {
 	if p := s.Position; p != nil {
 		d["position"] = []float64{p.X, p.Y, p.Z}
 	}
-	if top, ok := fsm.kernel.Top(); ok {
-		d["top"] = string(top.Kind())
+	if frames := fsm.activities(); len(frames) > 0 {
+		d["top"] = string(frames[len(frames)-1].Kind())
 	}
 	fsm.eventSink(tick, EventVitals, fmt.Sprintf("hp=%.1f food=%d air=%d", s.Health, s.FoodLevel, s.AirSupply), d)
 }
@@ -145,8 +145,8 @@ func (fsm *AgentFSM) NavReason() map[string]any {
 	stage, routine := fsm.currentStage, fsm.currentRoutine
 	fsm.mu.RUnlock()
 	d := map[string]any{"goal": string(stage), "routine": fmt.Sprint(routine)}
-	if top, ok := fsm.kernel.Top(); ok {
-		d["activity"] = string(top.Kind())
+	if frames := fsm.activities(); len(frames) > 0 {
+		d["activity"] = string(frames[len(frames)-1].Kind())
 	}
 	return d
 }

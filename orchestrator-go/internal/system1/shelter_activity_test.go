@@ -10,7 +10,7 @@ import (
 
 func shelterFrameLocal(t *testing.T, fsm *AgentFSM) (shelterLocal, uint64) {
 	t.Helper()
-	for _, f := range fsm.kernel.Frames() {
+	for _, f := range fsm.activities() {
 		if sl, ok := f.Local.(shelterLocal); ok {
 			return sl, uint64(f.ID)
 		}

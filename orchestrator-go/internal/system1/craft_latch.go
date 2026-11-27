@@ -107,7 +107,7 @@ func (w *fsmWorld) inheritCraftLatch(local any) any {
 	if w == nil || w.fsm == nil || w.fsm.kernel == nil {
 		return local
 	}
-	frames := w.fsm.kernel.FramesInStep()
+	frames := w.activitiesInStep()
 	for i := len(frames) - 1; i >= 0; i-- {
 		if l := craftLatchOf(frames[i].Local); l.armed() {
 			return setCraftLatch(local, l)

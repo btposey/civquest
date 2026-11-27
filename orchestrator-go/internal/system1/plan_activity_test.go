@@ -120,7 +120,7 @@ func (r *planRig) tick(f *civquestv1.TelemetryFrame) []*civquestv1.AgentIntent {
 }
 
 func (r *planRig) planLocal() (planLocal, bool) {
-	for _, f := range r.fsm.kernel.Frames() {
+	for _, f := range r.fsm.activities() {
 		if l, ok := f.Local.(planLocal); ok {
 			return l, true
 		}

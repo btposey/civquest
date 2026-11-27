@@ -31,8 +31,9 @@ func LevelOf(act Activity) Level {
 
 // Verdict is a supervising parent's decision about the work above it.
 type Verdict struct {
-	Recall bool
+	Park   bool // set the subtree aside, intact, and tell the parent
 	Reason string
+	Token  any // handed back in Parked, typically what the parent wants to do instead
 }
 
 // Supervisor is implemented by activities that watch their child while it works. Supervise is
@@ -41,18 +42,20 @@ type Supervisor interface {
 	Supervise(w World, local any, child Kind) Verdict
 }
 
-// CriticalSection is implemented by activities that must briefly not be recalled (a craft
+// CriticalSection is implemented by activities that must briefly not be set aside (a craft
 // awaiting its inventory change). Interrupts still cover them.
 type CriticalSection interface {
 	Critical(w World, local any) bool
 }
 
-// Recalled is the ChildDone Result a parent receives for a child it recalled. Memento is the
-// Result the child returned on Cancel: what it needs to carry on if pushed again.
-type Recalled struct {
-	Child   Kind
-	Reason  string
-	Memento any
+// Parked is the ChildDone Result a parent receives for work it set aside. Frames is the whole
+// subtree, bottom first, with its locals intact; the parent keeps it in its own Local and
+// returns it with OpResume to carry on.
+type Parked struct {
+	Child  Kind
+	Reason string
+	Token  any
+	Frames []Frame
 }
 
 // Shape and back-off diagnostics.
@@ -62,7 +65,6 @@ const (
 	ReasonNotDeeper     = "shape: child is not more concrete than its parent"
 	ReasonDuplicateKind = "shape: kind already on the stack"
 	ReasonNoProgress    = "back-off: ended without progress moments ago"
-	reasonRecalledBy    = "recalled: "
 )
 
 // shapeViolation names the hierarchy rule that pushing act would break ("" for none). parent is
@@ -114,7 +116,7 @@ func (r *run) checkShape(act Activity, parent FrameID) (refuse string) {
 	return ""
 }
 
-// protected reports whether the frames from index i upwards may not be recalled.
+// protected reports whether the frames from index i upwards may not be set aside.
 func (r *run) protected(i int) bool {
 	for _, f := range r.k.stack[i:] {
 		if LevelOf(f.Act) == LevelInterrupt {
@@ -127,8 +129,8 @@ func (r *run) protected(i int) bool {
 	return false
 }
 
-// supervise asks each frame, base first, about the work above it and carries out the first
-// recall.
+// supervise asks each frame, base first, about the work above it and parks the first subtree a
+// parent wants set aside.
 func (r *run) supervise() {
 	for i := 0; i < len(r.k.stack)-1; i++ {
 		f := r.k.stack[i]
@@ -136,35 +138,39 @@ func (r *run) supervise() {
 		if !ok || r.protected(i+1) {
 			continue
 		}
-		if v := s.Supervise(r.w, f.Local, r.k.stack[i+1].Kind()); v.Recall {
-			r.recall(i, v.Reason)
+		if v := s.Supervise(r.w, f.Local, r.k.stack[i+1].Kind()); v.Park {
+			r.park(i, v)
 			return
 		}
 	}
 }
 
-// recall cancels every frame above index i, top first, and tells frame i.
-func (r *run) recall(i int, reason string) {
-	child := r.k.stack[i+1]
-	var memento any
-	for len(r.k.stack) > i+1 {
-		f := r.k.stack[len(r.k.stack)-1]
-		s := f.Act.Step(r.w, f.Local, Cancel{Reason: reasonRecalledBy + reason})
-		if len(s.Intents) > 0 {
-			r.diag(f.ID, f.Kind(), ReasonIntentsOnClose)
-		}
-		r.fx.Memory = append(r.fx.Memory, s.Memory...)
-		if f.ID == child.ID {
-			memento = s.Result
-		}
-		progressed := r.k.stack[len(r.k.stack)-1].progressed
-		r.pop(s.Store)
-		r.life(LifeCancel, f, "", s.Result)
-		if progressed {
-			r.k.stack[len(r.k.stack)-1].progressed = true
-		}
+// park detaches every frame above index i, without stepping them, and tells frame i.
+func (r *run) park(i int, v Verdict) {
+	frames := append([]Frame(nil), r.k.stack[i+1:]...)
+	r.k.stack = r.k.stack[:i+1]
+	for j := len(frames) - 1; j >= 0; j-- {
+		r.life(LifePark, frames[j], "", nil)
 	}
-	r.stepTop(ChildDone{Child: child.Kind(), ID: child.ID, Result: Recalled{Child: child.Kind(), Reason: reason, Memento: memento}})
+	child := frames[0]
+	r.stepTop(ChildDone{Child: child.Kind(), ID: child.ID, Result: Parked{Child: child.Kind(), Reason: v.Reason, Token: v.Token, Frames: frames}})
+}
+
+// resume restores a parked subtree over parent and hands its top frame the result of the work
+// that was done in the meantime.
+func (r *run) resume(parent Frame, s Step) {
+	if len(s.Resume) == 0 || len(r.k.stack)+len(s.Resume) > r.k.opts.MaxDepth {
+		r.diag(parent.ID, parent.Kind(), ReasonDepthLimit)
+		return
+	}
+	for i, f := range s.Resume {
+		if i == 0 {
+			f.Parent = parent.ID
+		}
+		r.k.stack = append(r.k.stack, f)
+		r.life(LifeResume, f, "", nil)
+	}
+	r.stepTop(ChildDone{Child: s.Child, Result: s.Result})
 }
 
 type cooledKey struct {

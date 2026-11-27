@@ -214,7 +214,7 @@ func (w *fsmWorld) planOnStack() bool {
 	if w == nil || w.fsm == nil || w.fsm.kernel == nil {
 		return false
 	}
-	for _, f := range w.fsm.kernel.FramesInStep() {
+	for _, f := range w.activitiesInStep() {
 		if f.Kind() == activityKindPlan {
 			return true
 		}

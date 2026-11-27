@@ -81,6 +81,8 @@ const (
 	LifeExpire  = "expire"
 	LifeReplace = "replace"
 	LifeCancel  = "cancel"
+	LifePark    = "park"   // set aside by its supervisor
+	LifeResume  = "resume" // restored by its parent
 )
 
 // FrameEvent is one frame stack operation. Depth is the stack depth after the operation.

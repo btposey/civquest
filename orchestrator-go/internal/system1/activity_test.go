@@ -37,7 +37,7 @@ func makeActivityTestCtx(st *AgentState, tick int64, health float32, hostile boo
 func stackTask(fsm *AgentFSM) *TaskSubroutine {
 	fsm.mu.RLock()
 	defer fsm.mu.RUnlock()
-	frames := fsm.kernel.Frames()
+	frames := fsm.activities()
 	for i := len(frames) - 1; i >= 0; i-- {
 		if tl, ok := frames[i].Local.(taskLocal); ok {
 			return tl.Task
@@ -50,7 +50,7 @@ func topTaskLocal(t *testing.T, fsm *AgentFSM) (uint64, *TaskSubroutine) {
 	t.Helper()
 	fsm.mu.RLock()
 	defer fsm.mu.RUnlock()
-	frames := fsm.kernel.Frames()
+	frames := fsm.activities()
 	for i := len(frames) - 1; i >= 0; i-- {
 		if tl, ok := frames[i].Local.(taskLocal); ok {
 			return uint64(frames[i].ID), tl.Task
