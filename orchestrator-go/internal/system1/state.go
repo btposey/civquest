@@ -217,6 +217,9 @@ type AgentState struct {
 	ClanSize         int
 	RendezvousOrigin *[3]float64 // nil = the home origin (resolved when an expedition starts)
 	HomesteadClaimed bool
+	// dangers and freshDangers are the registered mob dangers (danger.go).
+	dangers      []Danger
+	freshDangers []Danger
 	// strategy is the strategic machine the agent is in (strategy.go).
 	strategy     StrategyRecord
 	HomesteadPos [3]float64
@@ -1180,8 +1183,11 @@ func (s *AgentState) IsTargetUnreachable(x, y, z float64, worldTick int64) bool 
 
 // IsTargetUnreachableLocked returns true if (x, y, z) is blacklisted while s.mu is held.
 func (s *AgentState) IsTargetUnreachableLocked(x, y, z float64, worldTick int64) bool {
-	if s == nil || len(s.unreachableTargets) == 0 {
+	if s == nil {
 		return false
+	}
+	if s.endangeredLocked(x, z, worldTick) {
+		return true
 	}
 	for _, entry := range s.unreachableTargets {
 		if entry == nil || entry.blacklistUntil <= 0 {

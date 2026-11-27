@@ -27,6 +27,9 @@ const (
 	// emergencyQuietDamageTicks: no combat damage for this long (one melee attack cooldown,
 	// design budget).
 	emergencyQuietDamageTicks = int64(20)
+	// emergencyEscapeTicks: an agent that was hit and is still inside the danger gives up
+	// getting clear after this long without sight or blow (design budget).
+	emergencyEscapeTicks = int64(200)
 	// emergencyLeaseTicks caps how long one emergency frame may hold the motor stack before
 	// it expires (and, if the threat persists, re-bids with a fresh frame); design budget ~30s.
 	emergencyLeaseTicks = int64(600)

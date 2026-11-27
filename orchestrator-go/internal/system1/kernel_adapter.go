@@ -203,6 +203,7 @@ func (fsm *AgentFSM) dispatchLocked(w *fsmWorld, ev htpda.Event) []FSMIntent {
 					if !fsm.walkAllowedLocked(w, em.Frame, em.Kind, nav) {
 						continue
 					}
+					routeRoundDanger(w, em.Kind, nav)
 					if fsm.navTargets == nil {
 						fsm.navTargets = map[htpda.FrameID][3]float64{}
 					}

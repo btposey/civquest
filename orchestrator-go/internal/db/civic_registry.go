@@ -280,6 +280,16 @@ func (c *CivicRegistryDB) initSchema(ctx context.Context) error {
 	CREATE INDEX IF NOT EXISTS idx_civic_edicts_clan ON civic_edicts(clan_id);
 	CREATE INDEX IF NOT EXISTS idx_civic_edicts_status ON civic_edicts(status);
 
+	CREATE TABLE IF NOT EXISTS danger_spots (
+		world_id TEXT NOT NULL,
+		kind TEXT NOT NULL,
+		x REAL NOT NULL,
+		y REAL NOT NULL,
+		z REAL NOT NULL,
+		seen_tick INTEGER NOT NULL,
+		reported_by TEXT NOT NULL DEFAULT ''
+	);
+
 	-- A clan may come to hold several settlement sites; site 0 is home.
 	CREATE TABLE IF NOT EXISTS clan_sites (
 		world_id TEXT NOT NULL,

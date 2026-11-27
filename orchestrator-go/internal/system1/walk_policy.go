@@ -33,6 +33,19 @@ func near(a, b [3]float64) bool {
 	return math.Abs(a[0]-b[0]) < walkSameDist && math.Abs(a[1]-b[1]) < walkSameDist && math.Abs(a[2]-b[2]) < walkSameDist
 }
 
+// routeRoundDanger bends a walk that would cross a registered danger to a waypoint beside it;
+// the activity sends its walk again from there. Emergency and Recover steer for themselves.
+func routeRoundDanger(w *fsmWorld, kind htpda.Kind, nav *civquestv1.NavigateIntent) {
+	pos := w.pos()
+	if pos == nil || w.ctx == nil || w.ctx.State == nil || kind == activityKindEmergency || kind == activityKindRecover {
+		return
+	}
+	to := [3]float64{nav.Target.X, nav.Target.Y, nav.Target.Z}
+	if via, ok := w.ctx.State.detour([3]float64{pos.X, pos.Y, pos.Z}, to, w.tick); ok {
+		nav.Target = &civquestv1.Vec3{X: via[0], Y: via[1], Z: via[2]}
+	}
+}
+
 // walkAllowedLocked records frame's walk to nav and reports whether it may still be sent.
 func (fsm *AgentFSM) walkAllowedLocked(w *fsmWorld, frame htpda.FrameID, kind htpda.Kind, nav *civquestv1.NavigateIntent) bool {
 	pos := w.pos()

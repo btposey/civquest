@@ -212,8 +212,36 @@ func (el emergencyLocal) resolved(ctx *FSMContext, tick int64) bool {
 	quiet := func(last, n int64) bool { return last == 0 || tick-last >= n }
 	return !el.Drowning && !el.Burning &&
 		quiet(el.LastHostileTick, emergencySettleHostileTicks) &&
-		quiet(el.LastDamageTick, emergencyQuietDamageTicks) &&
+		quiet(el.LastDamageTick, emergencyQuietDamageTicks) && !el.stillInDanger(ctx, tick) &&
 		!ctx.IsCriticalHunger() && !ctx.ShouldPanic() && ctx.BlockHazard() == blockHazardNone
+}
+
+// stillInDanger holds an agent that was hit to its escape: until it is clear of the danger,
+// not merely out of sight of it.
+func (el emergencyLocal) stillInDanger(ctx *FSMContext, tick int64) bool {
+	if el.LastDamageTick == 0 || tick-max(el.LastDamageTick, el.LastHostileTick) >= emergencyEscapeTicks {
+		return false
+	}
+	_, ok := escapeTarget(ctx, tick)
+	return ok
+}
+
+// escapeTarget is a point beyond the registered danger the agent stands in, if it stands in one.
+func escapeTarget(ctx *FSMContext, tick int64) (*civquestv1.Vec3, bool) {
+	if ctx == nil || ctx.State == nil || ctx.Frame == nil || ctx.Frame.Status == nil || ctx.Frame.Status.Position == nil {
+		return nil, false
+	}
+	pos := ctx.Frame.Status.Position
+	d, dist, ok := ctx.State.nearestDanger(pos.X, pos.Z, tick)
+	if !ok || dist >= dangerRadius {
+		return nil, false
+	}
+	ux, uz := 1.0, 0.0
+	if dist > 0.5 {
+		ux, uz = (pos.X-d.X)/dist, (pos.Z-d.Z)/dist
+	}
+	off := dangerRadius + detourMargin
+	return &civquestv1.Vec3{X: math.Round(d.X + ux*off), Y: pos.Y, Z: math.Round(d.Z + uz*off)}, true
 }
 
 // reflexIntents is the emergency frame's motor output. A latched hazard owns the output
@@ -242,6 +270,15 @@ func (el *emergencyLocal) reflexIntents(ctx *FSMContext, tick int64) []*civquest
 	}
 	if ctx == nil || ctx.Frame == nil || ctx.Frame.Status == nil {
 		return nil
+	}
+	// The attacker is out of sight but the agent is still in its reach: keep moving away.
+	if el.LastDamageTick != 0 && !ctx.HostilesPresent() && !ctx.IsCriticalHunger() {
+		if to, ok := escapeTarget(ctx, tick); ok {
+			if el.LastFleeTick != 0 && tick-el.LastFleeTick < hazardNavReissueTicks {
+				return nil
+			}
+			return []*civquestv1.AgentIntent{recoverNav(ctx.AgentID, to.X, to.Y, to.Z, 2)}
+		}
 	}
 	reg := resolveContextRegistry(ctx)
 	ensureFSMFacts(ctx, reg)

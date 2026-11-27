@@ -548,6 +548,7 @@ func (fsm *AgentFSM) Tick(ctx *FSMContext) FSMResult {
 			ctx.State.ensureOwnBed(ctx.AgentID, ctx.Frame)
 		}
 		fsm.advanceStrategy(ctx)
+		observeDangers(ctx)
 		configured := ctx.Config
 		ctx.Config = EffectiveIdentity(ctx.State, configured)
 		defer func() { ctx.Config = configured }()

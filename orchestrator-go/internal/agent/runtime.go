@@ -187,10 +187,13 @@ type AgentRuntime struct {
 	persistMu       sync.Mutex         // guards the saved copies below
 	savedSettlement system1.Settlement // last settlement written to the agent database
 	savedStrategy   db.StrategyRow     // last strategy written to the agent database
-	system1State    *system1.AgentState
-	agentFSM        *system1.AgentFSM
-	memoryPipeline  *memory.Pipeline
-	peerGate        peerConversationGate
+	// dangersLearntTick is when the clan's dangers were last read.
+	dangersLearntTick int64
+	dangerBusy        atomic.Bool
+	system1State      *system1.AgentState
+	agentFSM          *system1.AgentFSM
+	memoryPipeline    *memory.Pipeline
+	peerGate          peerConversationGate
 
 	// System 2 Deliberative Dialogue Pipeline
 	dialogueService            *system2.DialogueService
