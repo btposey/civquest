@@ -228,4 +228,118 @@ public interface AgentStatusOrBuilder extends
    * <code>.civquest.v1.FishingState fishing = 21;</code>
    */
   com.civquest.mod.grpc.v1.FishingStateOrBuilder getFishingOrBuilder();
+
+  /**
+   * <pre>
+   * Diagnostics (cq-49c), logged only:
+   * </pre>
+   *
+   * <code>string feet_block = 22;</code>
+   * @return The feetBlock.
+   */
+  java.lang.String getFeetBlock();
+  /**
+   * <pre>
+   * Diagnostics (cq-49c), logged only:
+   * </pre>
+   *
+   * <code>string feet_block = 22;</code>
+   * @return The bytes for feetBlock.
+   */
+  com.google.protobuf.ByteString
+      getFeetBlockBytes();
+
+  /**
+   * <pre>
+   * block id at eye height
+   * </pre>
+   *
+   * <code>string head_block = 23;</code>
+   * @return The headBlock.
+   */
+  java.lang.String getHeadBlock();
+  /**
+   * <pre>
+   * block id at eye height
+   * </pre>
+   *
+   * <code>string head_block = 23;</code>
+   * @return The bytes for headBlock.
+   */
+  com.google.protobuf.ByteString
+      getHeadBlockBytes();
+
+  /**
+   * <pre>
+   * block id under the feet
+   * </pre>
+   *
+   * <code>string ground_block = 24;</code>
+   * @return The groundBlock.
+   */
+  java.lang.String getGroundBlock();
+  /**
+   * <pre>
+   * block id under the feet
+   * </pre>
+   *
+   * <code>string ground_block = 24;</code>
+   * @return The bytes for groundBlock.
+   */
+  com.google.protobuf.ByteString
+      getGroundBlockBytes();
+
+  /**
+   * <pre>
+   * Entity#getTicksFrozen (damage begins at 140)
+   * </pre>
+   *
+   * <code>int32 frozen_ticks = 25;</code>
+   * @return The frozenTicks.
+   */
+  int getFrozenTicks();
+
+  /**
+   * <pre>
+   * worn armour and held items; slot = EquipmentSlot ordinal
+   * </pre>
+   *
+   * <code>repeated .civquest.v1.ItemStackProto equipment = 26;</code>
+   */
+  java.util.List<com.civquest.mod.grpc.v1.ItemStackProto> 
+      getEquipmentList();
+  /**
+   * <pre>
+   * worn armour and held items; slot = EquipmentSlot ordinal
+   * </pre>
+   *
+   * <code>repeated .civquest.v1.ItemStackProto equipment = 26;</code>
+   */
+  com.civquest.mod.grpc.v1.ItemStackProto getEquipment(int index);
+  /**
+   * <pre>
+   * worn armour and held items; slot = EquipmentSlot ordinal
+   * </pre>
+   *
+   * <code>repeated .civquest.v1.ItemStackProto equipment = 26;</code>
+   */
+  int getEquipmentCount();
+  /**
+   * <pre>
+   * worn armour and held items; slot = EquipmentSlot ordinal
+   * </pre>
+   *
+   * <code>repeated .civquest.v1.ItemStackProto equipment = 26;</code>
+   */
+  java.util.List<? extends com.civquest.mod.grpc.v1.ItemStackProtoOrBuilder> 
+      getEquipmentOrBuilderList();
+  /**
+   * <pre>
+   * worn armour and held items; slot = EquipmentSlot ordinal
+   * </pre>
+   *
+   * <code>repeated .civquest.v1.ItemStackProto equipment = 26;</code>
+   */
+  com.civquest.mod.grpc.v1.ItemStackProtoOrBuilder getEquipmentOrBuilder(
+      int index);
 }

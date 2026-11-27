@@ -280,6 +280,9 @@ type AgentFSM struct {
 	eventSink      EventSink
 	vitalsEmitted  bool
 	lastVitalsTick int64
+	// What the logs last reported (diag.go).
+	seenHealth             float32
+	seenItems, seenThreats string
 }
 
 // StartTask commits a task from outside any frame; the task activity pushes it as a task frame.

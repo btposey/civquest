@@ -84,7 +84,7 @@ func (r *AgentRuntime) reportStall(rep StallReport) {
 			rep.DumpPath = path
 		}
 	}
-	log.Printf("[civquest-agent] %s BRAIN STALL: frame at tick %d still running after %v (goroutine dump: %s)",
+	log.Printf("[ERROR] [civquest-agent] %s BRAIN STALL: frame at tick %d still running after %v (goroutine dump: %s)",
 		rep.AgentID, rep.Tick, rep.Elapsed.Round(time.Millisecond), rep.DumpPath)
 	if r.debugLogger != nil {
 		r.debugLogger.Emit(rep.Tick, "BRAIN_STALL", "Telemetry frame did not finish", map[string]any{

@@ -310,6 +310,10 @@ func NewRuntime(cfg Config) (*AgentRuntime, error) {
 		)
 	}
 
+	if debugLog != nil && cfg.DialogueService != nil {
+		traceModelCalls(cfg.DialogueService.Client(), debugLog)
+	}
+
 	var agentFSM *system1.AgentFSM
 	agentFSM = system1.NewAgentFSM(system1.StateBootstrap, func(from, to system1.State, reason string) {
 		if debugLog != nil {
@@ -1197,6 +1201,7 @@ func (r *AgentRuntime) sendLoop(ctx context.Context, cancel context.CancelFunc, 
 			Intents:        intents,
 		}
 		r.frameSeam.stamp(batch)
+		r.logBatch(batch)
 		if err := stream.Send(batch); err != nil {
 			sendErr = err
 			cancel()
@@ -1339,6 +1344,8 @@ func (r *AgentRuntime) executePermadeath(deathEv *civquestv1.DeathEvent) {
 	if ctx == nil || ctx.Err() != nil {
 		ctx = context.Background()
 	}
+
+	r.logDeath(deathEv)
 
 	res, err := ExecutePermadeath(ctx, PermadeathRequest{
 		AgentID:           r.agentID,
@@ -2345,6 +2352,7 @@ func (r *AgentRuntime) dispatchContemplation(frame *civquestv1.TelemetryFrame) {
 		if err != nil {
 			if !errors.Is(err, context.Canceled) {
 				log.Printf("[WARN] agent %s nighttime strategic contemplation failed: %v", agentID, err)
+				r.debugLogger.Emit(frame.WorldTick, "CONTEMPLATION_FAILED", err.Error(), map[string]any{"trigger": triggerReason})
 			}
 			return
 		}

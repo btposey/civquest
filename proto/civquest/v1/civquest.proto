@@ -174,6 +174,12 @@ message AgentStatus {
   int32 air_supply = 19;        // remaining air ticks (Entity#getAirSupply)
   int32 max_air_supply = 20;    // Entity#getMaxAirSupply (300 default)
   FishingState fishing = 21;    // cq-390.4: bobber/bite telemetry; unset when no line is cast
+  // Diagnostics (cq-49c), logged only:
+  string feet_block = 22;       // block id at the feet, e.g. "minecraft:powder_snow"
+  string head_block = 23;       // block id at eye height
+  string ground_block = 24;     // block id under the feet
+  int32 frozen_ticks = 25;      // Entity#getTicksFrozen (damage begins at 140)
+  repeated ItemStackProto equipment = 26; // worn armour and held items; slot = EquipmentSlot ordinal
 }
 
 // FishingState reports the agent's fishing hook (Player#fishing): the bobber in the water and
@@ -223,6 +229,7 @@ message DamageEvent {
   string attacker_uuid = 3;
   string attacker_name = 4;
   float damage_amount = 5;
+  string damage_type = 6;       // vanilla damage id, e.g. "freeze", "mob", "drown" (cq-49c, logged only)
 }
 
 message TradeRequest {

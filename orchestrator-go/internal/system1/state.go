@@ -1,6 +1,7 @@
 package system1
 
 import (
+	"fmt"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -220,6 +221,9 @@ type AgentState struct {
 	// dangers and freshDangers are the registered mob dangers (danger.go).
 	dangers      []Danger
 	freshDangers []Danger
+	// diags are log-only notes awaiting the event sink (diag.go).
+	diagMu sync.Mutex
+	diags  []diagnostic
 	// strategy is the strategic machine the agent is in (strategy.go).
 	strategy     StrategyRecord
 	HomesteadPos [3]float64
@@ -992,6 +996,7 @@ func (s *AgentState) MarkTreeFailedLocked(x, z int32, tick int64) {
 		s.mem.failedTrees = make(map[[2]int32]int64)
 	}
 	s.mem.failedTrees[[2]int32{x, z}] = tick
+	s.noteDiag(EventTreeFailed, fmt.Sprintf("trunk %d,%d", x, z), map[string]any{"x": x, "z": z})
 }
 
 // IsTreeOnCooldownLocked returns true if a tree trunk recently timed out and is on retry backoff.
@@ -1114,6 +1119,8 @@ func (s *AgentState) MarkTargetUnreachableLocked(x, y, z float64, worldTick, ttl
 			return
 		}
 	}
+	s.noteDiag(EventUnreachable, fmt.Sprintf("(%.0f, %.0f, %.0f) for %d ticks", x, y, z, ttlTicks),
+		map[string]any{"target": []float64{x, y, z}, "ttl_ticks": ttlTicks})
 	s.unreachableTargets = append(s.unreachableTargets, &unreachableTargetEntry{
 		x:              x,
 		y:              y,

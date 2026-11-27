@@ -267,7 +267,7 @@ func (t *TaskSubroutine) TickWithReceipt(agentID string, state *AgentState, fram
 			t.LastActionTick = 0
 			t.LastNavigateTick = 0
 			if standCell(t) != nil {
-				t.giveUpStand(frame.WorldTick)
+				t.giveUpStand(state, frame, "walk failed: "+receipt.FailureReason)
 				break
 			}
 			t.ConsecutiveFailures++
@@ -362,7 +362,7 @@ func (t *TaskSubroutine) TickWithReceipt(agentID string, state *AgentState, fram
 
 	if cell := standCell(t); cell != nil && !standingIn(frame.Status.Position, cell) &&
 		frame.WorldTick-t.LastProgressTick >= standGiveUpTicks {
-		t.giveUpStand(frame.WorldTick)
+		t.giveUpStand(state, frame, "took too long")
 	}
 
 	// 4. EVALUATE: select or advance sub-target

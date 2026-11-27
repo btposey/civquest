@@ -6,6 +6,7 @@ package system1
 // with the clan (agent/danger_sync.go).
 
 import (
+	"fmt"
 	"math"
 	"strings"
 
@@ -96,6 +97,8 @@ func (s *AgentState) noteDangerLocked(d Danger) int {
 			return i
 		}
 	}
+	s.noteDiag(EventDanger, fmt.Sprintf("%s at (%.0f, %.0f)", d.Kind, d.X, d.Z),
+		map[string]any{"kind": d.Kind, "x": d.X, "z": d.Z, "seen_tick": d.Seen})
 	s.dangers = append(s.dangers, d)
 	return len(s.dangers) - 1
 }

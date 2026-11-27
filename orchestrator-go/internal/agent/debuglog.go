@@ -6,7 +6,30 @@ import (
 	"path/filepath"
 	"sync"
 	"time"
+
+	"github.com/btposey/civquest/orchestrator-go/internal/logging"
+	"github.com/btposey/civquest/orchestrator-go/internal/system1"
 )
+
+// eventLevels is each event category's level (logging package); anything not listed is DEBUG.
+var eventLevels = map[string]logging.Level{
+	"BRAIN_STALL": logging.Error,
+
+	"DEATH": logging.Warn, system1.EventDamage: logging.Warn, "DIALOGUE_ERROR": logging.Warn,
+	"LLM_ERROR": logging.Warn, "CONTEMPLATION_FAILED": logging.Warn,
+
+	"RUNTIME_INIT": logging.Info, "RECIPE_CATALOG_SYNCED": logging.Info, "FSM_TRANSITION": logging.Info,
+	"GOAL_TRANSITION": logging.Info, "STRATEGIC_CONTEMPLATION": logging.Info, system1.EventStrategy: logging.Info,
+	"HORIZON_SURVEY_COMPLETE": logging.Info, "INCOMING_CHAT": logging.Info, "DIALOGUE_EVAL": logging.Info,
+	"COMPANION_COMMAND": logging.Info, "SYSTEM1_TRADE_EVAL": logging.Info, "SETTLEMENT_VOTE": logging.Info,
+	"COLLECTIVE_SETTLEMENT_SITE": logging.Info, system1.EventRecover: logging.Info,
+	system1.EventMotorStuck: logging.Info, system1.EventInventory: logging.Info,
+	system1.EventReceiptFailed: logging.Info, system1.EventTaskStart: logging.Info,
+	system1.EventTaskEnd: logging.Info, system1.EventTaskDropped: logging.Info,
+	system1.EventDanger: logging.Info, system1.EventUnreachable: logging.Info,
+	system1.EventTreeFailed: logging.Info, system1.EventStandGiveUp: logging.Info,
+	system1.EventWalkGivenUp: logging.Info,
+}
 
 // DebugEvent represents a single structured JSONL event emitted during playtesting
 // to $XDG_STATE_HOME/civquest/logs/ so sessions can be reconstructed and evaluated.
@@ -30,6 +53,7 @@ type DebugLogger struct {
 	clanID       string
 	agentFile    *os.File
 	playtestFile *os.File
+	minimum      logging.Level
 }
 
 // NewDebugLogger opens or creates the structured JSONL debug log files in the well-known XDG logs directory.
@@ -37,6 +61,7 @@ func NewDebugLogger(agentDebugPath, playtestEventsPath, agentID, clanID string) 
 	dl := &DebugLogger{
 		agentID: agentID,
 		clanID:  clanID,
+		minimum: logging.Minimum(),
 	}
 	if agentDebugPath != "" {
 		_ = os.MkdirAll(filepath.Dir(agentDebugPath), 0o750)
@@ -58,9 +83,13 @@ func (d *DebugLogger) Emit(worldTick int64, category, summary string, details ma
 	if d == nil {
 		return
 	}
+	level := eventLevels[category]
+	if level < d.minimum {
+		return
+	}
 	ev := DebugEvent{
 		Timestamp: time.Now().UTC().Format(time.RFC3339Nano),
-		Level:     "DEBUG",
+		Level:     level.String(),
 		AgentID:   d.agentID,
 		ClanID:    d.clanID,
 		WorldTick: worldTick,

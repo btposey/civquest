@@ -126,9 +126,10 @@ func (fsm *AgentFSM) emitVitalsLocked(ctx *FSMContext, tick int64) {
 		"on_fire":    s.IsOnFire,
 		"stage":      string(fsm.currentStage),
 	}
-	if p := s.Position; p != nil {
-		d["position"] = []float64{p.X, p.Y, p.Z}
+	for k, v := range bodyDetails(ctx.Frame) {
+		d[k] = v
 	}
+	d["navigation"] = s.NavigationState.String()
 	if frames := fsm.activities(); len(frames) > 0 {
 		d["top"] = string(frames[len(frames)-1].Kind())
 	}

@@ -8,6 +8,7 @@ package system1
 // outside the owning frame.
 
 import (
+	"fmt"
 	civquestv1 "github.com/btposey/civquest/orchestrator-go/internal/proto/v1"
 	"github.com/btposey/civquest/orchestrator-go/internal/system1/htpda"
 )
@@ -46,6 +47,9 @@ func (w *walkLocal) hasTask() bool { return w != nil && taskActive(w.task) }
 
 // startTaskLocked commits t to the walk cursor (state.mu held). The first step runs inline.
 func (w *walkLocal) startTaskLocked(state *AgentState, t *TaskSubroutine) {
+	if t != nil {
+		state.noteDiag(EventTaskStart, t.Spec.ID, taskDetails(t, nil))
+	}
 	if state == nil {
 		return
 	}
@@ -74,6 +78,7 @@ func (w *walkLocal) stepTaskLocked(agentID string, state *AgentState, frame *civ
 	w.taskReceipt = nil
 	res := w.task.TickWithReceipt(agentID, state, frame, receipt)
 	if res.Done {
+		state.noteDiag(EventTaskEnd, fmt.Sprintf("%s %s: %s", w.task.Spec.ID, res.Phase, res.Reason), taskDetails(w.task, frame))
 		w.task = nil
 	}
 	state.publishTask(w.task)
@@ -93,6 +98,9 @@ func (w *walkLocal) stepTask(agentID string, state *AgentState, frame *civquestv
 // clearTaskLocked drops the owned task (state.mu not required: the view is atomic).
 func (w *walkLocal) clearTask(state *AgentState) {
 	if w != nil {
+		if w.task != nil {
+			state.noteDiag(EventTaskDropped, w.task.Spec.ID, taskDetails(w.task, nil))
+		}
 		w.task, w.taskReceipt = nil, nil
 	}
 	state.publishTask(nil)

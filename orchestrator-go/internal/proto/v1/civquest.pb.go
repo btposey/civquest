@@ -1485,8 +1485,14 @@ type AgentStatus struct {
 	AirSupply          int32                  `protobuf:"varint,19,opt,name=air_supply,json=airSupply,proto3" json:"air_supply,omitempty"`                            // remaining air ticks (Entity#getAirSupply)
 	MaxAirSupply       int32                  `protobuf:"varint,20,opt,name=max_air_supply,json=maxAirSupply,proto3" json:"max_air_supply,omitempty"`                 // Entity#getMaxAirSupply (300 default)
 	Fishing            *FishingState          `protobuf:"bytes,21,opt,name=fishing,proto3" json:"fishing,omitempty"`                                                  // cq-390.4: bobber/bite telemetry; unset when no line is cast
-	unknownFields      protoimpl.UnknownFields
-	sizeCache          protoimpl.SizeCache
+	// Diagnostics (cq-49c), logged only:
+	FeetBlock     string            `protobuf:"bytes,22,opt,name=feet_block,json=feetBlock,proto3" json:"feet_block,omitempty"`        // block id at the feet, e.g. "minecraft:powder_snow"
+	HeadBlock     string            `protobuf:"bytes,23,opt,name=head_block,json=headBlock,proto3" json:"head_block,omitempty"`        // block id at eye height
+	GroundBlock   string            `protobuf:"bytes,24,opt,name=ground_block,json=groundBlock,proto3" json:"ground_block,omitempty"`  // block id under the feet
+	FrozenTicks   int32             `protobuf:"varint,25,opt,name=frozen_ticks,json=frozenTicks,proto3" json:"frozen_ticks,omitempty"` // Entity#getTicksFrozen (damage begins at 140)
+	Equipment     []*ItemStackProto `protobuf:"bytes,26,rep,name=equipment,proto3" json:"equipment,omitempty"`                         // worn armour and held items; slot = EquipmentSlot ordinal
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *AgentStatus) Reset() {
@@ -1662,6 +1668,41 @@ func (x *AgentStatus) GetMaxAirSupply() int32 {
 func (x *AgentStatus) GetFishing() *FishingState {
 	if x != nil {
 		return x.Fishing
+	}
+	return nil
+}
+
+func (x *AgentStatus) GetFeetBlock() string {
+	if x != nil {
+		return x.FeetBlock
+	}
+	return ""
+}
+
+func (x *AgentStatus) GetHeadBlock() string {
+	if x != nil {
+		return x.HeadBlock
+	}
+	return ""
+}
+
+func (x *AgentStatus) GetGroundBlock() string {
+	if x != nil {
+		return x.GroundBlock
+	}
+	return ""
+}
+
+func (x *AgentStatus) GetFrozenTicks() int32 {
+	if x != nil {
+		return x.FrozenTicks
+	}
+	return 0
+}
+
+func (x *AgentStatus) GetEquipment() []*ItemStackProto {
+	if x != nil {
+		return x.Equipment
 	}
 	return nil
 }
@@ -2021,6 +2062,7 @@ type DamageEvent struct {
 	AttackerUuid     string                 `protobuf:"bytes,3,opt,name=attacker_uuid,json=attackerUuid,proto3" json:"attacker_uuid,omitempty"`
 	AttackerName     string                 `protobuf:"bytes,4,opt,name=attacker_name,json=attackerName,proto3" json:"attacker_name,omitempty"`
 	DamageAmount     float32                `protobuf:"fixed32,5,opt,name=damage_amount,json=damageAmount,proto3" json:"damage_amount,omitempty"`
+	DamageType       string                 `protobuf:"bytes,6,opt,name=damage_type,json=damageType,proto3" json:"damage_type,omitempty"` // vanilla damage id, e.g. "freeze", "mob", "drown" (cq-49c, logged only)
 	unknownFields    protoimpl.UnknownFields
 	sizeCache        protoimpl.SizeCache
 }
@@ -2088,6 +2130,13 @@ func (x *DamageEvent) GetDamageAmount() float32 {
 		return x.DamageAmount
 	}
 	return 0
+}
+
+func (x *DamageEvent) GetDamageType() string {
+	if x != nil {
+		return x.DamageType
+	}
+	return ""
 }
 
 type TradeRequest struct {
@@ -4218,7 +4267,7 @@ const file_civquest_v1_civquest_proto_rawDesc = "" +
 	"\x1alast_processed_sequence_id\x18\x0e \x01(\x03R\x17lastProcessedSequenceId\x12@\n" +
 	"\x0ereflex_notices\x18\x0f \x03(\v2\x19.civquest.v1.ReflexNoticeR\rreflexNotices\x124\n" +
 	"\areceipt\x18\x10 \x01(\v2\x1a.civquest.v1.IntentReceiptR\areceipt\x12G\n" +
-	"\x0ehorizon_survey\x18\x11 \x01(\v2 .civquest.v1.HorizonSurveyReportR\rhorizonSurvey\"\x86\x06\n" +
+	"\x0ehorizon_survey\x18\x11 \x01(\v2 .civquest.v1.HorizonSurveyReportR\rhorizonSurvey\"\xc5\a\n" +
 	"\vAgentStatus\x12\x19\n" +
 	"\bagent_id\x18\x01 \x01(\tR\aagentId\x12\x1b\n" +
 	"\tentity_id\x18\x02 \x01(\x05R\bentityId\x12-\n" +
@@ -4248,7 +4297,14 @@ const file_civquest_v1_civquest_proto_rawDesc = "" +
 	"\n" +
 	"air_supply\x18\x13 \x01(\x05R\tairSupply\x12$\n" +
 	"\x0emax_air_supply\x18\x14 \x01(\x05R\fmaxAirSupply\x123\n" +
-	"\afishing\x18\x15 \x01(\v2\x19.civquest.v1.FishingStateR\afishing\"\x83\x01\n" +
+	"\afishing\x18\x15 \x01(\v2\x19.civquest.v1.FishingStateR\afishing\x12\x1d\n" +
+	"\n" +
+	"feet_block\x18\x16 \x01(\tR\tfeetBlock\x12\x1d\n" +
+	"\n" +
+	"head_block\x18\x17 \x01(\tR\theadBlock\x12!\n" +
+	"\fground_block\x18\x18 \x01(\tR\vgroundBlock\x12!\n" +
+	"\ffrozen_ticks\x18\x19 \x01(\x05R\vfrozenTicks\x129\n" +
+	"\tequipment\x18\x1a \x03(\v2\x1b.civquest.v1.ItemStackProtoR\tequipment\"\x83\x01\n" +
 	"\fFishingState\x12\x12\n" +
 	"\x04cast\x18\x01 \x01(\bR\x04cast\x12\x19\n" +
 	"\bin_water\x18\x02 \x01(\bR\ainWater\x12\x12\n" +
@@ -4286,14 +4342,16 @@ const file_civquest_v1_civquest_proto_rawDesc = "" +
 	"senderName\x12\x18\n" +
 	"\amessage\x18\x03 \x01(\tR\amessage\x12\x1a\n" +
 	"\bdistance\x18\x04 \x01(\x02R\bdistance\x12&\n" +
-	"\x0fsender_is_agent\x18\x05 \x01(\bR\rsenderIsAgent\"\xea\x01\n" +
+	"\x0fsender_is_agent\x18\x05 \x01(\bR\rsenderIsAgent\"\x8b\x02\n" +
 	"\vDamageEvent\x12>\n" +
 	"\vsource_type\x18\x01 \x01(\x0e2\x1d.civquest.v1.DamageSourceTypeR\n" +
 	"sourceType\x12,\n" +
 	"\x12attacker_entity_id\x18\x02 \x01(\x05R\x10attackerEntityId\x12#\n" +
 	"\rattacker_uuid\x18\x03 \x01(\tR\fattackerUuid\x12#\n" +
 	"\rattacker_name\x18\x04 \x01(\tR\fattackerName\x12#\n" +
-	"\rdamage_amount\x18\x05 \x01(\x02R\fdamageAmount\"\xf2\x01\n" +
+	"\rdamage_amount\x18\x05 \x01(\x02R\fdamageAmount\x12\x1f\n" +
+	"\vdamage_type\x18\x06 \x01(\tR\n" +
+	"damageType\"\xf2\x01\n" +
 	"\fTradeRequest\x12(\n" +
 	"\x10player_entity_id\x18\x01 \x01(\x05R\x0eplayerEntityId\x12\x1f\n" +
 	"\vplayer_uuid\x18\x02 \x01(\tR\n" +
@@ -4637,62 +4695,63 @@ var file_civquest_v1_civquest_proto_depIdxs = []int32{
 	1,  // 21: civquest.v1.AgentStatus.navigation_state:type_name -> civquest.v1.NavigationState
 	12, // 22: civquest.v1.AgentStatus.inventory:type_name -> civquest.v1.ItemStackProto
 	23, // 23: civquest.v1.AgentStatus.fishing:type_name -> civquest.v1.FishingState
-	9,  // 24: civquest.v1.FishingState.bobber_pos:type_name -> civquest.v1.Vec3
-	9,  // 25: civquest.v1.VisibleEntity.position:type_name -> civquest.v1.Vec3
-	10, // 26: civquest.v1.VisibleBlock.pos:type_name -> civquest.v1.BlockPosProto
-	2,  // 27: civquest.v1.DamageEvent.source_type:type_name -> civquest.v1.DamageSourceType
-	12, // 28: civquest.v1.TradeRequest.player_offered_items:type_name -> civquest.v1.ItemStackProto
-	11, // 29: civquest.v1.FarmlandSurveyEvent.bounds:type_name -> civquest.v1.BoundingBoxProto
-	9,  // 30: civquest.v1.DeathEvent.death_location:type_name -> civquest.v1.Vec3
-	12, // 31: civquest.v1.DeathEvent.dropped_loot:type_name -> civquest.v1.ItemStackProto
-	4,  // 32: civquest.v1.ReflexNotice.reflex_type:type_name -> civquest.v1.ReflexNotice.ReflexType
-	5,  // 33: civquest.v1.IntentReceipt.status:type_name -> civquest.v1.IntentReceipt.ReceiptStatus
-	34, // 34: civquest.v1.IntentReceipt.facts:type_name -> civquest.v1.MotorFacts
-	35, // 35: civquest.v1.HorizonSurveyReport.sectors:type_name -> civquest.v1.HorizonSector
-	38, // 36: civquest.v1.IntentBatch.intents:type_name -> civquest.v1.AgentIntent
-	39, // 37: civquest.v1.AgentIntent.navigate:type_name -> civquest.v1.NavigateIntent
-	40, // 38: civquest.v1.AgentIntent.attack:type_name -> civquest.v1.AttackIntent
-	41, // 39: civquest.v1.AgentIntent.interact_block:type_name -> civquest.v1.InteractBlockIntent
-	42, // 40: civquest.v1.AgentIntent.use_item:type_name -> civquest.v1.UseItemIntent
-	43, // 41: civquest.v1.AgentIntent.craft_item:type_name -> civquest.v1.CraftItemIntent
-	44, // 42: civquest.v1.AgentIntent.chat:type_name -> civquest.v1.SendChatIntent
-	45, // 43: civquest.v1.AgentIntent.trade_response:type_name -> civquest.v1.RespondTradeIntent
-	46, // 44: civquest.v1.AgentIntent.caravan:type_name -> civquest.v1.CaravanIntent
-	47, // 45: civquest.v1.AgentIntent.build_block:type_name -> civquest.v1.BuildBlockIntent
-	48, // 46: civquest.v1.AgentIntent.create_book:type_name -> civquest.v1.CreateWrittenBookIntent
-	49, // 47: civquest.v1.AgentIntent.place_signpost:type_name -> civquest.v1.PlaceSignpostIntent
-	50, // 48: civquest.v1.AgentIntent.transfer_container:type_name -> civquest.v1.TransferContainerIntent
-	51, // 49: civquest.v1.AgentIntent.survey_horizon:type_name -> civquest.v1.SurveyHorizonIntent
-	9,  // 50: civquest.v1.NavigateIntent.target:type_name -> civquest.v1.Vec3
-	10, // 51: civquest.v1.InteractBlockIntent.pos:type_name -> civquest.v1.BlockPosProto
-	6,  // 52: civquest.v1.InteractBlockIntent.interaction_type:type_name -> civquest.v1.InteractBlockIntent.InteractionType
-	7,  // 53: civquest.v1.UseItemIntent.mode:type_name -> civquest.v1.UseItemIntent.Mode
-	9,  // 54: civquest.v1.UseItemIntent.aim_at:type_name -> civquest.v1.Vec3
-	10, // 55: civquest.v1.CraftItemIntent.workstation_pos:type_name -> civquest.v1.BlockPosProto
-	3,  // 56: civquest.v1.SendChatIntent.target_channel:type_name -> civquest.v1.ChatChannel
-	12, // 57: civquest.v1.RespondTradeIntent.agent_counter_offer:type_name -> civquest.v1.ItemStackProto
-	12, // 58: civquest.v1.RespondTradeIntent.demanded_from_player:type_name -> civquest.v1.ItemStackProto
-	8,  // 59: civquest.v1.CaravanIntent.action:type_name -> civquest.v1.CaravanIntent.CaravanAction
-	10, // 60: civquest.v1.CaravanIntent.fence_pos:type_name -> civquest.v1.BlockPosProto
-	12, // 61: civquest.v1.CaravanIntent.cargo_items:type_name -> civquest.v1.ItemStackProto
-	10, // 62: civquest.v1.BuildBlockIntent.target_voxel:type_name -> civquest.v1.BlockPosProto
-	10, // 63: civquest.v1.CreateWrittenBookIntent.target_lectern_or_shelf:type_name -> civquest.v1.BlockPosProto
-	10, // 64: civquest.v1.PlaceSignpostIntent.pos:type_name -> civquest.v1.BlockPosProto
-	10, // 65: civquest.v1.TransferContainerIntent.container_pos:type_name -> civquest.v1.BlockPosProto
-	12, // 66: civquest.v1.TransferContainerIntent.items:type_name -> civquest.v1.ItemStackProto
-	37, // 67: civquest.v1.CivQuestBridgeService.ConnectAgent:input_type -> civquest.v1.IntentBatch
-	13, // 68: civquest.v1.CivQuestBridgeService.SpawnAgentEntity:input_type -> civquest.v1.SpawnAgentRequest
-	15, // 69: civquest.v1.CivQuestBridgeService.DespawnAgentEntity:input_type -> civquest.v1.DespawnAgentRequest
-	17, // 70: civquest.v1.CivQuestBridgeService.ExportRecipeGraph:input_type -> civquest.v1.ExportRecipeRequest
-	21, // 71: civquest.v1.CivQuestBridgeService.ConnectAgent:output_type -> civquest.v1.TelemetryFrame
-	14, // 72: civquest.v1.CivQuestBridgeService.SpawnAgentEntity:output_type -> civquest.v1.SpawnAgentResponse
-	16, // 73: civquest.v1.CivQuestBridgeService.DespawnAgentEntity:output_type -> civquest.v1.DespawnAgentResponse
-	20, // 74: civquest.v1.CivQuestBridgeService.ExportRecipeGraph:output_type -> civquest.v1.ExportRecipeResponse
-	71, // [71:75] is the sub-list for method output_type
-	67, // [67:71] is the sub-list for method input_type
-	67, // [67:67] is the sub-list for extension type_name
-	67, // [67:67] is the sub-list for extension extendee
-	0,  // [0:67] is the sub-list for field type_name
+	12, // 24: civquest.v1.AgentStatus.equipment:type_name -> civquest.v1.ItemStackProto
+	9,  // 25: civquest.v1.FishingState.bobber_pos:type_name -> civquest.v1.Vec3
+	9,  // 26: civquest.v1.VisibleEntity.position:type_name -> civquest.v1.Vec3
+	10, // 27: civquest.v1.VisibleBlock.pos:type_name -> civquest.v1.BlockPosProto
+	2,  // 28: civquest.v1.DamageEvent.source_type:type_name -> civquest.v1.DamageSourceType
+	12, // 29: civquest.v1.TradeRequest.player_offered_items:type_name -> civquest.v1.ItemStackProto
+	11, // 30: civquest.v1.FarmlandSurveyEvent.bounds:type_name -> civquest.v1.BoundingBoxProto
+	9,  // 31: civquest.v1.DeathEvent.death_location:type_name -> civquest.v1.Vec3
+	12, // 32: civquest.v1.DeathEvent.dropped_loot:type_name -> civquest.v1.ItemStackProto
+	4,  // 33: civquest.v1.ReflexNotice.reflex_type:type_name -> civquest.v1.ReflexNotice.ReflexType
+	5,  // 34: civquest.v1.IntentReceipt.status:type_name -> civquest.v1.IntentReceipt.ReceiptStatus
+	34, // 35: civquest.v1.IntentReceipt.facts:type_name -> civquest.v1.MotorFacts
+	35, // 36: civquest.v1.HorizonSurveyReport.sectors:type_name -> civquest.v1.HorizonSector
+	38, // 37: civquest.v1.IntentBatch.intents:type_name -> civquest.v1.AgentIntent
+	39, // 38: civquest.v1.AgentIntent.navigate:type_name -> civquest.v1.NavigateIntent
+	40, // 39: civquest.v1.AgentIntent.attack:type_name -> civquest.v1.AttackIntent
+	41, // 40: civquest.v1.AgentIntent.interact_block:type_name -> civquest.v1.InteractBlockIntent
+	42, // 41: civquest.v1.AgentIntent.use_item:type_name -> civquest.v1.UseItemIntent
+	43, // 42: civquest.v1.AgentIntent.craft_item:type_name -> civquest.v1.CraftItemIntent
+	44, // 43: civquest.v1.AgentIntent.chat:type_name -> civquest.v1.SendChatIntent
+	45, // 44: civquest.v1.AgentIntent.trade_response:type_name -> civquest.v1.RespondTradeIntent
+	46, // 45: civquest.v1.AgentIntent.caravan:type_name -> civquest.v1.CaravanIntent
+	47, // 46: civquest.v1.AgentIntent.build_block:type_name -> civquest.v1.BuildBlockIntent
+	48, // 47: civquest.v1.AgentIntent.create_book:type_name -> civquest.v1.CreateWrittenBookIntent
+	49, // 48: civquest.v1.AgentIntent.place_signpost:type_name -> civquest.v1.PlaceSignpostIntent
+	50, // 49: civquest.v1.AgentIntent.transfer_container:type_name -> civquest.v1.TransferContainerIntent
+	51, // 50: civquest.v1.AgentIntent.survey_horizon:type_name -> civquest.v1.SurveyHorizonIntent
+	9,  // 51: civquest.v1.NavigateIntent.target:type_name -> civquest.v1.Vec3
+	10, // 52: civquest.v1.InteractBlockIntent.pos:type_name -> civquest.v1.BlockPosProto
+	6,  // 53: civquest.v1.InteractBlockIntent.interaction_type:type_name -> civquest.v1.InteractBlockIntent.InteractionType
+	7,  // 54: civquest.v1.UseItemIntent.mode:type_name -> civquest.v1.UseItemIntent.Mode
+	9,  // 55: civquest.v1.UseItemIntent.aim_at:type_name -> civquest.v1.Vec3
+	10, // 56: civquest.v1.CraftItemIntent.workstation_pos:type_name -> civquest.v1.BlockPosProto
+	3,  // 57: civquest.v1.SendChatIntent.target_channel:type_name -> civquest.v1.ChatChannel
+	12, // 58: civquest.v1.RespondTradeIntent.agent_counter_offer:type_name -> civquest.v1.ItemStackProto
+	12, // 59: civquest.v1.RespondTradeIntent.demanded_from_player:type_name -> civquest.v1.ItemStackProto
+	8,  // 60: civquest.v1.CaravanIntent.action:type_name -> civquest.v1.CaravanIntent.CaravanAction
+	10, // 61: civquest.v1.CaravanIntent.fence_pos:type_name -> civquest.v1.BlockPosProto
+	12, // 62: civquest.v1.CaravanIntent.cargo_items:type_name -> civquest.v1.ItemStackProto
+	10, // 63: civquest.v1.BuildBlockIntent.target_voxel:type_name -> civquest.v1.BlockPosProto
+	10, // 64: civquest.v1.CreateWrittenBookIntent.target_lectern_or_shelf:type_name -> civquest.v1.BlockPosProto
+	10, // 65: civquest.v1.PlaceSignpostIntent.pos:type_name -> civquest.v1.BlockPosProto
+	10, // 66: civquest.v1.TransferContainerIntent.container_pos:type_name -> civquest.v1.BlockPosProto
+	12, // 67: civquest.v1.TransferContainerIntent.items:type_name -> civquest.v1.ItemStackProto
+	37, // 68: civquest.v1.CivQuestBridgeService.ConnectAgent:input_type -> civquest.v1.IntentBatch
+	13, // 69: civquest.v1.CivQuestBridgeService.SpawnAgentEntity:input_type -> civquest.v1.SpawnAgentRequest
+	15, // 70: civquest.v1.CivQuestBridgeService.DespawnAgentEntity:input_type -> civquest.v1.DespawnAgentRequest
+	17, // 71: civquest.v1.CivQuestBridgeService.ExportRecipeGraph:input_type -> civquest.v1.ExportRecipeRequest
+	21, // 72: civquest.v1.CivQuestBridgeService.ConnectAgent:output_type -> civquest.v1.TelemetryFrame
+	14, // 73: civquest.v1.CivQuestBridgeService.SpawnAgentEntity:output_type -> civquest.v1.SpawnAgentResponse
+	16, // 74: civquest.v1.CivQuestBridgeService.DespawnAgentEntity:output_type -> civquest.v1.DespawnAgentResponse
+	20, // 75: civquest.v1.CivQuestBridgeService.ExportRecipeGraph:output_type -> civquest.v1.ExportRecipeResponse
+	72, // [72:76] is the sub-list for method output_type
+	68, // [68:72] is the sub-list for method input_type
+	68, // [68:68] is the sub-list for extension type_name
+	68, // [68:68] is the sub-list for extension extendee
+	0,  // [0:68] is the sub-list for field type_name
 }
 
 func init() { file_civquest_v1_civquest_proto_init() }

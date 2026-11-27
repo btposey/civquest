@@ -357,10 +357,13 @@ func (fsm *AgentFSM) tickActivitiesLocked(ctx *FSMContext, reg *EngineRegistry, 
 	w := newFSMWorld(fsm, ctx, reg, skillCtx)
 	var out []FSMIntent
 	fsm.emitVitalsLocked(ctx, w.tick)
+	fsm.observeFrameLocked(ctx, w.tick)
+	defer fsm.emitDiagnosticsLocked(ctx, w.tick)
 	if ctx != nil && ctx.Frame != nil {
 		if r := ctx.Frame.GetReceipt(); fsm.admitReceiptLocked(r) {
 			w.receipt = r
 			rev := htpda.Receipt{Frame: htpda.FrameID(r.GetFrameId()), Status: r.GetStatus(), Facts: motorFacts(r.GetFacts())}
+			fsm.emitReceiptLocked(w.tick, r)
 			fsm.emitStuckReceiptLocked(w.tick, r, rev.Facts)
 			// A receipt can push Recover, whose first attempt is emitted by that dispatch.
 			out = append(out, fsm.dispatchLocked(w, rev)...)

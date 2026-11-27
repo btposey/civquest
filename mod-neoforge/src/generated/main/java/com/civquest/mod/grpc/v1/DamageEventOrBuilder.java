@@ -55,4 +55,24 @@ public interface DamageEventOrBuilder extends
    * @return The damageAmount.
    */
   float getDamageAmount();
+
+  /**
+   * <pre>
+   * vanilla damage id, e.g. "freeze", "mob", "drown" (cq-49c, logged only)
+   * </pre>
+   *
+   * <code>string damage_type = 6;</code>
+   * @return The damageType.
+   */
+  java.lang.String getDamageType();
+  /**
+   * <pre>
+   * vanilla damage id, e.g. "freeze", "mob", "drown" (cq-49c, logged only)
+   * </pre>
+   *
+   * <code>string damage_type = 6;</code>
+   * @return The bytes for damageType.
+   */
+  com.google.protobuf.ByteString
+      getDamageTypeBytes();
 }

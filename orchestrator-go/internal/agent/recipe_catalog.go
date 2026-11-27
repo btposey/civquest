@@ -22,7 +22,7 @@ func (r *AgentRuntime) syncRecipeGraph(ctx context.Context, client *bridge.Clien
 
 	resp, err := client.ExportRecipeGraph(callCtx, &civquestv1.ExportRecipeRequest{})
 	if err != nil {
-		log.Printf("[Agent %s] ExportRecipeGraph sync failed (fail-closed crafting until synced): %v", r.agentID, err)
+		log.Printf("[WARN] [Agent %s] ExportRecipeGraph sync failed (fail-closed crafting until synced): %v", r.agentID, err)
 		return err
 	}
 	if resp == nil {

@@ -31,6 +31,10 @@ private static final long serialVersionUID = 0L;
     navigationState_ = 0;
     inventory_ = java.util.Collections.emptyList();
     leashedEntityIds_ = emptyIntList();
+    feetBlock_ = "";
+    headBlock_ = "";
+    groundBlock_ = "";
+    equipment_ = java.util.Collections.emptyList();
   }
 
   public static final com.google.protobuf.Descriptors.Descriptor
@@ -428,6 +432,223 @@ private static final long serialVersionUID = 0L;
     return fishing_ == null ? com.civquest.mod.grpc.v1.FishingState.getDefaultInstance() : fishing_;
   }
 
+  public static final int FEET_BLOCK_FIELD_NUMBER = 22;
+  @SuppressWarnings("serial")
+  private volatile java.lang.Object feetBlock_ = "";
+  /**
+   * <pre>
+   * Diagnostics (cq-49c), logged only:
+   * </pre>
+   *
+   * <code>string feet_block = 22;</code>
+   * @return The feetBlock.
+   */
+  @java.lang.Override
+  public java.lang.String getFeetBlock() {
+    java.lang.Object ref = feetBlock_;
+    if (ref instanceof java.lang.String) {
+      return (java.lang.String) ref;
+    } else {
+      com.google.protobuf.ByteString bs = 
+          (com.google.protobuf.ByteString) ref;
+      java.lang.String s = bs.toStringUtf8();
+      feetBlock_ = s;
+      return s;
+    }
+  }
+  /**
+   * <pre>
+   * Diagnostics (cq-49c), logged only:
+   * </pre>
+   *
+   * <code>string feet_block = 22;</code>
+   * @return The bytes for feetBlock.
+   */
+  @java.lang.Override
+  public com.google.protobuf.ByteString
+      getFeetBlockBytes() {
+    java.lang.Object ref = feetBlock_;
+    if (ref instanceof java.lang.String) {
+      com.google.protobuf.ByteString b = 
+          com.google.protobuf.ByteString.copyFromUtf8(
+              (java.lang.String) ref);
+      feetBlock_ = b;
+      return b;
+    } else {
+      return (com.google.protobuf.ByteString) ref;
+    }
+  }
+
+  public static final int HEAD_BLOCK_FIELD_NUMBER = 23;
+  @SuppressWarnings("serial")
+  private volatile java.lang.Object headBlock_ = "";
+  /**
+   * <pre>
+   * block id at eye height
+   * </pre>
+   *
+   * <code>string head_block = 23;</code>
+   * @return The headBlock.
+   */
+  @java.lang.Override
+  public java.lang.String getHeadBlock() {
+    java.lang.Object ref = headBlock_;
+    if (ref instanceof java.lang.String) {
+      return (java.lang.String) ref;
+    } else {
+      com.google.protobuf.ByteString bs = 
+          (com.google.protobuf.ByteString) ref;
+      java.lang.String s = bs.toStringUtf8();
+      headBlock_ = s;
+      return s;
+    }
+  }
+  /**
+   * <pre>
+   * block id at eye height
+   * </pre>
+   *
+   * <code>string head_block = 23;</code>
+   * @return The bytes for headBlock.
+   */
+  @java.lang.Override
+  public com.google.protobuf.ByteString
+      getHeadBlockBytes() {
+    java.lang.Object ref = headBlock_;
+    if (ref instanceof java.lang.String) {
+      com.google.protobuf.ByteString b = 
+          com.google.protobuf.ByteString.copyFromUtf8(
+              (java.lang.String) ref);
+      headBlock_ = b;
+      return b;
+    } else {
+      return (com.google.protobuf.ByteString) ref;
+    }
+  }
+
+  public static final int GROUND_BLOCK_FIELD_NUMBER = 24;
+  @SuppressWarnings("serial")
+  private volatile java.lang.Object groundBlock_ = "";
+  /**
+   * <pre>
+   * block id under the feet
+   * </pre>
+   *
+   * <code>string ground_block = 24;</code>
+   * @return The groundBlock.
+   */
+  @java.lang.Override
+  public java.lang.String getGroundBlock() {
+    java.lang.Object ref = groundBlock_;
+    if (ref instanceof java.lang.String) {
+      return (java.lang.String) ref;
+    } else {
+      com.google.protobuf.ByteString bs = 
+          (com.google.protobuf.ByteString) ref;
+      java.lang.String s = bs.toStringUtf8();
+      groundBlock_ = s;
+      return s;
+    }
+  }
+  /**
+   * <pre>
+   * block id under the feet
+   * </pre>
+   *
+   * <code>string ground_block = 24;</code>
+   * @return The bytes for groundBlock.
+   */
+  @java.lang.Override
+  public com.google.protobuf.ByteString
+      getGroundBlockBytes() {
+    java.lang.Object ref = groundBlock_;
+    if (ref instanceof java.lang.String) {
+      com.google.protobuf.ByteString b = 
+          com.google.protobuf.ByteString.copyFromUtf8(
+              (java.lang.String) ref);
+      groundBlock_ = b;
+      return b;
+    } else {
+      return (com.google.protobuf.ByteString) ref;
+    }
+  }
+
+  public static final int FROZEN_TICKS_FIELD_NUMBER = 25;
+  private int frozenTicks_ = 0;
+  /**
+   * <pre>
+   * Entity#getTicksFrozen (damage begins at 140)
+   * </pre>
+   *
+   * <code>int32 frozen_ticks = 25;</code>
+   * @return The frozenTicks.
+   */
+  @java.lang.Override
+  public int getFrozenTicks() {
+    return frozenTicks_;
+  }
+
+  public static final int EQUIPMENT_FIELD_NUMBER = 26;
+  @SuppressWarnings("serial")
+  private java.util.List<com.civquest.mod.grpc.v1.ItemStackProto> equipment_;
+  /**
+   * <pre>
+   * worn armour and held items; slot = EquipmentSlot ordinal
+   * </pre>
+   *
+   * <code>repeated .civquest.v1.ItemStackProto equipment = 26;</code>
+   */
+  @java.lang.Override
+  public java.util.List<com.civquest.mod.grpc.v1.ItemStackProto> getEquipmentList() {
+    return equipment_;
+  }
+  /**
+   * <pre>
+   * worn armour and held items; slot = EquipmentSlot ordinal
+   * </pre>
+   *
+   * <code>repeated .civquest.v1.ItemStackProto equipment = 26;</code>
+   */
+  @java.lang.Override
+  public java.util.List<? extends com.civquest.mod.grpc.v1.ItemStackProtoOrBuilder> 
+      getEquipmentOrBuilderList() {
+    return equipment_;
+  }
+  /**
+   * <pre>
+   * worn armour and held items; slot = EquipmentSlot ordinal
+   * </pre>
+   *
+   * <code>repeated .civquest.v1.ItemStackProto equipment = 26;</code>
+   */
+  @java.lang.Override
+  public int getEquipmentCount() {
+    return equipment_.size();
+  }
+  /**
+   * <pre>
+   * worn armour and held items; slot = EquipmentSlot ordinal
+   * </pre>
+   *
+   * <code>repeated .civquest.v1.ItemStackProto equipment = 26;</code>
+   */
+  @java.lang.Override
+  public com.civquest.mod.grpc.v1.ItemStackProto getEquipment(int index) {
+    return equipment_.get(index);
+  }
+  /**
+   * <pre>
+   * worn armour and held items; slot = EquipmentSlot ordinal
+   * </pre>
+   *
+   * <code>repeated .civquest.v1.ItemStackProto equipment = 26;</code>
+   */
+  @java.lang.Override
+  public com.civquest.mod.grpc.v1.ItemStackProtoOrBuilder getEquipmentOrBuilder(
+      int index) {
+    return equipment_.get(index);
+  }
+
   private byte memoizedIsInitialized = -1;
   @java.lang.Override
   public final boolean isInitialized() {
@@ -509,6 +730,21 @@ private static final long serialVersionUID = 0L;
     }
     if (((bitField0_ & 0x00000002) != 0)) {
       output.writeMessage(21, getFishing());
+    }
+    if (!com.google.protobuf.GeneratedMessage.isStringEmpty(feetBlock_)) {
+      com.google.protobuf.GeneratedMessage.writeString(output, 22, feetBlock_);
+    }
+    if (!com.google.protobuf.GeneratedMessage.isStringEmpty(headBlock_)) {
+      com.google.protobuf.GeneratedMessage.writeString(output, 23, headBlock_);
+    }
+    if (!com.google.protobuf.GeneratedMessage.isStringEmpty(groundBlock_)) {
+      com.google.protobuf.GeneratedMessage.writeString(output, 24, groundBlock_);
+    }
+    if (frozenTicks_ != 0) {
+      output.writeInt32(25, frozenTicks_);
+    }
+    for (int i = 0; i < equipment_.size(); i++) {
+      output.writeMessage(26, equipment_.get(i));
     }
     getUnknownFields().writeTo(output);
   }
@@ -612,6 +848,23 @@ private static final long serialVersionUID = 0L;
       size += com.google.protobuf.CodedOutputStream
         .computeMessageSize(21, getFishing());
     }
+    if (!com.google.protobuf.GeneratedMessage.isStringEmpty(feetBlock_)) {
+      size += com.google.protobuf.GeneratedMessage.computeStringSize(22, feetBlock_);
+    }
+    if (!com.google.protobuf.GeneratedMessage.isStringEmpty(headBlock_)) {
+      size += com.google.protobuf.GeneratedMessage.computeStringSize(23, headBlock_);
+    }
+    if (!com.google.protobuf.GeneratedMessage.isStringEmpty(groundBlock_)) {
+      size += com.google.protobuf.GeneratedMessage.computeStringSize(24, groundBlock_);
+    }
+    if (frozenTicks_ != 0) {
+      size += com.google.protobuf.CodedOutputStream
+        .computeInt32Size(25, frozenTicks_);
+    }
+    for (int i = 0; i < equipment_.size(); i++) {
+      size += com.google.protobuf.CodedOutputStream
+        .computeMessageSize(26, equipment_.get(i));
+    }
     size += getUnknownFields().getSerializedSize();
     memoizedSize = size;
     return size;
@@ -680,6 +933,16 @@ private static final long serialVersionUID = 0L;
       if (!getFishing()
           .equals(other.getFishing())) return false;
     }
+    if (!getFeetBlock()
+        .equals(other.getFeetBlock())) return false;
+    if (!getHeadBlock()
+        .equals(other.getHeadBlock())) return false;
+    if (!getGroundBlock()
+        .equals(other.getGroundBlock())) return false;
+    if (getFrozenTicks()
+        != other.getFrozenTicks()) return false;
+    if (!getEquipmentList()
+        .equals(other.getEquipmentList())) return false;
     if (!getUnknownFields().equals(other.getUnknownFields())) return false;
     return true;
   }
@@ -751,6 +1014,18 @@ private static final long serialVersionUID = 0L;
     if (hasFishing()) {
       hash = (37 * hash) + FISHING_FIELD_NUMBER;
       hash = (53 * hash) + getFishing().hashCode();
+    }
+    hash = (37 * hash) + FEET_BLOCK_FIELD_NUMBER;
+    hash = (53 * hash) + getFeetBlock().hashCode();
+    hash = (37 * hash) + HEAD_BLOCK_FIELD_NUMBER;
+    hash = (53 * hash) + getHeadBlock().hashCode();
+    hash = (37 * hash) + GROUND_BLOCK_FIELD_NUMBER;
+    hash = (53 * hash) + getGroundBlock().hashCode();
+    hash = (37 * hash) + FROZEN_TICKS_FIELD_NUMBER;
+    hash = (53 * hash) + getFrozenTicks();
+    if (getEquipmentCount() > 0) {
+      hash = (37 * hash) + EQUIPMENT_FIELD_NUMBER;
+      hash = (53 * hash) + getEquipmentList().hashCode();
     }
     hash = (29 * hash) + getUnknownFields().hashCode();
     memoizedHashCode = hash;
@@ -885,6 +1160,7 @@ private static final long serialVersionUID = 0L;
         getPositionFieldBuilder();
         getInventoryFieldBuilder();
         getFishingFieldBuilder();
+        getEquipmentFieldBuilder();
       }
     }
     @java.lang.Override
@@ -926,6 +1202,17 @@ private static final long serialVersionUID = 0L;
         fishingBuilder_.dispose();
         fishingBuilder_ = null;
       }
+      feetBlock_ = "";
+      headBlock_ = "";
+      groundBlock_ = "";
+      frozenTicks_ = 0;
+      if (equipmentBuilder_ == null) {
+        equipment_ = java.util.Collections.emptyList();
+      } else {
+        equipment_ = null;
+        equipmentBuilder_.clear();
+      }
+      bitField0_ = (bitField0_ & ~0x02000000);
       return this;
     }
 
@@ -967,6 +1254,15 @@ private static final long serialVersionUID = 0L;
         result.inventory_ = inventory_;
       } else {
         result.inventory_ = inventoryBuilder_.build();
+      }
+      if (equipmentBuilder_ == null) {
+        if (((bitField0_ & 0x02000000) != 0)) {
+          equipment_ = java.util.Collections.unmodifiableList(equipment_);
+          bitField0_ = (bitField0_ & ~0x02000000);
+        }
+        result.equipment_ = equipment_;
+      } else {
+        result.equipment_ = equipmentBuilder_.build();
       }
     }
 
@@ -1039,6 +1335,18 @@ private static final long serialVersionUID = 0L;
             ? fishing_
             : fishingBuilder_.build();
         to_bitField0_ |= 0x00000002;
+      }
+      if (((from_bitField0_ & 0x00200000) != 0)) {
+        result.feetBlock_ = feetBlock_;
+      }
+      if (((from_bitField0_ & 0x00400000) != 0)) {
+        result.headBlock_ = headBlock_;
+      }
+      if (((from_bitField0_ & 0x00800000) != 0)) {
+        result.groundBlock_ = groundBlock_;
+      }
+      if (((from_bitField0_ & 0x01000000) != 0)) {
+        result.frozenTicks_ = frozenTicks_;
       }
       result.bitField0_ |= to_bitField0_;
     }
@@ -1150,6 +1458,50 @@ private static final long serialVersionUID = 0L;
       }
       if (other.hasFishing()) {
         mergeFishing(other.getFishing());
+      }
+      if (!other.getFeetBlock().isEmpty()) {
+        feetBlock_ = other.feetBlock_;
+        bitField0_ |= 0x00200000;
+        onChanged();
+      }
+      if (!other.getHeadBlock().isEmpty()) {
+        headBlock_ = other.headBlock_;
+        bitField0_ |= 0x00400000;
+        onChanged();
+      }
+      if (!other.getGroundBlock().isEmpty()) {
+        groundBlock_ = other.groundBlock_;
+        bitField0_ |= 0x00800000;
+        onChanged();
+      }
+      if (other.getFrozenTicks() != 0) {
+        setFrozenTicks(other.getFrozenTicks());
+      }
+      if (equipmentBuilder_ == null) {
+        if (!other.equipment_.isEmpty()) {
+          if (equipment_.isEmpty()) {
+            equipment_ = other.equipment_;
+            bitField0_ = (bitField0_ & ~0x02000000);
+          } else {
+            ensureEquipmentIsMutable();
+            equipment_.addAll(other.equipment_);
+          }
+          onChanged();
+        }
+      } else {
+        if (!other.equipment_.isEmpty()) {
+          if (equipmentBuilder_.isEmpty()) {
+            equipmentBuilder_.dispose();
+            equipmentBuilder_ = null;
+            equipment_ = other.equipment_;
+            bitField0_ = (bitField0_ & ~0x02000000);
+            equipmentBuilder_ = 
+              com.google.protobuf.GeneratedMessage.alwaysUseFieldBuilders ?
+                 getEquipmentFieldBuilder() : null;
+          } else {
+            equipmentBuilder_.addAllMessages(other.equipment_);
+          }
+        }
       }
       this.mergeUnknownFields(other.getUnknownFields());
       onChanged();
@@ -1305,6 +1657,39 @@ private static final long serialVersionUID = 0L;
               bitField0_ |= 0x00100000;
               break;
             } // case 170
+            case 178: {
+              feetBlock_ = input.readStringRequireUtf8();
+              bitField0_ |= 0x00200000;
+              break;
+            } // case 178
+            case 186: {
+              headBlock_ = input.readStringRequireUtf8();
+              bitField0_ |= 0x00400000;
+              break;
+            } // case 186
+            case 194: {
+              groundBlock_ = input.readStringRequireUtf8();
+              bitField0_ |= 0x00800000;
+              break;
+            } // case 194
+            case 200: {
+              frozenTicks_ = input.readInt32();
+              bitField0_ |= 0x01000000;
+              break;
+            } // case 200
+            case 210: {
+              com.civquest.mod.grpc.v1.ItemStackProto m =
+                  input.readMessage(
+                      com.civquest.mod.grpc.v1.ItemStackProto.parser(),
+                      extensionRegistry);
+              if (equipmentBuilder_ == null) {
+                ensureEquipmentIsMutable();
+                equipment_.add(m);
+              } else {
+                equipmentBuilder_.addMessage(m);
+              }
+              break;
+            } // case 210
             default: {
               if (!super.parseUnknownField(input, extensionRegistry, tag)) {
                 done = true; // was an endgroup tag
@@ -2599,6 +2984,638 @@ private static final long serialVersionUID = 0L;
         fishing_ = null;
       }
       return fishingBuilder_;
+    }
+
+    private java.lang.Object feetBlock_ = "";
+    /**
+     * <pre>
+     * Diagnostics (cq-49c), logged only:
+     * </pre>
+     *
+     * <code>string feet_block = 22;</code>
+     * @return The feetBlock.
+     */
+    public java.lang.String getFeetBlock() {
+      java.lang.Object ref = feetBlock_;
+      if (!(ref instanceof java.lang.String)) {
+        com.google.protobuf.ByteString bs =
+            (com.google.protobuf.ByteString) ref;
+        java.lang.String s = bs.toStringUtf8();
+        feetBlock_ = s;
+        return s;
+      } else {
+        return (java.lang.String) ref;
+      }
+    }
+    /**
+     * <pre>
+     * Diagnostics (cq-49c), logged only:
+     * </pre>
+     *
+     * <code>string feet_block = 22;</code>
+     * @return The bytes for feetBlock.
+     */
+    public com.google.protobuf.ByteString
+        getFeetBlockBytes() {
+      java.lang.Object ref = feetBlock_;
+      if (ref instanceof String) {
+        com.google.protobuf.ByteString b = 
+            com.google.protobuf.ByteString.copyFromUtf8(
+                (java.lang.String) ref);
+        feetBlock_ = b;
+        return b;
+      } else {
+        return (com.google.protobuf.ByteString) ref;
+      }
+    }
+    /**
+     * <pre>
+     * Diagnostics (cq-49c), logged only:
+     * </pre>
+     *
+     * <code>string feet_block = 22;</code>
+     * @param value The feetBlock to set.
+     * @return This builder for chaining.
+     */
+    public Builder setFeetBlock(
+        java.lang.String value) {
+      if (value == null) { throw new NullPointerException(); }
+      feetBlock_ = value;
+      bitField0_ |= 0x00200000;
+      onChanged();
+      return this;
+    }
+    /**
+     * <pre>
+     * Diagnostics (cq-49c), logged only:
+     * </pre>
+     *
+     * <code>string feet_block = 22;</code>
+     * @return This builder for chaining.
+     */
+    public Builder clearFeetBlock() {
+      feetBlock_ = getDefaultInstance().getFeetBlock();
+      bitField0_ = (bitField0_ & ~0x00200000);
+      onChanged();
+      return this;
+    }
+    /**
+     * <pre>
+     * Diagnostics (cq-49c), logged only:
+     * </pre>
+     *
+     * <code>string feet_block = 22;</code>
+     * @param value The bytes for feetBlock to set.
+     * @return This builder for chaining.
+     */
+    public Builder setFeetBlockBytes(
+        com.google.protobuf.ByteString value) {
+      if (value == null) { throw new NullPointerException(); }
+      checkByteStringIsUtf8(value);
+      feetBlock_ = value;
+      bitField0_ |= 0x00200000;
+      onChanged();
+      return this;
+    }
+
+    private java.lang.Object headBlock_ = "";
+    /**
+     * <pre>
+     * block id at eye height
+     * </pre>
+     *
+     * <code>string head_block = 23;</code>
+     * @return The headBlock.
+     */
+    public java.lang.String getHeadBlock() {
+      java.lang.Object ref = headBlock_;
+      if (!(ref instanceof java.lang.String)) {
+        com.google.protobuf.ByteString bs =
+            (com.google.protobuf.ByteString) ref;
+        java.lang.String s = bs.toStringUtf8();
+        headBlock_ = s;
+        return s;
+      } else {
+        return (java.lang.String) ref;
+      }
+    }
+    /**
+     * <pre>
+     * block id at eye height
+     * </pre>
+     *
+     * <code>string head_block = 23;</code>
+     * @return The bytes for headBlock.
+     */
+    public com.google.protobuf.ByteString
+        getHeadBlockBytes() {
+      java.lang.Object ref = headBlock_;
+      if (ref instanceof String) {
+        com.google.protobuf.ByteString b = 
+            com.google.protobuf.ByteString.copyFromUtf8(
+                (java.lang.String) ref);
+        headBlock_ = b;
+        return b;
+      } else {
+        return (com.google.protobuf.ByteString) ref;
+      }
+    }
+    /**
+     * <pre>
+     * block id at eye height
+     * </pre>
+     *
+     * <code>string head_block = 23;</code>
+     * @param value The headBlock to set.
+     * @return This builder for chaining.
+     */
+    public Builder setHeadBlock(
+        java.lang.String value) {
+      if (value == null) { throw new NullPointerException(); }
+      headBlock_ = value;
+      bitField0_ |= 0x00400000;
+      onChanged();
+      return this;
+    }
+    /**
+     * <pre>
+     * block id at eye height
+     * </pre>
+     *
+     * <code>string head_block = 23;</code>
+     * @return This builder for chaining.
+     */
+    public Builder clearHeadBlock() {
+      headBlock_ = getDefaultInstance().getHeadBlock();
+      bitField0_ = (bitField0_ & ~0x00400000);
+      onChanged();
+      return this;
+    }
+    /**
+     * <pre>
+     * block id at eye height
+     * </pre>
+     *
+     * <code>string head_block = 23;</code>
+     * @param value The bytes for headBlock to set.
+     * @return This builder for chaining.
+     */
+    public Builder setHeadBlockBytes(
+        com.google.protobuf.ByteString value) {
+      if (value == null) { throw new NullPointerException(); }
+      checkByteStringIsUtf8(value);
+      headBlock_ = value;
+      bitField0_ |= 0x00400000;
+      onChanged();
+      return this;
+    }
+
+    private java.lang.Object groundBlock_ = "";
+    /**
+     * <pre>
+     * block id under the feet
+     * </pre>
+     *
+     * <code>string ground_block = 24;</code>
+     * @return The groundBlock.
+     */
+    public java.lang.String getGroundBlock() {
+      java.lang.Object ref = groundBlock_;
+      if (!(ref instanceof java.lang.String)) {
+        com.google.protobuf.ByteString bs =
+            (com.google.protobuf.ByteString) ref;
+        java.lang.String s = bs.toStringUtf8();
+        groundBlock_ = s;
+        return s;
+      } else {
+        return (java.lang.String) ref;
+      }
+    }
+    /**
+     * <pre>
+     * block id under the feet
+     * </pre>
+     *
+     * <code>string ground_block = 24;</code>
+     * @return The bytes for groundBlock.
+     */
+    public com.google.protobuf.ByteString
+        getGroundBlockBytes() {
+      java.lang.Object ref = groundBlock_;
+      if (ref instanceof String) {
+        com.google.protobuf.ByteString b = 
+            com.google.protobuf.ByteString.copyFromUtf8(
+                (java.lang.String) ref);
+        groundBlock_ = b;
+        return b;
+      } else {
+        return (com.google.protobuf.ByteString) ref;
+      }
+    }
+    /**
+     * <pre>
+     * block id under the feet
+     * </pre>
+     *
+     * <code>string ground_block = 24;</code>
+     * @param value The groundBlock to set.
+     * @return This builder for chaining.
+     */
+    public Builder setGroundBlock(
+        java.lang.String value) {
+      if (value == null) { throw new NullPointerException(); }
+      groundBlock_ = value;
+      bitField0_ |= 0x00800000;
+      onChanged();
+      return this;
+    }
+    /**
+     * <pre>
+     * block id under the feet
+     * </pre>
+     *
+     * <code>string ground_block = 24;</code>
+     * @return This builder for chaining.
+     */
+    public Builder clearGroundBlock() {
+      groundBlock_ = getDefaultInstance().getGroundBlock();
+      bitField0_ = (bitField0_ & ~0x00800000);
+      onChanged();
+      return this;
+    }
+    /**
+     * <pre>
+     * block id under the feet
+     * </pre>
+     *
+     * <code>string ground_block = 24;</code>
+     * @param value The bytes for groundBlock to set.
+     * @return This builder for chaining.
+     */
+    public Builder setGroundBlockBytes(
+        com.google.protobuf.ByteString value) {
+      if (value == null) { throw new NullPointerException(); }
+      checkByteStringIsUtf8(value);
+      groundBlock_ = value;
+      bitField0_ |= 0x00800000;
+      onChanged();
+      return this;
+    }
+
+    private int frozenTicks_ ;
+    /**
+     * <pre>
+     * Entity#getTicksFrozen (damage begins at 140)
+     * </pre>
+     *
+     * <code>int32 frozen_ticks = 25;</code>
+     * @return The frozenTicks.
+     */
+    @java.lang.Override
+    public int getFrozenTicks() {
+      return frozenTicks_;
+    }
+    /**
+     * <pre>
+     * Entity#getTicksFrozen (damage begins at 140)
+     * </pre>
+     *
+     * <code>int32 frozen_ticks = 25;</code>
+     * @param value The frozenTicks to set.
+     * @return This builder for chaining.
+     */
+    public Builder setFrozenTicks(int value) {
+
+      frozenTicks_ = value;
+      bitField0_ |= 0x01000000;
+      onChanged();
+      return this;
+    }
+    /**
+     * <pre>
+     * Entity#getTicksFrozen (damage begins at 140)
+     * </pre>
+     *
+     * <code>int32 frozen_ticks = 25;</code>
+     * @return This builder for chaining.
+     */
+    public Builder clearFrozenTicks() {
+      bitField0_ = (bitField0_ & ~0x01000000);
+      frozenTicks_ = 0;
+      onChanged();
+      return this;
+    }
+
+    private java.util.List<com.civquest.mod.grpc.v1.ItemStackProto> equipment_ =
+      java.util.Collections.emptyList();
+    private void ensureEquipmentIsMutable() {
+      if (!((bitField0_ & 0x02000000) != 0)) {
+        equipment_ = new java.util.ArrayList<com.civquest.mod.grpc.v1.ItemStackProto>(equipment_);
+        bitField0_ |= 0x02000000;
+       }
+    }
+
+    private com.google.protobuf.RepeatedFieldBuilder<
+        com.civquest.mod.grpc.v1.ItemStackProto, com.civquest.mod.grpc.v1.ItemStackProto.Builder, com.civquest.mod.grpc.v1.ItemStackProtoOrBuilder> equipmentBuilder_;
+
+    /**
+     * <pre>
+     * worn armour and held items; slot = EquipmentSlot ordinal
+     * </pre>
+     *
+     * <code>repeated .civquest.v1.ItemStackProto equipment = 26;</code>
+     */
+    public java.util.List<com.civquest.mod.grpc.v1.ItemStackProto> getEquipmentList() {
+      if (equipmentBuilder_ == null) {
+        return java.util.Collections.unmodifiableList(equipment_);
+      } else {
+        return equipmentBuilder_.getMessageList();
+      }
+    }
+    /**
+     * <pre>
+     * worn armour and held items; slot = EquipmentSlot ordinal
+     * </pre>
+     *
+     * <code>repeated .civquest.v1.ItemStackProto equipment = 26;</code>
+     */
+    public int getEquipmentCount() {
+      if (equipmentBuilder_ == null) {
+        return equipment_.size();
+      } else {
+        return equipmentBuilder_.getCount();
+      }
+    }
+    /**
+     * <pre>
+     * worn armour and held items; slot = EquipmentSlot ordinal
+     * </pre>
+     *
+     * <code>repeated .civquest.v1.ItemStackProto equipment = 26;</code>
+     */
+    public com.civquest.mod.grpc.v1.ItemStackProto getEquipment(int index) {
+      if (equipmentBuilder_ == null) {
+        return equipment_.get(index);
+      } else {
+        return equipmentBuilder_.getMessage(index);
+      }
+    }
+    /**
+     * <pre>
+     * worn armour and held items; slot = EquipmentSlot ordinal
+     * </pre>
+     *
+     * <code>repeated .civquest.v1.ItemStackProto equipment = 26;</code>
+     */
+    public Builder setEquipment(
+        int index, com.civquest.mod.grpc.v1.ItemStackProto value) {
+      if (equipmentBuilder_ == null) {
+        if (value == null) {
+          throw new NullPointerException();
+        }
+        ensureEquipmentIsMutable();
+        equipment_.set(index, value);
+        onChanged();
+      } else {
+        equipmentBuilder_.setMessage(index, value);
+      }
+      return this;
+    }
+    /**
+     * <pre>
+     * worn armour and held items; slot = EquipmentSlot ordinal
+     * </pre>
+     *
+     * <code>repeated .civquest.v1.ItemStackProto equipment = 26;</code>
+     */
+    public Builder setEquipment(
+        int index, com.civquest.mod.grpc.v1.ItemStackProto.Builder builderForValue) {
+      if (equipmentBuilder_ == null) {
+        ensureEquipmentIsMutable();
+        equipment_.set(index, builderForValue.build());
+        onChanged();
+      } else {
+        equipmentBuilder_.setMessage(index, builderForValue.build());
+      }
+      return this;
+    }
+    /**
+     * <pre>
+     * worn armour and held items; slot = EquipmentSlot ordinal
+     * </pre>
+     *
+     * <code>repeated .civquest.v1.ItemStackProto equipment = 26;</code>
+     */
+    public Builder addEquipment(com.civquest.mod.grpc.v1.ItemStackProto value) {
+      if (equipmentBuilder_ == null) {
+        if (value == null) {
+          throw new NullPointerException();
+        }
+        ensureEquipmentIsMutable();
+        equipment_.add(value);
+        onChanged();
+      } else {
+        equipmentBuilder_.addMessage(value);
+      }
+      return this;
+    }
+    /**
+     * <pre>
+     * worn armour and held items; slot = EquipmentSlot ordinal
+     * </pre>
+     *
+     * <code>repeated .civquest.v1.ItemStackProto equipment = 26;</code>
+     */
+    public Builder addEquipment(
+        int index, com.civquest.mod.grpc.v1.ItemStackProto value) {
+      if (equipmentBuilder_ == null) {
+        if (value == null) {
+          throw new NullPointerException();
+        }
+        ensureEquipmentIsMutable();
+        equipment_.add(index, value);
+        onChanged();
+      } else {
+        equipmentBuilder_.addMessage(index, value);
+      }
+      return this;
+    }
+    /**
+     * <pre>
+     * worn armour and held items; slot = EquipmentSlot ordinal
+     * </pre>
+     *
+     * <code>repeated .civquest.v1.ItemStackProto equipment = 26;</code>
+     */
+    public Builder addEquipment(
+        com.civquest.mod.grpc.v1.ItemStackProto.Builder builderForValue) {
+      if (equipmentBuilder_ == null) {
+        ensureEquipmentIsMutable();
+        equipment_.add(builderForValue.build());
+        onChanged();
+      } else {
+        equipmentBuilder_.addMessage(builderForValue.build());
+      }
+      return this;
+    }
+    /**
+     * <pre>
+     * worn armour and held items; slot = EquipmentSlot ordinal
+     * </pre>
+     *
+     * <code>repeated .civquest.v1.ItemStackProto equipment = 26;</code>
+     */
+    public Builder addEquipment(
+        int index, com.civquest.mod.grpc.v1.ItemStackProto.Builder builderForValue) {
+      if (equipmentBuilder_ == null) {
+        ensureEquipmentIsMutable();
+        equipment_.add(index, builderForValue.build());
+        onChanged();
+      } else {
+        equipmentBuilder_.addMessage(index, builderForValue.build());
+      }
+      return this;
+    }
+    /**
+     * <pre>
+     * worn armour and held items; slot = EquipmentSlot ordinal
+     * </pre>
+     *
+     * <code>repeated .civquest.v1.ItemStackProto equipment = 26;</code>
+     */
+    public Builder addAllEquipment(
+        java.lang.Iterable<? extends com.civquest.mod.grpc.v1.ItemStackProto> values) {
+      if (equipmentBuilder_ == null) {
+        ensureEquipmentIsMutable();
+        com.google.protobuf.AbstractMessageLite.Builder.addAll(
+            values, equipment_);
+        onChanged();
+      } else {
+        equipmentBuilder_.addAllMessages(values);
+      }
+      return this;
+    }
+    /**
+     * <pre>
+     * worn armour and held items; slot = EquipmentSlot ordinal
+     * </pre>
+     *
+     * <code>repeated .civquest.v1.ItemStackProto equipment = 26;</code>
+     */
+    public Builder clearEquipment() {
+      if (equipmentBuilder_ == null) {
+        equipment_ = java.util.Collections.emptyList();
+        bitField0_ = (bitField0_ & ~0x02000000);
+        onChanged();
+      } else {
+        equipmentBuilder_.clear();
+      }
+      return this;
+    }
+    /**
+     * <pre>
+     * worn armour and held items; slot = EquipmentSlot ordinal
+     * </pre>
+     *
+     * <code>repeated .civquest.v1.ItemStackProto equipment = 26;</code>
+     */
+    public Builder removeEquipment(int index) {
+      if (equipmentBuilder_ == null) {
+        ensureEquipmentIsMutable();
+        equipment_.remove(index);
+        onChanged();
+      } else {
+        equipmentBuilder_.remove(index);
+      }
+      return this;
+    }
+    /**
+     * <pre>
+     * worn armour and held items; slot = EquipmentSlot ordinal
+     * </pre>
+     *
+     * <code>repeated .civquest.v1.ItemStackProto equipment = 26;</code>
+     */
+    public com.civquest.mod.grpc.v1.ItemStackProto.Builder getEquipmentBuilder(
+        int index) {
+      return getEquipmentFieldBuilder().getBuilder(index);
+    }
+    /**
+     * <pre>
+     * worn armour and held items; slot = EquipmentSlot ordinal
+     * </pre>
+     *
+     * <code>repeated .civquest.v1.ItemStackProto equipment = 26;</code>
+     */
+    public com.civquest.mod.grpc.v1.ItemStackProtoOrBuilder getEquipmentOrBuilder(
+        int index) {
+      if (equipmentBuilder_ == null) {
+        return equipment_.get(index);  } else {
+        return equipmentBuilder_.getMessageOrBuilder(index);
+      }
+    }
+    /**
+     * <pre>
+     * worn armour and held items; slot = EquipmentSlot ordinal
+     * </pre>
+     *
+     * <code>repeated .civquest.v1.ItemStackProto equipment = 26;</code>
+     */
+    public java.util.List<? extends com.civquest.mod.grpc.v1.ItemStackProtoOrBuilder> 
+         getEquipmentOrBuilderList() {
+      if (equipmentBuilder_ != null) {
+        return equipmentBuilder_.getMessageOrBuilderList();
+      } else {
+        return java.util.Collections.unmodifiableList(equipment_);
+      }
+    }
+    /**
+     * <pre>
+     * worn armour and held items; slot = EquipmentSlot ordinal
+     * </pre>
+     *
+     * <code>repeated .civquest.v1.ItemStackProto equipment = 26;</code>
+     */
+    public com.civquest.mod.grpc.v1.ItemStackProto.Builder addEquipmentBuilder() {
+      return getEquipmentFieldBuilder().addBuilder(
+          com.civquest.mod.grpc.v1.ItemStackProto.getDefaultInstance());
+    }
+    /**
+     * <pre>
+     * worn armour and held items; slot = EquipmentSlot ordinal
+     * </pre>
+     *
+     * <code>repeated .civquest.v1.ItemStackProto equipment = 26;</code>
+     */
+    public com.civquest.mod.grpc.v1.ItemStackProto.Builder addEquipmentBuilder(
+        int index) {
+      return getEquipmentFieldBuilder().addBuilder(
+          index, com.civquest.mod.grpc.v1.ItemStackProto.getDefaultInstance());
+    }
+    /**
+     * <pre>
+     * worn armour and held items; slot = EquipmentSlot ordinal
+     * </pre>
+     *
+     * <code>repeated .civquest.v1.ItemStackProto equipment = 26;</code>
+     */
+    public java.util.List<com.civquest.mod.grpc.v1.ItemStackProto.Builder> 
+         getEquipmentBuilderList() {
+      return getEquipmentFieldBuilder().getBuilderList();
+    }
+    private com.google.protobuf.RepeatedFieldBuilder<
+        com.civquest.mod.grpc.v1.ItemStackProto, com.civquest.mod.grpc.v1.ItemStackProto.Builder, com.civquest.mod.grpc.v1.ItemStackProtoOrBuilder> 
+        getEquipmentFieldBuilder() {
+      if (equipmentBuilder_ == null) {
+        equipmentBuilder_ = new com.google.protobuf.RepeatedFieldBuilder<
+            com.civquest.mod.grpc.v1.ItemStackProto, com.civquest.mod.grpc.v1.ItemStackProto.Builder, com.civquest.mod.grpc.v1.ItemStackProtoOrBuilder>(
+                equipment_,
+                ((bitField0_ & 0x02000000) != 0),
+                getParentForChildren(),
+                isClean());
+        equipment_ = null;
+      }
+      return equipmentBuilder_;
     }
 
     // @@protoc_insertion_point(builder_scope:civquest.v1.AgentStatus)

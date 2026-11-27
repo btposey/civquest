@@ -174,6 +174,8 @@ public class SensoryFrustumCollector {
             }
         }
 
+        addDiagnostics(agent, level, statusBuilder);
+
         // 5. Visible Entities within R = 24.0 blocks
         if (deathEvent == null && level != null) {
             AABB searchBox = agent.getBoundingBox().inflate(ENTITY_SCAN_RADIUS);
@@ -887,6 +889,31 @@ public class SensoryFrustumCollector {
                 .build();
     }
 
+    /** What the body is standing in and wearing: logged by the orchestrator for diagnosis (cq-49c). */
+    private static void addDiagnostics(AgentEntity agent, Level level, AgentStatus.Builder status) {
+        status.setFrozenTicks(agent.getTicksFrozen());
+        if (level != null && agent.blockPosition() != null) {
+            BlockPos feet = agent.blockPosition();
+            status.setFeetBlock(blockId(level, feet))
+                    .setHeadBlock(blockId(level, BlockPos.containing(agent.getX(), agent.getEyeY(), agent.getZ())))
+                    .setGroundBlock(blockId(level, feet.below()));
+        }
+        for (net.minecraft.world.entity.EquipmentSlot slot : net.minecraft.world.entity.EquipmentSlot.values()) {
+            ItemStack worn = agent.getItemBySlot(slot);
+            if (worn != null && !worn.isEmpty()) {
+                status.addEquipment(serializeItemStack(worn, slot.ordinal()));
+            }
+        }
+    }
+
+    private static String blockId(Level level, BlockPos pos) {
+        if (!level.hasChunkAt(pos)) {
+            return "";
+        }
+        var state = level.getBlockState(pos);
+        return state == null || state.getBlock() == null ? "" : BuiltInRegistries.BLOCK.getKey(state.getBlock()).toString();
+    }
+
     public static DamageSourceType mapDamageSourceType(DamageSource source) {
         if (source == null) {
             return DamageSourceType.DAMAGE_SOURCE_TYPE_UNSPECIFIED;
@@ -921,6 +948,9 @@ public class SensoryFrustumCollector {
                 .setSourceType(mapDamageSourceType(source))
                 .setDamageAmount(damageAmount);
         if (source != null) {
+            if (source.getMsgId() != null) {
+                builder.setDamageType(source.getMsgId());
+            }
             Entity attacker = source.getEntity();
             if (attacker == null) {
                 attacker = source.getDirectEntity();

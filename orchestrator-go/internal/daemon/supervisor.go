@@ -21,6 +21,7 @@ import (
 	"github.com/btposey/civquest/orchestrator-go/internal/domain"
 	"github.com/btposey/civquest/orchestrator-go/internal/governor"
 	"github.com/btposey/civquest/orchestrator-go/internal/inference"
+	"github.com/btposey/civquest/orchestrator-go/internal/logging"
 	"github.com/btposey/civquest/orchestrator-go/internal/xdg"
 )
 
@@ -110,8 +111,9 @@ func (w *JSONLLogWriter) WriteLine(stream, level, message string) error {
 	return firstErr
 }
 
-// PipeStream scans lines from r and writes each as a JSONL entry.
-func (w *JSONLLogWriter) PipeStream(stream, level string, r io.Reader, wg *sync.WaitGroup) {
+// PipeStream scans lines from r and writes each as a JSONL entry at the level the line itself
+// carries (logging.OfLine), dropping lines below the configured minimum.
+func (w *JSONLLogWriter) PipeStream(stream string, r io.Reader, wg *sync.WaitGroup) {
 	if wg != nil {
 		defer wg.Done()
 	}
@@ -119,7 +121,9 @@ func (w *JSONLLogWriter) PipeStream(stream, level string, r io.Reader, wg *sync.
 	scanner.Buffer(make([]byte, 64*1024), 1024*1024)
 	for scanner.Scan() {
 		line := scanner.Text()
-		_ = w.WriteLine(stream, level, line)
+		if level := logging.OfLine(line); level >= logging.Minimum() {
+			_ = w.WriteLine(stream, level.String(), line)
+		}
 	}
 }
 
@@ -575,10 +579,24 @@ func (s *DaemonSupervisor) logSupervisorEvent(format string, args ...any) {
 		_, _ = io.WriteString(s.config.Out, msg)
 	}
 	supLogPath := filepath.Join(s.resolver.LogsDir(), "supervisor.log")
+	if sameFile(s.config.Out, supLogPath) {
+		return // our output already is this file: writing again would repeat every line
+	}
 	if f, err := os.OpenFile(supLogPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o640); err == nil {
 		defer f.Close()
 		_, _ = io.WriteString(f, msg)
 	}
+}
+
+// sameFile reports whether w is already writing to the file at path.
+func sameFile(w io.Writer, path string) bool {
+	f, ok := w.(*os.File)
+	if !ok {
+		return false
+	}
+	a, errA := f.Stat()
+	b, errB := os.Stat(path)
+	return errA == nil && errB == nil && os.SameFile(a, b)
 }
 
 // discoverAndStartAgents identifies configured agents and spawns independent worker processes.
@@ -762,8 +780,8 @@ func (s *DaemonSupervisor) StartAgent(agentName string) error {
 
 	// Spawn stream scanner goroutines
 	worker.LogWG.Add(2)
-	go logWriter.PipeStream("stdout", "INFO", stdoutPipeR, &worker.LogWG)
-	go logWriter.PipeStream("stderr", "WARN", stderrPipeR, &worker.LogWG)
+	go logWriter.PipeStream("stdout", stdoutPipeR, &worker.LogWG)
+	go logWriter.PipeStream("stderr", stderrPipeR, &worker.LogWG)
 
 	// Close the read ends when scanning is complete
 	go func() {

@@ -8,6 +8,7 @@ package system1
 // Recover manage their own movement.
 
 import (
+	"fmt"
 	"math"
 
 	civquestv1 "github.com/btposey/civquest/orchestrator-go/internal/proto/v1"
@@ -74,5 +75,9 @@ func (fsm *AgentFSM) walkAllowedLocked(w *fsmWorld, frame htpda.FrameID, kind ht
 	delete(fsm.walks, frame)
 	w.ctx.State.MarkTargetUnreachable(target[0], target[1], target[2], w.tick, DefaultUnreachableTargetTTL)
 	fsm.meter.walkGivenUp()
+	if fsm.eventSink != nil {
+		fsm.eventSink(w.tick, EventWalkGivenUp, fmt.Sprintf("%s after %d sends", kind, watch.sends), map[string]any{
+			"activity": string(kind), "target": target[:], "position": here[:], "sends": watch.sends, "since_tick": watch.since})
+	}
 	return false
 }

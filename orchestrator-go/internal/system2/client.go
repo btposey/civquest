@@ -143,6 +143,24 @@ type Client struct {
 	viaProxy       bool
 	mu             sync.RWMutex
 	closed         bool
+	trace          func(ModelCall)
+}
+
+// ModelCall is one request to the model and what came back, for logging.
+type ModelCall struct {
+	Endpoint string
+	Request  json.RawMessage
+	Response any // the decoded reply; nil when Err is set
+	Duration time.Duration
+	Err      error
+}
+
+// SetTrace installs (or, with nil, removes) an observer of model requests. Embedding requests
+// are not reported. Headers, and so the API key, are never included.
+func (c *Client) SetTrace(trace func(ModelCall)) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.trace = trace
 }
 
 // NewClient initializes a Client from a GlobalConfig reference.
@@ -305,15 +323,26 @@ func (c *Client) executeRequest(ctx context.Context, endpoint string, reqPayload
 
 // executeRequestPrio is executeRequest with an explicit default queue priority
 // (overridable per call via inference.WithPriority on ctx).
-func (c *Client) executeRequestPrio(ctx context.Context, endpoint string, reqPayload any, respTarget any, defPrio inference.Priority) error {
+func (c *Client) executeRequestPrio(ctx context.Context, endpoint string, reqPayload any, respTarget any, defPrio inference.Priority) (callErr error) {
 	c.mu.RLock()
 	if c.closed {
 		c.mu.RUnlock()
 		return ErrClientClosed
 	}
+	trace := c.trace
 	c.mu.RUnlock()
 
 	reqBytes, err := json.Marshal(reqPayload)
+	if trace != nil && err == nil && endpoint != "/embeddings" {
+		started := time.Now()
+		defer func() {
+			call := ModelCall{Endpoint: endpoint, Request: reqBytes, Duration: time.Since(started), Err: callErr}
+			if callErr == nil {
+				call.Response = respTarget
+			}
+			trace(call)
+		}()
+	}
 	if err != nil {
 		return fmt.Errorf("failed to marshal request body: %w", err)
 	}

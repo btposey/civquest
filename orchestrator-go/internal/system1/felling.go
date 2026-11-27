@@ -65,7 +65,11 @@ func walkingIntoCell(local any) bool {
 }
 
 // giveUpStand drops a cell that could not be walked into; the task picks another sub-target.
-func (t *TaskSubroutine) giveUpStand(tick int64) {
+func (t *TaskSubroutine) giveUpStand(state *AgentState, frame *civquestv1.TelemetryFrame, why string) {
+	tick := frame.GetWorldTick()
+	d := taskDetails(t, frame)
+	d["why"] = why
+	state.noteDiag(EventStandGiveUp, t.Spec.ID+": "+why, d)
 	if t.Spec.OnStandFailed != nil {
 		t.Spec.OnStandFailed()
 	}
