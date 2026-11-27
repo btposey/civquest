@@ -10,6 +10,7 @@
 #   scripts/live-agent-smoke.sh                 # 6 agents, 600 seconds
 #   AGENTS="able bert" DURATION=240 scripts/live-agent-smoke.sh
 #   SEED=12345 ...                              # a different world
+#   SEED=2396837692978403373 ...                # playtest 5's icy, spruce and Drowned country
 #   KEEP=1 ...                                  # keep the sandbox and its logs
 #
 # Chat replies are checked only when an OpenAI-compatible endpoint answers at
@@ -149,6 +150,24 @@ def loops(ev):
     kind, n = max(pushes.items(), key=lambda kv: kv[1], default=("", 0))
     return longest, (n, kind), worst, int(beds), food
 
+def frozen(ev):
+    """Longest time (s) an agent claimed to be walking while its position never changed."""
+    walking, at, since, longest = False, None, None, 0.0
+    for e in sorted(ev, key=lambda e: e["timestamp"]):
+        d, c = e.get("details") or {}, e["category"]
+        if c == "MOTION":
+            walking = d.get("navigation_state") == "NAVIGATION_STATE_PATHING"
+            if not walking:
+                since = None
+        elif c == "VITALS" and d.get("position"):
+            here = tuple(round(v, 1) for v in d["position"])
+            if here != at or not walking:
+                at, since = here, None
+            else:
+                since = since or when(e)
+                longest = max(longest, (when(e) - since).total_seconds())
+    return longest
+
 by = collections.defaultdict(list)
 for line in open(events_path):
     try: e = json.loads(line)
@@ -182,6 +201,8 @@ for a in agents:
         if n > 40: failed.append(f"{a}: crafted {recipe} {n} times (craft loop)")
     # Walking to one place re-sends it now and then; hundreds of times is a retry loop.
     if repeat > 200: failed.append(f"{a}: sent one movement target {repeat} times (retry loop)")
+    stuck_walking = frozen(ev)
+    if stuck_walking > 90: failed.append(f"{a}: walking on the spot for {stuck_walking:.0f}s (frozen body)")
     longest, (pushed, kind), (still, action), beds, food = loops(ev)
     print(f"{'':8} emergency {longest:.0f}s, {kind} pushed {pushed}x, {still}x unmoved, bed tries {beds}, lowest food {food}")
     if longest > 60: failed.append(f"{a}: in an emergency for {longest:.0f}s")
@@ -193,6 +214,11 @@ for a in agents:
 print(f"server: {log.count('Dropping telemetry frames')} backpressure warnings, {log.count(chr(39) + ' spoke in chat')} agent chat lines")
 # A run on treeless ground (open ocean) exercises little: say so rather than pass quietly.
 crafted = sum(1 for a in agents if any("recipe=" in e.get("summary", "") for e in by.get(a, [])))
+everything = [e for a in agents for e in by.get(a, [])]
+votes = sum(e["category"] == "SETTLEMENT_VOTE" for e in everything)
+sites = sorted({e["summary"] for e in everything if e["category"] == "COLLECTIVE_SETTLEMENT_SITE"})
+print(f"deaths: {len(deaths)}; crafted something: {crafted} of {len(agents)}; settlement votes: {votes}; " +
+      (sites[0] if sites else "no settlement formed, so settled behaviour and nights near camp were not exercised"))
 if crafted * 2 < len(agents):
     print(f"NOTE: only {crafted} of {len(agents)} agents crafted anything; wood gathering and crafting were barely exercised")
 if model:
