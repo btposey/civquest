@@ -24,6 +24,7 @@ State at `b201b2a`, in `orchestrator-go/internal/system1`.
 | `failedTrees` | a trunk | 600 | `state.go` |
 | `unreachableWorkstations` | a block: a workstation not reached, or one that would not break (added by cq-6nz, after the commit above) | 600 | `state.go` |
 | `mem.stations` | setting a station down: asks made from a spot, and the last one placed (added by cq-qdj) | until another ask replaces it | `station_memory.go` |
+| `stationMemory` | a station that will not go down from a spot, or one just set down (added by cq-qdj) | until the agent moves away | `station_memory.go` |
 | `w.skipped` | an activity, for the current tick | 1 tick | `kernel_adapter.go` |
 | kernel `idled` / `cooled` | a child that ended without progress | `cooled` is off (`NoProgressBackoff` = 0) | `htpda/hierarchy.go` |
 
