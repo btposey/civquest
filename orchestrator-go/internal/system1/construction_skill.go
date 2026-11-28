@@ -225,7 +225,7 @@ func constructionWorkStep(frame *civquestv1.TelemetryFrame, quadrant blueprints.
 	if existingBlockAtVoxel != "" &&
 		!strings.EqualFold(existingBlockAtVoxel, "minecraft:air") &&
 		!strings.EqualFold(existingBlockAtVoxel, "air") &&
-		!strings.HasPrefix(existingBlockAtVoxel, targetBlockState) {
+		blueprints.NormalizeItemID(existingBlockAtVoxel) != blueprints.NormalizeItemID(targetBlockState) {
 
 		if unbreakable(obstruction) {
 			return nil, true

@@ -11,11 +11,10 @@ const (
 	BlockOakPlanks  = "minecraft:oak_planks"
 	BlockOakLogAxis = "minecraft:oak_log[axis=y]"
 	BlockOakDoorLow = "minecraft:oak_door[facing=south,half=lower]"
-	BlockOakDoorUpp = "minecraft:oak_door[facing=south,half=upper]"
 	BlockOakSlabBtm = "minecraft:oak_slab[type=bottom]"
 	BlockWallTorchS = "minecraft:wall_torch[facing=south]"
 
-	CabinTotalBlocks = 83
+	CabinTotalBlocks = 82
 )
 
 // Phase identifier constants for Frontier Cabin construction.
@@ -132,7 +131,8 @@ func rawCabinBlocks() []CabinBlockIntent {
 		})
 	}
 
-	// Y = 2: Corners (Phase 2), Wall faces (Phase 3), Doorway upper (Phase 4), Torch (Phase 6)
+	// Y = 2: Corners (Phase 2), Wall faces (Phase 3), Torch (Phase 6). The door placed at Y=1
+	// fills (0, 2, 2) too: one item hangs both halves.
 	for _, c := range corners {
 		blocks = append(blocks, CabinBlockIntent{
 			Phase: CabinPhaseCornerPillar,
@@ -159,13 +159,6 @@ func rawCabinBlocks() []CabinBlockIntent {
 		Y:     2,
 		Z:     2,
 		State: BlockOakPlanks,
-	})
-	blocks = append(blocks, CabinBlockIntent{
-		Phase: CabinPhaseDoorway,
-		X:     0,
-		Y:     2,
-		Z:     2,
-		State: BlockOakDoorUpp,
 	})
 	blocks = append(blocks, CabinBlockIntent{
 		Phase: CabinPhaseWallFaces,

@@ -29,7 +29,14 @@ import net.minecraft.world.level.block.BedBlock;
 import net.minecraft.world.level.block.BellBlock;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.Blocks;
+import net.minecraft.world.level.block.DoorBlock;
+import net.minecraft.world.level.block.FenceBlock;
+import net.minecraft.world.level.block.FenceGateBlock;
+import net.minecraft.world.level.block.IronBarsBlock;
+import net.minecraft.world.level.block.LadderBlock;
+import net.minecraft.world.level.block.TrapDoorBlock;
 import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.level.block.state.properties.DoubleBlockHalf;
 import net.minecraft.world.phys.AABB;
 import org.slf4j.Logger;
 
@@ -102,9 +109,13 @@ public class InteractHandler implements IntentHandler {
                     agent.getInventory().getItem(placement.slot()).shrink(1);
                 }
                 agent.swing(InteractionHand.MAIN_HAND, true);
-                return placement.bedHead() != null
-                        ? Beds.place(level, pos, placement.state(), placement.bedHead())
-                        : level.setBlockAndUpdate(pos, placement.state());
+                if (placement.bedHead() != null) {
+                    return Beds.place(level, pos, placement.state(), placement.bedHead());
+                }
+                if (placement.state().getBlock() instanceof DoorBlock) {
+                    return hangDoor(level, pos, placement.state());
+                }
+                return level.setBlockAndUpdate(pos, placement.state());
             }
             case RING_BELL -> {
                 if (level != null && level.hasChunkAt(pos)) {
@@ -176,7 +187,14 @@ public class InteractHandler implements IntentHandler {
         if (!state.canSurvive(level, pos)) {
             return Placement.refused("no solid support for " + requestedId + " at target (attach face is not solid)");
         }
-        if (isEntombing(agent, level, pos, state)) {
+        boolean door = state.getBlock() instanceof DoorBlock;
+        if (door && state.getValue(DoorBlock.HALF) != DoubleBlockHalf.LOWER) {
+            return Placement.refused("place target for a door is the cell of its lower half");
+        }
+        if (door && !level.getBlockState(pos.above()).canBeReplaced()) {
+            return Placement.refused("place target has no room for the door's upper half");
+        }
+        if (isEntombing(agent, level, pos, state) || door && isEntombing(agent, level, pos.above(), state)) {
             return Placement.refused("someone stands in the place target");
         }
         Direction bedHead = null;
@@ -187,6 +205,19 @@ public class InteractHandler implements IntentHandler {
             }
         }
         return new Placement(null, state, slot, bedHead);
+    }
+
+    /** One door item makes both halves (cq-0x4): a lone half is removed by the next neighbour update. */
+    private static boolean hangDoor(Level level, BlockPos pos, BlockState lower) {
+        boolean hung = level.setBlockAndUpdate(pos, lower);
+        return level.setBlockAndUpdate(pos.above(), lower.setValue(DoorBlock.HALF, DoubleBlockHalf.UPPER)) && hung;
+    }
+
+    /** A shaped fitting is only itself: it never stands in for building material, nor that for it. */
+    private static boolean isFitting(Block block) {
+        return block instanceof DoorBlock || block instanceof TrapDoorBlock || block instanceof FenceBlock
+                || block instanceof FenceGateBlock || block instanceof IronBarsBlock
+                || block instanceof LadderBlock || block instanceof BedBlock;
     }
 
     /**
@@ -302,16 +333,6 @@ public class InteractHandler implements IntentHandler {
                 }
             }
         }
-        // 0b. Ladders are placed exactly or not at all: never substitute another block for a ladder.
-        if (targetState != null && targetState.is(Blocks.LADDER)) {
-            for (int i = 0; i < inv.getContainerSize(); i++) {
-                ItemStack item = inv.getItem(i);
-                if (!item.isEmpty() && item.getItem() instanceof BlockItem bi && bi.getBlock() == Blocks.LADDER) {
-                    return i;
-                }
-            }
-            return -1;
-        }
         // 1. Exact match: the item of the block asked for (a wall torch is the torch item's wall form)
         if (targetState != null) {
             for (int i = 0; i < inv.getContainerSize(); i++) {
@@ -322,11 +343,14 @@ public class InteractHandler implements IntentHandler {
                 }
             }
         }
+        if (targetState != null && isFitting(targetState.getBlock())) {
+            return -1;
+        }
         // 2. Category / family match (e.g. any planks, log, stone/cobble, or light source)
         for (int i = 0; i < inv.getContainerSize(); i++) {
             ItemStack item = inv.getItem(i);
             if (item.isEmpty() || !(item.getItem() instanceof BlockItem bi)
-                    || targetState != null && stateFrom(targetState, item) == null) {
+                    || isFitting(bi.getBlock()) || targetState != null && stateFrom(targetState, item) == null) {
                 continue;
             }
             String key = BuiltInRegistries.ITEM.getKey(item.getItem()).toString().toLowerCase();
@@ -343,7 +367,8 @@ public class InteractHandler implements IntentHandler {
         if (req.isEmpty() || req.contains("planks") || req.contains("log") || req.contains("cobble") || req.contains("dirt") || req.contains("stone")) {
             for (int i = 0; i < inv.getContainerSize(); i++) {
                 ItemStack item = inv.getItem(i);
-                if (!item.isEmpty() && item.getItem() instanceof BlockItem bi && bi.getBlock().defaultBlockState().isSolid()) {
+                if (!item.isEmpty() && item.getItem() instanceof BlockItem bi && !isFitting(bi.getBlock())
+                        && bi.getBlock().defaultBlockState().isSolid()) {
                     return i;
                 }
             }

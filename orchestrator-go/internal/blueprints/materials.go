@@ -64,3 +64,11 @@ func WoodSubstitute(state string, held []string) (placed string, ok bool) {
 	}
 	return state, true
 }
+
+// SetByOtherHalf reports the half of a two-block item that placing its other half sets: a
+// door's upper half and a bed's head. It is never asked for on its own (cq-0x4).
+func SetByOtherHalf(state string) bool {
+	id := NormalizeItemID(state)
+	return (strings.HasSuffix(id, "_door") && strings.Contains(state, "half=upper")) ||
+		(strings.HasSuffix(id, "_bed") && strings.Contains(state, "part=head"))
+}

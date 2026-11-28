@@ -323,6 +323,39 @@ public class AgentGameTest {
         helper.succeed();
     }
 
+    // cq-0x4: one door item hangs both halves; a door with no room stays in the inventory, and a
+    // door is never spent as building material.
+    @GameTest(template = "empty3x3x3")
+    public static void testOneDoorItemHangsAWholeDoor(GameTestHelper helper) {
+        AgentEntityManager manager = new AgentEntityManager();
+        AgentEntity agent = spawnCoverageAgent(helper, manager, "agent-gt-door", new BlockPos(0, 1, 0));
+        agent.getInventory().add(new ItemStack(Items.SPRUCE_DOOR, 1));
+        BlockPos cell = new BlockPos(2, 1, 1);
+        helper.setBlock(cell.below(), Blocks.STONE);
+        helper.setBlock(cell.above(), Blocks.STONE);
+        var place = InteractBlockIntent.InteractionType.PLACE_BLOCK;
+        interactAt(helper, manager, "agent-gt-door", cell, place, "minecraft:spruce_door[facing=south,half=lower]");
+        helper.assertBlockPresent(Blocks.AIR, cell);
+        helper.setBlock(cell.above(), Blocks.AIR);
+        interactAt(helper, manager, "agent-gt-door", cell, place, "minecraft:oak_planks");
+        interactAt(helper, manager, "agent-gt-door", cell, place, "minecraft:spruce_door[facing=south,half=upper]");
+        helper.assertBlockPresent(Blocks.AIR, cell);
+        helper.assertTrue(countItem(agent, Items.SPRUCE_DOOR) == 1, "A refused door must stay in the inventory");
+
+        interactAt(helper, manager, "agent-gt-door", cell, place, "minecraft:spruce_door[facing=south,half=lower]");
+        var half = net.minecraft.world.level.block.DoorBlock.HALF;
+        var facing = net.minecraft.world.level.block.DoorBlock.FACING;
+        helper.assertBlockState(cell, s -> s.is(Blocks.SPRUCE_DOOR) && s.getValue(facing) == net.minecraft.core.Direction.SOUTH
+                && s.getValue(half) == net.minecraft.world.level.block.state.properties.DoubleBlockHalf.LOWER,
+                () -> "lower half");
+        helper.assertBlockState(cell.above(), s -> s.is(Blocks.SPRUCE_DOOR)
+                && s.getValue(half) == net.minecraft.world.level.block.state.properties.DoubleBlockHalf.UPPER,
+                () -> "upper half");
+        helper.assertTrue(countItem(agent, Items.SPRUCE_DOOR) == 0, "One door item makes both halves");
+        manager.despawnAgent(helper.getLevel().getServer(), "agent-gt-door").join();
+        helper.succeed();
+    }
+
     // cq-6nz, cq-vl2: stone with lava against it is not broken, and the frame says so beforehand;
     // stone with water against it, and dry stone, are reported breakable and break.
     @GameTest(template = "empty3x3x3")

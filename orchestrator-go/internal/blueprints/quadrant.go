@@ -138,7 +138,7 @@ func PartitionBlueprintWithAnchor(vm *VoxelMatrix, anchorX, anchorY, anchorZ int
 		for z := 0; z < length; z++ {
 			for x := 0; x < width; x++ {
 				state, err := vm.Get(x, y, z)
-				if err != nil || state.IsAir() {
+				if err != nil || state.IsAir() || SetByOtherHalf(state.String()) {
 					continue
 				}
 
