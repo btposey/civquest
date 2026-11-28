@@ -291,6 +291,38 @@ public class AgentGameTest {
         helper.succeed();
     }
 
+    // cq-vuv: a torch asked for on a wall is hung as a wall torch; without that wall nothing is placed.
+    @GameTest(template = "empty3x3x3")
+    public static void testWallTorchHangsOnItsWall(GameTestHelper helper) {
+        AgentEntityManager manager = new AgentEntityManager();
+        AgentEntity agent = spawnCoverageAgent(helper, manager, "agent-gt-wall-torch", new BlockPos(0, 1, 1));
+        agent.getInventory().add(new ItemStack(Items.TORCH, 1));
+        agent.getInventory().add(new ItemStack(Items.SOUL_TORCH, 1));
+        BlockPos cell = new BlockPos(2, 2, 1);
+        helper.setBlock(cell.below(), Blocks.AIR);
+        helper.setBlock(cell.north(), Blocks.AIR);
+        interactAt(helper, manager, "agent-gt-wall-torch", cell, InteractBlockIntent.InteractionType.PLACE_BLOCK,
+                "minecraft:wall_torch[facing=south]");
+        helper.assertBlockPresent(Blocks.AIR, cell);
+        helper.assertTrue(countItem(agent, Items.TORCH) == 1, "An unsupported wall torch must stay in the inventory");
+
+        helper.setBlock(cell.north(), Blocks.OAK_PLANKS);
+        interactAt(helper, manager, "agent-gt-wall-torch", cell, InteractBlockIntent.InteractionType.PLACE_BLOCK,
+                "minecraft:wall_torch[facing=south]");
+        helper.assertBlockState(cell, s -> s.is(Blocks.WALL_TORCH)
+                && s.getValue(net.minecraft.world.level.block.WallTorchBlock.FACING) == net.minecraft.core.Direction.SOUTH,
+                () -> "a wall torch facing south against the planks");
+
+        // A substitute torch takes its own wall form.
+        helper.setBlock(cell, Blocks.AIR);
+        interactAt(helper, manager, "agent-gt-wall-torch", cell, InteractBlockIntent.InteractionType.PLACE_BLOCK,
+                "minecraft:wall_torch[facing=south]");
+        helper.assertBlockState(cell, s -> s.is(Blocks.SOUL_WALL_TORCH), () -> "the soul torch's wall form");
+
+        manager.despawnAgent(helper.getLevel().getServer(), "agent-gt-wall-torch").join();
+        helper.succeed();
+    }
+
     // cq-6nz, cq-vl2: stone with lava against it is not broken, and the frame says so beforehand;
     // stone with water against it, and dry stone, are reported breakable and break.
     @GameTest(template = "empty3x3x3")

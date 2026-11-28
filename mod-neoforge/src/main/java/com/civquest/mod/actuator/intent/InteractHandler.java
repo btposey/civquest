@@ -5,7 +5,9 @@ import com.civquest.mod.grpc.v1.AgentIntent;
 import com.civquest.mod.AgentEntity;
 import com.civquest.mod.grpc.v1.InteractBlockIntent;
 import com.mojang.logging.LogUtils;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
@@ -21,6 +23,7 @@ import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.item.BlockItem;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.item.StandingAndWallBlockItem;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.BedBlock;
 import net.minecraft.world.level.block.BellBlock;
@@ -91,88 +94,17 @@ public class InteractHandler implements IntentHandler {
                 return !agent.isSleeping();
             }
             case PLACE_BLOCK -> {
-                if (level == null || !level.hasChunkAt(pos)) {
+                Placement placement = placementFor(agent, intent);
+                if (placement.refusal() != null) {
                     return false;
                 }
-                if (agent.distanceToSqr(pos.getX() + 0.5, pos.getY() + 0.5, pos.getZ() + 0.5) > INTERACT_REACH_SQ) {
-                    return false;
-                }
-                BlockState current = level.getBlockState(pos);
-                if (!current.canBeReplaced()) {
-                    return false;
-                }
-                BlockState blockState = resolver.apply(agent, intent.getBlockOrItemId());
-                if (blockState == null) {
-                    return false;
-                }
-
-                // A torch or the like put into fluid is washed away at once: refuse it.
-                if (isWashedAway(level, pos, current, blockState)) {
-                    return false;
-                }
-
-                // Never place an unsupported block (a floating ladder, torch, etc.): the state's own
-                // survival rule (ladder: solid face behind FACING) must hold at the target cell.
-                if (!blockState.canSurvive(level, pos)) {
-                    return false;
-                }
-
-                int slot = -1;
-                if (!agent.isCreative()) {
-                    slot = findMatchingBlockItemSlot(agent, blockState, intent.getBlockOrItemId());
-                    if (slot < 0) {
-                        return false;
-                    }
-                    ItemStack chosen = agent.getInventory().getItem(slot);
-                    if (chosen.getItem() instanceof BlockItem chosenBi) {
-                        if (chosenBi.getBlock() != blockState.getBlock()) {
-                            BlockState newState = chosenBi.getBlock().defaultBlockState();
-                            var stateDef = chosenBi.getBlock().getStateDefinition();
-                            for (var prop : blockState.getProperties()) {
-                                var matchingProp = stateDef.getProperty(prop.getName());
-                                if (matchingProp != null) {
-                                    newState = applyBlockProperty(newState, matchingProp, blockState.getValue(prop).toString().toLowerCase());
-                                }
-                            }
-                            blockState = newState;
-                        }
-                    }
-                }
-
-                // Verify that solid block placement does not collide with the agent's bounding box
-                // or any other player/living entity's bounding box to prevent entombment or suffocation.
-                AABB blockBox = new AABB(pos);
-                boolean isSolid = blockState.blocksMotion() || !blockState.getCollisionShape(level, pos).isEmpty();
-                // A ladder entombs nobody: a climber hangs it in the cell it stands in (cq-htv.1).
-                if (isSolid && !blockState.is(Blocks.LADDER)) {
-                    if (agent.getBoundingBox() != null && agent.getBoundingBox().intersects(blockBox)) {
-                        return false;
-                    }
-                    List<Entity> colliding = level.getEntities(agent, blockBox,
-                            e -> e != null && (e instanceof Player || (e.isAlive() && !e.isSpectator())));
-                    if (colliding != null) {
-                        for (Entity entity : colliding) {
-                            if (entity.getBoundingBox() != null && entity.getBoundingBox().intersects(blockBox)) {
-                                return false;
-                            }
-                        }
-                    }
-                }
-
-                Direction bedHead = null;
-                if (blockState.getBlock() instanceof BedBlock) {
-                    bedHead = Beds.headDirection(agent, level, pos, requiredFacing(intent.getBlockOrItemId(), blockState));
-                    if (bedHead == null) {
-                        return false;
-                    }
-                }
-
-                if (!agent.isCreative() && slot >= 0) {
-                    ItemStack chosen = agent.getInventory().getItem(slot);
-                    chosen.shrink(1);
+                if (!agent.isCreative() && placement.slot() >= 0) {
+                    agent.getInventory().getItem(placement.slot()).shrink(1);
                 }
                 agent.swing(InteractionHand.MAIN_HAND, true);
-                return bedHead != null ? Beds.place(level, pos, blockState, bedHead) : level.setBlockAndUpdate(pos, blockState);
+                return placement.bedHead() != null
+                        ? Beds.place(level, pos, placement.state(), placement.bedHead())
+                        : level.setBlockAndUpdate(pos, placement.state());
             }
             case RING_BELL -> {
                 if (level != null && level.hasChunkAt(pos)) {
@@ -198,43 +130,141 @@ public class InteractHandler implements IntentHandler {
                 && !placed.blocksMotion() && placed.getCollisionShape(level, pos).isEmpty();
     }
 
+    /** What a PLACE_BLOCK would do now: why it is refused, or the state to set and the slot it is taken from. */
+    private record Placement(String refusal, BlockState state, int slot, Direction bedHead) {
+        static Placement refused(String why) {
+            return new Placement(why, null, -1, null);
+        }
+    }
+
+    /** Reads the world and the inventory without changing them. */
+    private Placement placementFor(AgentEntity agent, InteractBlockIntent intent) {
+        Level level = agent.level();
+        BlockPos pos = new BlockPos(intent.getPos().getX(), intent.getPos().getY(), intent.getPos().getZ());
+        String requestedId = intent.getBlockOrItemId();
+        if (level == null || !level.hasChunkAt(pos)) {
+            return Placement.refused("place target chunk not loaded");
+        }
+        if (agent.distanceToSqr(pos.getX() + 0.5, pos.getY() + 0.5, pos.getZ() + 0.5) > INTERACT_REACH_SQ) {
+            return Placement.refused("place target out of reach");
+        }
+        BlockState current = level.getBlockState(pos);
+        if (!current.canBeReplaced()) {
+            return Placement.refused("place target cell is occupied");
+        }
+        BlockState state = resolver.apply(agent, requestedId);
+        if (state == null) {
+            return Placement.refused("unknown block state " + requestedId);
+        }
+        int slot = -1;
+        if (!agent.isCreative()) {
+            slot = findMatchingBlockItemSlot(agent, state, requestedId);
+            if (slot >= 0) {
+                state = stateFrom(state, agent.getInventory().getItem(slot));
+            }
+            if (slot < 0 || state == null) {
+                return Placement.refused("no matching block item in inventory for " + requestedId);
+            }
+        }
+        // Everything below judges the state that will be set, which a substitute item may have changed.
+        // A torch or the like put into fluid is washed away at once: refuse it.
+        if (isWashedAway(level, pos, current, state)) {
+            return Placement.refused("place target is under water");
+        }
+        // Never place an unsupported block (a floating ladder, torch, etc.): the state's own
+        // survival rule (ladder: solid face behind FACING) must hold at the target cell.
+        if (!state.canSurvive(level, pos)) {
+            return Placement.refused("no solid support for " + requestedId + " at target (attach face is not solid)");
+        }
+        if (isEntombing(agent, level, pos, state)) {
+            return Placement.refused("someone stands in the place target");
+        }
+        Direction bedHead = null;
+        if (state.getBlock() instanceof BedBlock) {
+            bedHead = Beds.headDirection(agent, level, pos, requiredFacing(requestedId, state));
+            if (bedHead == null) {
+                return Placement.refused("no room for the head half of " + requestedId);
+            }
+        }
+        return new Placement(null, state, slot, bedHead);
+    }
+
     /**
-     * Human-readable reason a PLACE_BLOCK at the intent's cell just failed (re-derives the checks; the world is
-     * unchanged by a failed placement). Blank when no specific cause is identified.
+     * Whether a block with a body would be set into the agent or another living thing, entombing or
+     * suffocating it. A ladder entombs nobody: a climber hangs it in the cell it stands in (cq-htv.1).
+     */
+    private static boolean isEntombing(AgentEntity agent, Level level, BlockPos pos, BlockState state) {
+        boolean isSolid = state.blocksMotion() || !state.getCollisionShape(level, pos).isEmpty();
+        if (!isSolid || state.is(Blocks.LADDER)) {
+            return false;
+        }
+        AABB blockBox = new AABB(pos);
+        if (agent.getBoundingBox() != null && agent.getBoundingBox().intersects(blockBox)) {
+            return true;
+        }
+        List<Entity> colliding = level.getEntities(agent, blockBox,
+                e -> e != null && (e instanceof Player || (e.isAlive() && !e.isSpectator())));
+        if (colliding != null) {
+            for (Entity entity : colliding) {
+                if (entity.getBoundingBox() != null && entity.getBoundingBox().intersects(blockBox)) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    /**
+     * The state {@code held} puts down where {@code requested} was asked for, carrying over the properties
+     * they share; null when the item cannot make that form. An item with a standing and a wall form
+     * (torches, signs, banners, heads) fills a wall request with its wall form only (cq-vuv).
+     */
+    private static BlockState stateFrom(BlockState requested, ItemStack held) {
+        if (!(held.getItem() instanceof BlockItem item)) {
+            return requested;
+        }
+        Block wanted = requested.getBlock();
+        if (item.getBlock() == wanted || wanted.asItem() == item) {
+            return requested;
+        }
+        Block placed = isWallForm(wanted) ? wallFormOf(item) : item.getBlock();
+        if (placed == null) {
+            return null;
+        }
+        BlockState state = placed.defaultBlockState();
+        var definition = placed.getStateDefinition();
+        for (var prop : requested.getProperties()) {
+            var matching = definition.getProperty(prop.getName());
+            if (matching != null) {
+                state = applyBlockProperty(state, matching, requested.getValue(prop).toString().toLowerCase());
+            }
+        }
+        return state;
+    }
+
+    private static boolean isWallForm(Block block) {
+        return block.asItem() instanceof StandingAndWallBlockItem item && item.getBlock() != block;
+    }
+
+    private static Block wallFormOf(BlockItem item) {
+        if (!(item instanceof StandingAndWallBlockItem)) {
+            return null;
+        }
+        Map<Block, Item> forms = new HashMap<>();
+        item.registerBlocks(forms, item);
+        return forms.keySet().stream().filter(b -> b != item.getBlock()).findFirst().orElse(null);
+    }
+
+    /**
+     * Human-readable reason a PLACE_BLOCK at the intent's cell just failed (the world is unchanged by a
+     * failed placement). Blank when no specific cause is identified.
      */
     public String placementFailureReason(AgentEntity agent, InteractBlockIntent intent) {
         if (agent == null || intent == null) {
             return "";
         }
-        Level level = agent.level();
-        BlockPos pos = new BlockPos(intent.getPos().getX(), intent.getPos().getY(), intent.getPos().getZ());
-        if (level == null || !level.hasChunkAt(pos)) {
-            return "place target chunk not loaded";
-        }
-        if (agent.distanceToSqr(pos.getX() + 0.5, pos.getY() + 0.5, pos.getZ() + 0.5) > INTERACT_REACH_SQ) {
-            return "place target out of reach";
-        }
-        if (!level.getBlockState(pos).canBeReplaced()) {
-            return "place target cell is occupied";
-        }
-        BlockState state = resolver.apply(agent, intent.getBlockOrItemId());
-        if (state == null) {
-            return "unknown block state " + intent.getBlockOrItemId();
-        }
-        if (isWashedAway(level, pos, level.getBlockState(pos), state)) {
-            return "place target is under water";
-        }
-        if (!state.canSurvive(level, pos)) {
-            return "no solid support for " + intent.getBlockOrItemId() + " at target (attach face is not solid)";
-        }
-        if (!agent.isCreative() && findMatchingBlockItemSlot(agent, state, intent.getBlockOrItemId()) < 0) {
-            return "no matching block item in inventory for " + intent.getBlockOrItemId();
-        }
-        if (state.getBlock() instanceof BedBlock
-                && Beds.headDirection(agent, level, pos, requiredFacing(intent.getBlockOrItemId(), state)) == null) {
-            return "no room for the head half of " + intent.getBlockOrItemId();
-        }
-        return "";
+        String refusal = placementFor(agent, intent).refusal();
+        return refusal != null ? refusal : "";
     }
 
     /** The bed facing the intent spelled out, or null to let the placement choose. */
@@ -282,11 +312,12 @@ public class InteractHandler implements IntentHandler {
             }
             return -1;
         }
-        // 1. Exact block match
+        // 1. Exact match: the item of the block asked for (a wall torch is the torch item's wall form)
         if (targetState != null) {
             for (int i = 0; i < inv.getContainerSize(); i++) {
                 ItemStack item = inv.getItem(i);
-                if (!item.isEmpty() && item.getItem() instanceof BlockItem bi && bi.getBlock() == targetState.getBlock()) {
+                if (!item.isEmpty() && item.getItem() instanceof BlockItem bi
+                        && (bi.getBlock() == targetState.getBlock() || targetState.getBlock().asItem() == bi)) {
                     return i;
                 }
             }
@@ -294,7 +325,8 @@ public class InteractHandler implements IntentHandler {
         // 2. Category / family match (e.g. any planks, log, stone/cobble, or light source)
         for (int i = 0; i < inv.getContainerSize(); i++) {
             ItemStack item = inv.getItem(i);
-            if (item.isEmpty() || !(item.getItem() instanceof BlockItem bi)) {
+            if (item.isEmpty() || !(item.getItem() instanceof BlockItem bi)
+                    || targetState != null && stateFrom(targetState, item) == null) {
                 continue;
             }
             String key = BuiltInRegistries.ITEM.getKey(item.getItem()).toString().toLowerCase();

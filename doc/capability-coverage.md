@@ -1,23 +1,3 @@
-# Capability Coverage Matrix
-
-Epic: cq-71l. Rule: every agent feature or capability has a row here and a covering smoke test at integration level or above.
-
-**Source of truth is `doc/capability-coverage.yaml`** (machine-readable; checked by `scripts/check-capability-coverage.sh`). The table below is generated from it: `./scripts/check-capability-coverage.sh --emit-md`. Edit the YAML, then regenerate.
-
-## How rows are scored
-
-- **covered**: at least one listed test exercises the capability end to end at level `replay` (real HTPDA/FSM driven by recorded facts, golden-checked), `integration-sim` (real Runtime/FSM in the synthetic world or a Java harness with a live server object), `GameTest` (real Minecraft server), or `live`. All listed tests must exist.
-- **partial**: only unit-level tests (a helper, a pure function, a JUnit test with a bootstrap but no running game) or only one half of a both-layer capability. Counts as not covered.
-- **gap**: nothing found, or the capability is declared but unimplemented.
-- **wip**: in flight on an open bead or branch (cq-3a0 ladders, cq-gpa.13 playtest-2 scenarios, uncommitted tool-progression work). Excluded from the percentage; re-score when merged.
-- `tests` entries are `go:<path>::<TestFunc>[/subtest]` or `java:<path>::<method>`; `*` means any test in the file.
-
-Inventory sources: proto `AgentIntent` oneof (13 variants), `mod-neoforge/.../actuator/intent/*Handler.java` (12 handlers; none for caravan or transfer_container), `internal/system1/*_activity.go` and `activity_managed.go` kinds, `Skill.Name()` registrations, `Evaluator.Name()`, replay scenarios under `system1/testdata/replay`, `internal/system2/*`, `internal/inference`, `AgentGameTest`, `test/integration`, `internal/eval`.
-
-Notes on honesty: the Go sim (`internal/eval`, `test/integration`) never runs Java handlers, so intents whose only coverage is Go-side are `partial` until a GameTest or Java harness proves the actuator half. Replay scenarios are recorded-fact simulations of the System 1 FSM, not live gameplay. The in-flight cq-gpa.13 scenarios had no commits on main when this was written.
-
-## Matrix
-
 | Capability | Layer | Status | Level | Covering test(s) | Group |
 |---|---|---|---|---|---|
 | `intent.navigate` AgentIntent.navigate (NavigateHandler, AgentNavigator) | both | covered | GameTest | `main/java/com/civquest/mod/gametest/AgentGameTest.java::testNavigateIntent`<br>`test/integration/explorer_horizon_loop_test.go::TestIntegration_SoloExplorer_NeverReturnsToSpawnAndClaimsHomestead` |  |
@@ -53,6 +33,7 @@ Notes on honesty: the Go sim (`internal/eval`, `test/integration`) never runs Ja
 | `java.combat_order` A combat order strikes at once and walks at once; a new one redirects at once, and the attack's own flight never overrides the walk | java | covered | GameTest | `main/java/com/civquest/mod/gametest/AgentGameTest.java::testCombatOrderWalksAtOnce` |  |
 | `java.break_over_walk` A break ordered while the agent is walking ends the walk and is carried out and reported at once | java | covered | GameTest | `main/java/com/civquest/mod/gametest/AgentGameTest.java::testBreakOrderEndsTheWalkUnderWay` |  |
 | `java.ladder` Ladder placement (FACING, support), climb up/down _(cq-3a0.4 is on main; the Go FellFromAbove activity (cq-3a0.3) is not.)_ | java | covered | GameTest | `test/java/com/civquest/mod/actuator/LadderTest.java::navigateClimbsUpPlacedLadderColumnToTopRung`<br>`test/java/com/civquest/mod/actuator/LadderTest.java::navigateDescendsPlacedLadderColumnAfterWalkingOntoTop`<br>`main/java/com/civquest/mod/gametest/AgentGameTest.java::testPlaceAndPickUpLadder`<br>`main/java/com/civquest/mod/gametest/AgentGameTest.java::testClimbsOutOfAShaftByLadder` |  |
+| `java.wall_torch` A torch asked for on a wall is hung in the wall form of the item spent, and a substituted state is placed only where it survives _(cq-vuv. Torches already floating in a world are left there.)_ | java | covered | GameTest | `main/java/com/civquest/mod/gametest/AgentGameTest.java::testWallTorchHangsOnItsWall` |  |
 | `java.recipe_catalog` RecipeCatalogExporter runtime recipe export to Go _(Go side: catalog over real gRPC bridge (bufconn) drives sim crafting, fail-closed without it (cq-71l.10). Java exporter remains JUnit-level.)_ | both | covered | integration-sim | `test/java/com/civquest/mod/RecipeCatalogExporterTest.java::*`<br>`internal/agent/recipe_catalog_test.go::TestSyncRecipeGraph_PopulatesSystem1State`<br>`test/smoke/libcontract_smoke_test.go::TestSmoke_RecipeCatalogOverBridgeDrivesCrafting` | lib-contract-smoke |
 | `java.grpc_bridge` gRPC bridge: auth, stream registry, agent id mismatch, proto contract | both | covered | integration-sim | `test/java/com/civquest/mod/CivQuestBridgeServerTest.java::*`<br>`test/integration/live_server_test.go::TestSyntheticLiveServerProbe` |  |
 | `java.worldgen_pioneer_camp` Pioneer camp worldgen _(GameTest places the template and checks the registered structure; natural chunk generation not exercised.)_ | java | covered | GameTest | `main/java/com/civquest/mod/gametest/AgentGameTest.java::testPioneerCampStructureGenerates`<br>`test/java/com/civquest/mod/worldgen/PioneerCampWorldgenTest.java::*` |  |
