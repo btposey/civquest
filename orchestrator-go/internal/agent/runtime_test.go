@@ -2552,6 +2552,7 @@ func TestRuntime_System2_ClanChroniclerBookSynthesis(t *testing.T) {
 
 	// Professions apply only once a settlement exists (cq-6l3.12).
 	rt.System1State().SetCollectiveSettlementSite(0, 64, 0)
+	rt.System1State().ObserveFarming(system1.FarmingNeeds{Shelter: true, Water: true, Bucket: true})
 	rt.System1State().AssignStrategy(system1.StrategyProfession, 0)
 
 	runErrCh := make(chan error, 1)
@@ -2838,6 +2839,7 @@ func TestRuntime_AgrarianSharecroppingAndSpecialization(t *testing.T) {
 
 	// Career transitions need a settlement (cq-6l3.14).
 	rt.System1State().SetCollectiveSettlementSite(10, 64, 10)
+	rt.System1State().ObserveFarming(system1.FarmingNeeds{Shelter: true, Water: true, Bucket: true})
 	rt.System1State().AssignStrategy(system1.StrategyProfession, 0)
 
 	runErrCh := make(chan error, 1)
@@ -3710,6 +3712,7 @@ func TestRuntime_Phase3IntentBatchAndReceiptFlow(t *testing.T) {
 	}
 	// The evening gathering belongs to established members (cq-507.7).
 	rt.System1State().SetCollectiveSettlementSite(0, 64, 0)
+	rt.System1State().ObserveFarming(system1.FarmingNeeds{Shelter: true, Water: true, Bucket: true})
 	rt.System1State().AssignStrategy(system1.StrategyProfession, 0)
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -3922,6 +3925,7 @@ func TestRuntime_PioneerGenesisAndNucleationLifecycle(t *testing.T) {
 	if prof := rtSpecialized.Profession(); prof != "SETTLER" {
 		t.Errorf("a new member should be a settler, got %q", prof)
 	}
+	rtSpecialized.System1State().ObserveFarming(system1.FarmingNeeds{Shelter: true, Water: true, Bucket: true})
 	rtSpecialized.System1State().AssignStrategy(system1.StrategyProfession, 100)
 	if prof := rtSpecialized.Profession(); prof != "FARMER" {
 		t.Errorf("expected profession unlocked to FARMER once the clan site is chosen, got %q", prof)

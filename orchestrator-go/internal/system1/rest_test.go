@@ -56,6 +56,7 @@ func TestShelterRest_UndeclaredQuietIsStillReported(t *testing.T) {
 			st := NewAgentState()
 			st.SetHomeOrigin(&civquestv1.Vec3{X: 0.5, Y: 64, Z: 0.5})
 			st.SetCollectiveSettlementSite(0.5, 64, 0.5)
+			st.ObserveFarming(canFarm)
 			st.AssignStrategy(StrategyProfession, 0)
 			cfg := xdg.DefaultAgentIdentityConfig("guard")
 			cfg.Profession = "GUARD"

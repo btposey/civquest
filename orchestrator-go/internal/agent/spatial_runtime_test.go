@@ -118,6 +118,7 @@ func TestRuntime_SpatialIndexStartupIngestionAndPlacement(t *testing.T) {
 	}
 	// A settled agent does not fell the log it sees (which would remove it from the map at once).
 	rt.System1State().SetCollectiveSettlementSite(20, 64, 20)
+	rt.System1State().ObserveFarming(system1.FarmingNeeds{Shelter: true, Water: true, Bucket: true})
 	rt.System1State().AssignStrategy(system1.StrategyProfession, 0)
 	rt.HandleTelemetryFrame(frame)
 

@@ -5,6 +5,7 @@ package smoke
 import (
 	"testing"
 
+	"github.com/btposey/civquest/orchestrator-go/internal/blueprints"
 	"github.com/btposey/civquest/orchestrator-go/internal/eval"
 	civquestv1 "github.com/btposey/civquest/orchestrator-go/internal/proto/v1"
 	"github.com/btposey/civquest/orchestrator-go/internal/system1"
@@ -50,29 +51,30 @@ func TestSmoke_ExplorerGathersAlongTheWay(t *testing.T) {
 	assertStayedDry(t, s)
 }
 
-// A settler stocks up around its new home, and not far from it (cq-507.7).
-func TestSmoke_SettlerStocksUpNearHomeOnly(t *testing.T) {
-	for _, c := range []struct {
-		home  float64
-		takes bool
-	}{{0.5, true}, {300.5, false}} {
+// cq-vuu: until farming is possible a long-settled agent with its cabin standing takes up no
+// trade, and gathers wherever it is, near its home or far.
+func TestSmoke_SettlerGathersNearHomeAndFar(t *testing.T) {
+	for _, home := range []float64{0.5, 300.5} {
 		s := harvestSim(findsWorld(), travellerKit(), 18)
-		s.State.SetCollectiveSettlementSite(c.home, 64, 0.5)
-		s.State.AssignStrategy(system1.StrategySettle, 0)
+		s.State.SetCollectiveSettlementSite(home, 64, 0.5)
+		s.State.SetCabinBuilt(blueprints.CabinTotalBlocks)
+		s.State.AssignStrategy(system1.StrategySettle, -100000)
 		s.Run(2 * harvestSimMinute)
-		got := s.ItemCount("minecraft:raw_iron")+s.ItemCount("minecraft:sweet_berries") > 0
-		if got != c.takes {
-			t.Errorf("home at x=%.0f: gathered=%t want %t (%s)", c.home, got, c.takes, s.InventorySummary())
+		if got := s.State.BaseStrategy(); got != system1.StrategySettle {
+			t.Errorf("home at x=%.0f: took up %s without a bucket", home, got)
+		}
+		if s.ItemCount("minecraft:raw_iron")+s.ItemCount("minecraft:sweet_berries") == 0 {
+			t.Errorf("home at x=%.0f: gathered nothing (%s)", home, s.InventorySummary())
 		}
 	}
 }
 
-func TestSmoke_SettledAgentDoesNotStockpileInPassing(t *testing.T) {
+func TestSmoke_ProfessionalDoesNotStockpileInPassing(t *testing.T) {
 	s := harvestSim(findsWorld(), travellerKit(), 18)
 	consecrate(s.State) // an established member of a settlement
 	s.Run(2 * harvestSimMinute)
 	if n := s.ItemCount("minecraft:raw_iron") + s.ItemCount("minecraft:sweet_berries"); n != 0 || s.Fauna().Casts != 0 {
-		t.Errorf("a settled agent gathered in passing: casts=%d inventory=%s", s.Fauna().Casts, s.InventorySummary())
+		t.Errorf("a professional gathered in passing: casts=%d inventory=%s", s.Fauna().Casts, s.InventorySummary())
 	}
 }
 

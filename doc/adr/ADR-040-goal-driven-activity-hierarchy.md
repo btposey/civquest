@@ -83,13 +83,15 @@ User direction, 2026-11-26. The base frame is one long-running **strategic machi
 | Machine | When | Objectives | Rhythm | Acts as |
 |---|---|---|---|---|
 | explore | no settlement | equip, provision, gather, shelter, bed, travel | day work, evening camp, night rest | explorer |
-| settle | has a settlement, not yet established in it | equip, provision, gather near home, shelter, bed, build | day work, evening together, night rest | settler (a homesteader if alone) |
-| profession | has a bed or shelter there and has been settled a while | its duties, build, provision, shelter, bed | the profession's shifts | its profession |
+| settle | has a settlement, not yet able to farm or not yet established | equip, provision, gather wherever it goes, shelter, bed, build | day work, evening together, night rest | settler (a homesteader if alone) |
+| profession | farming is possible there and it has been settled a while | its duties, build, provision, shelter, bed | the profession's shifts | its profession |
 | idle | nothing to do for a while | provision, shelter, bed | as before | as before |
 
 **Replacing a machine.** Three sources, each with its own timing:
 
 1. *Hard milestones* apply at once: a chosen clan site or homestead ends exploring.
+
+**Farming comes before any trade (user, 2026-11-27, cq-vuu).** No road leads into profession while farming is impossible: not time, a morning review, an assignment or a saved record. Farming is possible when the agent's cabin stands, surface water is in view within 48 blocks of the settlement and it carries a bucket (`system1/farming.go`). Nothing makes a bucket yet (cq-390.10), so every agent stays a settler. Next stages, not built: all farm first; professions open at 9 days of stored food per living agent and agents return to farming below 7.
 2. *Morning review*: System 2 may propose a change during the night, naming what is new. At the next dawn code weighs it once: it applies if it is among the options allowed from the current machine (settle ↔ profession, and a frontier explorer may come home) and the machine has run at least two days. A proposal that arrives after dawn expires before the next one, and a failed answer changes nothing.
 3. *Clan assignment* (for example a frontier explorer chosen from a surplus; the selection itself is cq-dhm).
 

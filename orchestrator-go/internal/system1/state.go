@@ -230,6 +230,7 @@ type AgentState struct {
 	diags     []diagnostic
 	// strategy is the strategic machine the agent is in (strategy.go).
 	strategy     StrategyRecord
+	farming      FarmingNeeds // as the latest frame showed them (farming.go)
 	HomesteadPos [3]float64
 	// Collective clan settlement site chosen at rendezvous (durable knowledge).
 	CollectiveSiteChosen bool

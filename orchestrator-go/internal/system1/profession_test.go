@@ -10,6 +10,7 @@ import (
 // consecrateSettlement makes the agent an established member of a settlement at the origin.
 func consecrateSettlement(st *AgentState) {
 	st.SetCollectiveSettlementSite(0.5, 64, 0.5)
+	st.ObserveFarming(canFarm)
 	st.AssignStrategy(StrategyProfession, 0)
 }
 

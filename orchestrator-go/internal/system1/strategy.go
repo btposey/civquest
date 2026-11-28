@@ -22,17 +22,15 @@ const (
 
 // DESIGN BUDGET (cq-507.7): durations are first guesses to tune in play. A day is 24000 ticks.
 const (
-	professionTenureTicks  = int64(12000) // settled with a home this long takes up a profession
-	professionMaxWaitTicks = int64(72000) // taken up after this long whatever the home
-	reviewTenureTicks      = int64(48000) // a strategy runs this long before a review may replace it
-	idleAfterTicks         = int64(600)   // nothing to do this long turns idle
-	idleLimitTicks         = int64(600)   // idle gives up waiting for advice after this long
-	morningEndsAt          = int64(6000)
-	eveningFromTick        = int64(12000)
+	professionTenureTicks = int64(12000) // settled this long, and able to farm, takes up a profession
+	reviewTenureTicks     = int64(48000) // a strategy runs this long before a review may replace it
+	idleAfterTicks        = int64(600)   // nothing to do this long turns idle
+	idleLimitTicks        = int64(600)   // idle gives up waiting for advice after this long
+	morningEndsAt         = int64(6000)
+	eveningFromTick       = int64(12000)
 	// proposalFreshTicks is how old a proposal may be at dawn: one that arrived after the
 	// previous dawn is late, and changes nothing.
 	proposalFreshTicks = int64(18000)
-	gatherNearHome     = 48.0
 )
 
 // StrategyProposal is a change System 2 suggested, to be weighed in the morning.
@@ -117,18 +115,32 @@ func (s *AgentState) StrategyRecord() StrategyRecord {
 	return s.strategy
 }
 
-// RestoreStrategy reinstates a record saved by an earlier run.
+// RestoreStrategy reinstates a record saved by an earlier run. A saved profession is not taken
+// on trust: it passes the farming gate again, at once if the needs are met, for Since is kept.
 func (s *AgentState) RestoreStrategy(r StrategyRecord) {
+	if r.base() == StrategyProfession {
+		r.Chosen = false
+		if r.Kind == StrategyIdle {
+			r.Resume = StrategySettle
+		} else {
+			r.Kind = StrategySettle
+		}
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.strategy = r
 }
 
-// AssignStrategy replaces the strategy at once: the clan's assignment.
-func (s *AgentState) AssignStrategy(to Strategy, tick int64) {
+// AssignStrategy replaces the strategy at once: the clan's assignment. It reports false, and
+// changes nothing, for a profession while farming is impossible.
+func (s *AgentState) AssignStrategy(to Strategy, tick int64) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if to == StrategyProfession && !s.farming.Met() {
+		return false
+	}
 	s.strategy = StrategyRecord{Kind: to, Since: tick, Chosen: true, Evening: s.strategy.Evening}
+	return true
 }
 
 // ProposeStrategy records a suggested change for the next morning review.
@@ -144,31 +156,32 @@ func (s *AgentState) AllowedStrategies() []Strategy {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	_, settled := s.settlementLocked()
-	return allowedFrom(s.strategyLocked().base(), settled)
+	return allowedFrom(s.strategyLocked().base(), settled, s.farming.Met())
 }
 
 // Exploring the frontier from a settlement is the clan's assignment (AssignStrategy), not
 // something an agent talks itself into.
-func allowedFrom(from Strategy, settled bool) []Strategy {
+func allowedFrom(from Strategy, settled, canFarm bool) []Strategy {
 	switch {
 	case !settled:
 		return nil
 	case from == StrategyExplore, from == StrategyProfession:
 		return []Strategy{StrategySettle}
-	case from == StrategySettle:
+	case from == StrategySettle && canFarm:
 		return []Strategy{StrategyProfession}
 	}
 	return nil
 }
 
-// advanceStrategy applies milestones and the dawn review for one tick. homeReady reports a bed
-// or finished shelter.
-func (s *AgentState) advanceStrategy(tick, timeOfDay int64, homeReady bool) (StrategyChange, bool) {
+// advanceStrategy applies milestones and the dawn review for one tick. farming is what the
+// tick's frame shows of farming's needs.
+func (s *AgentState) advanceStrategy(tick, timeOfDay int64, farming FarmingNeeds) (StrategyChange, bool) {
 	if s == nil {
 		return StrategyChange{}, false
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.farming = farming
 	if s.strategy.Kind == "" {
 		s.strategy = s.strategyLocked()
 		s.strategy.Since = tick
@@ -198,15 +211,14 @@ func (s *AgentState) advanceStrategy(tick, timeOfDay int64, homeReady bool) (Str
 		return replace(StrategyExplore, "no settlement", false)
 	case settled && from == StrategyExplore && !r.Chosen:
 		return replace(StrategySettle, "settlement established", false)
-	case settled && from == StrategySettle &&
-		(homeReady && tick-r.Since >= professionTenureTicks || tick-r.Since >= professionMaxWaitTicks):
-		return replace(StrategyProfession, "established in the settlement", false)
+	case settled && from == StrategySettle && farming.Met() && tick-r.Since >= professionTenureTicks:
+		return replace(StrategyProfession, "established and able to farm", false)
 	}
 	if proposal == nil || strings.TrimSpace(proposal.Reason) == "" ||
 		tick-proposal.Tick > proposalFreshTicks || tick-r.Since < reviewTenureTicks {
 		return StrategyChange{}, false
 	}
-	for _, ok := range allowedFrom(from, settled) {
+	for _, ok := range allowedFrom(from, settled, farming.Met()) {
 		if ok == proposal.Strategy {
 			return replace(proposal.Strategy, "morning review: "+proposal.Reason, true)
 		}

@@ -78,6 +78,7 @@ func TestRuntime_NightProposalAppliesAtDawnAndSurvivesRestart(t *testing.T) {
 	}
 	rt := start("a.sock")
 	rt.System1State().SetCollectiveSettlementSite(0, 64, 0)
+	rt.System1State().ObserveFarming(system1.FarmingNeeds{Shelter: true, Water: true, Bucket: true})
 	rt.System1State().AssignStrategy(system1.StrategyProfession, 0)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()

@@ -1,6 +1,8 @@
 package system1
 
 import (
+	"github.com/btposey/civquest/orchestrator-go/internal/blueprints"
+	civquestv1 "github.com/btposey/civquest/orchestrator-go/internal/proto/v1"
 	"slices"
 	"testing"
 
@@ -25,13 +27,16 @@ func TestStrategy_ExploreSettleProfessionCycle(t *testing.T) {
 	cfg := xdg.DefaultAgentIdentityConfig("member")
 	cfg.Profession = "FARMER"
 	var changes []string
+	frameInv, blocks := fullSurvivalKitInv(), []*civquestv1.VisibleBlock(nil)
 	fsm.SetEventSink(func(_ int64, category, summary string, _ map[string]any) {
 		if category == EventStrategy {
 			changes = append(changes, summary)
 		}
 	})
 	tick := func(at int64) {
-		fsm.Tick(&FSMContext{AgentID: "member", State: st, Config: cfg, Frame: makeArbiterTestFrame(at, 3000, 20, fullSurvivalKitInv(), nil)})
+		f := makeArbiterTestFrame(at, 3000, 20, frameInv, nil)
+		f.InterestingBlocks = blocks
+		fsm.Tick(&FSMContext{AgentID: "member", State: st, Config: cfg, Frame: f})
 	}
 	expect := func(at int64, strategy Strategy, base htpda.Kind, trade string) {
 		t.Helper()
@@ -49,8 +54,12 @@ func TestStrategy_ExploreSettleProfessionCycle(t *testing.T) {
 	expect(100, StrategyExplore, activityKindExplore, "EXPLORER")
 	st.SetCollectiveSettlementSite(0.5, 64, 0.5) // hard milestone: at once
 	expect(104, StrategySettle, activityKindSettle, "SETTLER")
-	expect(104+professionTenureTicks, StrategySettle, activityKindSettle, "SETTLER") // no home yet
-	expect(104+professionMaxWaitTicks, StrategyProfession, activityKindProfession, "FARMER")
+	// Neither time nor tenure opens a trade while farming is impossible.
+	expect(104+10*professionTenureTicks, StrategySettle, activityKindSettle, "SETTLER")
+	st.SetCabinBuilt(blueprints.CabinTotalBlocks)
+	frameInv, blocks = append(fullSurvivalKitInv(), &civquestv1.ItemStackProto{ItemId: "minecraft:bucket", Count: 1}),
+		[]*civquestv1.VisibleBlock{{BlockId: "minecraft:water", Pos: &civquestv1.BlockPosProto{X: 6, Y: 63, Z: 0}}}
+	expect(104+11*professionTenureTicks, StrategyProfession, activityKindProfession, "FARMER")
 	if want := 2; len(changes) != want {
 		t.Errorf("changes %v", changes)
 	}
@@ -62,6 +71,7 @@ func TestStrategy_MorningReviewIsNotFickle(t *testing.T) {
 	member := func() *AgentState {
 		st := NewAgentState()
 		st.SetCollectiveSettlementSite(0.5, 64, 0.5)
+		st.ObserveFarming(canFarm)
 		st.AssignStrategy(StrategyProfession, 0)
 		return st
 	}
@@ -85,19 +95,19 @@ func TestStrategy_MorningReviewIsNotFickle(t *testing.T) {
 	for _, c := range cases {
 		st := member()
 		start := c.nights * day
-		st.advanceStrategy(start+night, night, true)
+		st.advanceStrategy(start+night, night, canFarm)
 		if c.lateBy == 0 {
 			st.ProposeStrategy(c.to, c.reason, start+night)
 		}
 		if c.looksAt >= dawn {
-			st.advanceStrategy(start+dawn, dawn%day, true)
+			st.advanceStrategy(start+dawn, dawn%day, canFarm)
 		}
 		if c.lateBy > 0 {
 			st.ProposeStrategy(c.to, c.reason, start+dawn+500)
-			st.advanceStrategy(start+day+night, night, true)
-			st.advanceStrategy(start+2*day+500, 500, true)
+			st.advanceStrategy(start+day+night, night, canFarm)
+			st.advanceStrategy(start+2*day+500, 500, canFarm)
 		} else if c.looksAt < dawn {
-			st.advanceStrategy(start+c.looksAt, c.looksAt, true)
+			st.advanceStrategy(start+c.looksAt, c.looksAt, canFarm)
 		}
 		if got := st.Strategy(); got != c.wantAfter {
 			t.Errorf("%s: %s, want %s", c.name, got, c.wantAfter)
@@ -110,7 +120,7 @@ func TestStrategy_AssignedFrontierExplorerStaysOut(t *testing.T) {
 	st := NewAgentState()
 	st.SetCollectiveSettlementSite(0.5, 64, 0.5)
 	st.AssignStrategy(StrategyExplore, 100)
-	st.advanceStrategy(100+professionMaxWaitTicks, 3000, true)
+	st.advanceStrategy(100+reviewTenureTicks, 3000, canFarm)
 	if st.Strategy() != StrategyExplore {
 		t.Errorf("frontier exploration was undone: %s", st.Strategy())
 	}
@@ -156,5 +166,60 @@ func TestStrategy_TradeRoutinesWaitForAProfession(t *testing.T) {
 	}
 	if got := rhythm(StrategyProfession, RoutineCivicPatrol); got != RoutineCivicPatrol {
 		t.Errorf("a professional keeps its watch: %s", got)
+	}
+}
+
+// canFarm is a settlement with all a first field needs.
+var canFarm = FarmingNeeds{Shelter: true, Water: true, Bucket: true}
+
+// cq-vuu: no road into a profession is open while farming is impossible: not time, not a
+// morning review, not an assignment, not a record saved before.
+func TestStrategy_NoProfessionUntilFarmingIsPossible(t *testing.T) {
+	const night, dawn = int64(14000), int64(24500)
+	for name, needs := range map[string]FarmingNeeds{
+		"no shelter": {Water: true, Bucket: true},
+		"no water":   {Shelter: true, Bucket: true},
+		"no bucket":  {Shelter: true, Water: true},
+	} {
+		st := NewAgentState()
+		st.SetCollectiveSettlementSite(0.5, 64, 0.5)
+		st.advanceStrategy(100, 3000, needs)
+		start := 5 * day
+		st.advanceStrategy(start+night, night, needs)
+		if got := st.AllowedStrategies(); len(got) != 0 {
+			t.Errorf("%s: a review may choose %v", name, got)
+		}
+		st.ProposeStrategy(StrategyProfession, "time I took up a trade", start+night)
+		st.advanceStrategy(start+dawn, dawn%day, needs)
+		if st.AssignStrategy(StrategyProfession, start+dawn) || st.Strategy() != StrategySettle {
+			t.Errorf("%s: entered %s", name, st.Strategy())
+		}
+		st.RestoreStrategy(StrategyRecord{Kind: StrategyIdle, Resume: StrategyProfession, Since: 100})
+		if got := st.BaseStrategy(); got != StrategySettle {
+			t.Errorf("%s: a saved trade was resumed as %s", name, got)
+		}
+		// The same record qualifies at once when the needs are met.
+		st.advanceStrategy(start+dawn+4, dawn%day, canFarm)
+		if got := st.BaseStrategy(); got != StrategyProfession {
+			t.Errorf("%s: able to farm, still %s", name, got)
+		}
+	}
+}
+
+// cq-vuu: the needs are read from the frame, water counting only near the settlement.
+func TestFarmingNeeds(t *testing.T) {
+	st := NewAgentState()
+	st.SetCollectiveSettlementSite(0.5, 64, 0.5)
+	frame := func(item string, waterX int32) *civquestv1.TelemetryFrame {
+		f := makeArbiterTestFrame(100, 3000, 20, []*civquestv1.ItemStackProto{{ItemId: item, Count: 1}}, nil)
+		f.InterestingBlocks = []*civquestv1.VisibleBlock{{BlockId: "minecraft:water", Pos: &civquestv1.BlockPosProto{X: waterX, Y: 63}}}
+		return f
+	}
+	if got := farmingNeeds(st, frame("minecraft:lava_bucket", 200)); got != (FarmingNeeds{}) {
+		t.Errorf("needs %+v, want none", got)
+	}
+	st.SetCabinBuilt(blueprints.CabinTotalBlocks)
+	if got := farmingNeeds(st, frame("minecraft:water_bucket", 30)); got != canFarm {
+		t.Errorf("needs %+v, want all", got)
 	}
 }

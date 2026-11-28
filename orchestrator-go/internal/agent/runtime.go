@@ -2099,8 +2099,9 @@ func (r *AgentRuntime) dispatchAgrarian(frame *civquestv1.TelemetryFrame) {
 	}
 
 	// 1. Emergent Specialization evaluation
-	// ADR-027: specialized career transitions require a settlement.
-	if r.system1State.SettlementEstablished() && identity != nil && agrarian.IsTransitionableProfession(identity.Profession) {
+	// ADR-027: a career is taken up only by an agent whose strategy is a profession, which waits
+	// on farming being possible (cq-vuu).
+	if r.system1State.BaseStrategy() == system1.StrategyProfession && identity != nil && agrarian.IsTransitionableProfession(identity.Profession) {
 		specCtx := agrarian.SpecializationContext{
 			AgentID:           r.agentID,
 			CurrentProfession: identity.Profession,

@@ -8,8 +8,7 @@ func (fsm *AgentFSM) advanceStrategy(ctx *FSMContext) {
 	if ctx == nil || ctx.State == nil || ctx.Frame == nil || ctx.Frame.Status == nil {
 		return
 	}
-	home := isStateShelterOrBedSatisfied(ctx.State)
-	change, ok := ctx.State.advanceStrategy(ctx.Frame.WorldTick, ctx.Frame.TimeOfDay, home)
+	change, ok := ctx.State.advanceStrategy(ctx.Frame.WorldTick, ctx.Frame.TimeOfDay, farmingNeeds(ctx.State, ctx.Frame))
 	if !ok {
 		return
 	}

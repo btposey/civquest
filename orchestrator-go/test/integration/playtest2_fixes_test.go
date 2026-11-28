@@ -322,6 +322,7 @@ func TestPlaytest2_06_SettlementPlacesRecommendedBlueprintByDay(t *testing.T) {
 		Setup: func(st *system1.AgentState) {
 			st.SetHomeOrigin(&civquestv1.Vec3{X: 0.5, Y: 64, Z: 0.5})
 			st.SetCollectiveSettlementSite(0.5, 64, 0.5) // building belongs to a settlement (cq-507.7)
+			st.ObserveFarming(system1.FarmingNeeds{Shelter: true, Water: true, Bucket: true})
 			st.AssignStrategy(system1.StrategyProfession, 0)
 		},
 	})
