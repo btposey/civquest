@@ -22,6 +22,7 @@ var eventLevels = map[string]logging.Level{
 	"GOAL_TRANSITION": logging.Info, "STRATEGIC_CONTEMPLATION": logging.Info, system1.EventStrategy: logging.Info,
 	"HORIZON_SURVEY_COMPLETE": logging.Info, "INCOMING_CHAT": logging.Info, "DIALOGUE_EVAL": logging.Info,
 	"COMPANION_COMMAND": logging.Info, "SYSTEM1_TRADE_EVAL": logging.Info, "SETTLEMENT_VOTE": logging.Info,
+	eventSettlementNoVote:        logging.Info,
 	"COLLECTIVE_SETTLEMENT_SITE": logging.Info, system1.EventRecover: logging.Info,
 	system1.EventMotorStuck: logging.Info, system1.EventInventory: logging.Info,
 	system1.EventReceiptFailed: logging.Info, system1.EventTaskStart: logging.Info,

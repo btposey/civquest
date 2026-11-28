@@ -2,7 +2,9 @@ package agent_test
 
 import (
 	"context"
+	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -142,6 +144,29 @@ func TestSettlement_PoorGroundIsNotSelected(t *testing.T) {
 	if site, err := civic.GetClanSite(context.Background(), "pioneers"); err != nil || site != nil {
 		t.Errorf("clan site recorded: %+v %v", site, err)
 	}
+	expectNoVote(t, res, "aria", `"why":"below_score"`)
+}
+
+// expectNoVote requires a recorded reason for a report that endorsed nothing (cq-ix1).
+func expectNoVote(t *testing.T, res *xdg.Resolver, name string, want ...string) {
+	t.Helper()
+	out, err := os.ReadFile(res.AgentDebugJSONLPath(name))
+	if err != nil {
+		t.Fatalf("reading the debug log: %v", err)
+	}
+	for _, line := range strings.Split(string(out), "\n") {
+		if !strings.Contains(line, `"category":"SETTLEMENT_NO_VOTE"`) {
+			continue
+		}
+		found := true
+		for _, w := range want {
+			found = found && strings.Contains(line, w)
+		}
+		if found {
+			return
+		}
+	}
+	t.Errorf("no SETTLEMENT_NO_VOTE event with %v in:\n%s", want, out)
 }
 
 // cq-6l3.20: wooded flat ground alone is not enough; water, ore or a cave, or livestock tips it.
@@ -243,6 +268,7 @@ func TestSettlement_NoSiteBesideADanger(t *testing.T) {
 	if st, ok := second.rt.System1State().Settlement(); ok {
 		t.Fatalf("settled beside a Drowned: %+v", st)
 	}
+	expectNoVote(t, res, "bert", `"why":"danger"`, `"kind":"drowned"`)
 }
 
 func TestSettlement_Quorum(t *testing.T) {

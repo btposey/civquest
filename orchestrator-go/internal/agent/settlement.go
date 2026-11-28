@@ -40,19 +40,76 @@ func SiteQuorum(living, clanSize int) int {
 	return need
 }
 
-// siteEndangered reports a registered danger near the candidate.
-func siteEndangered(c db.SettlementCandidate, dangers []db.DangerSpot) bool {
-	for _, d := range dangers {
-		if math.Hypot(d.X-c.X, d.Z-c.Z) <= clanSiteDangerRadius {
-			return true
+// siteDanger returns the registered danger nearest the candidate, among those near enough to
+// veto it, or nil.
+func siteDanger(c db.SettlementCandidate, dangers []db.DangerSpot) *db.DangerSpot {
+	var near *db.DangerSpot
+	best := clanSiteDangerRadius
+	for i, d := range dangers {
+		if dist := math.Hypot(d.X-c.X, d.Z-c.Z); dist <= best {
+			near, best = &dangers[i], dist
 		}
 	}
-	return false
+	return near
 }
 
-// clanSiteQualifies reports whether a surveyed region is good enough to settle.
-func clanSiteQualifies(c db.SettlementCandidate) bool {
-	return c.Score >= clanSiteStrongScore || (c.ExplorerCount >= clanSiteMinExplorers && c.Score >= clanSiteSharedScore)
+// Why a surveyed region is not endorsed (EventSettlementNoVote).
+const (
+	siteBelowScore      = "below_score"
+	siteTooFewExplorers = "too_few_explorers"
+	siteNearDanger      = "danger"
+)
+
+// clanSiteShortfall says why a surveyed region is not good enough to settle, or "" if it is.
+func clanSiteShortfall(c db.SettlementCandidate) string {
+	switch {
+	case c.Score >= clanSiteStrongScore:
+		return ""
+	case c.Score < clanSiteSharedScore:
+		return siteBelowScore
+	case c.ExplorerCount < clanSiteMinExplorers:
+		return siteTooFewExplorers
+	}
+	return ""
+}
+
+// siteRefusal says why a region is not to be endorsed, as recorded in the playtest events; nil
+// means it is to be endorsed.
+func siteRefusal(c db.SettlementCandidate, dangers []db.DangerSpot) map[string]any {
+	why := clanSiteShortfall(c)
+	var danger *db.DangerSpot
+	if why == "" {
+		if danger = siteDanger(c, dangers); danger == nil {
+			return nil
+		}
+		why = siteNearDanger
+	}
+	out := map[string]any{"x": c.X, "y": c.Y, "z": c.Z, "score": c.Score, "explorers": c.ExplorerCount, "why": why}
+	if danger != nil {
+		out["danger"] = map[string]any{"kind": danger.Kind, "x": danger.X, "y": danger.Y, "z": danger.Z,
+			"distance": math.Hypot(danger.X-c.X, danger.Z-c.Z), "seen_tick": danger.SeenTick, "reported_by": danger.ReportedBy}
+	}
+	return out
+}
+
+const (
+	// eventSettlementNoVote records why a report at the rendezvous endorsed no site (cq-ix1).
+	eventSettlementNoVote = "SETTLEMENT_NO_VOTE"
+	// noVoteRegionsListed bounds the regions one such event names, best scored first.
+	noVoteRegionsListed = 8
+)
+
+// emitNoVote records a report that endorsed nothing: no region has been surveyed, every region
+// was refused, or the clan's records could not be used.
+func emitNoVote(debugLog *DebugLogger, tick int64, reason, summary string, details map[string]any) {
+	if debugLog == nil {
+		return
+	}
+	if details == nil {
+		details = map[string]any{}
+	}
+	details["reason"] = reason
+	debugLog.Emit(tick, eventSettlementNoVote, "Endorsed no site: "+summary, details)
 }
 
 // joinClanSite runs at a rendezvous: the agent adopts the site its clan has committed to. If
@@ -67,11 +124,13 @@ func (r *AgentRuntime) joinClanSite(ctx context.Context, frame *civquestv1.Telem
 	}
 	if err := civicDB.MemberHeartbeat(ctx, clanID, agentID, frame.WorldTick); err != nil {
 		log.Printf("[WARN] agent %s could not report to its clan: %v", agentID, err)
+		emitNoVote(debugLog, frame.WorldTick, "store_error", "could not report to the clan", map[string]any{"error": err.Error()})
 		return
 	}
 	site, err := civicDB.GetClanSite(ctx, clanID)
 	if err != nil {
 		log.Printf("[WARN] agent %s could not read the clan site: %v", agentID, err)
+		emitNoVote(debugLog, frame.WorldTick, "store_error", "could not read the clan site", map[string]any{"error": err.Error()})
 		return
 	}
 	if site == nil {
@@ -132,21 +191,28 @@ func (r *AgentRuntime) endorseSite(ctx context.Context, frame *civquestv1.Teleme
 		log.Printf("[WARN] agent %s could not %s: %v", agentID, what, err)
 		return nil
 	}
+	// unread is a failure before any vote was cast.
+	unread := func(what string, err error) *db.ClanSite {
+		emitNoVote(debugLog, frame.WorldTick, "store_error", "could not "+what, map[string]any{"error": err.Error()})
+		return warn(what, err)
+	}
 	ranked, err := civicDB.RankCollectiveSettlementCandidates(ctx)
 	if err != nil {
-		return warn("rank settlement sites", err)
+		return unread("rank settlement sites", err)
 	}
 	dangers, err := civicDB.ListDangers(ctx, frame.WorldTick-system1.DangerMemoryTicks+1)
 	if err != nil {
-		return warn("read the clan's dangers", err)
+		return unread("read the clan's dangers", err)
 	}
+	var refused []map[string]any
 	for _, c := range ranked {
-		if !clanSiteQualifies(c) || siteEndangered(c, dangers) {
+		if why := siteRefusal(c, dangers); why != nil {
+			refused = append(refused, why)
 			continue
 		}
 		choice := db.ClanSite{X: c.X, Y: c.Y, Z: c.Z, Score: c.Score, ChosenBy: agentID, ChosenTick: frame.WorldTick}
 		if err := civicDB.VoteForSite(ctx, clanID, agentID, choice); err != nil {
-			return warn("vote for a site", err)
+			return unread("vote for a site", err)
 		}
 		supporters, living, err := civicDB.SiteSupport(ctx, clanID, c.X, c.Z, clanSiteVoteRadius, frame.WorldTick-clanMemberWindow)
 		if err != nil {
@@ -167,5 +233,20 @@ func (r *AgentRuntime) endorseSite(ctx context.Context, frame *civquestv1.Teleme
 		}
 		return &standing
 	}
+	if len(refused) == 0 {
+		emitNoVote(debugLog, frame.WorldTick, "no_surveyed_region", "no region has been surveyed", nil)
+		return nil
+	}
+	best := refused[0]
+	summary := fmt.Sprintf("all %d regions refused; the best, at (%.0f, %.0f) scored %.1f by %d explorers, for %s",
+		len(refused), best["x"], best["z"], best["score"], best["explorers"], best["why"])
+	if d, ok := best["danger"].(map[string]any); ok {
+		summary += fmt.Sprintf(" (%s %.0f blocks away)", d["kind"], d["distance"])
+	}
+	emitNoVote(debugLog, frame.WorldTick, "all_regions_refused", summary, map[string]any{
+		"regions": len(refused), "refused": refused[:min(len(refused), noVoteRegionsListed)],
+		"strong_score": clanSiteStrongScore, "shared_score": clanSiteSharedScore,
+		"min_explorers": clanSiteMinExplorers, "danger_radius": clanSiteDangerRadius,
+	})
 	return nil
 }
