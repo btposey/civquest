@@ -22,7 +22,7 @@ The stack therefore records the order of interruptions. Live play on 2026-11-26 
 | 0 Goal | Always the base frame; the only chooser of objectives | `goal` (new) |
 | 1 Objective | Pursues one purpose by choosing tasks | bootstrap, plan, foraging, shelter, bed, construction, exploration, strategic directive |
 | 2 Task | Sequences steps to one concrete result | expedition, gathering, wool, task subroutine (fell a tree, collect drops); later mine, hunt, fish, craft |
-| 3 Step | One physical job with receipts | navigate, survey, break or place a block, use an item |
+| 3 Step | One physical job with receipts | navigate, survey, ladder (climb a wall; recover pushes it), break or place a block, use an item |
 | Interrupt | May cover any frame, then returns | emergency, recover, dead |
 
 Kernel invariants, enforced at push time:
