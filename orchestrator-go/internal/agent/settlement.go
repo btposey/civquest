@@ -28,7 +28,16 @@ const (
 	clanSiteDangerRadius = 48.0
 	clanSiteVoteRadius   = 32.0
 	clanMemberWindow     = int64(6000)
+	// A mob that does not stay about a place blocks a site only when met there again this
+	// long after it was first met; one passing encounter does not (cq-ix1).
+	clanSiteRepeatThreatTicks = int64(1200)
 )
+
+// blocksSite reports a danger that rules out settling near it: one that lasts (a kind that
+// stays about its place, such as a Drowned with a trident) or one met repeatedly.
+func blocksSite(d db.DangerSpot) bool {
+	return system1.LingeringDanger(d.Kind) || d.SeenTick-d.FirstSeenTick >= clanSiteRepeatThreatTicks
+}
 
 // SiteQuorum is how many members must endorse a site: a majority of the living, and never one
 // member alone while the clan has others.
@@ -40,13 +49,13 @@ func SiteQuorum(living, clanSize int) int {
 	return need
 }
 
-// siteDanger returns the registered danger nearest the candidate, among those near enough to
+// siteDanger returns the blocking danger nearest the candidate, among those near enough to
 // veto it, or nil.
 func siteDanger(c db.SettlementCandidate, dangers []db.DangerSpot) *db.DangerSpot {
 	var near *db.DangerSpot
 	best := clanSiteDangerRadius
 	for i, d := range dangers {
-		if dist := math.Hypot(d.X-c.X, d.Z-c.Z); dist <= best {
+		if dist := math.Hypot(d.X-c.X, d.Z-c.Z); dist <= best && blocksSite(d) {
 			near, best = &dangers[i], dist
 		}
 	}
@@ -112,29 +121,35 @@ func emitNoVote(debugLog *DebugLogger, tick int64, reason, summary string, detai
 	debugLog.Emit(tick, eventSettlementNoVote, "Endorsed no site: "+summary, details)
 }
 
-// joinClanSite runs at a rendezvous: the agent adopts the site its clan has committed to. If
-// there is none yet it endorses the best surveyed region that is worth settling and clear of
-// dangers, and claims it for the clan once enough members agree.
-func (r *AgentRuntime) joinClanSite(ctx context.Context, frame *civquestv1.TelemetryFrame, civicDB *db.CivicRegistryDB, clanID, agentID string, debugLog *DebugLogger) {
+// joinClanSite runs at a rendezvous and on the periodic clan exchange: the agent adopts the
+// site its clan has committed to. If there is none yet, a member that has surveyed for the clan
+// endorses the best surveyed region that is worth settling and clear of blocking dangers, and
+// claims it for the clan once enough members agree. The periodic exchange records only changed
+// votes and the settlement, not the reasons for endorsing nothing.
+func (r *AgentRuntime) joinClanSite(ctx context.Context, frame *civquestv1.TelemetryFrame, civicDB *db.CivicRegistryDB, clanID, agentID string, debugLog *DebugLogger, periodic bool) {
 	if r.system1State.SettlementEstablished() {
 		return
 	}
 	if clanID == "" {
 		clanID = defaultSettlementClan
 	}
+	noVoteLog := debugLog
+	if periodic {
+		noVoteLog = nil
+	}
 	if err := civicDB.MemberHeartbeat(ctx, clanID, agentID, frame.WorldTick); err != nil {
 		log.Printf("[WARN] agent %s could not report to its clan: %v", agentID, err)
-		emitNoVote(debugLog, frame.WorldTick, "store_error", "could not report to the clan", map[string]any{"error": err.Error()})
+		emitNoVote(noVoteLog, frame.WorldTick, "store_error", "could not report to the clan", map[string]any{"error": err.Error()})
 		return
 	}
 	site, err := civicDB.GetClanSite(ctx, clanID)
 	if err != nil {
 		log.Printf("[WARN] agent %s could not read the clan site: %v", agentID, err)
-		emitNoVote(debugLog, frame.WorldTick, "store_error", "could not read the clan site", map[string]any{"error": err.Error()})
+		emitNoVote(noVoteLog, frame.WorldTick, "store_error", "could not read the clan site", map[string]any{"error": err.Error()})
 		return
 	}
 	if site == nil {
-		site = r.endorseSite(ctx, frame, civicDB, clanID, agentID, debugLog)
+		site = r.endorseSite(ctx, frame, civicDB, clanID, agentID, debugLog, noVoteLog)
 	}
 	if site == nil {
 		return
@@ -186,15 +201,24 @@ func (r *AgentRuntime) persistSettlement() {
 
 // endorseSite votes for the best acceptable region and returns the clan's site if that vote
 // completed the commitment.
-func (r *AgentRuntime) endorseSite(ctx context.Context, frame *civquestv1.TelemetryFrame, civicDB *db.CivicRegistryDB, clanID, agentID string, debugLog *DebugLogger) *db.ClanSite {
+func (r *AgentRuntime) endorseSite(ctx context.Context, frame *civquestv1.TelemetryFrame, civicDB *db.CivicRegistryDB, clanID, agentID string, debugLog, noVoteLog *DebugLogger) *db.ClanSite {
 	warn := func(what string, err error) *db.ClanSite {
 		log.Printf("[WARN] agent %s could not %s: %v", agentID, what, err)
 		return nil
 	}
 	// unread is a failure before any vote was cast.
 	unread := func(what string, err error) *db.ClanSite {
-		emitNoVote(debugLog, frame.WorldTick, "store_error", "could not "+what, map[string]any{"error": err.Error()})
+		emitNoVote(noVoteLog, frame.WorldTick, "store_error", "could not "+what, map[string]any{"error": err.Error()})
 		return warn(what, err)
+	}
+	// No member endorses before it has survey knowledge of its own.
+	surveyed, err := civicDB.HasSurveyed(ctx, agentID)
+	if err != nil {
+		return unread("read its own surveys", err)
+	}
+	if !surveyed {
+		emitNoVote(noVoteLog, frame.WorldTick, "no_own_survey", "has shared no survey of its own", nil)
+		return nil
 	}
 	ranked, err := civicDB.RankCollectiveSettlementCandidates(ctx)
 	if err != nil {
@@ -211,7 +235,8 @@ func (r *AgentRuntime) endorseSite(ctx context.Context, frame *civquestv1.Teleme
 			continue
 		}
 		choice := db.ClanSite{X: c.X, Y: c.Y, Z: c.Z, Score: c.Score, ChosenBy: agentID, ChosenTick: frame.WorldTick}
-		if err := civicDB.VoteForSite(ctx, clanID, agentID, choice); err != nil {
+		changed, err := civicDB.VoteForSite(ctx, clanID, agentID, choice)
+		if err != nil {
 			return unread("vote for a site", err)
 		}
 		supporters, living, err := civicDB.SiteSupport(ctx, clanID, c.X, c.Z, clanSiteVoteRadius, frame.WorldTick-clanMemberWindow)
@@ -219,7 +244,7 @@ func (r *AgentRuntime) endorseSite(ctx context.Context, frame *civquestv1.Teleme
 			return warn("count site support", err)
 		}
 		need := SiteQuorum(living, max(living, r.system1State.KnownClanSize()))
-		if debugLog != nil {
+		if debugLog != nil && (changed || noVoteLog != nil) {
 			debugLog.Emit(frame.WorldTick, "SETTLEMENT_VOTE",
 				fmt.Sprintf("Endorsed (%.0f, %.0f, %.0f), scored %.1f: %d of %d living members agree, %d needed", c.X, c.Y, c.Z, c.Score, supporters, living, need),
 				map[string]any{"x": c.X, "y": c.Y, "z": c.Z, "score": c.Score, "supporters": supporters, "living": living, "needed": need})
@@ -234,7 +259,7 @@ func (r *AgentRuntime) endorseSite(ctx context.Context, frame *civquestv1.Teleme
 		return &standing
 	}
 	if len(refused) == 0 {
-		emitNoVote(debugLog, frame.WorldTick, "no_surveyed_region", "no region has been surveyed", nil)
+		emitNoVote(noVoteLog, frame.WorldTick, "no_surveyed_region", "no region has been surveyed", nil)
 		return nil
 	}
 	best := refused[0]
@@ -243,7 +268,7 @@ func (r *AgentRuntime) endorseSite(ctx context.Context, frame *civquestv1.Teleme
 	if d, ok := best["danger"].(map[string]any); ok {
 		summary += fmt.Sprintf(" (%s %.0f blocks away)", d["kind"], d["distance"])
 	}
-	emitNoVote(debugLog, frame.WorldTick, "all_regions_refused", summary, map[string]any{
+	emitNoVote(noVoteLog, frame.WorldTick, "all_regions_refused", summary, map[string]any{
 		"regions": len(refused), "refused": refused[:min(len(refused), noVoteRegionsListed)],
 		"strong_score": clanSiteStrongScore, "shared_score": clanSiteSharedScore,
 		"min_explorers": clanSiteMinExplorers, "danger_radius": clanSiteDangerRadius,

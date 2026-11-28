@@ -69,22 +69,25 @@ func (r *AgentRuntime) syncDangers(frame *civquestv1.TelemetryFrame) {
 		r.dangerBusy.Store(false)
 		return
 	}
-	tick := frame.WorldTick
+	r.mu.RLock()
+	debugLog := r.debugLogger
+	r.mu.RUnlock()
 	r.poiWg.Add(1)
 	go func() {
 		defer r.poiWg.Done()
 		defer r.dangerBusy.Store(false)
-		r.exchangeDangers(fresh, learn, tick)
+		r.exchangeDangers(fresh, learn, frame, debugLog)
 	}()
 }
 
-func (r *AgentRuntime) exchangeDangers(fresh []system1.Danger, learn bool, tick int64) {
+func (r *AgentRuntime) exchangeDangers(fresh []system1.Danger, learn bool, frame *civquestv1.TelemetryFrame, debugLog *DebugLogger) {
+	tick := frame.WorldTick
 	r.withCivicDB(func(civic *db.CivicRegistryDB, clanID string) {
 		ctx, cancel := context.WithTimeout(context.Background(), settlementStoreTimeout)
 		defer cancel()
 		for _, d := range fresh {
 			spot := db.DangerSpot{Kind: d.Kind, X: d.X, Y: d.Y, Z: d.Z, SeenTick: d.Seen, ReportedBy: r.agentID}
-			if err := civic.PublishDanger(ctx, spot, dangerShareRadius); err != nil {
+			if err := civic.PublishDanger(ctx, spot, dangerShareRadius, system1.DangerMemoryTicks); err != nil {
 				log.Printf("[WARN] agent %s could not share a danger: %v", r.agentID, err)
 			}
 		}
@@ -108,5 +111,7 @@ func (r *AgentRuntime) exchangeDangers(fresh []system1.Danger, learn bool, tick 
 			known = append(known, system1.Danger{Kind: s.Kind, X: s.X, Y: s.Y, Z: s.Z, Seen: s.SeenTick})
 		}
 		r.system1State.MergeDangers(known)
+		// Members also endorse a site here, from what the clan has shared (cq-ix1).
+		r.joinClanSite(ctx, frame, civic, clanID, r.agentID, debugLog, true)
 	})
 }

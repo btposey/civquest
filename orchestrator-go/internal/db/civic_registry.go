@@ -305,7 +305,8 @@ func (c *CivicRegistryDB) initSchema(ctx context.Context) error {
 		y REAL NOT NULL,
 		z REAL NOT NULL,
 		seen_tick INTEGER NOT NULL,
-		reported_by TEXT NOT NULL DEFAULT ''
+		reported_by TEXT NOT NULL DEFAULT '',
+		first_seen_tick INTEGER NOT NULL DEFAULT 0
 	);
 
 	-- A clan may come to hold several settlement sites; site 0 is home.
@@ -383,8 +384,15 @@ func (c *CivicRegistryDB) initSchema(ctx context.Context) error {
 	);
 	CREATE INDEX IF NOT EXISTS idx_world_bed_claims_owner ON world_bed_claims(world_id, owner_agent_id);
 	`
-	_, err := c.db.ExecContext(ctx, schema)
-	return err
+	if _, err := c.db.ExecContext(ctx, schema); err != nil {
+		return err
+	}
+	// A registry from before cq-ix1 lacks the column.
+	_, err := c.db.ExecContext(ctx, `ALTER TABLE danger_spots ADD COLUMN first_seen_tick INTEGER NOT NULL DEFAULT 0;`)
+	if err != nil && !strings.Contains(err.Error(), "duplicate column") {
+		return err
+	}
+	return nil
 }
 
 // ClanID returns the clan identifier.

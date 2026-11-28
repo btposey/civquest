@@ -103,7 +103,9 @@ A replaced machine abandons its parked work, which banks what it knows.
 
 **Several settlements.** A clan's chosen sites are kept per site, the first being home; founding colonies and trade between them are cq-dhm.
 
-**Committing to a site (playtest 5, cq-gey.3).** A site is claimed only when a majority of the clan's living members, and never one alone while others live, have endorsed it. Ice and frozen country count heavily against a site and cancel the value of water beside it, and no site is taken within 48 blocks of a registered danger.
+**Committing to a site (playtest 5, cq-gey.3).** A site is claimed only when a majority of the clan's living members, and never one alone while others live, have endorsed it. Ice and frozen country count heavily against a site and cancel the value of water beside it, and no site is taken within 48 blocks of a blocking danger.
+
+**Endorsing without returning (cq-ix1).** A member that has shared a survey of its own also endorses on the 200 tick clan exchange, from what the clan has shared, and every member adopts the claimed site there; the quorum and the two-explorer bar for sites scored 35 to 55 are unchanged. A danger blocks a site only if it lasts (a kind that stays about its place, such as a Drowned with a trident) or is met again at least 1200 ticks after first met; one passing mob encounter does not. Travel still avoids every registered danger. The constants are together in `agent/settlement.go`.
 
 **Dangers (cq-gey.2).** A mob that hurts an agent, or one that lingers such as a Drowned, marks its spot for at least a game day, shared with the clan. Agents choose no targets within 20 blocks (home excepted), walk round it, and once hit keep going until clear.
 

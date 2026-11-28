@@ -27,23 +27,43 @@ func (c *CivicRegistryDB) MemberHeartbeat(ctx context.Context, clanID, agentID s
 	return nil
 }
 
-// VoteForSite records the site voter endorses now, replacing its earlier choice.
-func (c *CivicRegistryDB) VoteForSite(ctx context.Context, clanID, voter string, site ClanSite) error {
+// VoteForSite records the site voter endorses now, replacing its earlier choice, and reports
+// whether the choice changed.
+func (c *CivicRegistryDB) VoteForSite(ctx context.Context, clanID, voter string, site ClanSite) (bool, error) {
 	c.writeMu.Lock()
 	defer c.writeMu.Unlock()
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	if c.isClosed {
-		return ErrClosed
+		return false, ErrClosed
 	}
-	_, err := c.db.ExecContext(ctx, `
+	res, err := c.db.ExecContext(ctx, `
 		INSERT INTO clan_site_votes (world_id, clan_id, agent_id, x, z, voted_tick) VALUES (?, ?, ?, ?, ?, ?)
-		ON CONFLICT(world_id, clan_id, agent_id) DO UPDATE SET x = excluded.x, z = excluded.z, voted_tick = excluded.voted_tick;`,
+		ON CONFLICT(world_id, clan_id, agent_id) DO UPDATE SET x = excluded.x, z = excluded.z, voted_tick = excluded.voted_tick
+		WHERE x != excluded.x OR z != excluded.z;`,
 		c.worldID, clanID, voter, site.X, site.Z, site.ChosenTick)
 	if err != nil {
-		return fmt.Errorf("recording site vote: %w", err)
+		return false, fmt.Errorf("recording site vote: %w", err)
 	}
-	return nil
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("recording site vote: %w", err)
+	}
+	return n > 0, nil
+}
+
+// HasSurveyed reports whether agentID has shared a horizon survey with the clan.
+func (c *CivicRegistryDB) HasSurveyed(ctx context.Context, agentID string) (bool, error) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	if c.isClosed {
+		return false, ErrClosed
+	}
+	var found bool
+	if err := c.db.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM clan_horizon_sectors WHERE explorer_id = ?);`, agentID).Scan(&found); err != nil {
+		return false, fmt.Errorf("reading surveys: %w", err)
+	}
+	return found, nil
 }
 
 // SiteSupport counts the clan's living members (seen at or after sinceTick) and how many of

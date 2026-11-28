@@ -43,6 +43,9 @@ type Danger struct {
 	shared  int64 // when this agent last told the clan
 }
 
+// LingeringDanger reports a registered danger of a kind that stays about its place.
+func LingeringDanger(kind string) bool { return lingers(kind) }
+
 // lingers reports mobs that stay about the place they were seen.
 func lingers(kind string) bool {
 	for _, k := range []string{"drowned", "polar_bear", "guardian", "witch", "pillager", "vindicator", "evoker", "ravager", "warden"} {

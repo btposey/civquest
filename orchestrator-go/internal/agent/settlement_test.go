@@ -246,7 +246,7 @@ func endorse(t *testing.T, civic *db.CivicRegistryDB, name string, x, z float64)
 	if err := civic.MemberHeartbeat(ctx, "pioneers", name, 100); err != nil {
 		t.Fatalf("MemberHeartbeat: %v", err)
 	}
-	if err := civic.VoteForSite(ctx, "pioneers", name, db.ClanSite{X: x, Z: z, ChosenTick: 100}); err != nil {
+	if _, err := civic.VoteForSite(ctx, "pioneers", name, db.ClanSite{X: x, Z: z, ChosenTick: 100}); err != nil {
 		t.Fatalf("VoteForSite: %v", err)
 	}
 }
@@ -259,7 +259,7 @@ func TestSettlement_NoSiteBesideADanger(t *testing.T) {
 		t.Fatalf("OpenCivicRegistryDBForClan: %v", err)
 	}
 	defer civic.Close()
-	if err := civic.PublishDanger(context.Background(), db.DangerSpot{Kind: "drowned", X: 230, Y: 62, Z: 200, SeenTick: 100}, 16); err != nil {
+	if err := civic.PublishDanger(context.Background(), db.DangerSpot{Kind: "drowned", X: 230, Y: 62, Z: 200, SeenTick: 100}, 16, system1.DangerMemoryTicks); err != nil {
 		t.Fatalf("PublishDanger: %v", err)
 	}
 	first, second := newSettler(t, res, civic, "aria"), newSettler(t, res, civic, "bert")
@@ -276,5 +276,84 @@ func TestSettlement_Quorum(t *testing.T) {
 		if got := agent.SiteQuorum(c.living, c.clan); got != c.want {
 			t.Errorf("%d living of %d: need %d, want %d", c.living, c.clan, got, c.want)
 		}
+	}
+}
+
+// cq-ix1 (run sb1): only some members have reported and one zombie was met 31 blocks away. The
+// members who surveyed agree on the periodic exchange, without another report.
+func TestSettlement_PeriodicExchangeReachesAgreement(t *testing.T) {
+	for _, c := range []struct {
+		name      string
+		sightings []int64 // ticks the zombie was met
+		want      bool
+	}{
+		{name: "one sighting", sightings: []int64{100}, want: true},
+		{name: "repeated", sightings: []int64{100, 100 + 1200}, want: false},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			res := xdg.NewResolver(xdg.WithCustomRoot(t.TempDir()))
+			civic, err := db.OpenCivicRegistryDBForClan(res, "pioneers")
+			if err != nil {
+				t.Fatalf("OpenCivicRegistryDBForClan: %v", err)
+			}
+			defer civic.Close()
+			ctx := context.Background()
+			for _, tick := range c.sightings {
+				if err := civic.PublishDanger(ctx, db.DangerSpot{Kind: "zombie", X: 231, Y: 64, Z: 200, SeenTick: tick}, 16, system1.DangerMemoryTicks); err != nil {
+					t.Fatalf("PublishDanger: %v", err)
+				}
+			}
+			members := []*settler{}
+			for _, name := range []string{"able", "bert", "carl", "dave", "earl", "fred"} {
+				s := newSettler(t, res, civic, name)
+				s.rt.System1State().SetClanSize(6)
+				s.tick = 2000
+				if err := civic.MemberHeartbeat(ctx, "pioneers", name, s.tick); err != nil {
+					t.Fatalf("MemberHeartbeat: %v", err)
+				}
+				members = append(members, s)
+			}
+			report := makeRuntimeSurveyReport(200, 64, 200, 150, 10, 6)
+			sectors := make([]db.HorizonSector, 0, len(report.Sectors))
+			for _, sec := range report.Sectors {
+				sectors = append(sectors, db.HorizonSector{SectorIndex: int(sec.SectorIndex), FeatureType: sec.FeatureType, SurveyedTick: 150})
+			}
+			share := func(name string) {
+				if err := civic.MergeExplorerHorizonSurvey(ctx, name, 200, 64, 200, 150, sectors); err != nil {
+					t.Fatalf("merging survey: %v", err)
+				}
+			}
+			exchange := func() {
+				for _, s := range members {
+					s.tick += 200
+					s.frame(1, 1, nil)
+				}
+				time.Sleep(50 * time.Millisecond) // the exchange runs off the frame path
+			}
+			settled := func() bool {
+				site, err := civic.GetClanSite(ctx, "pioneers")
+				if err != nil {
+					t.Fatalf("GetClanSite: %v", err)
+				}
+				return site != nil
+			}
+			// Three explorers of six are short of the quorum, and the others have no survey.
+			share("able")
+			share("carl")
+			share("dave")
+			for i := 0; i < 5; i++ {
+				exchange()
+			}
+			if settled() {
+				t.Fatal("settled without a quorum")
+			}
+			share("fred")
+			for i := 0; i < 15 && !(c.want && settled()); i++ {
+				exchange()
+			}
+			if got := settled(); got != c.want {
+				t.Errorf("settled=%t, want %t", got, c.want)
+			}
+		})
 	}
 }

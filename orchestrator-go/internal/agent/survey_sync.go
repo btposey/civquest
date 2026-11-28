@@ -254,7 +254,7 @@ func (r *AgentRuntime) syncRendezvousReport(frame *civquestv1.TelemetryFrame, su
 			}
 		}
 
-		r.joinClanSite(ctx, frame, civicDB, clanID, agentID, debugLog)
+		r.joinClanSite(ctx, frame, civicDB, clanID, agentID, debugLog, false)
 	}
 
 	// Broadcast local chat report to nearby clanmates & players (ADR-030).
