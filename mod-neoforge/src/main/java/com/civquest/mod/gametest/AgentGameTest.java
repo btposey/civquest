@@ -2268,6 +2268,13 @@ public class AgentGameTest {
             agent.tick();
         }
         atRung.accept(3); // holds the rung while it waits for the next walk
+        // What the next moves are decided from: the wall two above the rung is listed.
+        com.civquest.mod.grpc.v1.TelemetryFrame.Builder seen = com.civquest.mod.grpc.v1.TelemetryFrame.newBuilder();
+        new com.civquest.mod.sensory.SensoryFrustumCollector().collectInterestingBlocks(agent, level, seen);
+        BlockPos wallAbove = helper.absolutePos(new BlockPos(2, 5, 1));
+        helper.assertTrue(seen.getInterestingBlocksList().stream().anyMatch(b -> b.getPos().getX() == wallAbove.getX()
+                && b.getPos().getY() == wallAbove.getY() && b.getPos().getZ() == wallAbove.getZ()),
+                "the wall two above the rung must be listed");
         hang.accept(4);
         hang.accept(5);
         walkInto.accept(new BlockPos(1, 5, 1));
