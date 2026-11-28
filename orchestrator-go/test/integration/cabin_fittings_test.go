@@ -5,6 +5,7 @@ package integration
 // had never holds the shelter up.
 
 import (
+	"math"
 	"strings"
 	"testing"
 
@@ -112,5 +113,61 @@ func TestCabin_TimberIsFetchedForTheDoor(t *testing.T) {
 	if len(placedIn(s, "oak_door")) != 1 {
 		t.Errorf("no door hung with trees to hand (inventory: %s)\n%s", s.InventorySummary(),
 			traceTail(s, len(s.Steps)-30, len(s.Steps)))
+	}
+}
+
+// cq-8jf (user: favour protection): an opening with no fitting is blocked with a temporary
+// block, the doorway from inside for the night; the walls are never touched, the doorway is
+// opened in the morning, and fittings held later replace the temporary blocks.
+func TestCabin_SealedForTheNightOpenedInTheMorningAndFittedLater(t *testing.T) {
+	s, state := buildCabinIn(t, groundWorld(30), &civquestv1.ItemStackProto{ItemId: "minecraft:cobblestone", Count: 100})
+	site := state.GetShelterPos()
+	at := func(dx, dy, dz int32) eval.BlockPosKey {
+		return eval.BlockPosKey{X: site.X + dx, Y: site.Y + dy, Z: site.Z + dz}
+	}
+	door := []eval.BlockPosKey{at(0, 1, 2), at(0, 2, 2)}
+	windows := []eval.BlockPosKey{at(-2, 2, 0), at(2, 2, 0)}
+	inside := func(s *eval.PlaytestSim) bool {
+		return math.Abs(s.Pos.X-float64(site.X)-0.5) < 1.5 && math.Abs(s.Pos.Z-float64(site.Z)-0.5) < 1.5
+	}
+	sealed := func(s *eval.PlaytestSim) bool {
+		return s.BlockAt(door[0]) == "minecraft:cobblestone" && s.BlockAt(door[1]) == "minecraft:cobblestone"
+	}
+	harvested := len(s.Harvests)
+	// The sim walks in straight lines: put the builder on the doorway's side.
+	s.Pos = eval.SimVec{X: float64(site.X) + 0.5, Y: float64(site.Y), Z: float64(site.Z) + 3.5}
+
+	if !s.RunUntil(func(s *eval.PlaytestSim) bool { return sealed(s) && inside(s) }, 2*simTicksPerMinute) {
+		t.Fatalf("doorway not sealed from inside: door %q/%q pos %+v\n%s", s.BlockAt(door[0]), s.BlockAt(door[1]), s.Pos,
+			traceTail(s, len(s.Steps)-30, len(s.Steps)))
+	}
+	for _, w := range windows {
+		if s.BlockAt(w) != "minecraft:cobblestone" {
+			t.Errorf("window %v is %q, want blocked", w, s.BlockAt(w))
+		}
+	}
+	s.RunUntil(func(s *eval.PlaytestSim) bool { return s.TOD%24000 >= 22000 }, 12*simTicksPerMinute)
+	if !sealed(s) || !inside(s) || len(s.Harvests) != harvested {
+		t.Fatalf("night not spent sealed in: sealed=%v inside=%v breaks=%d", sealed(s), inside(s), len(s.Harvests)-harvested)
+	}
+
+	if !s.RunUntil(func(s *eval.PlaytestSim) bool { return s.BlockAt(door[0]) == "" && s.BlockAt(door[1]) == "" }, 5*simTicksPerMinute) {
+		t.Fatalf("doorway not opened in the morning (tod %d)\n%s", s.TOD%24000, traceTail(s, len(s.Steps)-30, len(s.Steps)))
+	}
+	for _, h := range s.Harvests[harvested:] {
+		if h.Cell != door[0] && h.Cell != door[1] {
+			t.Errorf("broke %v (%s), outside the doorway", h.Cell, h.BlockID)
+		}
+	}
+
+	s.AddItem("minecraft:oak_door", 1)
+	s.AddItem("minecraft:glass_pane", 2)
+	s.Pos = eval.SimVec{X: float64(site.X) + 0.5, Y: float64(site.Y + 1), Z: float64(site.Z) + 0.5}
+	if !s.RunUntil(func(s *eval.PlaytestSim) bool {
+		return s.BlockAt(door[0]) == "minecraft:oak_door" && s.BlockAt(windows[0]) == "minecraft:glass_pane" &&
+			s.BlockAt(windows[1]) == "minecraft:glass_pane"
+	}, 3*simTicksPerMinute) {
+		t.Fatalf("fittings not put in: %q %q %q (%s)\n%s", s.BlockAt(door[0]), s.BlockAt(windows[0]), s.BlockAt(windows[1]),
+			s.InventorySummary(), traceTail(s, len(s.Steps)-30, len(s.Steps)))
 	}
 }

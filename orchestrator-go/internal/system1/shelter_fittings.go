@@ -119,6 +119,18 @@ func (v fittingView) timberShort(state *AgentState, frame *civquestv1.TelemetryF
 // when there has long been nothing to do for it. state.mu held.
 func (s *AgentState) fittingStepLocked(agentID, at string, frame *civquestv1.TelemetryFrame, pos *civquestv1.Vec3,
 	navState civquestv1.NavigationState, prog *shelterLocal) *civquestv1.AgentIntent {
+	in, spent := prog.workFitting(s, agentID, at, frame, pos, navState)
+	if spent {
+		s.passOverFittingLocked(prog, inspectBootstrapInventory(frame.Status.Inventory))
+		return nil
+	}
+	return in
+}
+
+// workFitting is one step of l.Fit toward making a fitting; spent reports that there has long
+// been nothing to do for it. state.mu held.
+func (prog *shelterLocal) workFitting(s *AgentState, agentID, at string, frame *civquestv1.TelemetryFrame,
+	pos *civquestv1.Vec3, navState civquestv1.NavigationState) (in *civquestv1.AgentIntent, spent bool) {
 	tick := frame.WorldTick
 	job := prog.Fit
 	in, working := s.makeFittingLocked(agentID, at, frame, pos, navState, prog, &job)
@@ -131,11 +143,7 @@ func (s *AgentState) fittingStepLocked(agentID, at string, frame *civquestv1.Tel
 		job.Idled = tick
 	}
 	prog.Fit = job
-	if job.IdleSince != 0 && tick-job.IdleSince >= fittingPatience {
-		s.passOverFittingLocked(prog, inspectBootstrapInventory(frame.Status.Inventory))
-		return nil
-	}
-	return in
+	return in, job.IdleSince != 0 && tick-job.IdleSince >= fittingPatience
 }
 
 // makeFittingLocked crafts what the fitting needs, with the table that takes. working is false

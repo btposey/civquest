@@ -73,3 +73,35 @@ func FittingCrafts(state string) []string {
 	}
 	return out
 }
+
+// Opening is a doorway or window of the cabin template: the state it should hold and the cells
+// it spans, bottom first, as offsets from the cabin's centre.
+type Opening struct {
+	State string
+	Cells [][3]int32
+}
+
+// CabinOpenings lists the template's openings, the doorway first.
+func CabinOpenings() []Opening {
+	var out []Opening
+	for _, b := range rawCabinBlocks() {
+		if !IsFitting(b.State) {
+			continue
+		}
+		o := Opening{State: b.State, Cells: [][3]int32{{b.X, b.Y, b.Z}}}
+		if !IsWindow(b.State) {
+			o.Cells = append(o.Cells, [3]int32{b.X, b.Y + 1, b.Z}) // a door is two blocks tall
+		}
+		out = append(out, o)
+	}
+	return out
+}
+
+// FillsOpening reports whether blockID is a fitting for an opening drawn as state.
+func FillsOpening(state, blockID string) bool {
+	id := NormalizeItemID(blockID)
+	if !IsWindow(state) {
+		return strings.HasSuffix(id, "_door")
+	}
+	return strings.HasSuffix(id, "glass_pane") || strings.HasSuffix(id, "_trapdoor") || strings.HasSuffix(id, "_fence")
+}

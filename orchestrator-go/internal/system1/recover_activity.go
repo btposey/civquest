@@ -321,7 +321,8 @@ func (recoverActivity) Init(w htpda.World, args any) (any, htpda.Lease) {
 		if l := lw.fsm.escapeLock; l != nil && a.Cause == CauseEnclosed && w.Tick()-l.Tick < l.ttl() {
 			loc.Locked, loc.DirX, loc.DirZ, loc.Climb, loc.NoLadder = true, l.DirX, l.DirZ, l.Climb, l.NoLadder
 		}
-		if a.Cause == CauseEnclosed && lw.fsm.notePocket(lw.pos(), w.Tick()) >= pocketsBeforeClimb(lw.Frame(), lw.pos()) {
+		indoors := lw.ctx != nil && lw.ctx.State != nil && insideCabin(lw.pos(), lw.ctx.State.ownCabin())
+		if a.Cause == CauseEnclosed && !indoors && lw.fsm.notePocket(lw.pos(), w.Tick()) >= pocketsBeforeClimb(lw.Frame(), lw.pos()) {
 			loc.Climb = true
 		}
 		if p := lw.pos(); p != nil {
@@ -329,7 +330,7 @@ func (recoverActivity) Init(w htpda.World, args any) (any, htpda.Lease) {
 			if a.HasTarget {
 				loc.StartDist = math.Hypot(p.X-a.Target[0], p.Z-a.Target[2])
 				// Not for an enclosed agent: digging, not another target, is its remedy.
-				if a.Cause == CauseTerrain && !loc.SawEntity && lw.fsm != nil {
+				if a.Cause == CauseTerrain && !loc.SawEntity && !indoors && lw.fsm != nil {
 					dist := math.Sqrt(sq(p.X-a.Target[0]) + sq(p.Y-a.Target[1]) + sq(p.Z-a.Target[2]))
 					loc.Stalled = lw.fsm.noteStuck(a.Target, dist, w.Tick())
 				}
@@ -448,6 +449,11 @@ func (a recoverActivity) advance(lw *fsmWorld, loc recoverLocal) htpda.Step {
 	}
 	if loc.Attempts >= loc.maxAttempts() && loc.Cause != CauseEnclosed {
 		return a.giveUp(lw, loc)
+	}
+	// The agent's own cabin is left by its doorway, never through its walls (shelter_openings.go).
+	if in, handled := loc.doorwayStep(lw, f, pos); handled {
+		loc.LastEmit, loc.Emitted, loc.NavSent = tick, true, in.GetNavigate() != nil
+		return htpda.Step{Op: htpda.OpStay, Next: loc, Intents: []*civquestv1.AgentIntent{in}}
 	}
 	var intent *civquestv1.AgentIntent
 	switch loc.Cause {
