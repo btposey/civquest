@@ -30,10 +30,11 @@ const (
 // climbMemory is where recent enclosed recoveries began.
 type climbMemory struct{ pockets []gaveUpHere }
 
-// notePocket records an enclosed recovery at pos and reports whether to climb.
-func (fsm *AgentFSM) notePocket(pos *civquestv1.Vec3, tick int64) bool {
+// notePocket records an enclosed recovery at pos and returns how many there have now been about
+// here.
+func (fsm *AgentFSM) notePocket(pos *civquestv1.Vec3, tick int64) int {
 	if pos == nil {
-		return false
+		return 0
 	}
 	kept, near := fsm.pockets[:0], 0
 	for _, p := range fsm.pockets {
@@ -45,7 +46,29 @@ func (fsm *AgentFSM) notePocket(pos *civquestv1.Vec3, tick int64) bool {
 		}
 	}
 	fsm.pockets = append(kept, gaveUpHere{X: pos.X, Z: pos.Z, Tick: tick})
-	return near+1 >= pocketEpisodes
+	return near + 1
+}
+
+// pocketsBeforeClimb is how many enclosed recoveries here start a climb. With ladders carried the
+// way up needs no table and no steps cut, so it is taken sooner where the higher ground is plain:
+// at once between walls on three sides, at the second recovery beside fewer (cq-htv.4).
+func pocketsBeforeClimb(f *civquestv1.TelemetryFrame, pos *civquestv1.Vec3) int {
+	if f == nil || f.Status == nil || pos == nil || crafting.InventoryMapFromProtos(f.Status.Inventory)[ladderItem] == 0 {
+		return pocketEpisodes
+	}
+	walls := 0
+	for _, d := range CardinalDirs {
+		if vertical.Climbable(ladderCell(pos), int(d[0]), int(d[1]), frameSolid(f)) {
+			walls++
+		}
+	}
+	switch {
+	case walls >= 3:
+		return 1
+	case walls > 0:
+		return pocketEpisodes - 1
+	}
+	return pocketEpisodes
 }
 
 func (l recoverEscapeLock) ttl() int64 {

@@ -1,7 +1,8 @@
 package system1
 
-// Climbing a wall by ladder (cq-htv.1): a step-level activity (ADR-040) that crafts ladders from
-// carried wood, hangs them up the agent's own column and climbs onto the ledge above. Recover
+// Climbing a wall by ladder (cq-htv.1): a step-level activity (ADR-040) that hangs ladders up the
+// agent's own column and climbs onto the ledge above. It uses the ladders carried (the reserve of
+// plan/ladders.go) and crafts from carried wood only when it has none (cq-htv.4). Recover
 // pushes it for a trapped agent; travel and felling may push it with the wall they choose. The
 // ladders stay where they are hung (user, 2026-11-27).
 //
@@ -17,6 +18,7 @@ import (
 	"github.com/btposey/civquest/orchestrator-go/internal/crafting"
 	civquestv1 "github.com/btposey/civquest/orchestrator-go/internal/proto/v1"
 	"github.com/btposey/civquest/orchestrator-go/internal/system1/htpda"
+	"github.com/btposey/civquest/orchestrator-go/internal/system1/plan"
 	"github.com/btposey/civquest/orchestrator-go/internal/system1/vertical"
 )
 
@@ -32,7 +34,7 @@ const (
 
 // ladderTunables is the single home of the climb's numbers (initial values).
 var ladderTunables = struct {
-	// Stock ladders are made before climbing, if the wood lasts: the wall's height is unseen.
+	// Stock ladders are made when none are carried, if the wood lasts: the wall's height is unseen.
 	Stock int
 	// StockTicks bounds the making of them.
 	StockTicks int64
@@ -42,7 +44,7 @@ var ladderTunables = struct {
 	AskTicks int64
 	// IdleWalks is how many climbing legs may end no higher before the climb has failed.
 	IdleWalks int
-}{Stock: 12, StockTicks: 400, LeaseTicks: 600, AskTicks: 200, IdleWalks: 3}
+}{Stock: plan.LadderReserve, StockTicks: 400, LeaseTicks: 600, AskTicks: 200, IdleWalks: 3}
 
 // ladderArgs names the wall: the side of the agent's cell it is on.
 type ladderArgs struct{ DirX, DirZ int32 }
@@ -65,11 +67,12 @@ type ladderLocal struct {
 	ladderArgs
 	Column  vertical.Cell // the base of the ladder column
 	Walk    walkLocal     // craft latch and station asks
-	Started int64
-	Stocked bool // no more are made
-	Top     int  // highest rung hung
-	Best    int  // highest cell reached
-	Idle    int  // climbing legs since Best rose
+	Started int64         // when the making of ladders began
+	Making  bool          // ladders are being made
+	Made    bool          // the one making of this climb is over
+	Top     int           // highest rung hung
+	Best    int           // highest cell reached
+	Idle    int           // climbing legs since Best rose
 	Ask     ladderAsk
 	Waiting bool // Ask is out
 }
@@ -84,7 +87,7 @@ func (ladderActivity) Propose(htpda.World) htpda.Bid { return htpda.Bid{} }
 
 func (ladderActivity) Init(w htpda.World, args any) (any, htpda.Lease) {
 	a, _ := args.(ladderArgs)
-	loc := ladderLocal{ladderArgs: a, Started: w.Tick()}
+	loc := ladderLocal{ladderArgs: a}
 	if lw := asFSMWorld(w); lw != nil {
 		if p := lw.pos(); p != nil {
 			loc.Column = ladderCell(p)
@@ -157,7 +160,7 @@ func (a ladderActivity) step(w htpda.World, loc ladderLocal, ev htpda.Event) htp
 				return a.fail(lw, loc, "refused: "+reason)
 			}
 			if loc.Walk.craftLatch.armed() { // a refused craft: climb with what there is
-				loc.Walk.craftLatch, loc.Stocked = craftLatch{}, true
+				loc.Walk.craftLatch, loc.Making, loc.Made = craftLatch{}, false, true
 			}
 		case civquestv1.IntentReceipt_RECEIPT_STATUS_COMPLETED:
 			if loc.Waiting && loc.Ask.Op == vertical.ClimbHang {
@@ -176,6 +179,14 @@ func (a ladderActivity) step(w htpda.World, loc ladderLocal, ev htpda.Event) htp
 
 func (l ladderLocal) answered() ladderLocal {
 	l.Waiting = false
+	return l
+}
+
+// made ends the making of ladders when done.
+func (l ladderLocal) made(done bool) ladderLocal {
+	if done {
+		l.Making, l.Made = false, true
+	}
 	return l
 }
 
@@ -210,16 +221,6 @@ func (a ladderActivity) advance(lw *fsmWorld, loc ladderLocal) htpda.Step {
 	case !inColumn:
 		return a.fail(lw, loc, "no longer at the wall")
 	}
-	if !loc.Stocked {
-		var in *civquestv1.AgentIntent
-		if in, loc = a.stock(lw, loc); !loc.Stocked {
-			st := htpda.Step{Op: htpda.OpStay, Next: loc}
-			if in != nil {
-				st.Intents = []*civquestv1.AgentIntent{in}
-			}
-			return st
-		}
-	}
 	var lease *htpda.Lease
 	if at.Y > loc.Best {
 		loc.Best, loc.Idle, lease = at.Y, 0, a.renew(lw)
@@ -232,8 +233,27 @@ func (a ladderActivity) advance(lw *fsmWorld, loc ladderLocal) htpda.Step {
 		}
 		loc.Top++
 	}
+	carried := crafting.InventoryMapFromProtos(f.Status.Inventory)[ladderItem]
 	move := vertical.NextClimb(vertical.ClimbState{At: at, DX: int(loc.DirX), DZ: int(loc.DirZ), BaseY: loc.Column.Y,
-		Top: loc.Top, Ladders: crafting.InventoryMapFromProtos(f.Status.Inventory)[ladderItem]}, frameSolid(f))
+		Top: loc.Top, Ladders: carried}, frameSolid(f))
+	if move.Op == vertical.ClimbStuck && carried == 0 && !loc.Made && !loc.Making {
+		loc.Making, loc.Started = true, tick
+	}
+	if loc.Making {
+		in, next := a.stock(lw, loc)
+		if !next.Making {
+			st := a.advance(lw, next)
+			if st.Lease == nil {
+				st.Lease = lease
+			}
+			return st
+		}
+		st := htpda.Step{Op: htpda.OpStay, Next: next, Lease: lease}
+		if in != nil {
+			st.Intents = []*civquestv1.AgentIntent{in}
+		}
+		return st
+	}
 	var intent *civquestv1.AgentIntent
 	switch move.Op {
 	case vertical.ClimbHang:
@@ -249,7 +269,7 @@ func (a ladderActivity) advance(lw *fsmWorld, loc ladderLocal) htpda.Step {
 		intent = recoverStep(lw.agentID(), int32(move.Cell.X), int32(move.Cell.Y), int32(move.Cell.Z))
 	default:
 		reason := "no way up the wall"
-		if crafting.InventoryMapFromProtos(f.Status.Inventory)[ladderItem] == 0 {
+		if carried == 0 {
 			reason = "out of ladders"
 		}
 		return a.fail(lw, loc, reason)
@@ -258,14 +278,13 @@ func (a ladderActivity) advance(lw *fsmWorld, loc ladderLocal) htpda.Step {
 	return htpda.Step{Op: htpda.OpStay, Next: loc, Lease: lease, Intents: []*civquestv1.AgentIntent{intent}}
 }
 
-// stock makes ladders at the foot of the wall: a table in reach (set down, or made first), then
-// batches until there are enough or no more can be made. A nil intent while not Stocked waits.
+// stock makes ladders at the wall: a table in reach (set down, or made first), then batches until
+// there are enough or no more can be made, which clears Making. A nil intent while Making waits.
 func (ladderActivity) stock(lw *fsmWorld, loc ladderLocal) (*civquestv1.AgentIntent, ladderLocal) {
 	st, f, pos := lw.ctx.State, lw.Frame(), lw.pos()
 	inv := crafting.InventoryMapFromProtos(f.Status.Inventory)
 	if inv[ladderItem] >= ladderTunables.Stock || lw.Tick()-loc.Started >= ladderTunables.StockTicks {
-		loc.Stocked = true
-		return nil, loc
+		return nil, loc.made(true)
 	}
 	st.mu.Lock()
 	defer st.mu.Unlock()
@@ -277,18 +296,15 @@ func (ladderActivity) stock(lw *fsmWorld, loc ladderLocal) (*civquestv1.AgentInt
 		want = craftingTableItem
 		if inv[craftingTableItem] > 0 {
 			in, refused := st.placeStationLocked(lw.agentID(), craftingTableItem, f, &loc.Walk)
-			loc.Stocked = refused
-			return in, loc
+			return in, loc.made(refused)
 		}
 		if st.stationRefusedLocked(craftingTableItem, f) {
 			// Just set down and not yet listed, or given up: wait, unless there is nothing to wait for.
-			loc.Stocked = inv[ladderItem] > 0
-			return nil, loc
+			return nil, loc.made(inv[ladderItem] > 0)
 		}
 	}
 	if step, ok := graph.PlanNextStep(want, inv, inReach); !ok || !step.CanExecuteNow {
-		loc.Stocked = true
-		return nil, loc
+		return nil, loc.made(true)
 	}
 	return craftToolIntentLocked(lw.agentID(), f, st, pos, want, &loc.Walk), loc
 }

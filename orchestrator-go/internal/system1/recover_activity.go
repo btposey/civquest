@@ -319,7 +319,7 @@ func (recoverActivity) Init(w htpda.World, args any) (any, htpda.Lease) {
 		if l := lw.fsm.escapeLock; l != nil && a.Cause == CauseEnclosed && w.Tick()-l.Tick < l.ttl() {
 			loc.Locked, loc.DirX, loc.DirZ, loc.Climb, loc.NoLadder = true, l.DirX, l.DirZ, l.Climb, l.NoLadder
 		}
-		if a.Cause == CauseEnclosed && lw.fsm.notePocket(lw.pos(), w.Tick()) {
+		if a.Cause == CauseEnclosed && lw.fsm.notePocket(lw.pos(), w.Tick()) >= pocketsBeforeClimb(lw.Frame(), lw.pos()) {
 			loc.Climb = true
 		}
 		if p := lw.pos(); p != nil {

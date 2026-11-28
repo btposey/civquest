@@ -22,15 +22,17 @@ func TestPlaytest11_AgentClimbsOutOfADeepPitByLadder(t *testing.T) {
 		name        string
 		half, depth int32
 		logs        int32
+		carried     int // ladders already in the pack
 		rock        string
 		refuse      bool // the server refuses every ladder
 		ladders     bool // the way out is by ladder
 	}{
 		// Rock that cannot be cut leaves the ladder as the only way up.
-		{"narrow shaft, eight deep", 1, 8, 8, "minecraft:bedrock", false, true},
-		{"ravine floor, ten deep", 3, 10, 8, "minecraft:bedrock", false, true},
-		{"too little wood: steps are cut", 2, 5, 1, "minecraft:stone", false, false},
-		{"ladders refused: steps are cut", 2, 5, 8, "minecraft:stone", true, false},
+		{"narrow shaft, eight deep", 1, 8, 8, 0, "minecraft:bedrock", false, true},
+		{"ravine floor, ten deep", 3, 10, 8, 0, "minecraft:bedrock", false, true},
+		{"ladders carried, no wood", 1, 8, 0, 12, "minecraft:bedrock", false, true},
+		{"too little wood: steps are cut", 2, 5, 1, 0, "minecraft:stone", false, false},
+		{"ladders refused: steps are cut", 2, 5, 8, 0, "minecraft:stone", true, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			p := &pocketSim{air: map[pocketCell]bool{}, top: 64 + tc.depth, rock: tc.rock}
@@ -49,7 +51,7 @@ func TestPlaytest11_AgentClimbsOutOfADeepPitByLadder(t *testing.T) {
 			cfg := xdg.DefaultAgentIdentityConfig("fred")
 			cfg.Profession = "EXPLORER"
 			inv := map[string]int{"minecraft:stone_pickaxe": 1, "minecraft:stone_axe": 1, "minecraft:stone_sword": 1,
-				"minecraft:oak_log": int(tc.logs)}
+				"minecraft:oak_log": int(tc.logs), "minecraft:ladder": tc.carried}
 
 			ladders, tables := map[pocketCell]bool{}, map[pocketCell]bool{}
 			// hold reports whether a body stays in cell c.
@@ -196,6 +198,8 @@ func TestPlaytest11_AgentClimbsOutOfADeepPitByLadder(t *testing.T) {
 					switch {
 					case tc.ladders && hung < int(tc.depth)-1:
 						t.Errorf("left the pit with %d ladders hung, want a column of at least %d", hung, tc.depth-1)
+					case tc.carried > 0 && (len(tables) > 0 || tick-1000 > 400):
+						t.Errorf("carried ladders: %d tables set down, out after %d ticks", len(tables), tick-1000)
 					case !tc.ladders && (hung > 0 || breaks == 0):
 						t.Errorf("want steps cut: %d ladders hung, %d blocks broken", hung, breaks)
 					case tc.refuse && asked > 4:
