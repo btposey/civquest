@@ -34,6 +34,7 @@ const (
 
 // woolLocal is the Wool frame Local.
 type woolLocal struct {
+	Breaks         breakRecord // refused_breaks.go
 	LastActionTick int64
 	LastTargetKey  string
 }

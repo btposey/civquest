@@ -285,6 +285,10 @@ func (fsm *AgentFSM) applyMemoryLocked(w *fsmWorld, writes []htpda.MemoryWrite) 
 		if fsm.planning.applyMemory(wr) {
 			continue
 		}
+		if b, ok := wr.(blockRefused); ok {
+			w.ctx.State.giveUpBlock(b.At, b.Tick)
+			continue
+		}
 		if b, ok := wr.(workBackoff); ok {
 			if fsm.workBackoffUntil == nil {
 				fsm.workBackoffUntil = map[htpda.Kind]int64{}

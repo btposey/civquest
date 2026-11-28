@@ -22,7 +22,7 @@ State at `b201b2a`, in `orchestrator-go/internal/system1`.
 | `gatherSkips` | a find that took too long | 6000 | `gather_activity.go` |
 | `unreachableTargets` | a place (2.5 block radius) | 2400 | `state.go`, `blacklist.go` |
 | `failedTrees` | a trunk | 600 | `state.go` |
-| `unreachableWorkstations` | a workstation block | 600 | `state.go` |
+| `unreachableWorkstations` | a block: a workstation not reached, or one that would not break (added by cq-6nz, after the commit above) | 600 | `state.go` |
 | `w.skipped` | an activity, for the current tick | 1 tick | `kernel_adapter.go` |
 | kernel `idled` / `cooled` | a child that ended without progress | `cooled` is off (`NoProgressBackoff` = 0) | `htpda/hierarchy.go` |
 
@@ -57,7 +57,7 @@ type Subject struct {
 
 type Failure struct {
     Subject Subject
-    Reason  Reason // NoPath, NoProgress, TimedOut, NothingToDo, Thrashed, ...
+    Reason  Reason // NoPath, NoProgress, TimedOut, NothingToDo, ...
     At      int64
     Until   int64
     Count   int
@@ -81,15 +81,16 @@ type Failure struct {
 
 ### 3. One rule against churn
 
-The kernel already reports each popped frame as idle or not. The adapter turns an idle or thrashing pop into `Failed{Work(kind), ...}`. This replaces `popNoWork`, the interruption tracker and the kernel's unused `cooled` map. Interrupts, travel and tasks are exempt, as now.
+The kernel already reports each popped frame as idle or not. The adapter turns a pop for want of work into `Failed{Work(kind), NothingToDo}`. This replaces `popNoWork` and the kernel's unused `cooled` map. Interrupts, travel and tasks are exempt, as now. Work that keeps starting and stopping, or falls straight through when pushed over other work, is a fault: it is reported (§4), not backed off.
 
-### 4. The watchdog becomes an alarm
+### 4. The watchdog only reports
 
-The standstill watch stays as a last resort, because a frozen agent stops all progress. Its meaning changes: **a firing is a bug**.
+Decided in review (2026-11-27): "Frozen stays frozen. Doesn't mask the issue." The watchdog takes no action, in live play or in tests. An agent that freezes stays frozen until the cause is fixed.
 
-- Simulation and replay tests fail if it fires.
-- In live play it still acts, logs at error level, and is counted by `stack-metrics`.
-- It is deleted after three consecutive play tests with no firing.
+- It watches for three conditions: an activity repeatedly refused, no progress through daylight, and work that keeps starting and stopping (`cq-xr7.4`).
+- Only an action the game confirms counts as progress. Counting each send hid a 36-minute block-breaking loop (`cq-6nz`).
+- A firing is a bug. It is logged at error level with the activity and what it was attempting, flagged in play test summaries, counted by `stack-metrics`, and fails simulation and replay tests.
+- Its actions are deleted: taking the activity off the stack (`stonewalls`), asking for a fresh look, and backing off thrashing work.
 
 ### 5. Tests enforce the design
 
@@ -109,14 +110,13 @@ Each stage is one or more commits with all tests green, scored with `stack-metri
 
 | # | Stage | Behaviour change |
 |---|---|---|
-| 1 | Ratchet tests (sizes, fields, state calls) | none |
+| 1 | Watchdog reports only; delete `stonewalls` and the thrash back-off. Ratchet tests (sizes, fields, state calls) | yes |
 | 2 | `Memory` type; move the activity back-offs into it | none intended |
-| 3 | Move place, trunk and workstation records into it | none intended |
-| 4 | `Refused` event; survey as a child; delete `refusals` | yes |
-| 5 | One churn rule; delete `popNoWork`, `interruptions`, `cooled`, and `skipped` if possible | yes |
-| 6 | Watchdog alarm in tests; delete `stonewalls` in favour of `Memory` | yes |
+| 3 | Move place, trunk and block records into it | none intended |
+| 4 | `Refused` event; survey as a child; delete `refusals` (the watchdog counts `Refused` instead) | yes |
+| 5 | One churn rule; delete `popNoWork`, `cooled`, and `skipped` if possible | yes |
 
-Stages 4 to 6 each get a sandbox play test before the next begins.
+The watchdog goes first so that every later play test shows what is really wrong. Stages 1, 4 and 5 each get a sandbox play test before the next begins.
 
 ## Done means
 
@@ -135,10 +135,10 @@ Stages 4 to 6 each get a sandbox play test before the next begins.
 
 - Merging stores can change behaviour by accident, mostly through match radius and duration. Stages 2 and 3 keep today's values and compare replays.
 - Popping on refusal may make an agent switch activities more often. Stage 4 is measured on pushes per 1000 ticks.
-- Replay golden files will change in stages 4 to 6, with the reason recorded.
+- Replay golden files will change in stages 1, 4 and 5, with the reason recorded.
+- With no safety net, play tests may show more frozen agents until the causes are fixed. This is intended.
 
 ## Open questions for review
 
-1. **Watchdog:** keep it acting in live play until proven unused (proposed), or make it log only from stage 6?
-2. **Size ceilings:** reset to today's sizes and ratchet down (proposed), or first split the seven oversized files back under the old ceilings?
-3. **Order:** finish this before the night shelter bug `cq-xr7.3` (proposed)?
+1. **Size ceilings:** reset to today's sizes and ratchet down (proposed), or first split the seven oversized files back under the old ceilings?
+2. **Order:** finish this before the night shelter bug `cq-xr7.3` (proposed)?

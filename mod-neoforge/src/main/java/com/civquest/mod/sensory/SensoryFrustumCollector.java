@@ -2,6 +2,7 @@ package com.civquest.mod.sensory;
 
 import com.civquest.mod.CivQuestMod;
 import com.civquest.mod.AgentEntity;
+import com.civquest.mod.actuator.BlockBreaker;
 import com.civquest.mod.grpc.v1.AgentStatus;
 import com.civquest.mod.grpc.v1.BlockPosProto;
 import com.civquest.mod.grpc.v1.BoundingBoxProto;
@@ -602,6 +603,8 @@ public class SensoryFrustumCollector {
             frameBuilder.addInterestingBlocks(nonLog);
         }
 
+        markRefusedBreaks(level, frameBuilder);
+
         if ((totalFarmlandBlocks > 0 || matureCropCount > 0) && farmMinX <= farmMaxX) {
             String primaryCropId = matureCropCount > 0 ? matureCropFrequency.entrySet().stream()
                     .max(Map.Entry.comparingByValue())
@@ -619,6 +622,20 @@ public class SensoryFrustumCollector {
                     .setInferredOwnerUuid("")
                     .build();
             frameBuilder.setFarmlandSurvey(survey);
+        }
+    }
+
+    /**
+     * Says which of the collected blocks the breaker would refuse from anywhere (cq-6nz), by the
+     * breaker's own rule, so the orchestrator does not ask for them.
+     */
+    private static void markRefusedBreaks(Level level, TelemetryFrame.Builder frameBuilder) {
+        for (int i = 0; i < frameBuilder.getInterestingBlocksCount(); i++) {
+            VisibleBlock block = frameBuilder.getInterestingBlocks(i);
+            BlockPos pos = new BlockPos(block.getPos().getX(), block.getPos().getY(), block.getPos().getZ());
+            if (!BlockBreaker.isBreakable(level, pos)) {
+                frameBuilder.setInterestingBlocks(i, block.toBuilder().setBreakRefused(true).build());
+            }
         }
     }
 

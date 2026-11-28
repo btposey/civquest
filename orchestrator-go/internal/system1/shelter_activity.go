@@ -25,8 +25,9 @@ const (
 )
 
 type shelterLocal struct {
-	BuildIndex int // next cabin blueprint block to place
-	Phase      int // construction phase of the last placed block
+	Breaks     breakRecord // refused_breaks.go
+	BuildIndex int         // next cabin blueprint block to place
+	Phase      int         // construction phase of the last placed block
 	Pos        *civquestv1.BlockPosProto
 	// Walk is the night-outpost search/exploration cursor used while sourcing materials.
 	Walk walkLocal

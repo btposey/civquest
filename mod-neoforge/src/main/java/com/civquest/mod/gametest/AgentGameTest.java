@@ -288,6 +288,55 @@ public class AgentGameTest {
         helper.succeed();
     }
 
+    // cq-6nz: stone with water against it is not broken, and the frame says so beforehand; dry
+    // stone is reported breakable and breaks.
+    @GameTest(template = "empty3x3x3")
+    public static void testRefusedBreakIsReported(GameTestHelper helper) {
+        MinecraftServer server = helper.getLevel().getServer();
+        AgentEntityManager manager = new AgentEntityManager();
+        BlockPos wet = new BlockPos(2, 1, 1);
+        BlockPos water = wet.east();
+        for (BlockPos holds : new BlockPos[] {wet.below(), water.below(), water.east(), water.north(), water.south()}) {
+            helper.setBlock(holds, Blocks.STONE);
+        }
+        helper.setBlock(wet, Blocks.STONE);
+        helper.setBlock(water, Blocks.WATER);
+        BlockPos dry = new BlockPos(0, 1, 3);
+        helper.setBlock(dry, Blocks.STONE);
+        helper.setBlock(new BlockPos(0, 0, 1), Blocks.STONE);
+        AgentEntity agent = spawnCoverageAgent(helper, manager, "agent-gt-wet", new BlockPos(0, 1, 1));
+        agent.getInventory().add(new ItemStack(Items.STONE_PICKAXE));
+
+        TelemetryFrame frame = manager.getSensoryCollector().collectFrame(agent);
+        helper.assertTrue(reportedRefused(helper, frame, wet), "Stone beside water must be reported as refused");
+        helper.assertTrue(!reportedRefused(helper, frame, dry), "Dry stone must be reported as breakable");
+
+        BlockPos at = helper.absolutePos(wet);
+        manager.handleIntent(server, AgentIntent.newBuilder().setAgentId("agent-gt-wet")
+                .setInteractBlock(InteractBlockIntent.newBuilder()
+                        .setPos(BlockPosProto.newBuilder().setX(at.getX()).setY(at.getY()).setZ(at.getZ()))
+                        .setInteractionType(InteractBlockIntent.InteractionType.HARVEST_BREAK))
+                .build()).join();
+        for (int t = 0; t < 100; t++) {
+            agent.tick();
+        }
+        helper.assertBlockPresent(Blocks.STONE, wet);
+        breakAndWait(helper, manager, server, agent, helper.absolutePos(dry));
+        manager.despawnAgent(server, "agent-gt-wet").join();
+        helper.succeed();
+    }
+
+    private static boolean reportedRefused(GameTestHelper helper, TelemetryFrame frame, BlockPos relative) {
+        BlockPos at = helper.absolutePos(relative);
+        for (VisibleBlock block : frame.getInterestingBlocksList()) {
+            if (block.getPos().getX() == at.getX() && block.getPos().getY() == at.getY() && block.getPos().getZ() == at.getZ()) {
+                return block.getBreakRefused();
+            }
+        }
+        helper.fail("The agent does not see the block at " + relative);
+        return false;
+    }
+
     // cq-gey.1: agents far from any player and from spawn must keep ticking.
     @GameTest(template = "empty3x3x3", timeoutTicks = 200)
     public static void testAgentKeepsTickingFarFromSpawn(GameTestHelper helper) {

@@ -195,7 +195,8 @@ type recoverArgs struct {
 
 type recoverLocal struct {
 	recoverArgs
-	Climb        bool // enclosed: work to a wall and cut steps up it (climb_out.go)
+	Breaks       breakRecord // refused_breaks.go
+	Climb        bool        // enclosed: work to a wall and cut steps up it (climb_out.go)
 	Attempts     int
 	Congestions  int
 	SawEntity    bool // blocked_by_entity seen at any point of the episode: never blacklist
@@ -334,6 +335,10 @@ func (recoverActivity) Init(w htpda.World, args any) (any, htpda.Lease) {
 }
 
 func (a recoverActivity) Step(w htpda.World, local any, ev htpda.Event) htpda.Step {
+	return breakingStep(w, local, ev, func(local any) htpda.Step { return a.step(w, local, ev) })
+}
+
+func (a recoverActivity) step(w htpda.World, local any, ev htpda.Event) htpda.Step {
 	lw := asFSMWorld(w)
 	loc := htpda.LocalAs[recoverLocal](local)
 	if lw == nil || lw.ctx == nil || lw.ctx.State == nil {
@@ -416,6 +421,7 @@ func (a recoverActivity) advance(lw *fsmWorld, loc recoverLocal) htpda.Step {
 		return htpda.Step{Op: htpda.OpStay, Next: loc}
 	}
 	tick := lw.Tick()
+	unbreakable := func(b *civquestv1.VisibleBlock) bool { return lw.ctx.State.unbreakable(b, tick) }
 	if (loc.climbDone(pos) || !loc.Climb && loc.progressed(pos)) && (loc.Attempts > 0 || loc.Cause == CauseCongestion) {
 		return a.pop(loc, recovered{})
 	}
@@ -427,7 +433,7 @@ func (a recoverActivity) advance(lw *fsmWorld, loc recoverLocal) htpda.Step {
 	}
 	// Leaves are no wall: a spruce carries them to the ground, and the way in is through them.
 	if loc.Cause == CauseTerrain && loc.HasTarget {
-		if leaf := foliageAhead(f, pos, loc.Target); leaf != nil {
+		if leaf := foliageAhead(f, pos, loc.Target, unbreakable); leaf != nil {
 			loc.LeafBreaks++
 			loc.LastEmit, loc.Emitted, loc.NavSent = tick, true, false
 			return htpda.Step{Op: htpda.OpStay, Next: loc, Intents: []*civquestv1.AgentIntent{recoverBreak(lw.agentID(), leaf)}}
@@ -452,7 +458,7 @@ func (a recoverActivity) advance(lw *fsmWorld, loc recoverLocal) htpda.Step {
 		loc.Attempts++
 	case CauseEnclosed:
 		var isNav bool
-		intent, isNav = loc.enclosedStep(lw.agentID(), f, pos, tick, &loc)
+		intent, isNav = loc.enclosedStep(lw.agentID(), f, pos, tick, &loc, unbreakable)
 		if intent == nil || (isNav && tick < loc.NavNotBefore) {
 			return htpda.Step{Op: htpda.OpStay, Next: loc}
 		}
@@ -462,7 +468,7 @@ func (a recoverActivity) advance(lw *fsmWorld, loc recoverLocal) htpda.Step {
 	default:
 		if loc.Dig && hasAdjacentObstruction(f, loc.Bearing, pos) {
 			var isNav bool
-			intent, isNav = loc.enclosedStep(lw.agentID(), f, pos, tick, &loc)
+			intent, isNav = loc.enclosedStep(lw.agentID(), f, pos, tick, &loc, unbreakable)
 			if intent == nil || (isNav && tick < loc.NavNotBefore) {
 				return htpda.Step{Op: htpda.OpStay, Next: loc} // wait for the break to register
 			}
@@ -554,22 +560,46 @@ func recoverBreak(agentID string, b *civquestv1.VisibleBlock) *civquestv1.AgentI
 
 // enclosedStep returns the next dig-out intent (isNav: a step-up/out navigation, which counts
 // as an attempt) or nil to wait for a break to register. It updates the heading lock and the
-// dig throttle in out. Pillaring up has no Go-side intent (no jump) and is not restored.
-func (loc recoverLocal) enclosedStep(agentID string, frame *civquestv1.TelemetryFrame, pos *civquestv1.Vec3, tick int64, out *recoverLocal) (*civquestv1.AgentIntent, bool) {
+// dig throttle in out. A block that will not break is never asked for: the heading turns to a
+// side that can be cut, and failing that the agent steps about. Pillaring up has no Go-side
+// intent (no jump) and is not restored.
+func (loc recoverLocal) enclosedStep(agentID string, frame *civquestv1.TelemetryFrame, pos *civquestv1.Vec3, tick int64, out *recoverLocal,
+	unbreakable func(*civquestv1.VisibleBlock) bool) (*civquestv1.AgentIntent, bool) {
 	bx, by, bz := int32(math.Floor(pos.X)), int32(math.Floor(pos.Y)), int32(math.Floor(pos.Z))
 	if !out.Locked {
 		out.DirX, out.DirZ, _ = recoverEscapeDir(frame, loc.Bearing, bx, by, bz)
 		out.Locked = true
-	}
-	dirX, dirZ := out.DirX, out.DirZ
-	canDig := func() bool {
-		return out.LastDig == 0 || tick < out.LastDig || tick-out.LastDig >= recoverTunables.AttemptTicks
 	}
 	diggable := func(x, y, z int32) *civquestv1.VisibleBlock {
 		if b := FindVisibleBlockAt(frame, x, y, z); b != nil && IsDiggableObstruction(b.BlockId) {
 			return b
 		}
 		return nil
+	}
+	// toCut is the block at a cell that digging can remove.
+	toCut := func(x, y, z int32) *civquestv1.VisibleBlock {
+		if b := diggable(x, y, z); b != nil && !unbreakable(b) {
+			return b
+		}
+		return nil
+	}
+	refusedSide := func(dx, dz int32) bool {
+		for _, c := range [...]blockCell{{bx + dx, by + 1, bz + dz}, {bx + dx, by + 2, bz + dz}, {bx + 2*dx, by + 1, bz + 2*dz}} {
+			if b := diggable(c[0], c[1], c[2]); b != nil && unbreakable(b) {
+				return true
+			}
+		}
+		return false
+	}
+	for dx, dz, turn := out.DirX, out.DirZ, 0; turn < 4; dx, dz, turn = -dz, dx, turn+1 {
+		if !refusedSide(dx, dz) {
+			out.DirX, out.DirZ = dx, dz // with every side refused the heading stays
+			break
+		}
+	}
+	dirX, dirZ := out.DirX, out.DirZ
+	canDig := func() bool {
+		return out.LastDig == 0 || tick < out.LastDig || tick-out.LastDig >= recoverTunables.AttemptTicks
 	}
 	// breakAt returns (intent, true) when b is set: a break if the throttle allows, else wait.
 	breakAt := func(b *civquestv1.VisibleBlock) (*civquestv1.AgentIntent, bool) {
@@ -580,24 +610,24 @@ func (loc recoverLocal) enclosedStep(agentID string, frame *civquestv1.Telemetry
 		return recoverBreak(agentID, b), false
 	}
 
-	if b := diggable(bx, by+2, bz); b != nil { // overhead clearance
+	if b := toCut(bx, by+2, bz); b != nil { // overhead clearance
 		return breakAt(b)
 	}
 	s1x, s1z := bx+dirX, bz+dirZ
-	if b := diggable(s1x, by+1, s1z); b != nil { // eye level of the first step
+	if b := toCut(s1x, by+1, s1z); b != nil { // eye level of the first step
 		return breakAt(b)
 	}
-	if b := diggable(s1x, by+2, s1z); b != nil {
+	if b := toCut(s1x, by+2, s1z); b != nil {
 		return breakAt(b)
 	}
 	s2x, s2z := bx+2*dirX, bz+2*dirZ
 	if diggable(s1x, by, s1z) != nil { // 1-block elevated step: clear step-2 headroom, then jump onto it
-		if b := diggable(s2x, by+2, s2z); b != nil {
+		if b := toCut(s2x, by+2, s2z); b != nil {
 			return breakAt(b)
 		}
 		return recoverStep(agentID, s1x, by+1, s1z), true
 	}
-	if b := diggable(s2x, by+1, s2z); b != nil {
+	if b := toCut(s2x, by+1, s2z); b != nil {
 		return breakAt(b)
 	}
 	if loc.Climb {
@@ -612,7 +642,8 @@ func (loc recoverLocal) enclosedStep(agentID string, frame *civquestv1.Telemetry
 
 // foliageAhead is a leaf block at body height within two cells towards target, looking along the
 // grid direction nearest the target first: the telemetry always lists those cells.
-func foliageAhead(f *civquestv1.TelemetryFrame, pos *civquestv1.Vec3, target [3]float64) *civquestv1.VisibleBlock {
+func foliageAhead(f *civquestv1.TelemetryFrame, pos *civquestv1.Vec3, target [3]float64,
+	unbreakable func(*civquestv1.VisibleBlock) bool) *civquestv1.VisibleBlock {
 	dx, dz := target[0]-pos.X, target[2]-pos.Z
 	sign := func(v float64) int32 {
 		if v < 0 {
@@ -632,7 +663,7 @@ func foliageAhead(f *civquestv1.TelemetryFrame, pos *civquestv1.Vec3, target [3]
 		for n := int32(1); n <= 2; n++ {
 			for _, dy := range []int32{1, 0} {
 				b := FindVisibleBlockAt(f, bx+dir[0]*n, by+dy, bz+dir[1]*n)
-				if b != nil && strings.HasSuffix(b.BlockId, "_leaves") {
+				if b != nil && strings.HasSuffix(b.BlockId, "_leaves") && !unbreakable(b) {
 					return b
 				}
 			}

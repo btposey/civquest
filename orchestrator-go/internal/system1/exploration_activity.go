@@ -10,7 +10,10 @@ import (
 	"github.com/btposey/civquest/orchestrator-go/internal/xdg"
 )
 
-type explorationLocal struct{ Walk walkLocal }
+type explorationLocal struct {
+	Walk   walkLocal
+	Breaks breakRecord // refused_breaks.go
+}
 
 type explorationActivity struct{ frameBase }
 

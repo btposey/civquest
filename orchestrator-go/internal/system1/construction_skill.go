@@ -145,7 +145,9 @@ func (s *ConstructionSkill) Execute(ctx *SkillContext, facts *FactGraph) ([]*civ
 		return nil, nil
 	}
 
-	out, advance := constructionWorkStep(ctx.Frame, quadrant, intents[idx])
+	out, advance := constructionWorkStep(ctx.Frame, quadrant, intents[idx], func(b *civquestv1.VisibleBlock) bool {
+		return ctx.State.unbreakable(b, ctx.Frame.WorldTick)
+	})
 	if advance && ctx.Construction != nil {
 		ctx.Construction.Index++
 	}
@@ -154,8 +156,10 @@ func (s *ConstructionSkill) Execute(ctx *SkillContext, facts *FactGraph) ([]*civ
 
 // constructionWorkStep is the pure core of one blueprint work item: approach the voxel, clear
 // natural terrain obstructing it, or place the block. advance reports that the item is done
-// (placed, or skipped for lacking a target voxel) and the caller's index moves on.
-func constructionWorkStep(frame *civquestv1.TelemetryFrame, quadrant blueprints.Quadrant, targetWork *civquestv1.BuildBlockIntent) ([]*civquestv1.AgentIntent, bool) {
+// (placed, or skipped for lacking a target voxel or having one that will not be cleared) and
+// the caller's index moves on.
+func constructionWorkStep(frame *civquestv1.TelemetryFrame, quadrant blueprints.Quadrant, targetWork *civquestv1.BuildBlockIntent,
+	unbreakable func(*civquestv1.VisibleBlock) bool) ([]*civquestv1.AgentIntent, bool) {
 	targetVoxel := targetWork.TargetVoxel
 	if targetVoxel == nil {
 		return nil, true
@@ -206,12 +210,13 @@ func constructionWorkStep(frame *civquestv1.TelemetryFrame, quadrant blueprints.
 	// 4. Inspect current world voxel at target to detect subterranean obstruction
 	targetBlockState := targetWork.BlockStateString
 	var existingBlockAtVoxel string
+	var obstruction *civquestv1.VisibleBlock
 	for _, vb := range frame.InterestingBlocks {
 		if vb != nil && vb.Pos != nil &&
 			vb.Pos.X == targetVoxel.X &&
 			vb.Pos.Y == targetVoxel.Y &&
 			vb.Pos.Z == targetVoxel.Z {
-			existingBlockAtVoxel = vb.BlockId
+			existingBlockAtVoxel, obstruction = vb.BlockId, vb
 			break
 		}
 	}
@@ -222,6 +227,9 @@ func constructionWorkStep(frame *civquestv1.TelemetryFrame, quadrant blueprints.
 		!strings.EqualFold(existingBlockAtVoxel, "air") &&
 		!strings.HasPrefix(existingBlockAtVoxel, targetBlockState) {
 
+		if unbreakable(obstruction) {
+			return nil, true
+		}
 		// Emit excavation harvest intent to clear voxel
 		digIntent := &civquestv1.AgentIntent{
 			Action: &civquestv1.AgentIntent_InteractBlock{

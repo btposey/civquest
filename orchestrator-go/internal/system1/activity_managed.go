@@ -91,6 +91,10 @@ func popFrame(lw *fsmWorld, kind htpda.Kind, intents []*civquestv1.AgentIntent, 
 
 // stepManaged is htpda.Activity.Step for every waterfall activity.
 func stepManaged(a waterfallActivity, w htpda.World, local any, ev htpda.Event) htpda.Step {
+	return breakingStep(w, local, ev, func(local any) htpda.Step { return managedStep(a, w, local, ev) })
+}
+
+func managedStep(a waterfallActivity, w htpda.World, local any, ev htpda.Event) htpda.Step {
 	lw := asFSMWorld(w)
 	switch e := ev.(type) {
 	case htpda.Cancel, htpda.Expired:

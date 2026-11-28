@@ -779,7 +779,7 @@ func findNearestTreeTrunk(agentID string, frame *civquestv1.TelemetryFrame, pos 
 		if b == nil || b.Pos == nil || !isLogBlockID(b.BlockId) {
 			continue
 		}
-		if isElevatedCanopyOnlyLog(frame, pos, b) {
+		if isElevatedCanopyOnlyLog(frame, pos, b) || state.unbreakableLocked(b, frame.WorldTick) {
 			continue
 		}
 		if state != nil && (state.IsTreeOnCooldownLocked(b.Pos.X, b.Pos.Z, frame.WorldTick) ||

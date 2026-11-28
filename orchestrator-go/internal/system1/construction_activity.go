@@ -106,6 +106,7 @@ type constructionLocal struct {
 	Quadrant, Item int
 	LastAction     int64
 	Done           bool
+	Breaks         breakRecord // refused_breaks.go
 }
 
 func (l constructionLocal) progress() ConstructionProgress {
@@ -248,7 +249,9 @@ func (a constructionActivity) run(lw *fsmWorld, local any) htpda.Step {
 		(l.LastAction > 0 && f.WorldTick >= l.LastAction && f.WorldTick-l.LastAction < constructionActionTicks) {
 		return htpda.Step{Op: htpda.OpStay, Next: l}
 	}
-	intents, advance := constructionWorkStep(f, q, work)
+	intents, advance := constructionWorkStep(f, q, work, func(b *civquestv1.VisibleBlock) bool {
+		return lw.ctx.State.unbreakable(b, f.WorldTick)
+	})
 	if advance {
 		l.Item++
 	}

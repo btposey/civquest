@@ -211,6 +211,9 @@ message VisibleBlock {
   BlockPosProto pos = 1;
   string block_id = 2;
   string block_state_string = 3; // e.g., "age=7,honey_level=5" or "minecraft:wheat[age=7]"
+  // The mod would refuse to break this block from anywhere: it is unbreakable, is fluid or has
+  // fluid against a face (cq-6nz). Reach is not covered; it depends on where the agent stands.
+  bool break_refused = 4;
 }
 
 message ChatEvent {

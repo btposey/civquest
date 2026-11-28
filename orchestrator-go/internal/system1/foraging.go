@@ -335,7 +335,8 @@ func evaluateForagingWithMemory(agentID string, frame *civquestv1.TelemetryFrame
 		if float64(b.Pos.Y)-pos.Y > 4.0 {
 			continue
 		}
-		if state != nil && state.IsTargetUnreachableLocked(float64(b.Pos.X)+0.5, float64(b.Pos.Y), float64(b.Pos.Z)+0.5, frame.WorldTick) {
+		if state != nil && state.IsTargetUnreachableLocked(float64(b.Pos.X)+0.5, float64(b.Pos.Y), float64(b.Pos.Z)+0.5, frame.WorldTick) ||
+			state.unbreakableLocked(b, frame.WorldTick) {
 			continue
 		}
 		d := blockDistance(pos, b)
@@ -389,7 +390,7 @@ func evaluateForagingWithMemory(agentID string, frame *civquestv1.TelemetryFrame
 	}
 
 	// Immediate action within reach takes top priority (plant harvest or animal hunt).
-	if bestPrimePlant != nil && bestPrimeDist <= forageBlockReach {
+	if bestPrimePlant != nil && bestPrimeDist <= forageBlockReach && withinBreakReach(pos, bestPrimePlant.Pos) {
 		targetKey := fmt.Sprintf("block:%d,%d,%d", bestPrimePlant.Pos.X, bestPrimePlant.Pos.Y, bestPrimePlant.Pos.Z)
 		if mem.LastTargetKey == targetKey && mem.LastActionTick > 0 &&
 			frame.WorldTick >= mem.LastActionTick && frame.WorldTick-mem.LastActionTick < forageActionCooldownTicks {
@@ -486,7 +487,7 @@ func evaluateForagingWithMemory(agentID string, frame *civquestv1.TelemetryFrame
 		return navigateToAnimal(bestAnimal)
 	}
 	if bestFallbackPlant != nil {
-		if bestFallbackDist <= forageBlockReach {
+		if bestFallbackDist <= forageBlockReach && withinBreakReach(pos, bestFallbackPlant.Pos) {
 			targetKey := fmt.Sprintf("block:%d,%d,%d", bestFallbackPlant.Pos.X, bestFallbackPlant.Pos.Y, bestFallbackPlant.Pos.Z)
 			if mem.LastTargetKey == targetKey && mem.LastActionTick > 0 &&
 				frame.WorldTick >= mem.LastActionTick && frame.WorldTick-mem.LastActionTick < forageActionCooldownTicks {

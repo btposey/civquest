@@ -27,7 +27,7 @@ var eventLevels = map[string]logging.Level{
 	system1.EventReceiptFailed: logging.Info, system1.EventTaskStart: logging.Info,
 	system1.EventTaskEnd: logging.Info, system1.EventTaskDropped: logging.Info,
 	system1.EventDanger: logging.Info, system1.EventUnreachable: logging.Info,
-	system1.EventTreeFailed: logging.Info, system1.EventStandGiveUp: logging.Info,
+	system1.EventTreeFailed: logging.Info, system1.EventStandGiveUp: logging.Info, system1.EventBlockGivenUp: logging.Info,
 	system1.EventWalkGivenUp: logging.Info, system1.EventRescan: logging.Info, system1.EventStandstill: logging.Warn,
 }
 

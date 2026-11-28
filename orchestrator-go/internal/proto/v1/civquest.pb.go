@@ -1922,8 +1922,11 @@ type VisibleBlock struct {
 	Pos              *BlockPosProto         `protobuf:"bytes,1,opt,name=pos,proto3" json:"pos,omitempty"`
 	BlockId          string                 `protobuf:"bytes,2,opt,name=block_id,json=blockId,proto3" json:"block_id,omitempty"`
 	BlockStateString string                 `protobuf:"bytes,3,opt,name=block_state_string,json=blockStateString,proto3" json:"block_state_string,omitempty"` // e.g., "age=7,honey_level=5" or "minecraft:wheat[age=7]"
-	unknownFields    protoimpl.UnknownFields
-	sizeCache        protoimpl.SizeCache
+	// The mod would refuse to break this block from anywhere: it is unbreakable, is fluid or has
+	// fluid against a face (cq-6nz). Reach is not covered; it depends on where the agent stands.
+	BreakRefused  bool `protobuf:"varint,4,opt,name=break_refused,json=breakRefused,proto3" json:"break_refused,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *VisibleBlock) Reset() {
@@ -1975,6 +1978,13 @@ func (x *VisibleBlock) GetBlockStateString() string {
 		return x.BlockStateString
 	}
 	return ""
+}
+
+func (x *VisibleBlock) GetBreakRefused() bool {
+	if x != nil {
+		return x.BreakRefused
+	}
+	return false
 }
 
 type ChatEvent struct {
@@ -4330,11 +4340,12 @@ const file_civquest_v1_civquest_proto_rawDesc = "" +
 	"fuse_ticks\x18\v \x01(\x05R\tfuseTicks\x12\x17\n" +
 	"\ais_baby\x18\f \x01(\bR\x06isBaby\x12\x1d\n" +
 	"\n" +
-	"is_sheared\x18\r \x01(\bR\tisSheared\"\x85\x01\n" +
+	"is_sheared\x18\r \x01(\bR\tisSheared\"\xaa\x01\n" +
 	"\fVisibleBlock\x12,\n" +
 	"\x03pos\x18\x01 \x01(\v2\x1a.civquest.v1.BlockPosProtoR\x03pos\x12\x19\n" +
 	"\bblock_id\x18\x02 \x01(\tR\ablockId\x12,\n" +
-	"\x12block_state_string\x18\x03 \x01(\tR\x10blockStateString\"\xab\x01\n" +
+	"\x12block_state_string\x18\x03 \x01(\tR\x10blockStateString\x12#\n" +
+	"\rbreak_refused\x18\x04 \x01(\bR\fbreakRefused\"\xab\x01\n" +
 	"\tChatEvent\x12\x1f\n" +
 	"\vsender_uuid\x18\x01 \x01(\tR\n" +
 	"senderUuid\x12\x1f\n" +

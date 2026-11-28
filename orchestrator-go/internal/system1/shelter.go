@@ -301,7 +301,7 @@ func evaluateDuskNightOutpostShelterLocked(
 				if isElevatedCanopyOnlyLog(frame, pos, b) {
 					continue
 				}
-				if state.IsTreeOnCooldownLocked(b.Pos.X, b.Pos.Z, frame.WorldTick) ||
+				if state.unbreakableLocked(b, frame.WorldTick) || state.IsTreeOnCooldownLocked(b.Pos.X, b.Pos.Z, frame.WorldTick) ||
 					state.IsTargetUnreachableLocked(float64(b.Pos.X)+0.5, float64(b.Pos.Y), float64(b.Pos.Z)+0.5, frame.WorldTick) {
 					continue
 				}
@@ -333,7 +333,7 @@ func evaluateDuskNightOutpostShelterLocked(
 
 		if targetLog != nil {
 			prog.focusTree(targetLog.Pos.X, targetLog.Pos.Z)
-			if targetDistSq <= 20.25 { // Within 4.5 blocks melee/harvest reach
+			if targetDistSq <= 20.25 && withinBreakReach(pos, targetLog.Pos) { // Within 4.5 blocks melee/harvest reach
 				if state.mem.lastHarvestTick == 0 || frame.WorldTick < state.mem.lastHarvestTick || frame.WorldTick-state.mem.lastHarvestTick >= 20 {
 					state.mem.lastHarvestTick = frame.WorldTick
 					return &civquestv1.AgentIntent{

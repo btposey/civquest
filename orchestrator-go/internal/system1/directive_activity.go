@@ -25,7 +25,8 @@ type directiveLocal struct {
 	LastNavKey     string
 	ScoutTarget    *civquestv1.Vec3 // immutable once set; replaced, never mutated
 	ScoutStep      int
-	Walk           walkLocal // unstuck heading cursor
+	Walk           walkLocal   // unstuck heading cursor
+	Breaks         breakRecord // refused_breaks.go
 }
 
 // runnableDirective is the shared gate for acting on the active directive: alive, awake, no

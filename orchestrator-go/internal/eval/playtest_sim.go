@@ -59,6 +59,9 @@ type PlaytestSimConfig struct {
 	CraftLatency int64
 	// ViewRadius is the interesting-block scan radius (default 16, like the mod).
 	ViewRadius int32
+	// NoRefusalReport leaves VisibleBlock.break_refused unset, so a refusal is learnt only
+	// from the failed receipt.
+	NoRefusalReport bool
 }
 
 // SimVec is a plain position (proto Vec3 carries a lock and cannot be copied freely).
@@ -110,6 +113,7 @@ type SimHarvest struct {
 	InReach bool
 	NoDrop  bool // tool-gated block broken without the right tool
 	HadTool bool
+	Refused bool   // the mod would not start the break (out of reach, fluid or beside fluid)
 	Inv     string // inventory summary at the time
 }
 
@@ -139,6 +143,9 @@ type PlaytestSim struct {
 	navState      civquestv1.NavigationState
 	pendingDmg    *civquestv1.DamageEvent
 	pendingSurvey bool
+	// refused is the failure report of a break the mod would not start, due next frame.
+	refused *civquestv1.IntentReceipt
+	batch   int64
 
 	Zombies []*SimZombie
 	// faunaState holds sheep, fish, drops and the fishing line (playtest_sim_fauna.go).
@@ -361,6 +368,18 @@ func (s *PlaytestSim) Submerged() bool {
 	return isSimWater(s.World.Blocks[cellOf(s.Pos.X, s.Pos.Y+simEyeHeight, s.Pos.Z)])
 }
 
+// fluidAt mirrors the mod's BlockBreaker: a block that is fluid, or has fluid against any
+// face, is not broken.
+func (s *PlaytestSim) fluidAt(k BlockPosKey) bool {
+	for _, d := range [...][3]int32{{0, 0, 0}, {1, 0, 0}, {-1, 0, 0}, {0, 1, 0}, {0, -1, 0}, {0, 0, 1}, {0, 0, -1}} {
+		id := s.World.Blocks[BlockPosKey{X: k.X + d[0], Y: k.Y + d[1], Z: k.Z + d[2]}]
+		if isSimWater(id) || strings.Contains(id, "lava") {
+			return true
+		}
+	}
+	return false
+}
+
 // OnFire reports the agent is burning.
 func (s *PlaytestSim) OnFire() bool { return s.fire > 0 }
 
@@ -433,6 +452,7 @@ func (s *PlaytestSim) frameBlocks() []*civquestv1.VisibleBlock {
 		seen[k] = true
 		out = append(out, &civquestv1.VisibleBlock{
 			Pos: &civquestv1.BlockPosProto{X: k.X, Y: k.Y, Z: k.Z}, BlockId: id, BlockStateString: s.World.BlockStates[k],
+			BreakRefused: !s.cfg.NoRefusalReport && s.fluidAt(k),
 		})
 	}
 	f := cellOf(s.Pos.X, s.Pos.Y+0.01, s.Pos.Z)
@@ -501,6 +521,7 @@ func (s *PlaytestSim) buildFrame() *civquestv1.TelemetryFrame {
 		LastDamageTaken:   s.pendingDmg,
 	}
 	s.pendingDmg = nil
+	f.Receipt, s.refused = s.refused, nil
 	for _, z := range s.Zombies {
 		if z.Dead {
 			continue
@@ -577,7 +598,14 @@ func (s *PlaytestSim) Step() SimStep {
 	rec.Top = s.FSM.ActiveActivityKind()
 	for _, fi := range res.Intents {
 		rec.Intents = append(rec.Intents, fi.Intent)
+		seen := len(s.Harvests)
 		s.applyIntent(fi.Intent)
+		s.batch++
+		if len(s.Harvests) > seen && s.Harvests[seen].Refused {
+			s.refused = &civquestv1.IntentReceipt{BatchId: s.batch, FrameId: fi.Frame,
+				Status:        civquestv1.IntentReceipt_RECEIPT_STATUS_FAILED,
+				FailureReason: "HARVEST_BREAK failed (unbreakable, fluid, or out of reach)"}
+		}
 	}
 	s.Steps = append(s.Steps, rec)
 	k := [2]int32{int32(math.Floor(s.Pos.X / 2)), int32(math.Floor(s.Pos.Z / 2))}
@@ -856,7 +884,8 @@ func (s *PlaytestSim) applyInteract(ib *civquestv1.InteractBlockIntent) {
 		reach := s.withinReach(k, simBlockReach)
 		hasPick := s.CountSuffix("_pickaxe") > 0
 		h := SimHarvest{Tick: s.Tick, Cell: k, BlockID: id, Existed: exists, InReach: reach, HadTool: hasPick, Inv: s.InventorySummary()}
-		if exists && reach {
+		h.Refused = exists && (!reach || s.fluidAt(k))
+		if exists && !h.Refused {
 			drop := harvestDrop(id, hasPick)
 			h.NoDrop = isToolGatedStone(id) && !hasPick
 			delete(s.World.Blocks, k)

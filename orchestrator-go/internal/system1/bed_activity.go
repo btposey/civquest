@@ -34,6 +34,7 @@ type bedLocal struct {
 	LastActionTick int64
 	PlacePos       *civquestv1.BlockPosProto // placed bed awaiting confirmation (immutable once set)
 	PlaceTick      int64
+	Breaks         breakRecord // refused_breaks.go
 }
 
 // bedActivity owns its eligibility (Propose) and step; its weight is priorityBed.
@@ -246,6 +247,7 @@ func logGatherIntent(agentID string, frame *civquestv1.TelemetryFrame, pos *civq
 	bestD := math.MaxFloat64
 	for _, b := range frame.InterestingBlocks {
 		if b == nil || b.Pos == nil || !isLogBlockID(b.BlockId) || isElevatedCanopyOnlyLog(frame, pos, b) ||
+			st.unbreakableLocked(b, frame.WorldTick) ||
 			st.IsTargetUnreachableLocked(float64(b.Pos.X)+0.5, float64(b.Pos.Y), float64(b.Pos.Z)+0.5, frame.WorldTick) {
 			continue
 		}
@@ -257,7 +259,7 @@ func logGatherIntent(agentID string, frame *civquestv1.TelemetryFrame, pos *civq
 	if best == nil {
 		return nil, false
 	}
-	if bestD <= bedBlockReach {
+	if bestD <= bedBlockReach && withinBreakReach(pos, best.Pos) {
 		if bl.LastActionTick != 0 && frame.WorldTick >= bl.LastActionTick && frame.WorldTick-bl.LastActionTick < bedActionCooldown {
 			return nil, true
 		}

@@ -55,4 +55,15 @@ public interface VisibleBlockOrBuilder extends
    */
   com.google.protobuf.ByteString
       getBlockStateStringBytes();
+
+  /**
+   * <pre>
+   * The mod would refuse to break this block from anywhere: it is unbreakable, is fluid or has
+   * fluid against a face (cq-6nz). Reach is not covered; it depends on where the agent stands.
+   * </pre>
+   *
+   * <code>bool break_refused = 4;</code>
+   * @return The breakRefused.
+   */
+  boolean getBreakRefused();
 }

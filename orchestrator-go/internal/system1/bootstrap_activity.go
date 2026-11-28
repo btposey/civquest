@@ -9,7 +9,10 @@ import (
 	"github.com/btposey/civquest/orchestrator-go/internal/system1/htpda"
 )
 
-type bootstrapLocal struct{ Walk walkLocal }
+type bootstrapLocal struct {
+	Walk   walkLocal
+	Breaks breakRecord // refused_breaks.go
+}
 
 type bootstrapActivity struct{ frameBase }
 

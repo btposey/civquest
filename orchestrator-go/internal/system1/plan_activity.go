@@ -85,6 +85,7 @@ type planLocal struct {
 	Fails      int               // consecutive failed gather targets
 	Backoff    int64             // tree gathering is not attempted before this tick
 	PlaceTries int               // placements sent since the held item last left the inventory
+	Breaks     breakRecord       // refused_breaks.go
 }
 
 type planActivity struct{ frameBase }
@@ -456,7 +457,8 @@ func (x *planExec) trunkCandidates() []planTrunk {
 	cols := map[[2]int32]*planTrunk{}
 	var order [][2]int32
 	for _, b := range f.InterestingBlocks {
-		if b == nil || b.Pos == nil || !isLogBlockID(b.BlockId) || isElevatedCanopyOnlyLog(f, pos, b) {
+		if b == nil || b.Pos == nil || !isLogBlockID(b.BlockId) || isElevatedCanopyOnlyLog(f, pos, b) ||
+			st.unbreakableLocked(b, x.tick) {
 			continue
 		}
 		k := [2]int32{b.Pos.X, b.Pos.Z}
@@ -668,8 +670,9 @@ func (x *planExec) gatherMine(step plan.Step) (*civquestv1.AgentIntent, bool) {
 		if !dropWouldBeInReach(pos, b.Pos) {
 			continue // buried, or underfoot: its drop would be left in the hole
 		}
-		if x.st().givenUpLocked(float64(b.Pos.X)+0.5, float64(b.Pos.Y), float64(b.Pos.Z)+0.5, x.tick) {
-			continue // no way to it was found
+		if x.st().givenUpLocked(float64(b.Pos.X)+0.5, float64(b.Pos.Y), float64(b.Pos.Z)+0.5, x.tick) ||
+			x.st().unbreakableLocked(b, x.tick) {
+			continue // no way to it was found, or it will not break
 		}
 		c := [3]int32{b.Pos.X, b.Pos.Y, b.Pos.Z}
 		d := math.Sqrt(math.Pow(float64(c[0])+0.5-pos.X, 2) + math.Pow(float64(c[1])+0.5-pos.Y, 2) + math.Pow(float64(c[2])+0.5-pos.Z, 2))

@@ -157,6 +157,22 @@ private static final long serialVersionUID = 0L;
     }
   }
 
+  public static final int BREAK_REFUSED_FIELD_NUMBER = 4;
+  private boolean breakRefused_ = false;
+  /**
+   * <pre>
+   * The mod would refuse to break this block from anywhere: it is unbreakable, is fluid or has
+   * fluid against a face (cq-6nz). Reach is not covered; it depends on where the agent stands.
+   * </pre>
+   *
+   * <code>bool break_refused = 4;</code>
+   * @return The breakRefused.
+   */
+  @java.lang.Override
+  public boolean getBreakRefused() {
+    return breakRefused_;
+  }
+
   private byte memoizedIsInitialized = -1;
   @java.lang.Override
   public final boolean isInitialized() {
@@ -180,6 +196,9 @@ private static final long serialVersionUID = 0L;
     if (!com.google.protobuf.GeneratedMessage.isStringEmpty(blockStateString_)) {
       com.google.protobuf.GeneratedMessage.writeString(output, 3, blockStateString_);
     }
+    if (breakRefused_ != false) {
+      output.writeBool(4, breakRefused_);
+    }
     getUnknownFields().writeTo(output);
   }
 
@@ -198,6 +217,10 @@ private static final long serialVersionUID = 0L;
     }
     if (!com.google.protobuf.GeneratedMessage.isStringEmpty(blockStateString_)) {
       size += com.google.protobuf.GeneratedMessage.computeStringSize(3, blockStateString_);
+    }
+    if (breakRefused_ != false) {
+      size += com.google.protobuf.CodedOutputStream
+        .computeBoolSize(4, breakRefused_);
     }
     size += getUnknownFields().getSerializedSize();
     memoizedSize = size;
@@ -223,6 +246,8 @@ private static final long serialVersionUID = 0L;
         .equals(other.getBlockId())) return false;
     if (!getBlockStateString()
         .equals(other.getBlockStateString())) return false;
+    if (getBreakRefused()
+        != other.getBreakRefused()) return false;
     if (!getUnknownFields().equals(other.getUnknownFields())) return false;
     return true;
   }
@@ -242,6 +267,9 @@ private static final long serialVersionUID = 0L;
     hash = (53 * hash) + getBlockId().hashCode();
     hash = (37 * hash) + BLOCK_STATE_STRING_FIELD_NUMBER;
     hash = (53 * hash) + getBlockStateString().hashCode();
+    hash = (37 * hash) + BREAK_REFUSED_FIELD_NUMBER;
+    hash = (53 * hash) + com.google.protobuf.Internal.hashBoolean(
+        getBreakRefused());
     hash = (29 * hash) + getUnknownFields().hashCode();
     memoizedHashCode = hash;
     return hash;
@@ -386,6 +414,7 @@ private static final long serialVersionUID = 0L;
       }
       blockId_ = "";
       blockStateString_ = "";
+      breakRefused_ = false;
       return this;
     }
 
@@ -432,6 +461,9 @@ private static final long serialVersionUID = 0L;
       if (((from_bitField0_ & 0x00000004) != 0)) {
         result.blockStateString_ = blockStateString_;
       }
+      if (((from_bitField0_ & 0x00000008) != 0)) {
+        result.breakRefused_ = breakRefused_;
+      }
       result.bitField0_ |= to_bitField0_;
     }
 
@@ -459,6 +491,9 @@ private static final long serialVersionUID = 0L;
         blockStateString_ = other.blockStateString_;
         bitField0_ |= 0x00000004;
         onChanged();
+      }
+      if (other.getBreakRefused() != false) {
+        setBreakRefused(other.getBreakRefused());
       }
       this.mergeUnknownFields(other.getUnknownFields());
       onChanged();
@@ -503,6 +538,11 @@ private static final long serialVersionUID = 0L;
               bitField0_ |= 0x00000004;
               break;
             } // case 26
+            case 32: {
+              breakRefused_ = input.readBool();
+              bitField0_ |= 0x00000008;
+              break;
+            } // case 32
             default: {
               if (!super.parseUnknownField(input, extensionRegistry, tag)) {
                 done = true; // was an endgroup tag
@@ -801,6 +841,53 @@ private static final long serialVersionUID = 0L;
       checkByteStringIsUtf8(value);
       blockStateString_ = value;
       bitField0_ |= 0x00000004;
+      onChanged();
+      return this;
+    }
+
+    private boolean breakRefused_ ;
+    /**
+     * <pre>
+     * The mod would refuse to break this block from anywhere: it is unbreakable, is fluid or has
+     * fluid against a face (cq-6nz). Reach is not covered; it depends on where the agent stands.
+     * </pre>
+     *
+     * <code>bool break_refused = 4;</code>
+     * @return The breakRefused.
+     */
+    @java.lang.Override
+    public boolean getBreakRefused() {
+      return breakRefused_;
+    }
+    /**
+     * <pre>
+     * The mod would refuse to break this block from anywhere: it is unbreakable, is fluid or has
+     * fluid against a face (cq-6nz). Reach is not covered; it depends on where the agent stands.
+     * </pre>
+     *
+     * <code>bool break_refused = 4;</code>
+     * @param value The breakRefused to set.
+     * @return This builder for chaining.
+     */
+    public Builder setBreakRefused(boolean value) {
+
+      breakRefused_ = value;
+      bitField0_ |= 0x00000008;
+      onChanged();
+      return this;
+    }
+    /**
+     * <pre>
+     * The mod would refuse to break this block from anywhere: it is unbreakable, is fluid or has
+     * fluid against a face (cq-6nz). Reach is not covered; it depends on where the agent stands.
+     * </pre>
+     *
+     * <code>bool break_refused = 4;</code>
+     * @return This builder for chaining.
+     */
+    public Builder clearBreakRefused() {
+      bitField0_ = (bitField0_ & ~0x00000008);
+      breakRefused_ = false;
       onChanged();
       return this;
     }

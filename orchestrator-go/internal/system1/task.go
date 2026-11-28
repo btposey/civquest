@@ -757,7 +757,7 @@ func scanTreeClusterLogs(
 		dSq := bx*bx + by*by + bz*bz
 		// Vanilla reach: eye to nearest point of the block AABB (cq-gpa.9), so a
 		// trunk worked from directly underneath is harvestable to ~y+6.
-		if vertical.ReachableAABB(vertical.Vec3{X: pos.X, Y: pos.Y, Z: pos.Z}, vertical.DefaultEyeHeight, reachRadius,
+		if !b.BreakRefused && vertical.ReachableAABB(vertical.Vec3{X: pos.X, Y: pos.Y, Z: pos.Z}, vertical.DefaultEyeHeight, reachRadius,
 			vertical.Cell{X: int(b.Pos.X), Y: int(b.Pos.Y), Z: int(b.Pos.Z)}) {
 			reachableLogs = append(reachableLogs, b)
 		}

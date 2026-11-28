@@ -43,6 +43,7 @@ const (
 // (cq-gpa.2) and the held fight-vs-flee verdict (cq-gpa.3): the reflex owns the top of the
 // motor stack until resolved() holds, instead of exiting on the first damage-free frame.
 type emergencyLocal struct {
+	Breaks         breakRecord // refused_breaks.go
 	Mode           emergencyMode
 	EnteredTick    int64
 	LastFleeTarget *civquestv1.Vec3
@@ -101,7 +102,11 @@ func (emergencyActivity) Init(w htpda.World, _ any) (any, htpda.Lease) {
 	return el, htpda.Lease{StartTick: w.Tick(), DeadlineTick: w.Tick() + emergencyLeaseTicks}
 }
 
-func (emergencyActivity) Step(w htpda.World, local any, ev htpda.Event) htpda.Step {
+func (a emergencyActivity) Step(w htpda.World, local any, ev htpda.Event) htpda.Step {
+	return breakingStep(w, local, ev, func(local any) htpda.Step { return a.step(w, local, ev) })
+}
+
+func (emergencyActivity) step(w htpda.World, local any, ev htpda.Event) htpda.Step {
 	el := htpda.LocalAs[emergencyLocal](local)
 	switch e := ev.(type) {
 	case htpda.Cancel, htpda.Expired:
@@ -279,6 +284,7 @@ func (el *emergencyLocal) reflexIntents(ctx *FSMContext, tick int64) []*civquest
 	if ctx != nil && !el.Drowning && !ctx.HostilesPresent() {
 		// Block-contact hazard: recomputed from the frame each tick (frame-local, nothing latched).
 		if h := detectBlockHazard(ctx.Frame); h != nil {
+			h = h.walkOutIfRefused(ctx, tick)
 			var out []*civquestv1.AgentIntent
 			if in := blockHazardIntent(ctx.AgentID, ctx.Frame, h, el.LastFleeTarget, el.LastFleeTick, tick); in != nil {
 				out = append(out, in)

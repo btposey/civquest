@@ -50,7 +50,8 @@ func TestRecover_EnclosedFanOutAngularCooldownAndPeerSeparation(t *testing.T) {
 	frame := rf(100, 3000, withPos(10, 64, 10))
 	step := func(id string, attempts int) (float64, float64) {
 		var out recoverLocal
-		in, isNav := recoverLocal{Attempts: attempts}.enclosedStep(id, frame, pos, 100, &out)
+		in, isNav := recoverLocal{Attempts: attempts}.enclosedStep(id, frame, pos, 100, &out,
+			func(*civquestv1.VisibleBlock) bool { return false })
 		if in == nil || in.GetNavigate() == nil || !isNav {
 			t.Fatalf("flat enclosed walkway must fan out with a navigation, got %v", in)
 		}

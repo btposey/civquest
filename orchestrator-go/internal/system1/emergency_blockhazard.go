@@ -195,6 +195,28 @@ func detectBlockHazard(f *civquestv1.TelemetryFrame) *blockHazard {
 	return nil
 }
 
+// refusedSideTicks is how long one side is tried when the way out cannot be dug.
+const refusedSideTicks = int64(40)
+
+// walkOutIfRefused turns a dig that will not be done into a try at walking out, one side after
+// another (refused_breaks.go).
+func (h *blockHazard) walkOutIfRefused(ctx *FSMContext, tick int64) *blockHazard {
+	if h.Dig == nil {
+		return h
+	}
+	b := FindVisibleBlockAt(ctx.Frame, h.Dig.X, h.Dig.Y, h.Dig.Z)
+	if b == nil {
+		b = &civquestv1.VisibleBlock{Pos: h.Dig}
+	}
+	if !ctx.State.unbreakable(b, tick) {
+		return h
+	}
+	p := ctx.Frame.Status.Position
+	d := horizontalDirs[(tick/refusedSideTicks)%int64(len(horizontalDirs))]
+	return &blockHazard{Kind: h.Kind, Target: &civquestv1.Vec3{
+		X: math.Floor(p.X) + 0.5 + float64(d[0]), Y: math.Floor(p.Y + 1e-3), Z: math.Floor(p.Z) + 0.5 + float64(d[1])}}
+}
+
 // blockHazardIntent builds the escape for a block hazard, deduping navigate re-issues the way
 // hazardEscapeIntent does.
 func blockHazardIntent(agentID string, f *civquestv1.TelemetryFrame, h *blockHazard, lastTarget *civquestv1.Vec3, lastTick, tick int64) *civquestv1.AgentIntent {

@@ -252,7 +252,8 @@ func bestGatherFind(agentID string, frame *civquestv1.TelemetryFrame, state *Age
 			continue
 		}
 		good, item := gatherBlockGood(b)
-		if good == goodNone || !stock.wants(good, item) || !HasSuitableTool(frame.Status.Inventory, RequirementForBlock(b.BlockId)) {
+		if good == goodNone || !stock.wants(good, item) || !HasSuitableTool(frame.Status.Inventory, RequirementForBlock(b.BlockId)) ||
+			state.unbreakableLocked(b, frame.WorldTick) {
 			continue
 		}
 		dy := b.Pos.Y - feet
@@ -310,6 +311,7 @@ type gatherLocal struct {
 	Since      int64
 	LastAction int64
 	Fishing    forageLocal // the fishing cursor while the find is a spell of fishing
+	Breaks     breakRecord // refused_breaks.go
 }
 
 // gatherActivity bids while the agent has no settlement and something worth taking is in view.

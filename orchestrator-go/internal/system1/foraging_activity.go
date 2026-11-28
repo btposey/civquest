@@ -75,6 +75,7 @@ type forageLocal struct {
 	Forced bool
 	// Spatial is the agent's spatial memory (Memory, ADR-039), bound each step; read-only.
 	Spatial spatialmem.Snapshot
+	Breaks  breakRecord // refused_breaks.go
 }
 
 func newForageLocal() *forageLocal { return &forageLocal{Visited: map[string]int64{}} }

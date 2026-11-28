@@ -322,8 +322,9 @@ func evaluateDirectiveMineStone(
 	// Precondition (cq-gpa.10): never issue a stone/ore break without a tool that yields drops.
 	// Only blocks the current tools can harvest are considered; with no pickaxe at all, plan to
 	// craft one (wooden first) instead of mining by hand or with an unrelated tool.
-	bestBlock, bestDistSq := findNearestMineableStoneBlock(frame, pos, inventory, func(b *civquestv1.BlockPosProto) bool {
-		return state.givenUpLocked(float64(b.X)+0.5, float64(b.Y), float64(b.Z)+0.5, frame.WorldTick)
+	bestBlock, bestDistSq := findNearestMineableStoneBlock(frame, pos, inventory, func(b *civquestv1.VisibleBlock) bool {
+		return state.unbreakableLocked(b, frame.WorldTick) ||
+			state.givenUpLocked(float64(b.Pos.X)+0.5, float64(b.Pos.Y), float64(b.Pos.Z)+0.5, frame.WorldTick)
 	})
 	if bestBlock == nil {
 		if _, havePick := BestToolTier(inventory, ToolClassPickaxe); !havePick {
@@ -617,7 +618,7 @@ func craftToolIntentLocked(agentID string, frame *civquestv1.TelemetryFrame, sta
 	return &civquestv1.AgentIntent{AgentId: agentID, Action: &civquestv1.AgentIntent_CraftItem{CraftItem: craft}}
 }
 
-func findNearestMineableStoneBlock(frame *civquestv1.TelemetryFrame, pos *civquestv1.Vec3, inventory []*civquestv1.ItemStackProto, skip func(*civquestv1.BlockPosProto) bool) (*civquestv1.VisibleBlock, float64) {
+func findNearestMineableStoneBlock(frame *civquestv1.TelemetryFrame, pos *civquestv1.Vec3, inventory []*civquestv1.ItemStackProto, skip func(*civquestv1.VisibleBlock) bool) (*civquestv1.VisibleBlock, float64) {
 	if frame == nil || pos == nil {
 		return nil, math.MaxFloat64
 	}
@@ -633,7 +634,7 @@ func findNearestMineableStoneBlock(frame *civquestv1.TelemetryFrame, pos *civque
 		if !dropWouldBeInReach(pos, b.Pos) {
 			continue // buried, or underfoot: its drop would be left in the hole
 		}
-		if skip != nil && skip(b.Pos) {
+		if skip != nil && skip(b) {
 			continue
 		}
 		dx := float64(b.Pos.X) + 0.5 - pos.X

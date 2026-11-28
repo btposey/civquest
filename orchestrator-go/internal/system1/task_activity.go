@@ -14,7 +14,8 @@ type taskLocal struct {
 	Task         *TaskSubroutine
 	Receipt      *civquestv1.IntentReceipt // routed to this frame, not yet consumed by a step
 	LastStepTick int64
-	Walk         walkLocal // bootstrap-gather cursor for the legacy task tick
+	Walk         walkLocal   // bootstrap-gather cursor for the legacy task tick
+	Breaks       breakRecord // refused_breaks.go
 }
 
 // taskActivity owns its eligibility (Propose) and waterfall; its weight is priorityTask.
