@@ -147,7 +147,7 @@ func evaluateDuskNightOutpostShelterLocked(
 	if recalledHabPOI != nil && (hasShelterMaterials || isShelterComplete || strings.Contains(strings.ToLower(recalledHabPOI.BlockID), "bed")) &&
 		(prog.Pos == nil || math.Hypot(pos.X-float64(prog.Pos.X), pos.Z-float64(prog.Pos.Z)) > 32.0) {
 		accessTarget := poiAccessTarget(recalledHabPOI)
-		if math.Hypot(pos.X-recalledHabPOI.X, pos.Z-recalledHabPOI.Z) > 4.0 && !isStuckOrEnclosed {
+		if math.Hypot(pos.X-recalledHabPOI.X, pos.Z-recalledHabPOI.Z) > 4.0 && !poiWalkOver(pos, recalledHabPOI) && !isStuckOrEnclosed {
 			if navState == civquestv1.NavigationState_NAVIGATION_STATE_PATHING {
 				return nil
 			}
@@ -412,7 +412,7 @@ func evaluateDuskNightOutpostShelterLocked(
 		// only when holding shelter materials or returning to a completed shelter.
 		if hasShelterMaterials || isShelterComplete {
 			if recalledLight := findNearestReliableHabitationPOI(pos, state, "campfire", frame.WorldTick); recalledLight != nil {
-				if math.Hypot(pos.X-recalledLight.X, pos.Z-recalledLight.Z) > 4.0 && !isStuckOrEnclosed {
+				if math.Hypot(pos.X-recalledLight.X, pos.Z-recalledLight.Z) > 4.0 && !poiWalkOver(pos, recalledLight) && !isStuckOrEnclosed {
 					if navState == civquestv1.NavigationState_NAVIGATION_STATE_PATHING {
 						return nil
 					}

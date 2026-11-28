@@ -58,6 +58,15 @@ func routeRoundDanger(w *fsmWorld, kind htpda.Kind, nav *civquestv1.NavigateInte
 	}
 }
 
+// walkArrives reports that a walk from pos to target is over before it starts: the mod reports it
+// done and the agent stays where it is. An activity that wants more than to be there must not
+// send it (cq-kne).
+func walkArrives(pos, target *civquestv1.Vec3, tolerance int32) bool {
+	return pos != nil && target != nil &&
+		math.Hypot(target.X-pos.X, target.Z-pos.Z) <= float64(tolerance)+walkSameDist &&
+		math.Abs(target.Y-pos.Y) <= walkArrivalHeight
+}
+
 // walkAllowedLocked records frame's walk to nav and reports whether it may still be sent.
 func (fsm *AgentFSM) walkAllowedLocked(w *fsmWorld, frame htpda.FrameID, kind htpda.Kind, nav *civquestv1.NavigateIntent) bool {
 	pos := w.pos()
@@ -83,9 +92,7 @@ func (fsm *AgentFSM) walkAllowedLocked(w *fsmWorld, frame htpda.FrameID, kind ht
 	if pathing {
 		waiting = w.tick-watch.since < walkStillTicks
 	}
-	if waiting ||
-		(math.Hypot(target[0]-here[0], target[2]-here[2]) <= float64(nav.ArrivalTolerance)+walkSameDist &&
-			math.Abs(target[1]-here[1]) <= walkArrivalHeight) {
+	if waiting || walkArrives(pos, nav.Target, nav.ArrivalTolerance) {
 		return true // standing on the target is arrival, not a failed walk
 	}
 	delete(fsm.walks, frame)

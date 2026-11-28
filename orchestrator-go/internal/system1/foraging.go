@@ -522,7 +522,7 @@ func evaluateForagingWithMemory(agentID string, frame *civquestv1.TelemetryFrame
 					continue
 				}
 				d := math.Hypot(cropPOI.X-pos.X, cropPOI.Z-pos.Z)
-				if d > 4.0 {
+				if d > 4.0 && !poiWalkOver(pos, cropPOI) {
 					targetKey := fmt.Sprintf("poi:%s", cropPOI.POIID)
 					if navState != civquestv1.NavigationState_NAVIGATION_STATE_PATHING || mem.LastTargetKey != targetKey {
 						mem.LastTargetKey = targetKey
@@ -557,7 +557,7 @@ func evaluateForagingWithMemory(agentID string, frame *civquestv1.TelemetryFrame
 				}
 				lastVisit := mem.Visited[contPOI.POIID]
 				d := math.Hypot(contPOI.X-pos.X, contPOI.Z-pos.Z)
-				if d <= 4.0 {
+				if d <= 4.0 || poiWalkOver(pos, contPOI) {
 					mem.Visited[contPOI.POIID] = frame.WorldTick
 				} else if lastVisit == 0 || frame.WorldTick-lastVisit > forageContainerRevisitTicks {
 					targetKey := fmt.Sprintf("poi:%s", contPOI.POIID)

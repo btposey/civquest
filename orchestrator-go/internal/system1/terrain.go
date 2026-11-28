@@ -366,6 +366,9 @@ func findDistantPOI(pos *civquestv1.Vec3, blocks []*civquestv1.VisibleBlock) *ci
 	return bestPOI
 }
 
+// terrainMinLeg is the shortest walk worth making to a terrain feature.
+const terrainMinLeg = 8.0
+
 // EvaluateTerrainExploration selects an exploration target based on local terrain heuristics.
 func EvaluateTerrainExploration(
 	agentID string,
@@ -453,6 +456,12 @@ func EvaluateTerrainExploration(
 		goalLabel = "WATERWAY_TRANSIT: Scouting along navigable river channel"
 
 	default:
+		return nil
+	}
+
+	// A feature a few steps off is already here. The caller picks again once its target is
+	// reached, so walking to one would pick the next one at once, for ever (cq-kne).
+	if math.Hypot(targetX-pos.X, targetZ-pos.Z) < terrainMinLeg {
 		return nil
 	}
 

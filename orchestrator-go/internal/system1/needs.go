@@ -435,7 +435,8 @@ func EvaluateSleep(agentID string, frame *civquestv1.TelemetryFrame, state *Agen
 				}
 			}
 		}
-		if recalledBedPOI != nil {
+		// From the spot the bed was seen from, walk to the bed itself.
+		if recalledBedPOI != nil && !walkArrives(agentPos, poiAccessTarget(recalledBedPOI), 1) {
 			target = poiAccessTarget(recalledBedPOI)
 		}
 		if state != nil {

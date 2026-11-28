@@ -308,6 +308,14 @@ func evaluateBootstrapGoalsLocked(
 						}
 						return nil
 					}
+					if poiWalkOver(pos, recalledTablePOI) {
+						// There, and the table is still out of reach: it cannot be used.
+						state.MarkWorkstationUnreachableLocked(nearestCraftingTable.Pos.X, nearestCraftingTable.Pos.Y, nearestCraftingTable.Pos.Z, frame.WorldTick)
+						if si := state.SpatialIndexLocked(); si != nil {
+							si.RemovePOI(recalledTablePOI.POIID)
+						}
+						return nil
+					}
 					walk.navigatingToPOI = true
 					if navState != civquestv1.NavigationState_NAVIGATION_STATE_PATHING {
 						if walk.lastBootstrapNavTick == 0 || frame.WorldTick < walk.lastBootstrapNavTick || frame.WorldTick-walk.lastBootstrapNavTick >= 40 {
@@ -442,7 +450,8 @@ func navigateToRecalledTreePOILocked(
 	dx := recalledTreePOI.X - pos.X
 	dy := recalledTreePOI.Y + 0.5 - pos.Y
 	dz := recalledTreePOI.Z - pos.Z
-	if dx*dx+dy*dy+dz*dz <= 12.25 || (dx*dx+dz*dz <= 12.25 && math.Abs(recalledTreePOI.AccessY-pos.Y) <= 4.0) {
+	if dx*dx+dy*dy+dz*dz <= 12.25 || (dx*dx+dz*dz <= 12.25 && math.Abs(recalledTreePOI.AccessY-pos.Y) <= 4.0) ||
+		poiWalkOver(pos, recalledTreePOI) {
 		// At the end of the leg with no logs in view: forget the sighting and look round for
 		// the next bearing. (One far above or below is given up by the walking policy.)
 		if si := state.SpatialIndexLocked(); si != nil {

@@ -388,7 +388,8 @@ func EvaluateArmoryMaintenance(
 				Y: float64(nearestCraftingTable.Pos.Y),
 				Z: float64(nearestCraftingTable.Pos.Z) + 0.5,
 			}
-			if recalledTablePOI != nil {
+			// From the spot the table was seen from, walk to the table itself.
+			if recalledTablePOI != nil && !poiWalkOver(frame.Status.Position, recalledTablePOI) {
 				target = poiAccessTarget(recalledTablePOI)
 			}
 			return &civquestv1.AgentIntent{

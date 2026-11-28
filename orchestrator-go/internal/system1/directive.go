@@ -275,29 +275,34 @@ func evaluateDirectiveGatherTimber(
 		dx := recalledTreePOI.X - pos.X
 		dy := recalledTreePOI.Y + 0.5 - pos.Y
 		dz := recalledTreePOI.Z - pos.Z
-		if dx*dx+dy*dy+dz*dz <= 12.25 {
+		if dx*dx+dy*dy+dz*dz <= 12.25 || poiWalkOver(pos, recalledTreePOI) {
+			// The walk is over and no tree here can be felled: forget the sighting, leave the
+			// trunk alone a while and head somewhere else.
 			if si := state.SpatialIndexLocked(); si != nil {
 				si.RemovePOI(recalledTreePOI.POIID)
 			}
-		} else if navState != civquestv1.NavigationState_NAVIGATION_STATE_PATHING &&
-			canDispatchDirectiveNavLocked(loc, frame.WorldTick, "poi:"+recalledTreePOI.POIID) {
-			loc.LastActionTick = frame.WorldTick
-			loc.LastNavKey = "poi:" + recalledTreePOI.POIID
-			return &civquestv1.AgentIntent{
-				AgentId: agentID,
-				Action: &civquestv1.AgentIntent_Navigate{
-					Navigate: &civquestv1.NavigateIntent{
-						Target:           poiAccessTarget(recalledTreePOI),
-						SpeedMultiplier:  1.0,
-						ArrivalTolerance: 2,
-					},
-				},
-			}
-		} else if navState == civquestv1.NavigationState_NAVIGATION_STATE_STUCK {
 			state.MarkTreeFailedLocked(bpos.X, bpos.Z, frame.WorldTick)
+			state.wantFreshBearing("nothing at the remembered trees")
+		} else {
+			if navState == civquestv1.NavigationState_NAVIGATION_STATE_STUCK {
+				state.MarkTreeFailedLocked(bpos.X, bpos.Z, frame.WorldTick)
+			} else if navState != civquestv1.NavigationState_NAVIGATION_STATE_PATHING &&
+				canDispatchDirectiveNavLocked(loc, frame.WorldTick, "poi:"+recalledTreePOI.POIID) {
+				loc.LastActionTick = frame.WorldTick
+				loc.LastNavKey = "poi:" + recalledTreePOI.POIID
+				return &civquestv1.AgentIntent{
+					AgentId: agentID,
+					Action: &civquestv1.AgentIntent_Navigate{
+						Navigate: &civquestv1.NavigateIntent{
+							Target:           poiAccessTarget(recalledTreePOI),
+							SpeedMultiplier:  1.0,
+							ArrivalTolerance: poiArrivalTolerance,
+						},
+					},
+				}
+			}
 			return nil
 		}
-		return nil
 	}
 
 	return evaluateDirectiveScoutOutwardLocked(agentID, frame, pos, navState, state, loc, dir.IssuedTick)
@@ -381,7 +386,7 @@ func evaluateDirectiveMineStone(
 			dx := minePOI.X - pos.X
 			dy := minePOI.Y + 0.5 - pos.Y
 			dz := minePOI.Z - pos.Z
-			if dx*dx+dy*dy+dz*dz <= 12.25 {
+			if dx*dx+dy*dy+dz*dz <= 12.25 || poiWalkOver(pos, minePOI) {
 				si.RemovePOI(minePOI.POIID)
 			} else if navState != civquestv1.NavigationState_NAVIGATION_STATE_PATHING &&
 				canDispatchDirectiveNavLocked(loc, frame.WorldTick, "poi:"+minePOI.POIID) {
@@ -393,7 +398,7 @@ func evaluateDirectiveMineStone(
 						Navigate: &civquestv1.NavigateIntent{
 							Target:           poiAccessTarget(minePOI),
 							SpeedMultiplier:  1.0,
-							ArrivalTolerance: 2,
+							ArrivalTolerance: poiArrivalTolerance,
 						},
 					},
 				}

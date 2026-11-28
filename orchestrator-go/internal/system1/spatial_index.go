@@ -30,6 +30,9 @@ const (
 	ElevationElevated    = "ELEVATED"
 )
 
+// poiArrivalTolerance is the arrival tolerance of a walk to a remembered sighting.
+const poiArrivalTolerance = 2
+
 // SpatialIndex maintains a thread-safe, in-memory 16x16x16 voxel grid index of persistent POIs
 // and learned trail corridors for sub-0.1ms zero-token System 1 spatial queries (ADR-022, ADR-023).
 type SpatialIndex struct {
@@ -167,6 +170,12 @@ func poiAccessTarget(poi *db.AgentPOI) *civquestv1.Vec3 {
 		return &civquestv1.Vec3{X: poi.X, Y: poi.Y, Z: poi.Z}
 	}
 	return &civquestv1.Vec3{X: poi.AccessX, Y: poi.AccessY, Z: poi.AccessZ}
+}
+
+// poiWalkOver reports that the walk to where a sighting was seen from is over. That spot may lie
+// far from the sighting itself, so being far from the sighting is no reason to walk again.
+func poiWalkOver(pos *civquestv1.Vec3, poi *db.AgentPOI) bool {
+	return walkArrives(pos, poiAccessTarget(poi), poiArrivalTolerance)
 }
 
 // poiBlockPos converts a POI's continuous world coordinates back into block grid coordinates.
