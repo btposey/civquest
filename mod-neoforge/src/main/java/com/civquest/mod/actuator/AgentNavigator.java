@@ -196,6 +196,9 @@ public class AgentNavigator {
         this.allowPlace = allowPlace;
         this.arrivalTolerance = arrivalTolerance > 0 ? arrivalTolerance : 1;
         this.intoCell = intoCell;
+        if (this.agent != null) {
+            this.agent.setShiftKeyDown(false);
+        }
         this.stuckTicks = 0;
         this.lastEntityBlockedTick = Long.MIN_VALUE;
         this.stuckByEntity = false;
@@ -341,6 +344,7 @@ public class AgentNavigator {
     private static final double STANDING_Y_ALLOWANCE = 0.6;
     /** From the water, a target overhead is reached only about head-high to it (cq-6l3.16). */
     private static final double SWIM_UP_Y_ALLOWANCE = 1.1;
+    private static final double RUNG_Y_ALLOWANCE = 0.35;
     private static final int REPLAN_INTERVAL = 8;
     private static final int WIDE_REPLAN_INTERVAL = 100;
     private static final int WIDE_SEARCH_COOLDOWN_TICKS = 40;
@@ -1596,6 +1600,10 @@ public class AgentNavigator {
         if (dy > 0.0 && this.agent != null && this.agent.isInWater()) {
             return SWIM_UP_Y_ALLOWANCE;
         }
+        if (onClimbable && this.intoCell) {
+            // A rung is reached only at its height: a climb that ends a block short gets no higher.
+            return RUNG_Y_ALLOWANCE;
+        }
         if (!onClimbable && level != null && this.targetCoords != null) {
             BlockPos targetBlock = BlockPos.containing(this.targetCoords.x, this.targetCoords.y, this.targetCoords.z);
             boolean solidTarget = isBlockSolid(level, targetBlock);
@@ -1676,6 +1684,9 @@ public class AgentNavigator {
         if (this.agent != null) {
             this.agent.setDeltaMovement(0.0, this.agent.getDeltaMovement().y, 0.0);
             this.agent.setSprinting(false);
+            if (this.intoCell && this.agent.onClimbable()) {
+                this.agent.setShiftKeyDown(true); // holds the rung until the next walk
+            }
         }
     }
 

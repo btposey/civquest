@@ -18,6 +18,9 @@ import com.civquest.mod.grpc.v1.CreateWrittenBookIntent;
 import com.civquest.mod.grpc.v1.InteractBlockIntent;
 import com.civquest.mod.grpc.v1.NavigateIntent;
 import com.civquest.mod.grpc.v1.NavigationState;
+import java.util.function.IntConsumer;
+import java.util.function.Consumer;
+import net.minecraft.util.Mth;
 import com.civquest.mod.grpc.v1.PlaceSignpostIntent;
 import com.civquest.mod.grpc.v1.SpawnAgentRequest;
 import com.civquest.mod.grpc.v1.TelemetryFrame;
@@ -2190,6 +2193,92 @@ public class AgentGameTest {
             helper.assertTrue(n == 2, "ladder item must return to the agent inventory, had " + n);
             manager.despawnAgent(server, "agent-gt-ladder").join();
         });
+    }
+
+    /**
+     * cq-htv.1: the orchestrator's climb out of a shaft five deep. Rungs are hung up the agent's own
+     * column as far as it reaches, each climbing leg ends only at its rung's height, and the last
+     * walk goes off the top of the ladder onto the ledge.
+     */
+    @GameTest(template = "empty3x3x3", timeoutTicks = 600)
+    public static void testClimbsOutOfAShaftByLadder(GameTestHelper helper) {
+        ServerLevel level = helper.getLevel();
+        MinecraftServer server = level.getServer();
+        AgentEntityManager manager = new AgentEntityManager();
+        for (int x = 0; x <= 2; x++) {
+            for (int z = 0; z <= 2; z++) {
+                for (int y = 0; y <= 5; y++) {
+                    helper.setBlock(new BlockPos(x, y, z), y > 0 && x == 1 && z == 1 ? Blocks.AIR : Blocks.STONE);
+                }
+                helper.setBlock(new BlockPos(x, 6, z), Blocks.AIR);
+                helper.setBlock(new BlockPos(x, 7, z), Blocks.AIR);
+            }
+        }
+        BlockPos start = helper.absolutePos(new BlockPos(1, 1, 1));
+        AgentEntity agent = manager.spawnAgent(server, level, SpawnAgentRequest.newBuilder()
+                .setAgentId("agent-gt-shaft")
+                .setDisplayName("ShaftAgent")
+                .setClanId("clan-ironwood")
+                .setSpawnCoords(Vec3.newBuilder().setX(start.getX() + 0.5).setY(start.getY()).setZ(start.getZ() + 0.5).build())
+                .build()).join();
+        helper.assertTrue(agent != null, "Agent must spawn");
+        agent.getInventory().add(new ItemStack(Items.LADDER, 5));
+
+        Consumer<Integer> hang = y -> {
+            BlockPos rung = helper.absolutePos(new BlockPos(1, y, 1));
+            manager.handleIntent(server, AgentIntent.newBuilder()
+                    .setAgentId("agent-gt-shaft")
+                    .setBuildBlock(com.civquest.mod.grpc.v1.BuildBlockIntent.newBuilder()
+                            .setTargetVoxel(BlockPosProto.newBuilder().setX(rung.getX()).setY(rung.getY()).setZ(rung.getZ()).build())
+                            .setBlockStateString("minecraft:ladder[facing=west]")
+                            .build())
+                    .build()).join();
+            helper.assertBlockPresent(Blocks.LADDER, new BlockPos(1, y, 1));
+        };
+        Consumer<BlockPos> walkInto = rel -> {
+            BlockPos to = helper.absolutePos(rel);
+            manager.handleIntent(server, AgentIntent.newBuilder()
+                    .setAgentId("agent-gt-shaft")
+                    .setNavigate(NavigateIntent.newBuilder()
+                            .setTarget(Vec3.newBuilder().setX(to.getX() + 0.5).setY(to.getY()).setZ(to.getZ() + 0.5))
+                            .setSpeedMultiplier(1.0f)
+                            .setArrivalTolerance(1)
+                            .setIntoCell(true))
+                    .build()).join();
+        };
+        Runnable walkEnds = () -> {
+            for (int t = 0; t < 200 && agent.getNavigator().isPathing(); t++) {
+                agent.tick();
+            }
+            helper.assertTrue(!agent.getNavigator().isPathing(),
+                    "walk not finished at y=" + (agent.getY() - helper.absolutePos(BlockPos.ZERO).getY()));
+        };
+        // The height the orchestrator reads a body on a ladder as having reached.
+        IntConsumer atRung = y -> helper.assertTrue(
+                Mth.floor(agent.getY() + 0.4) >= helper.absolutePos(new BlockPos(1, y, 1)).getY(),
+                "arrived below rung " + y + " at y=" + (agent.getY() - helper.absolutePos(BlockPos.ZERO).getY()));
+
+        for (int y = 1; y <= 3; y++) {
+            hang.accept(y);
+        }
+        walkInto.accept(new BlockPos(1, 3, 1));
+        walkEnds.run();
+        atRung.accept(3);
+        for (int t = 0; t < 40; t++) {
+            agent.tick();
+        }
+        atRung.accept(3); // holds the rung while it waits for the next walk
+        hang.accept(4);
+        hang.accept(5);
+        walkInto.accept(new BlockPos(1, 5, 1));
+        walkEnds.run();
+        atRung.accept(5);
+        walkInto.accept(new BlockPos(2, 6, 1));
+        walkEnds.run();
+        helper.assertTrue(agent.blockPosition().equals(helper.absolutePos(new BlockPos(2, 6, 1))),
+                "agent must stand on the ledge, is at " + agent.blockPosition());
+        manager.despawnAgent(server, "agent-gt-shaft").join();
+        helper.succeed();
     }
 
     // ---- cq-71l.4 coverage smoke tests -------------------------------------------------------

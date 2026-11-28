@@ -143,7 +143,8 @@ public class InteractHandler implements IntentHandler {
                 // or any other player/living entity's bounding box to prevent entombment or suffocation.
                 AABB blockBox = new AABB(pos);
                 boolean isSolid = blockState.blocksMotion() || !blockState.getCollisionShape(level, pos).isEmpty();
-                if (isSolid) {
+                // A ladder entombs nobody: a climber hangs it in the cell it stands in (cq-htv.1).
+                if (isSolid && !blockState.is(Blocks.LADDER)) {
                     if (agent.getBoundingBox() != null && agent.getBoundingBox().intersects(blockBox)) {
                         return false;
                     }
