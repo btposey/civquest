@@ -3,12 +3,12 @@ package system1
 import (
 	"testing"
 
+	"github.com/btposey/civquest/orchestrator-go/internal/crafting"
+	"github.com/btposey/civquest/orchestrator-go/internal/crafting/craftingtest"
+	civquestv1 "github.com/btposey/civquest/orchestrator-go/internal/proto/v1"
 	"github.com/btposey/civquest/orchestrator-go/internal/system1/htpda"
 
 	"github.com/btposey/civquest/orchestrator-go/internal/xdg"
-
-	"github.com/btposey/civquest/orchestrator-go/internal/system1/watchdog"
-	"github.com/btposey/civquest/orchestrator-go/internal/system1/watchdog/watchdogtest"
 )
 
 func countPushes(fsm *AgentFSM) map[string]int {
@@ -39,22 +39,35 @@ func TestForaging_DirectiveWithNothingToFindBacksOff(t *testing.T) {
 	}
 }
 
-// An agent without a bed and with nothing to make one from pushed the bed plan every tick.
-func TestBed_NothingToProgressBacksOff(t *testing.T) {
-	fsm := NewAgentFSMWithRegistry(StageSettlement, nil, NewDefaultEngineRegistry())
-	watchdogtest.Expect(t, fsm, watchdog.Thrash, activityKindBed, "cq-3sa.2: bed bids with nothing to do")
-	st := NewAgentState()
-	st.SetBedRegistry(newFakeBedRegistry())
-	cfg := xdg.DefaultAgentIdentityConfig("bedless")
-	cfg.Profession = "FARMER"
-	pushes := countPushes(fsm)
-	for tick := int64(100); tick < 900; tick += 4 {
-		fsm.Tick(&FSMContext{AgentID: "bedless", State: st, Config: cfg,
-			Frame: makeArbiterTestFrame(tick, 3000, 20, fullSurvivalKitInv(), nil)})
-	}
-	limit := int(800/workBackoffTicks) + 1
-	if got := pushes[activityKindBed]; got == 0 || got > limit {
-		t.Fatalf("bed plan pushed %d times, want 1..%d", got, limit)
+// An agent without a bed and with nothing to make one from pushed the bed plan, which popped in
+// the same tick, again and again (cq-3sa.2): it is offered only when its step can progress.
+func TestBed_OfferedOnlyWhenTheStepCanProgress(t *testing.T) {
+	for name, tc := range map[string]struct {
+		blocks []*civquestv1.VisibleBlock
+		pushed bool
+	}{
+		"nothing to make one from": {},
+		"a log in view": {blocks: []*civquestv1.VisibleBlock{
+			{Pos: &civquestv1.BlockPosProto{X: 3, Y: 64, Z: 0}, BlockId: "minecraft:oak_log"},
+		}, pushed: true},
+	} {
+		t.Run(name, func(t *testing.T) {
+			fsm := NewAgentFSMWithRegistry(StageSettlement, nil, NewDefaultEngineRegistry())
+			st := NewAgentState()
+			st.SetBedRegistry(newFakeBedRegistry())
+			st.SetRecipeGraph(crafting.NewRecipeGraph(craftingtest.Nodes()))
+			cfg := xdg.DefaultAgentIdentityConfig("bedless")
+			cfg.Profession = "FARMER"
+			pushes := countPushes(fsm)
+			for tick := int64(100); tick < 900; tick += 4 {
+				f := makeArbiterTestFrame(tick, 3000, 20, fullSurvivalKitInv(), nil)
+				f.InterestingBlocks = append(f.InterestingBlocks, tc.blocks...)
+				fsm.Tick(&FSMContext{AgentID: "bedless", State: st, Config: cfg, Frame: f})
+			}
+			if got := pushes[activityKindBed]; (got > 0) != tc.pushed {
+				t.Fatalf("bed plan pushed %d times, want pushed=%v", got, tc.pushed)
+			}
+		})
 	}
 }
 

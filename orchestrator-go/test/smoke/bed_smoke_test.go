@@ -10,9 +10,6 @@ import (
 	"github.com/btposey/civquest/orchestrator-go/internal/db"
 	"github.com/btposey/civquest/orchestrator-go/internal/eval"
 	civquestv1 "github.com/btposey/civquest/orchestrator-go/internal/proto/v1"
-
-	"github.com/btposey/civquest/orchestrator-go/internal/system1/watchdog"
-	"github.com/btposey/civquest/orchestrator-go/internal/system1/watchdog/watchdogtest"
 )
 
 type bedAgent struct {
@@ -173,7 +170,6 @@ func TestSmoke_ThreeAgentsOneBedEachEndsWithOwnBed(t *testing.T) {
 // for the planks while the wool is outstanding.
 func TestSmoke_BedlessAgentWithoutWoolRunsBedPlan(t *testing.T) {
 	civic, agents := newBedClan(t, []string{"able", "bert"}, 1000, survivalKit(), true)
-	watchdogtest.Expect(t, agents[1].sim.Runtime().AgentFSM(), watchdog.Thrash, "bed", "cq-3sa.2: bed bids with nothing to do")
 	for _, a := range agents {
 		a.sim.Runtime().System1State().SetRecipeGraph(bedRecipes())
 		a.sim.AddBlock(-3, 64, 0, "minecraft:oak_log")

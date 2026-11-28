@@ -130,8 +130,7 @@ func TestChoosersPassOverBlocksThatWillNotBreak(t *testing.T) {
 			return b.GetPos()
 		}},
 		"timber for a bed": {"minecraft:oak_log", func(f *civquestv1.TelemetryFrame, st *AgentState) *civquestv1.BlockPosProto {
-			in, _ := logGatherIntent("a", f, pos, st, &bedLocal{})
-			return in.GetInteractBlock().GetPos()
+			return bedLogLocked(f, pos, st).GetPos()
 		}},
 		"find along the way": {"minecraft:coal_ore", func(f *civquestv1.TelemetryFrame, st *AgentState) *civquestv1.BlockPosProto {
 			find := bestGatherFind("a", f, st, func(string) bool { return false })

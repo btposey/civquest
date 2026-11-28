@@ -27,9 +27,6 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/protobuf/encoding/protojson"
-
-	"github.com/btposey/civquest/orchestrator-go/internal/system1/watchdog"
-	"github.com/btposey/civquest/orchestrator-go/internal/system1/watchdog/watchdogtest"
 )
 
 // inMemBridgeStream implements grpc.BidiStreamingClient[IntentBatch, TelemetryFrame]
@@ -1517,9 +1514,6 @@ func TestIntegration_SixDaytimeExplorersWithNearbyObstructedTrees_RunInitialSurv
 			return false
 		}
 		agents = append(agents, sa)
-	}
-	for _, sa := range agents {
-		watchdogtest.Expect(t, sa.runtime.AgentFSM(), watchdog.Thrash, "bed", "cq-3sa.2: bed bids with nothing to do")
 	}
 	defer func() {
 		for _, sa := range agents {
