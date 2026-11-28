@@ -306,34 +306,27 @@ func evaluateDuskNightOutpostShelterLocked(
 		var focusedLog *civquestv1.VisibleBlock
 		focusedDistSq := math.MaxFloat64
 
-		for _, b := range frame.InterestingBlocks {
-			if b == nil || b.Pos == nil {
+		// A tree once begun is finished; otherwise the nearest log of a tree worth felling
+		// now (tree_choice.go).
+		trunks := usableTrunks(frame, pos, state, nil)
+		squared := func(b *civquestv1.VisibleBlock) float64 {
+			dx, dy, dz := float64(b.Pos.X)+0.5-pos.X, float64(b.Pos.Y)+0.5-pos.Y, float64(b.Pos.Z)+0.5-pos.Z
+			return dx*dx + dy*dy + dz*dz
+		}
+		for _, t := range preferredTrunks(trunks) {
+			for _, b := range t.logs {
+				if d := squared(b); d < bestDistSq {
+					nearestLog, bestDistSq = b, d
+				}
+			}
+		}
+		for _, t := range trunks {
+			if !treeLocked || t.base.Pos.X != tx || t.base.Pos.Z != tz {
 				continue
 			}
-			id := strings.ToLower(b.BlockId)
-			if strings.HasSuffix(id, "_log") || strings.HasSuffix(id, "_wood") || strings.HasSuffix(id, "_stem") {
-				if isElevatedCanopyOnlyLog(frame, pos, b) {
-					continue
-				}
-				if state.unbreakableLocked(b, frame.WorldTick) || state.IsTreeOnCooldownLocked(b.Pos.X, b.Pos.Z, frame.WorldTick) ||
-					state.IsDestinationShunnedLocked(float64(b.Pos.X)+0.5, float64(b.Pos.Y), float64(b.Pos.Z)+0.5, frame.WorldTick) {
-					continue
-				}
-				dx := float64(b.Pos.X) + 0.5 - pos.X
-				dy := float64(b.Pos.Y) + 0.5 - pos.Y
-				dz := float64(b.Pos.Z) + 0.5 - pos.Z
-				dSq := dx*dx + dy*dy + dz*dz
-
-				if treeLocked && b.Pos.X == tx && b.Pos.Z == tz {
-					if dSq < focusedDistSq {
-						focusedDistSq = dSq
-						focusedLog = b
-					}
-				}
-
-				if dSq < bestDistSq {
-					bestDistSq = dSq
-					nearestLog = b
+			for _, b := range t.logs {
+				if d := squared(b); d < focusedDistSq {
+					focusedLog, focusedDistSq = b, d
 				}
 			}
 		}

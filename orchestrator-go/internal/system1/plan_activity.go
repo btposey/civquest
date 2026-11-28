@@ -25,6 +25,7 @@ package system1
 
 import (
 	"math"
+	"slices"
 	"strings"
 
 	"github.com/btposey/civquest/orchestrator-go/internal/crafting"
@@ -429,38 +430,19 @@ func (x *planExec) navigate(c [3]int32) *civquestv1.AgentIntent {
 type planTrunk struct {
 	pos   [3]int32 // lowest reachable log of the column
 	score float64
+	large bool // chosen only when no small tree will do (tree_choice.go)
 }
 
 // trunkCandidates are the visible, usable trunk columns scored by distance + revisit cost.
 func (x *planExec) trunkCandidates() []planTrunk {
-	f, pos, st := x.frame(), x.pos(), x.st()
-	cols := map[[2]int32]*planTrunk{}
-	var order [][2]int32
-	for _, b := range f.InterestingBlocks {
-		if b == nil || b.Pos == nil || !isLogBlockID(b.BlockId) || isElevatedCanopyOnlyLog(f, pos, b) ||
-			st.unbreakableLocked(b, x.tick) {
-			continue
-		}
-		k := [2]int32{b.Pos.X, b.Pos.Z}
-		if st.IsTreeOnCooldownLocked(k[0], k[1], x.tick) ||
-			st.IsDestinationShunnedLocked(float64(b.Pos.X)+0.5, float64(b.Pos.Y), float64(b.Pos.Z)+0.5, x.tick) ||
-			x.mem.Depleted(trunkMark(k), spatialmem.KindTrunk, x.tick) {
-			continue
-		}
-		if c, ok := cols[k]; ok {
-			if b.Pos.Y < c.pos[1] {
-				c.pos[1] = b.Pos.Y
-			}
-			continue
-		}
-		cols[k] = &planTrunk{pos: [3]int32{b.Pos.X, b.Pos.Y, b.Pos.Z}}
-		order = append(order, k)
-	}
-	out := make([]planTrunk, 0, len(order))
-	for _, k := range order {
-		c := cols[k]
+	trunks := usableTrunks(x.frame(), x.pos(), x.st(), func(b *civquestv1.VisibleBlock) bool {
+		return !x.mem.Depleted(trunkMark([2]int32{b.Pos.X, b.Pos.Z}), spatialmem.KindTrunk, x.tick)
+	})
+	out := make([]planTrunk, 0, len(trunks))
+	for _, t := range trunks {
+		c := planTrunk{pos: [3]int32{t.base.Pos.X, t.base.Pos.Y, t.base.Pos.Z}, large: t.large}
 		c.score = x.trunkScore(c.pos)
-		out = append(out, *c)
+		out = append(out, c)
 	}
 	return out
 }
@@ -490,8 +472,12 @@ func (x *planExec) trunkScore(p [3]int32) float64 {
 // hysteresis ratio. ok=false: no usable trunk in view.
 func (x *planExec) commitTrunk() (planTarget, bool) {
 	cands := x.trunkCandidates()
+	small := slices.ContainsFunc(cands, func(c planTrunk) bool { return !c.large })
 	best := -1
 	for i, c := range cands {
+		if c.large && small {
+			continue
+		}
 		if best < 0 || c.score < cands[best].score ||
 			(c.score == cands[best].score && (c.pos[0] < cands[best].pos[0] || (c.pos[0] == cands[best].pos[0] && c.pos[2] < cands[best].pos[2]))) {
 			best = i
@@ -515,8 +501,11 @@ func (x *planExec) commitTrunk() (planTarget, bool) {
 			if c.pos[0] != cur.Pos[0] || c.pos[2] != cur.Pos[2] {
 				continue
 			}
-			// still valid: hold it unless the best candidate is far cheaper
-			if best >= 0 && cands[best].pos != c.pos && cands[best].score < planSwitchRatio*c.score {
+			// still valid: hold it unless the best candidate is far cheaper, or it proves large
+			// before it is tried while a small tree will do. A tried one is held so that its
+			// failure is recorded.
+			if best >= 0 && cands[best].pos != c.pos && (cands[best].score < planSwitchRatio*c.score ||
+				cur.Attempts == 0 && c.large && !cands[best].large) {
 				break
 			}
 			cur.Pos = c.pos

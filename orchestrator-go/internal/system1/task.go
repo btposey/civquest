@@ -791,7 +791,6 @@ func NewHarvestTreeTask(tx, ty, tz int32, stage Stage, startTick int64) *TaskSub
 	if stage == "" {
 		stage = StageBootstrap
 	}
-	const treeReach = 4.5
 	const harvestTimeoutTicks = int64(150)
 	var planted, standGivenUp bool
 	var woodFamily string

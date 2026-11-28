@@ -274,19 +274,16 @@ func placeBedIntent(ctx *FSMContext, bl *bedLocal, st *AgentState, inv map[strin
 	}}}
 }
 
-// bedLogLocked is the nearest visible log worth harvesting (planks come from logs), or nil.
-// st.mu held.
+// bedLogLocked is the nearest log worth harvesting (planks come from logs) among the trees
+// worth felling now (tree_choice.go), or nil. st.mu held.
 func bedLogLocked(frame *civquestv1.TelemetryFrame, pos *civquestv1.Vec3, st *AgentState) *civquestv1.VisibleBlock {
 	var best *civquestv1.VisibleBlock
 	bestD := math.MaxFloat64
-	for _, b := range frame.InterestingBlocks {
-		if b == nil || b.Pos == nil || !isLogBlockID(b.BlockId) || isElevatedCanopyOnlyLog(frame, pos, b) ||
-			st.unbreakableLocked(b, frame.WorldTick) ||
-			st.IsDestinationShunnedLocked(float64(b.Pos.X)+0.5, float64(b.Pos.Y), float64(b.Pos.Z)+0.5, frame.WorldTick) {
-			continue
-		}
-		if d := bedBlockDistance(pos, b.Pos); d < bestD {
-			best, bestD = b, d
+	for _, t := range preferredTrunks(usableTrunks(frame, pos, st, nil)) {
+		for _, b := range t.logs {
+			if d := bedBlockDistance(pos, b.Pos); d < bestD {
+				best, bestD = b, d
+			}
 		}
 	}
 	return best

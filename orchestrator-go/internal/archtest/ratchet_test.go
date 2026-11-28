@@ -70,7 +70,7 @@ var stateOwnFiles = map[string]bool{
 
 // maxOutsideStateMutations is the number of places outside stateOwnFiles that call a
 // mutating AgentState method or write into an AgentState field. Only ever lower it.
-const maxOutsideStateMutations = 371
+const maxOutsideStateMutations = 369
 
 func TestAgentFSMFieldsAreAllowed(t *testing.T) {
 	pkg := load(t).pkg(t, system1Path)

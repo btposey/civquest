@@ -13,6 +13,9 @@ import (
 )
 
 const (
+	// treeReach is how far from the eye the harvest task breaks logs.
+	treeReach = 4.5
+
 	// A sub-target with this ID prefix is a cell to walk into, not a block to act on.
 	standTargetPrefix = "stand:"
 	underTrunkTarget  = standTargetPrefix + "under_trunk"

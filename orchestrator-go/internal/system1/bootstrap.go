@@ -3,6 +3,7 @@ package system1
 import (
 	"hash/crc32"
 	"math"
+	"slices"
 	"sort"
 	"strings"
 
@@ -572,37 +573,9 @@ func craftLightSourceIntentLocked(
 	return nil
 }
 
-type trunkCandidate struct {
-	tx     int32
-	tz     int32
-	distSq float64
-	anchor *civquestv1.VisibleBlock
-}
-
-// isElevatedCanopyOnlyLog returns true when a visible log block is > 4 blocks above the agent
-// and no reachable trunk base log (<= 4 blocks above pos.Y) exists in the same or adjacent column.
-func isElevatedCanopyOnlyLog(frame *civquestv1.TelemetryFrame, pos *civquestv1.Vec3, b *civquestv1.VisibleBlock) bool {
-	if frame == nil || pos == nil || b == nil || b.Pos == nil {
-		return false
-	}
-	if float64(b.Pos.Y)-pos.Y <= 4.0 {
-		return false
-	}
-	for _, other := range frame.InterestingBlocks {
-		if other == nil || other.Pos == nil || !isLogBlockID(other.BlockId) {
-			continue
-		}
-		dx := other.Pos.X - b.Pos.X
-		dz := other.Pos.Z - b.Pos.Z
-		if dx >= -1 && dx <= 1 && dz >= -1 && dz <= 1 && float64(other.Pos.Y)-pos.Y <= 4.0 {
-			return false
-		}
-	}
-	return true
-}
-
-// findNearestTreeTrunk selects a tree trunk column from visible logs, sorting unique
-// nearby trunks by distance and hashing agentID so multiple agents distribute across trees.
+// findNearestTreeTrunk selects a tree trunk column among those worth felling now
+// (tree_choice.go), sorting them by distance and hashing agentID so multiple agents
+// distribute across trees.
 // If no logs are visible in the frustum, it queries SpatialIndex for a recalled timber stand.
 func findNearestTreeTrunk(agentID string, frame *civquestv1.TelemetryFrame, pos *civquestv1.Vec3, state *AgentState) (*civquestv1.VisibleBlock, *db.AgentPOI) {
 	return findTreeTrunk(agentID, frame, pos, state, nil)
@@ -618,46 +591,13 @@ func findTreeTrunk(agentID string, frame *civquestv1.TelemetryFrame, pos *civque
 		return nil, nil
 	}
 
-	type trunkKey struct {
-		x int32
-		z int32
+	const candidateRadiusSq = 32.0 * 32.0
+	candidates := usableTrunks(frame, pos, state, nil)
+	if nearby := slices.DeleteFunc(slices.Clone(candidates), func(t treeTrunk) bool { return t.distSq > candidateRadiusSq }); len(nearby) > 0 {
+		candidates = nearby
 	}
-	byColumn := make(map[trunkKey]*trunkCandidate)
-	for _, b := range frame.InterestingBlocks {
-		if b == nil || b.Pos == nil || !isLogBlockID(b.BlockId) {
-			continue
-		}
-		if isElevatedCanopyOnlyLog(frame, pos, b) || state.unbreakableLocked(b, frame.WorldTick) {
-			continue
-		}
-		if state != nil && (state.IsTreeOnCooldownLocked(b.Pos.X, b.Pos.Z, frame.WorldTick) ||
-			state.IsDestinationShunnedLocked(float64(b.Pos.X)+0.5, float64(b.Pos.Y), float64(b.Pos.Z)+0.5, frame.WorldTick)) {
-			continue
-		}
-		dx := float64(b.Pos.X) + 0.5 - pos.X
-		dy := float64(b.Pos.Y) + 0.5 - pos.Y
-		dz := float64(b.Pos.Z) + 0.5 - pos.Z
-		dSq := dx*dx + dy*dy + dz*dz
-
-		k := trunkKey{x: b.Pos.X, z: b.Pos.Z}
-		existing, ok := byColumn[k]
-		if !ok {
-			byColumn[k] = &trunkCandidate{
-				tx:     b.Pos.X,
-				tz:     b.Pos.Z,
-				distSq: dSq,
-				anchor: b,
-			}
-		} else {
-			if dSq < existing.distSq {
-				existing.distSq = dSq
-			}
-			if b.Pos.Y < existing.anchor.Pos.Y {
-				existing.anchor = b
-			}
-		}
-	}
-	if len(byColumn) == 0 {
+	candidates = preferredTrunks(candidates)
+	if len(candidates) == 0 {
 		if state != nil {
 			if si := state.SpatialIndexLocked(); si != nil {
 				// ADR-026: Prohibit agents from pathfinding toward distant surface targets while underground.
@@ -699,37 +639,24 @@ func findTreeTrunk(agentID string, frame *civquestv1.TelemetryFrame, pos *civque
 		return nil, nil
 	}
 
-	const candidateRadiusSq = 32.0 * 32.0
-	var nearby []*trunkCandidate
-	var all []*trunkCandidate
-	for _, c := range byColumn {
-		all = append(all, c)
-		if c.distSq <= candidateRadiusSq {
-			nearby = append(nearby, c)
-		}
-	}
-	candidates := nearby
-	if len(candidates) == 0 {
-		candidates = all
-	}
-
 	sort.Slice(candidates, func(i, j int) bool {
 		if candidates[i].distSq != candidates[j].distSq {
 			return candidates[i].distSq < candidates[j].distSq
 		}
-		if candidates[i].tx != candidates[j].tx {
-			return candidates[i].tx < candidates[j].tx
+		a, b := candidates[i].base.Pos, candidates[j].base.Pos
+		if a.X != b.X {
+			return a.X < b.X
 		}
-		return candidates[i].tz < candidates[j].tz
+		return a.Z < b.Z
 	})
 
 	// Deprioritize trunks where a visible peer AgentEntity is already standing within 2.5m horizontally,
 	// spreading clustered agents across distinct trees whenever unoccupied trunks exist.
 	if len(candidates) > 1 && len(frame.VisibleEntities) > 0 {
-		var unoccupied []*trunkCandidate
+		var unoccupied []treeTrunk
 		for _, c := range candidates {
-			cx := float64(c.tx) + 0.5
-			cz := float64(c.tz) + 0.5
+			cx := float64(c.base.Pos.X) + 0.5
+			cz := float64(c.base.Pos.Z) + 0.5
 			occupied := false
 			for _, e := range frame.VisibleEntities {
 				if e == nil || e.Position == nil || IsHostile(e) || e.IsTamed {
@@ -760,7 +687,7 @@ func findTreeTrunk(agentID string, frame *civquestv1.TelemetryFrame, pos *civque
 	if len(candidates) > 1 && agentID != "" {
 		idx = int(crc32.ChecksumIEEE([]byte(agentID))) % len(candidates)
 	}
-	return candidates[idx].anchor, nil
+	return candidates[idx].base, nil
 }
 
 // bootstrapToolTargets is the ordered recipe-graph progression of tools the

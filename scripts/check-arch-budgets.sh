@@ -28,7 +28,7 @@ done
 FILE_BUDGETS=(
   "orchestrator-go/internal/agent/runtime.go|3938"
   "orchestrator-go/internal/system1/fsm.go|893"
-  "orchestrator-go/internal/system1/bootstrap.go|788"
+  "orchestrator-go/internal/system1/bootstrap.go|715"
   "orchestrator-go/internal/system1/state.go|1291"
   "mod-neoforge/src/main/java/com/civquest/mod/actuator/IntentActuator.java|483"
   "mod-neoforge/src/main/java/com/civquest/mod/actuator/AgentNavigator.java|1964"
