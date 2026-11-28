@@ -605,6 +605,15 @@ func isElevatedCanopyOnlyLog(frame *civquestv1.TelemetryFrame, pos *civquestv1.V
 // nearby trunks by distance and hashing agentID so multiple agents distribute across trees.
 // If no logs are visible in the frustum, it queries SpatialIndex for a recalled timber stand.
 func findNearestTreeTrunk(agentID string, frame *civquestv1.TelemetryFrame, pos *civquestv1.Vec3, state *AgentState) (*civquestv1.VisibleBlock, *db.AgentPOI) {
+	return findTreeTrunk(agentID, frame, pos, state, nil)
+}
+
+// findTreeTrunk is findNearestTreeTrunk for a chooser with its own reasons to pass over a
+// remembered stand (spent): the nearest stand it will take is returned. Filtering the one
+// answer instead let a single spent sighting hide every other, so what could be done changed
+// with where the agent stood (cq-3sa.4).
+func findTreeTrunk(agentID string, frame *civquestv1.TelemetryFrame, pos *civquestv1.Vec3, state *AgentState,
+	spent func(*db.AgentPOI) bool) (*civquestv1.VisibleBlock, *db.AgentPOI) {
 	if frame == nil || pos == nil {
 		return nil, nil
 	}
@@ -666,7 +675,8 @@ func findNearestTreeTrunk(agentID string, frame *civquestv1.TelemetryFrame, pos 
 						continue
 					}
 					bpos := poiBlockPos(poi)
-					if state.IsTreeOnCooldownLocked(bpos.X, bpos.Z, frame.WorldTick) || state.isPOIShunnedLocked(poi, frame.WorldTick) {
+					if state.IsTreeOnCooldownLocked(bpos.X, bpos.Z, frame.WorldTick) || state.isPOIShunnedLocked(poi, frame.WorldTick) ||
+						spent != nil && spent(poi) {
 						continue
 					}
 					if isUnderground {

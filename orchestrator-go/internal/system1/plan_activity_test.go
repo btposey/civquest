@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/btposey/civquest/orchestrator-go/internal/db"
 	civquestv1 "github.com/btposey/civquest/orchestrator-go/internal/proto/v1"
 	"github.com/btposey/civquest/orchestrator-go/internal/system1/htpda"
 	"github.com/btposey/civquest/orchestrator-go/internal/system1/plan"
@@ -167,6 +168,26 @@ func TestPlanActivity_CommitmentHysteresis(t *testing.T) {
 	r.tick(rf(180, 3000, stoneKit(), withBlocks(a, b, c)))
 	if l, _ := r.planLocal(); l.Target.Pos != [3]int32{2, 64, 1} {
 		t.Fatalf("a candidate past the hysteresis ratio must win, target=%v", l.Target.Pos)
+	}
+}
+
+// A spent sighting does not hide the usable ones, wherever the agent stands: when it did,
+// the plan could act from one end of a walk and not the other, and was pushed over the
+// expedition again and again (cq-3sa.4).
+func TestPlanActivity_RecallsPastASpentStand(t *testing.T) {
+	r := newPlanRig(t, StageBootstrap)
+	for _, x := range []int32{10, 30} {
+		r.st.SpatialIndex().UpsertPOI(db.AgentPOI{
+			POIID: FormatPOIID(POICategoryResource, x, 64, 0), Category: POICategoryResource, BlockID: "minecraft:oak_log",
+			X: float64(x) + 0.5, Y: 64, Z: 0.5, AccessX: float64(x) - 0.5, AccessY: 64, AccessZ: 0.5,
+			ElevationLayer: ElevationSurface, SafetyScore: 1, Reliability: 1, IsActive: true,
+		})
+	}
+	r.fsm.planning.Spatial = spatialmem.Snapshot{}.MarkDepleted(trunkMark([2]int32{10, 0}), spatialmem.KindTrunk, 100)
+	in := r.tick(rf(104, 3000))
+	tg, ok := planNavTarget(in)
+	if l, framed := r.planLocal(); !framed || !ok || tg.X < 28 {
+		t.Fatalf("want the plan walking to the stand at x=30, got plan=%+v intents=%v", l.Target, in)
 	}
 }
 

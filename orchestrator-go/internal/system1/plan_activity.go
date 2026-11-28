@@ -28,6 +28,7 @@ import (
 	"strings"
 
 	"github.com/btposey/civquest/orchestrator-go/internal/crafting"
+	"github.com/btposey/civquest/orchestrator-go/internal/db"
 	civquestv1 "github.com/btposey/civquest/orchestrator-go/internal/proto/v1"
 	"github.com/btposey/civquest/orchestrator-go/internal/system1/htpda"
 	"github.com/btposey/civquest/orchestrator-go/internal/system1/plan"
@@ -585,14 +586,14 @@ func (x *planExec) gatherTree() (*civquestv1.AgentIntent, bool) {
 // gatherRecalledTree walks to a remembered timber stand; arriving at an empty one marks it.
 func (x *planExec) gatherRecalledTree() (*civquestv1.AgentIntent, bool) {
 	st := x.st()
-	_, poi := findNearestTreeTrunk(x.agent(), x.frame(), x.pos(), st)
+	_, poi := findTreeTrunk(x.agent(), x.frame(), x.pos(), st, func(p *db.AgentPOI) bool {
+		bp := poiBlockPos(p)
+		return x.mem.Depleted(trunkMark([2]int32{bp.X, bp.Z}), spatialmem.KindTrunk, x.tick)
+	})
 	if poi == nil {
 		return nil, false
 	}
 	bp := poiBlockPos(poi)
-	if x.mem.Depleted(trunkMark([2]int32{bp.X, bp.Z}), spatialmem.KindTrunk, x.tick) {
-		return nil, false
-	}
 	if x.dry {
 		return nil, true
 	}
