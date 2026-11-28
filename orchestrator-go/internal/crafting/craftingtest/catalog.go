@@ -79,7 +79,11 @@ func Nodes() []*civquestv1.RecipeNode {
 	b.add("campfire", true, 1, "campfire", one(3, "stick"), one(1, fuel...), one(3, logs...))
 	b.add("chest", true, 1, "chest", one(8, planks...))
 	b.add("furnace", true, 1, "furnace", one(8, stone...))
-	b.add("oak_door", true, 3, "oak_door", one(6, "oak_planks"))
+	for _, w := range Woods {
+		b.add(w+"_door", true, 3, w+"_door", one(6, w+"_planks"))
+		b.add(w+"_trapdoor", true, 2, w+"_trapdoor", one(6, w+"_planks"))
+		b.add(w+"_fence", true, 3, w+"_fence", one(4, w+"_planks"), one(2, "stick"))
+	}
 	b.add("ladder", true, 3, "ladder", one(7, "stick"))
 	b.add("fishing_rod", true, 1, "fishing_rod", one(3, "stick"), one(2, "string"))
 	b.add("shears", false, 1, "shears", one(2, "iron_ingot"))

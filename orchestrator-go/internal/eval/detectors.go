@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"math"
 
+	"github.com/btposey/civquest/orchestrator-go/internal/blueprints"
 	civquestv1 "github.com/btposey/civquest/orchestrator-go/internal/proto/v1"
 	"github.com/btposey/civquest/orchestrator-go/internal/system1"
 )
@@ -218,7 +219,8 @@ func (d *BlueprintAdvancementDetector) OnBlockPlaced(pos *civquestv1.BlockPosPro
 	if len(d.placements) > 0 {
 		last := d.placements[len(d.placements)-1]
 		// Bottom-up verification: Y must never decrease between sequential construction phases
-		if pos.Y < last.Pos.Y-1 {
+		// The door and windows are hung after the structure stands.
+		if pos.Y < last.Pos.Y-1 && !blueprints.IsFitting(blockID) {
 			msg := fmt.Sprintf("blueprint bottom-up violation at tick %d: placed Y=%d after previous block at Y=%d",
 				tick, pos.Y, last.Pos.Y)
 			d.violations = append(d.violations, msg)

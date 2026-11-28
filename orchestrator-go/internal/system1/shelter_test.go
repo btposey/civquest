@@ -249,8 +249,8 @@ func TestFrontierCabinGeometry(t *testing.T) {
 		pos := intent.TargetVoxel
 		state := intent.BlockStateString
 
-		// Assert bottom-up Y-ordering: Y ascending across the returned slice
-		if i > 0 {
+		// The structure goes up bottom-first; the door and windows follow it.
+		if i > 0 && !blueprints.IsFitting(state) {
 			prevY := blueprint[i-1].TargetVoxel.Y
 			if pos.Y < prevY {
 				t.Fatalf("bottom-up Y-ordering violation at index %d: Y=%d < previous Y=%d", i, pos.Y, prevY)
@@ -352,7 +352,7 @@ func TestFrontierCabinIntents_Offset(t *testing.T) {
 	}
 
 	for i := 1; i < len(intents); i++ {
-		if intents[i].TargetVoxel.Y < intents[i-1].TargetVoxel.Y {
+		if !blueprints.IsFitting(intents[i].BlockStateString) && intents[i].TargetVoxel.Y < intents[i-1].TargetVoxel.Y {
 			t.Fatalf("offset intents bottom-up ordering violation at index %d", i)
 		}
 	}

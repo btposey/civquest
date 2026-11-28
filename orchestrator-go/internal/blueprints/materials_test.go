@@ -53,3 +53,23 @@ func TestNoTwoBlockItemIsAskedForTwice(t *testing.T) {
 		t.Errorf("a two-high door makes %d work items, want 1", n)
 	}
 }
+
+// cq-390.8: a pane if there is one, else an upright trapdoor, else a fence, of any wood.
+func TestFittingFill(t *testing.T) {
+	for _, tc := range []struct {
+		held []string
+		want string
+	}{
+		{[]string{"minecraft:spruce_fence", "minecraft:birch_trapdoor", "minecraft:glass_pane"}, "minecraft:glass_pane"},
+		{[]string{"minecraft:spruce_fence", "minecraft:birch_trapdoor"}, "minecraft:birch_trapdoor[facing=east,half=bottom,open=true]"},
+		{[]string{"minecraft:iron_trapdoor", "minecraft:spruce_fence"}, "minecraft:spruce_fence"},
+		{[]string{"minecraft:oak_fence_gate", "minecraft:oak_planks"}, ""},
+	} {
+		if got, ok := FittingFill(BlockWindowWest, tc.held); got != tc.want || ok != (tc.want != "") {
+			t.Errorf("held %v: window = %q, %v; want %q", tc.held, got, ok, tc.want)
+		}
+	}
+	if got, _ := FittingFill(BlockOakDoorLow, []string{"minecraft:oak_trapdoor", "minecraft:cherry_door"}); got != "minecraft:cherry_door[facing=south,half=lower]" {
+		t.Errorf("door = %q", got)
+	}
+}

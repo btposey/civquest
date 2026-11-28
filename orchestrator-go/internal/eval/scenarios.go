@@ -202,6 +202,8 @@ func RunDuskShelterConstructionScenario(baseCfg TimeWarpConfig) (*TimeWarpSimula
 	}
 	// Also provide initial logs in inventory to bootstrap construction speed
 	sim.AddInventoryItem("minecraft:oak_log", 25)
+	sim.AddInventoryItem("minecraft:oak_door", 1)
+	sim.AddInventoryItem("minecraft:glass_pane", 2)
 
 	sim.BlueprintDetector = NewBlueprintAdvancementDetector(blueprints.CabinTotalBlocks)
 

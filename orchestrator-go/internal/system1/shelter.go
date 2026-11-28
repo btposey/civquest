@@ -116,10 +116,17 @@ func evaluateDuskNightOutpostShelterLocked(
 		}
 	}
 
+	// What the cabin's next block needs, when it is a door or a window (shelter_fittings.go).
+	var fitting fittingView
+	if owned {
+		fitting = state.lookAtFittingLocked(prog, frame, pos, inv)
+		isShelterComplete = prog.complete()
+	}
+
 	// If the Explorer has traveled > 32 blocks from the current outpost along their path of travel,
 	// carries shelter/light materials, and no known habitation POI exists within 64 blocks,
 	// establish a new Forward Outpost.
-	if hasShelterMaterials && recalledHabPOI == nil && outpost != nil && math.Hypot(pos.X-outpost.X, pos.Z-outpost.Z) > 32.0 {
+	if hasShelterMaterials && !fitting.fetching() && recalledHabPOI == nil && outpost != nil && math.Hypot(pos.X-outpost.X, pos.Z-outpost.Z) > 32.0 {
 		newOutpost := &civquestv1.Vec3{X: pos.X, Y: pos.Y, Z: pos.Z}
 		state.currentOutpost = newOutpost
 		state.homeOrigin = newOutpost
@@ -144,7 +151,7 @@ func evaluateDuskNightOutpostShelterLocked(
 	targetX := pos.X
 	targetY := pos.Y
 	targetZ := pos.Z
-	if recalledHabPOI != nil && (hasShelterMaterials || isShelterComplete || strings.Contains(strings.ToLower(recalledHabPOI.BlockID), "bed")) &&
+	if recalledHabPOI != nil && !fitting.fetching() && (hasShelterMaterials || isShelterComplete || strings.Contains(strings.ToLower(recalledHabPOI.BlockID), "bed")) &&
 		(prog.Pos == nil || math.Hypot(pos.X-float64(prog.Pos.X), pos.Z-float64(prog.Pos.Z)) > 32.0) {
 		accessTarget := poiAccessTarget(recalledHabPOI)
 		if math.Hypot(pos.X-recalledHabPOI.X, pos.Z-recalledHabPOI.Z) > 4.0 && !poiWalkOver(pos, recalledHabPOI) && !isStuckOrEnclosed {
@@ -183,7 +190,7 @@ func evaluateDuskNightOutpostShelterLocked(
 	if distToShelter > 4.0 && state.givenUpLocked(targetX, targetY, targetZ, frame.WorldTick) {
 		return nil // no way back was found: neither walk there nor build at it from here
 	}
-	if (hasShelterMaterials || isShelterComplete) && distToShelter > 4.0 && !isStuckOrEnclosed {
+	if (hasShelterMaterials || isShelterComplete) && !fitting.fetching() && distToShelter > 4.0 && !isStuckOrEnclosed {
 		if navState == civquestv1.NavigationState_NAVIGATION_STATE_PATHING {
 			return nil
 		}
@@ -284,7 +291,14 @@ func evaluateDuskNightOutpostShelterLocked(
 			return walkToDrop(agentID, drop)
 		}
 	}
-	if (inv.buildingBlockCount < 16 && inv.logCount < 4) && prog.BuildIndex < len(cabinIntents) {
+	lowStock := inv.buildingBlockCount < 16 && inv.logCount < 4
+	switch {
+	case fitting.fetching():
+		lowStock = fitting.timberShort(state, frame, pos, prog.Pos, inv)
+	case fitting.held:
+		lowStock = false // hang it before going for more
+	}
+	if lowStock && prog.BuildIndex < len(cabinIntents) {
 		var nearestLog *civquestv1.VisibleBlock
 		bestDistSq := math.MaxFloat64
 
@@ -466,8 +480,27 @@ func evaluateDuskNightOutpostShelterLocked(
 		}
 	}
 
-	// 3. Progressively build bottom-up 5x5 Frontier Cabin structure per ADR-010
-	if owned && inv.buildingBlockCount > 0 && prog.BuildIndex < len(cabinIntents) && canPlace {
+	// 3. Build the 5x5 Frontier Cabin (ADR-010): the structure bottom-up, then door and windows
+	if owned && prog.BuildIndex < len(cabinIntents) {
+		// The block is asked for as drawn, from what is held; a door or a window from its fill.
+		fill := ""
+		if at := blueprints.CabinFittingAt(prog.BuildIndex); at != "" && !prog.fittingWalled() {
+			var held bool
+			if fill, held = blueprints.FittingFill(at, heldItemIDs(frame.Status.Inventory)); !held {
+				if !fitting.fetching() {
+					return nil // the site is far: the walk back comes first
+				}
+				return state.fittingStepLocked(agentID, at, frame, pos, navState, prog)
+			}
+		} else if inv.buildingBlockCount <= 0 {
+			if prog.fittingWalled() {
+				state.passOverFittingLocked(prog, inv)
+			}
+			return nil
+		}
+		if !canPlace {
+			return nil
+		}
 		target := cabinIntents[prog.BuildIndex]
 
 		// Ensure the agent is positioned outside the target block voxel before placing.
@@ -514,11 +547,16 @@ func evaluateDuskNightOutpostShelterLocked(
 			}
 		}
 
-		blockID := target.GetBlockStateString()
+		blockID := fill
 		if blockID == "" {
-			blockID = inv.placeableBlockID
+			drawn := target.GetBlockStateString()
+			if prog.fittingWalled() {
+				drawn = blueprints.BlockOakPlanks
+			} else if drawn == "" {
+				drawn = inv.placeableBlockID
+			}
+			blockID = cabinBlock(drawn, frame.Status.Inventory, inv.placeableBlockID)
 		}
-		blockID = cabinBlock(blockID, frame.Status.Inventory, inv.placeableBlockID)
 
 		prog.Phase = blueprints.CabinBlockPhase(prog.BuildIndex)
 		prog.BuildIndex++

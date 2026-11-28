@@ -27,20 +27,25 @@ const (
 // plain filler (cobblestone, dirt). Holding neither, the state is asked for as drawn, and a
 // placement that keeps failing is passed over.
 func cabinBlock(state string, inventory []*civquestv1.ItemStackProto, fallback string) string {
+	if placed, ok := blueprints.WoodSubstitute(state, heldItemIDs(inventory)); ok {
+		return placed
+	}
+	// A workstation or campfire is not a wall.
+	if isFillerBlock(fallback) {
+		return fallback
+	}
+	return state
+}
+
+// heldItemIDs lists the items the pack holds.
+func heldItemIDs(inventory []*civquestv1.ItemStackProto) []string {
 	var held []string
 	for _, it := range inventory {
 		if it != nil && it.Count > 0 {
 			held = append(held, it.ItemId)
 		}
 	}
-	if placed, ok := blueprints.WoodSubstitute(state, held); ok {
-		return placed
-	}
-	// A door cannot be made of loose blocks, and a workstation or campfire is not a wall.
-	if !strings.Contains(state, "_door") && isFillerBlock(fallback) {
-		return fallback
-	}
-	return state
+	return held
 }
 
 func isFillerBlock(id string) bool {

@@ -157,9 +157,13 @@ func (s *AgentState) placeStationLocked(agentID, item string, frame *civquestv1.
 	return in, false
 }
 
-// stationCursor returns the walk cursor of a Local that can set a station down.
-func stationCursor(local any) (walkLocal, func(walkLocal) any, bool) {
-	if l, ok := local.(taskLocal); ok {
+// craftCursor returns the walk cursor of a Local that crafts and sets stations down: where
+// its in-flight craft is latched and what it asks of a station is noted.
+func craftCursor(local any) (walkLocal, func(walkLocal) any, bool) {
+	switch l := local.(type) {
+	case taskLocal:
+		return l.Walk, func(w walkLocal) any { l.Walk = w; return l }, true
+	case shelterLocal:
 		return l.Walk, func(w walkLocal) any { l.Walk = w; return l }, true
 	}
 	return walkCarrier(local)
@@ -169,7 +173,7 @@ func stationCursor(local any) (walkLocal, func(walkLocal) any, bool) {
 // and returns what changed as a Memory write.
 func stationStep(w htpda.World, local any, step func(local any) htpda.Step) htpda.Step {
 	lw := asFSMWorld(w)
-	walk, put, ok := stationCursor(local)
+	walk, put, ok := craftCursor(local)
 	if !ok || lw == nil || lw.ctx == nil || lw.ctx.State == nil || lw.ctx.Frame.GetStatus() == nil {
 		return step(local)
 	}
@@ -179,7 +183,7 @@ func stationStep(w htpda.World, local any, step func(local any) htpda.Step) htpd
 	st.mu.RUnlock()
 	walk.stations = &now
 	out := step(put(walk))
-	if next, put, ok := stationCursor(out.Next); ok {
+	if next, put, ok := craftCursor(out.Next); ok {
 		next.stations = nil
 		out.Next = put(next)
 	}

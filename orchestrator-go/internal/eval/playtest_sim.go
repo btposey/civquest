@@ -926,7 +926,17 @@ func (s *PlaytestSim) applyInteract(ib *civquestv1.InteractBlockIntent) {
 }
 
 func (s *PlaytestSim) placeBlock(k BlockPosKey, item string) {
+	// As the mod does: the state's block item is spent, and a door item sets both halves.
+	state := item
+	if i := strings.IndexByte(item, '['); i >= 0 {
+		item = item[:i]
+	}
 	item = normItem(item)
+	above := BlockPosKey{X: k.X, Y: k.Y + 1, Z: k.Z}
+	door := strings.HasSuffix(item, "_door")
+	if _, taken := s.World.Blocks[above]; door && taken {
+		return
+	}
 	if _, taken := s.World.Blocks[k]; taken {
 		return
 	}
@@ -937,6 +947,12 @@ func (s *PlaytestSim) placeBlock(k BlockPosKey, item string) {
 		return
 	}
 	s.World.Blocks[k] = item
+	if state != item && s.World.BlockStates != nil {
+		s.World.BlockStates[k] = state
+	}
+	if door {
+		s.World.Blocks[above] = item
+	}
 	s.Placed = append(s.Placed, k)
 }
 

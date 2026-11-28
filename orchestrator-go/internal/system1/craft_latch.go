@@ -117,19 +117,12 @@ func (w *fsmWorld) inheritCraftLatch(local any) any {
 }
 
 func craftLatchOf(local any) craftLatch {
-	if tl, ok := local.(taskLocal); ok {
-		return tl.Walk.craftLatch
-	}
-	w, _, _ := walkCarrier(local)
+	w, _, _ := craftCursor(local)
 	return w.craftLatch
 }
 
 func setCraftLatch(local any, l craftLatch) any {
-	if tl, ok := local.(taskLocal); ok {
-		tl.Walk.craftLatch = l
-		return tl
-	}
-	if w, rebuild, ok := walkCarrier(local); ok {
+	if w, rebuild, ok := craftCursor(local); ok {
 		w.craftLatch = l
 		return rebuild(w)
 	}
@@ -150,7 +143,7 @@ func releaseCraftOnReceipt(local any, rc *civquestv1.IntentReceipt) any {
 	default:
 		return local
 	}
-	if w, rebuild, ok := walkCarrier(local); ok && w.craftLatch.armed() {
+	if w, rebuild, ok := craftCursor(local); ok && w.craftLatch.armed() {
 		w.craftLatch = craftLatch{}
 		return rebuild(w)
 	}

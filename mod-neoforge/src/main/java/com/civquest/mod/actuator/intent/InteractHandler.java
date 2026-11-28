@@ -29,6 +29,7 @@ import net.minecraft.world.level.block.BedBlock;
 import net.minecraft.world.level.block.BellBlock;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.Blocks;
+import net.minecraft.world.level.block.CrossCollisionBlock;
 import net.minecraft.world.level.block.DoorBlock;
 import net.minecraft.world.level.block.FenceBlock;
 import net.minecraft.world.level.block.FenceGateBlock;
@@ -115,7 +116,9 @@ public class InteractHandler implements IntentHandler {
                 if (placement.state().getBlock() instanceof DoorBlock) {
                     return hangDoor(level, pos, placement.state());
                 }
-                return level.setBlockAndUpdate(pos, placement.state());
+                // A fence or pane joins what stands beside it only if asked to when it is set.
+                return level.setBlockAndUpdate(pos, placement.state().getBlock() instanceof CrossCollisionBlock
+                        ? Block.updateFromNeighbourShapes(placement.state(), level, pos) : placement.state());
             }
             case RING_BELL -> {
                 if (level != null && level.hasChunkAt(pos)) {

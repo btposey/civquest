@@ -48,7 +48,7 @@ type CabinBlockIntent struct {
 }
 
 // rawCabinBlocks returns the complete set of block placements for the 5x5 Frontier Cabin,
-// strictly ordered bottom-up (Y ascending: Y=0 floor before Y=1..3 walls/doors before Y=4 roof).
+// the structure ordered bottom-up (Y=0 floor, Y=1..3 walls, Y=4 roof) and the fittings last.
 func rawCabinBlocks() []CabinBlockIntent {
 	var blocks []CabinBlockIntent
 
@@ -65,7 +65,7 @@ func rawCabinBlocks() []CabinBlockIntent {
 		}
 	}
 
-	// Y = 1: Corners (Phase 2), Wall faces (Phase 3), Doorway lower (Phase 4)
+	// Y = 1: Corners (Phase 2), Wall faces (Phase 3)
 	corners := [][2]int32{
 		{-2, -2}, {2, -2}, {-2, 2}, {2, 2},
 	}
@@ -88,20 +88,13 @@ func rawCabinBlocks() []CabinBlockIntent {
 			State: BlockOakPlanks,
 		})
 	}
-	// South wall Y=1: doorway at X=0; wall planks at X=-1, 1
+	// South wall Y=1: wall planks at X=-1, 1 beside the doorway
 	blocks = append(blocks, CabinBlockIntent{
 		Phase: CabinPhaseWallFaces,
 		X:     -1,
 		Y:     1,
 		Z:     2,
 		State: BlockOakPlanks,
-	})
-	blocks = append(blocks, CabinBlockIntent{
-		Phase: CabinPhaseDoorway,
-		X:     0,
-		Y:     1,
-		Z:     2,
-		State: BlockOakDoorLow,
 	})
 	blocks = append(blocks, CabinBlockIntent{
 		Phase: CabinPhaseWallFaces,
@@ -131,8 +124,7 @@ func rawCabinBlocks() []CabinBlockIntent {
 		})
 	}
 
-	// Y = 2: Corners (Phase 2), Wall faces (Phase 3), Torch (Phase 6). The door placed at Y=1
-	// fills (0, 2, 2) too: one item hangs both halves.
+	// Y = 2: Corners (Phase 2), Wall faces (Phase 3), Torch (Phase 6)
 	for _, c := range corners {
 		blocks = append(blocks, CabinBlockIntent{
 			Phase: CabinPhaseCornerPillar,
@@ -169,6 +161,9 @@ func rawCabinBlocks() []CabinBlockIntent {
 	})
 	// West wall Y=2
 	for z := int32(-1); z <= 1; z++ {
+		if z == 0 {
+			continue // window
+		}
 		blocks = append(blocks, CabinBlockIntent{
 			Phase: CabinPhaseWallFaces,
 			X:     -2,
@@ -179,6 +174,9 @@ func rawCabinBlocks() []CabinBlockIntent {
 	}
 	// East wall Y=2
 	for z := int32(-1); z <= 1; z++ {
+		if z == 0 {
+			continue // window
+		}
 		blocks = append(blocks, CabinBlockIntent{
 			Phase: CabinPhaseWallFaces,
 			X:     2,
@@ -260,11 +258,17 @@ func rawCabinBlocks() []CabinBlockIntent {
 		}
 	}
 
-	return blocks
+	// The fittings go in when the structure stands: the door first, then a window in each side
+	// wall. The door placed at (0, 1, 2) fills (0, 2, 2) too.
+	return append(blocks,
+		CabinBlockIntent{Phase: CabinPhaseDoorway, X: 0, Y: 1, Z: 2, State: BlockOakDoorLow},
+		CabinBlockIntent{Phase: CabinPhaseDoorway, X: -2, Y: 2, Z: 0, State: BlockWindowWest},
+		CabinBlockIntent{Phase: CabinPhaseDoorway, X: 2, Y: 2, Z: 0, State: BlockWindowEast},
+	)
 }
 
 // FrontierCabinBlueprint returns the complete slice of PlaceBlockIntents forming a 5x5 exterior /
-// 3x3 interior Frontier Cabin centered at (0, 0, 0) in strict bottom-up order (Y ascending: floor before walls before roof).
+// 3x3 interior Frontier Cabin centered at (0, 0, 0): floor, walls and roof bottom-up, then the fittings.
 func FrontierCabinBlueprint() []*civquestv1.PlaceBlockIntent {
 	raw := rawCabinBlocks()
 	intents := make([]*civquestv1.PlaceBlockIntent, len(raw))
@@ -305,7 +309,7 @@ func FrontierCabinIntents(center *civquestv1.Vec3) []*civquestv1.PlaceBlockInten
 // Phase 1: 5x5 Floor (Y=0)
 // Phase 2: 4 Corner Pillars (Y=1..3)
 // Phase 3: Perimeter Wall Faces (Y=1..3)
-// Phase 4: Doorway (Y=1..2)
+// Phase 4: Doorway and windows (Y=1..2)
 // Phase 5: Roof (Y=4)
 // Phase 6: Inside Torch (Y=2)
 func FrontierCabinBlueprintByPhase() []*civquestv1.PlaceBlockIntent {
@@ -369,7 +373,7 @@ func FrontierCabinSpec() *BlueprintSpec {
 			"1: Foundation Floor (oak_planks)",
 			"2: Corner Pillars (oak_log)",
 			"3: Wall Faces (oak_planks)",
-			"4: Doorway (oak_door)",
+			"4: Doorway and Windows (oak_door, glass_pane)",
 			"5: Roof Slabs (oak_slab)",
 			"6: Interior Lighting (torch)",
 		},

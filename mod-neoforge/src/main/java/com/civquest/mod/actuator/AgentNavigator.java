@@ -1725,44 +1725,54 @@ public class AgentNavigator {
         return false;
     }
 
+    /**
+     * Shuts behind the agent the doors, gates and hatches it opened. Run every tick, walking or not: a
+     * walk that ended just inside a door left it open all night (cq-390.8). While walking, one is shut
+     * once the agent is past it (or after 100 ticks); at rest, as soon as it is not standing in it.
+     */
+    public void closeOpenedDoors() {
+        net.minecraft.world.level.Level level = this.agent != null ? this.agent.level() : null;
+        if (level == null || openedDoors.isEmpty()) {
+            return;
+        }
+        boolean walking = isPathing();
+        java.util.Iterator<java.util.Map.Entry<BlockPos, Long>> it = openedDoors.entrySet().iterator();
+        while (it.hasNext()) {
+            var entry = it.next();
+            BlockPos pos = entry.getKey();
+            if (this.agent.getBoundingBox() != null && this.agent.getBoundingBox().intersects(new AABB(pos))) {
+                continue; // in the doorway
+            }
+            if (walking && this.agent.distanceToSqr(pos.getX() + 0.5, pos.getY() + 0.5, pos.getZ() + 0.5) <= 4.84
+                    && navTick - entry.getValue() <= 100) {
+                continue;
+            }
+            net.minecraft.world.level.block.state.BlockState state = level.getBlockState(pos);
+            var open = net.minecraft.world.level.block.state.properties.BlockStateProperties.OPEN;
+            if (isPassableDoor(state) && state.hasProperty(open) && state.getValue(open)) {
+                if (state.getBlock() instanceof net.minecraft.world.level.block.DoorBlock door) {
+                    door.setOpen(this.agent, level, state, pos, false);
+                } else {
+                    level.setBlockAndUpdate(pos, state.setValue(open, false));
+                    level.gameEvent(this.agent, net.minecraft.world.level.gameevent.GameEvent.BLOCK_CLOSE, pos);
+                }
+            }
+            it.remove();
+        }
+    }
+
+    /** A trapdoor standing open that the agent did not open: a panel, such as a window's, and no way through. */
+    private boolean isStandingPanel(net.minecraft.world.level.block.state.BlockState state, BlockPos pos) {
+        return state.getBlock() instanceof net.minecraft.world.level.block.TrapDoorBlock
+                && state.getValue(net.minecraft.world.level.block.TrapDoorBlock.OPEN) && !openedDoors.containsKey(pos);
+    }
+
     private void handleDoorInteractions(net.minecraft.world.level.Level level, Vec3 currentPos) {
         if (level == null || this.agent == null) {
             return;
         }
 
-        // 1. Auto-close doors we previously opened and have now moved away from (> 2.2 blocks)
-        if (!openedDoors.isEmpty()) {
-            java.util.Iterator<java.util.Map.Entry<BlockPos, Long>> it = openedDoors.entrySet().iterator();
-            while (it.hasNext()) {
-                var entry = it.next();
-                BlockPos pos = entry.getKey();
-                long openTick = entry.getValue();
-                double dSq = this.agent.distanceToSqr(pos.getX() + 0.5, pos.getY() + 0.5, pos.getZ() + 0.5);
-                if (dSq > 4.84 || navTick - openTick > 100) {
-                    try {
-                        net.minecraft.world.level.block.state.BlockState state = level.getBlockState(pos);
-                        if (state.getBlock() instanceof net.minecraft.world.level.block.DoorBlock door) {
-                            if (state.getValue(net.minecraft.world.level.block.state.properties.BlockStateProperties.OPEN)) {
-                                door.setOpen(this.agent, level, state, pos, false);
-                            }
-                        } else if (state.getBlock() instanceof net.minecraft.world.level.block.FenceGateBlock) {
-                            if (state.getValue(net.minecraft.world.level.block.state.properties.BlockStateProperties.OPEN)) {
-                                level.setBlockAndUpdate(pos, state.setValue(net.minecraft.world.level.block.state.properties.BlockStateProperties.OPEN, false));
-                                level.gameEvent(this.agent, net.minecraft.world.level.gameevent.GameEvent.BLOCK_CLOSE, pos);
-                            }
-                        } else if (state.getBlock() instanceof net.minecraft.world.level.block.TrapDoorBlock) {
-                            if (state.getValue(net.minecraft.world.level.block.state.properties.BlockStateProperties.OPEN)) {
-                                level.setBlockAndUpdate(pos, state.setValue(net.minecraft.world.level.block.state.properties.BlockStateProperties.OPEN, false));
-                                level.gameEvent(this.agent, net.minecraft.world.level.gameevent.GameEvent.BLOCK_CLOSE, pos);
-                            }
-                        }
-                    } catch (Throwable ignored) {}
-                    it.remove();
-                }
-            }
-        }
-
-        // 2. Open any closed passable doors directly ahead of the agent (within 1.5 blocks)
+        // Open any closed passable doors directly ahead of the agent (within 1.5 blocks)
         double rad = Math.toRadians(headYaw);
         double fx = -Math.sin(rad);
         double fz = Math.cos(rad);
@@ -1803,7 +1813,8 @@ public class AgentNavigator {
                 return false;
             }
             net.minecraft.world.level.block.state.BlockState state = level.getBlockState(pos);
-            if (state == null || state.isAir() || isClimbableState(state, level, pos) || isPassableDoor(state)) {
+            if (state == null || state.isAir() || isClimbableState(state, level, pos)
+                    || isPassableDoor(state) && !isStandingPanel(state, pos)) {
                 return false;
             }
             var shape = state.getCollisionShape(level, pos);
@@ -1823,7 +1834,6 @@ public class AgentNavigator {
         this.baritoneInactivityTicks = 0;
         this.enclosed = false;
         this.reachedTargetCell = false;
-        this.openedDoors.clear();
         if (this.cliffDetected && this.agent != null) {
             this.agent.setShiftKeyDown(false);
         }

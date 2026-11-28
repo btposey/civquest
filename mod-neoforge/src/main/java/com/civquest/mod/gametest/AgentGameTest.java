@@ -356,6 +356,112 @@ public class AgentGameTest {
         helper.succeed();
     }
 
+    // cq-390.8: window fills hang as windows: a pane and a fence join the wall either side, and a
+    // trapdoor stands upright.
+    @GameTest(template = "empty3x3x3")
+    public static void testWindowFillsCloseTheOpening(GameTestHelper helper) {
+        AgentEntityManager manager = new AgentEntityManager();
+        AgentEntity agent = spawnCoverageAgent(helper, manager, "agent-gt-window", new BlockPos(0, 1, 1));
+        agent.getInventory().add(new ItemStack(Items.GLASS_PANE));
+        agent.getInventory().add(new ItemStack(Items.SPRUCE_FENCE));
+        agent.getInventory().add(new ItemStack(Items.BIRCH_TRAPDOOR));
+        BlockPos cell = new BlockPos(2, 2, 1);
+        helper.setBlock(cell.north(), Blocks.OAK_PLANKS);
+        helper.setBlock(cell.south(), Blocks.OAK_PLANKS);
+        var place = InteractBlockIntent.InteractionType.PLACE_BLOCK;
+        for (String fill : new String[] {"minecraft:glass_pane", "minecraft:spruce_fence"}) {
+            interactAt(helper, manager, "agent-gt-window", cell, place, fill);
+            helper.assertBlockState(cell, s -> s.getBlock() instanceof net.minecraft.world.level.block.CrossCollisionBlock
+                    && s.getValue(net.minecraft.world.level.block.CrossCollisionBlock.NORTH)
+                    && s.getValue(net.minecraft.world.level.block.CrossCollisionBlock.SOUTH),
+                    () -> fill + " must join the wall on both sides");
+            helper.setBlock(cell, Blocks.AIR);
+        }
+        interactAt(helper, manager, "agent-gt-window", cell, place,
+                "minecraft:birch_trapdoor[facing=east,half=bottom,open=true]");
+        helper.assertBlockState(cell, s -> s.is(Blocks.BIRCH_TRAPDOOR)
+                && s.getValue(net.minecraft.world.level.block.TrapDoorBlock.OPEN)
+                && s.getValue(net.minecraft.world.level.block.TrapDoorBlock.FACING) == net.minecraft.core.Direction.EAST,
+                () -> "an upright trapdoor on the outer face");
+        manager.despawnAgent(helper.getLevel().getServer(), "agent-gt-window").join();
+        helper.succeed();
+    }
+
+    private static final int DOORWAY_ARENA_Y = 24;
+
+    /** A passage one cell wide along x with a wall cell across it at x=2, high above the other tests. */
+    private static void passage(GameTestHelper helper) {
+        for (int x = -1; x <= 5; x++) {
+            for (int z = 0; z <= 2; z++) {
+                helper.setBlock(new BlockPos(x, DOORWAY_ARENA_Y, z), Blocks.BEDROCK);
+                for (int y = 1; y <= 3; y++) {
+                    boolean wall = z != 1 || x == -1 || x == 5 || x == 2 && y == 3;
+                    helper.setBlock(new BlockPos(x, DOORWAY_ARENA_Y + y, z), wall ? Blocks.BEDROCK : Blocks.AIR);
+                }
+            }
+        }
+    }
+
+    // cq-390.8: an agent walks through a hung door and it is shut behind it, also when the walk
+    // ends beside the door.
+    @GameTest(template = "empty3x3x3")
+    public static void testDoorIsClosedBehindTheAgent(GameTestHelper helper) {
+        AgentEntityManager manager = new AgentEntityManager();
+        passage(helper);
+        int y = DOORWAY_ARENA_Y + 1;
+        AgentEntity agent = spawnCoverageAgent(helper, manager, "agent-gt-doorway", new BlockPos(0, y, 1));
+        agent.getInventory().add(new ItemStack(Items.OAK_DOOR));
+        BlockPos door = new BlockPos(2, y, 1);
+        interactAt(helper, manager, "agent-gt-doorway", door, InteractBlockIntent.InteractionType.PLACE_BLOCK,
+                "minecraft:oak_door[facing=east,half=lower]");
+        helper.assertBlockPresent(Blocks.OAK_DOOR, door.above());
+        // The walk's tolerance of 1 ends it just beside the door.
+        BlockPos beyond = helper.absolutePos(new BlockPos(4, y, 1));
+        navigateByIntent(manager, helper.getLevel().getServer(), "agent-gt-doorway",
+                beyond.getX() + 0.5, beyond.getY(), beyond.getZ() + 0.5, false, false);
+        for (int t = 0; t < 120; t++) {
+            agent.tick();
+        }
+        helper.assertTrue(agent.getX() > helper.absolutePos(door).getX() + 1.0,
+                "Agent must be through the door, at " + agent.position());
+        for (BlockPos half : new BlockPos[] {door, door.above()}) {
+            helper.assertBlockState(half, s -> !s.getValue(net.minecraft.world.level.block.DoorBlock.OPEN),
+                    () -> "the door must be shut behind the agent");
+        }
+        manager.despawnAgent(helper.getLevel().getServer(), "agent-gt-doorway").join();
+        helper.succeed();
+    }
+
+    // cq-390.8: an upright trapdoor filling an opening is a wall to the navigator, not a door. These
+    // run along the passage, so the body would fit past: only the navigator keeps the agent out.
+    @GameTest(template = "empty3x3x3")
+    public static void testUprightTrapdoorIsNoPassage(GameTestHelper helper) {
+        AgentEntityManager manager = new AgentEntityManager();
+        passage(helper);
+        int y = DOORWAY_ARENA_Y + 1;
+        AgentEntity agent = spawnCoverageAgent(helper, manager, "agent-gt-panel", new BlockPos(0, y, 1));
+        var panel = Blocks.OAK_TRAPDOOR.defaultBlockState()
+                .setValue(net.minecraft.world.level.block.TrapDoorBlock.OPEN, true)
+                .setValue(net.minecraft.world.level.block.TrapDoorBlock.FACING, net.minecraft.core.Direction.NORTH);
+        BlockPos low = new BlockPos(2, y, 1);
+        helper.setBlock(low, panel);
+        helper.setBlock(low.above(), panel);
+        BlockPos beyond = helper.absolutePos(new BlockPos(4, y, 1));
+        navigateByIntent(manager, helper.getLevel().getServer(), "agent-gt-panel",
+                beyond.getX() + 0.5, beyond.getY(), beyond.getZ() + 0.5, false, false);
+        for (int t = 0; t < 120; t++) {
+            agent.tick();
+        }
+        helper.assertTrue(agent.getX() < helper.absolutePos(low).getX(), "Agent must stay outside, at " + agent.position());
+        helper.assertTrue(!agent.getNavigator().isArrived(), "No path leads through the panels");
+        for (BlockPos half : new BlockPos[] {low, low.above()}) {
+            helper.assertBlockState(half, s -> s.is(Blocks.OAK_TRAPDOOR)
+                    && s.getValue(net.minecraft.world.level.block.TrapDoorBlock.OPEN), () -> "the panel stays as it was");
+        }
+        manager.despawnAgent(helper.getLevel().getServer(), "agent-gt-panel").join();
+        helper.succeed();
+    }
+
     // cq-6nz, cq-vl2: stone with lava against it is not broken, and the frame says so beforehand;
     // stone with water against it, and dry stone, are reported breakable and break.
     @GameTest(template = "empty3x3x3")

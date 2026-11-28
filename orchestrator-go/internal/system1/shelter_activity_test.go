@@ -93,7 +93,7 @@ func TestShelterFrame_CompleteIsDerivedAndBankedOnPop(t *testing.T) {
 	cfg := xdg.DefaultAgentIdentityConfig("replay")
 	cfg.Profession = "EXPLORER"
 	lit := withBlocks(blk(1, 64, 1, "minecraft:torch"))
-	inv := withInv(item(0, "minecraft:cobblestone", 64), item(1, "minecraft:torch", 4))
+	inv := withInv(item(0, "minecraft:cobblestone", 64), item(1, "minecraft:torch", 4), item(2, "minecraft:glass_pane", 1))
 	fsm.Tick(&FSMContext{AgentID: "replay", State: st, Config: cfg, Frame: rf(120, 14000, inv, lit)})
 	if l, _ := shelterFrameLocal(t, fsm); !l.complete() {
 		t.Fatalf("local not complete: %+v", l)

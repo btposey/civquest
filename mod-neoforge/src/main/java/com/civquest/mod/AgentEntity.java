@@ -232,6 +232,9 @@ public class AgentEntity extends FakePlayer {
                         this.navigator.tick();
                     }
                 }
+                if (this.navigator != null) {
+                    this.navigator.closeOpenedDoors();
+                }
                 if (this.intentActuator != null) {
                     this.intentActuator.tick(this);
                 }

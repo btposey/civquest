@@ -41,6 +41,8 @@ type shelterLocal struct {
 	// WalkIndex and Walks count the walks made to get within reach of one block.
 	WalkIndex, Walks int
 	WalkTick         int64
+	// Fit is the work on the door or window the build has come to (shelter_fittings.go).
+	Fit fittingJob
 	// Rest is why the frame is resting this step, "" when it is not (rest.go); QuietSince is
 	// the tick the frame last fell quiet (0 while it is asking for things).
 	Rest       string
