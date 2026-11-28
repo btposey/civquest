@@ -216,6 +216,8 @@ type recoverLocal struct {
 	Stalled      bool  // the target has defeated StallEpisodes episodes: give up at once
 	NavSent      bool  // the intent in flight is a movement, not a dig
 	LeafBreaks   int   // foliage cleared from the way this episode
+	// Descended: this episode has taken its one descent (ladder_descent.go).
+	Descended bool
 }
 
 // moved reports that the agent is at least a block from where the episode began, in any
@@ -475,6 +477,10 @@ func (a recoverActivity) advance(lw *fsmWorld, loc recoverLocal) htpda.Step {
 			loc.Attempts++ // enclosed is bounded by the lease, not the attempt budget (digging takes time)
 		}
 	default:
+		if args, ok := loc.ladderDescent(f, pos); ok {
+			loc.Descended = true
+			return htpda.Step{Op: htpda.OpPush, Child: activityKindLadder, Args: args, Next: loc}
+		}
 		if loc.Dig && hasAdjacentObstruction(f, loc.Bearing, pos) {
 			var isNav bool
 			intent, isNav = loc.enclosedStep(lw.agentID(), f, pos, tick, &loc, unbreakable)

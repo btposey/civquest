@@ -20,6 +20,7 @@ import com.civquest.mod.grpc.v1.NavigateIntent;
 import com.civquest.mod.grpc.v1.NavigationState;
 import java.util.function.IntConsumer;
 import java.util.function.Consumer;
+import java.util.function.Predicate;
 import net.minecraft.util.Mth;
 import com.civquest.mod.grpc.v1.PlaceSignpostIntent;
 import com.civquest.mod.grpc.v1.SpawnAgentRequest;
@@ -2546,6 +2547,82 @@ public class AgentGameTest {
         helper.assertTrue(agent.blockPosition().equals(helper.absolutePos(new BlockPos(2, 6, 1))),
                 "agent must stand on the ledge, is at " + agent.blockPosition());
         manager.despawnAgent(server, "agent-gt-shaft").join();
+        helper.succeed();
+    }
+
+    /**
+     * cq-htv.4: a deliberate descent. From the ledge the sensors list what a safe drop is judged by;
+     * the walk takes the three-block drop unhurt, the way back is hung from the landing without
+     * leaving it, and climbs to where the agent stood.
+     */
+    @GameTest(template = "empty3x3x3", timeoutTicks = 600)
+    public static void testDropsThreeAndLaddersBack(GameTestHelper helper) {
+        ServerLevel level = helper.getLevel();
+        MinecraftServer server = level.getServer();
+        AgentEntityManager manager = new AgentEntityManager();
+        for (int x = 0; x <= 2; x++) {
+            for (int z = 0; z <= 2; z++) {
+                for (int y = 0; y <= 6; y++) {
+                    boolean stone = y == 0 || y <= 3 && !(x == 1 && z == 1);
+                    helper.setBlock(new BlockPos(x, y, z), stone ? Blocks.STONE : Blocks.AIR);
+                }
+            }
+        }
+        AgentEntity agent = spawnCoverageAgent(helper, manager, "agent-gt-drop", new BlockPos(0, 4, 1));
+        helper.assertTrue(agent != null, "Agent must spawn");
+        agent.getInventory().add(new ItemStack(Items.LADDER, 3));
+        float health = agent.getHealth();
+
+        com.civquest.mod.grpc.v1.TelemetryFrame.Builder seen = com.civquest.mod.grpc.v1.TelemetryFrame.newBuilder();
+        new com.civquest.mod.sensory.SensoryFrustumCollector().collectInterestingBlocks(agent, level, seen);
+        Predicate<BlockPos> listed = rel -> {
+            BlockPos at = helper.absolutePos(rel);
+            return seen.getInterestingBlocksList().stream().anyMatch(b -> b.getPos().getX() == at.getX()
+                    && b.getPos().getY() == at.getY() && b.getPos().getZ() == at.getZ());
+        };
+        for (int y = 1; y <= 3; y++) {
+            helper.assertTrue(listed.test(new BlockPos(0, y, 1)), "the wall below must be listed at " + y);
+            helper.assertTrue(!listed.test(new BlockPos(1, y, 1)), "open air must not be listed at " + y);
+        }
+        helper.assertTrue(listed.test(new BlockPos(1, 0, 1)), "the landing block must be listed");
+
+        Consumer<BlockPos> walkInto = rel -> {
+            BlockPos to = helper.absolutePos(rel);
+            manager.handleIntent(server, AgentIntent.newBuilder()
+                    .setAgentId("agent-gt-drop")
+                    .setNavigate(NavigateIntent.newBuilder()
+                            .setTarget(Vec3.newBuilder().setX(to.getX() + 0.5).setY(to.getY()).setZ(to.getZ() + 0.5))
+                            .setSpeedMultiplier(1.0f)
+                            .setArrivalTolerance(1)
+                            .setIntoCell(true))
+                    .build()).join();
+            for (int t = 0; t < 200 && agent.getNavigator().isPathing(); t++) {
+                agent.tick();
+            }
+            for (int t = 0; t < 20; t++) {
+                agent.tick();
+            }
+        };
+        walkInto.accept(new BlockPos(1, 1, 1));
+        helper.assertTrue(agent.blockPosition().equals(helper.absolutePos(new BlockPos(1, 1, 1))),
+                "agent must land below the ledge, is at " + agent.blockPosition());
+        helper.assertTrue(agent.getHealth() >= health, "a three-block drop must not hurt");
+        for (int y = 1; y <= 3; y++) {
+            BlockPos rung = helper.absolutePos(new BlockPos(1, y, 1));
+            manager.handleIntent(server, AgentIntent.newBuilder()
+                    .setAgentId("agent-gt-drop")
+                    .setBuildBlock(com.civquest.mod.grpc.v1.BuildBlockIntent.newBuilder()
+                            .setTargetVoxel(BlockPosProto.newBuilder().setX(rung.getX()).setY(rung.getY()).setZ(rung.getZ()).build())
+                            .setBlockStateString("minecraft:ladder[facing=east]")
+                            .build())
+                    .build()).join();
+            helper.assertBlockPresent(Blocks.LADDER, new BlockPos(1, y, 1));
+        }
+        walkInto.accept(new BlockPos(1, 3, 1));
+        walkInto.accept(new BlockPos(0, 4, 1));
+        helper.assertTrue(agent.blockPosition().equals(helper.absolutePos(new BlockPos(0, 4, 1))),
+                "agent must climb back to where it stood, is at " + agent.blockPosition());
+        manager.despawnAgent(server, "agent-gt-drop").join();
         helper.succeed();
     }
 

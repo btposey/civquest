@@ -150,7 +150,9 @@ func (a recoverActivity) onChildDone(lw *fsmWorld, loc recoverLocal, e htpda.Chi
 		loc.NoLadder = 0
 		return a.pop(loc, recovered{})
 	}
-	if failed := sideOf(r.DirX, r.DirZ); ok && failed != 0 {
+	if failed := sideOf(r.DirX, r.DirZ); ok && r.Drop > 0 {
+		// A descent that came to nothing blames no wall.
+	} else if ok && failed != 0 {
 		loc.NoLadder |= failed
 	} else {
 		loc.NoLadder = allSides // refused or timed out: no telling which wall to blame

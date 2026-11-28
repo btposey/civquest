@@ -46,8 +46,12 @@ var ladderTunables = struct {
 	IdleWalks int
 }{Stock: plan.LadderReserve, StockTicks: 400, LeaseTicks: 600, AskTicks: 200, IdleWalks: 3}
 
-// ladderArgs names the wall: the side of the agent's cell it is on.
-type ladderArgs struct{ DirX, DirZ int32 }
+// ladderArgs names the wall: the side of the agent's cell it is on. With a Drop it names instead
+// the side of a descent that far (ladder_descent.go).
+type ladderArgs struct {
+	DirX, DirZ int32
+	Drop       int
+}
 
 // ladderResult is the pop Result.
 type ladderResult struct {
@@ -91,6 +95,9 @@ func (ladderActivity) Init(w htpda.World, args any) (any, htpda.Lease) {
 	if lw := asFSMWorld(w); lw != nil {
 		if p := lw.pos(); p != nil {
 			loc.Column = ladderCell(p)
+			if a.Drop > 0 {
+				loc.Column = loc.Column.Add(int(a.DirX), -a.Drop, int(a.DirZ)) // the landing
+			}
 			loc.Top, loc.Best = loc.Column.Y-1, loc.Column.Y
 		}
 	}
@@ -165,7 +172,7 @@ func (a ladderActivity) step(w htpda.World, loc ladderLocal, ev htpda.Event) htp
 		case civquestv1.IntentReceipt_RECEIPT_STATUS_COMPLETED:
 			if loc.Waiting && loc.Ask.Op == vertical.ClimbHang {
 				loc.Top = loc.Ask.Y
-				st := a.advance(lw, loc.answered())
+				st := a.next(lw, loc.answered())
 				st.Lease = a.renew(lw)
 				return st
 			}
@@ -173,6 +180,14 @@ func (a ladderActivity) step(w htpda.World, loc ladderLocal, ev htpda.Event) htp
 		case civquestv1.IntentReceipt_RECEIPT_STATUS_ABORTED, civquestv1.IntentReceipt_RECEIPT_STATUS_PREEMPTED_BY_REFLEX:
 			loc.Waiting = false
 		}
+	}
+	return a.next(lw, loc)
+}
+
+// next is the move of the climb or descent under way.
+func (a ladderActivity) next(lw *fsmWorld, loc ladderLocal) htpda.Step {
+	if loc.Drop > 0 && lw.Frame().GetStatus() != nil && lw.pos() != nil {
+		return a.descend(lw, loc)
 	}
 	return a.advance(lw, loc)
 }
@@ -194,6 +209,12 @@ func (ladderActivity) renew(lw *fsmWorld) *htpda.Lease {
 	return &htpda.Lease{StartTick: lw.Tick(), DeadlineTick: lw.Tick() + ladderTunables.LeaseTicks}
 }
 
+func (ladderActivity) succeed(lw *fsmWorld, loc ladderLocal, event, summary string, height int) htpda.Step {
+	lw.ctx.State.noteDiag(event, summary, map[string]any{
+		"column": []int{loc.Column.X, loc.Column.Y, loc.Column.Z}, "height": height})
+	return htpda.Step{Op: htpda.OpPop, Result: ladderResult{ladderArgs: loc.ladderArgs, Climbed: true}}
+}
+
 func (ladderActivity) fail(lw *fsmWorld, loc ladderLocal, reason string) htpda.Step {
 	lw.ctx.State.noteDiag(EventLadderFailed, "ladder climb failed: "+reason, map[string]any{
 		"reason": reason, "column": []int{loc.Column.X, loc.Column.Y, loc.Column.Z}, "height": loc.Best - loc.Column.Y})
@@ -210,9 +231,7 @@ func (a ladderActivity) advance(lw *fsmWorld, loc ladderLocal) htpda.Step {
 	onLedge := at.X == loc.Column.X+int(loc.DirX) && at.Z == loc.Column.Z+int(loc.DirZ) && at.Y >= loc.Column.Y+2
 	switch {
 	case onLedge:
-		lw.ctx.State.noteDiag(EventLadderClimbed, fmt.Sprintf("climbed %d blocks by ladder", at.Y-loc.Column.Y),
-			map[string]any{"column": []int{loc.Column.X, loc.Column.Y, loc.Column.Z}, "height": at.Y - loc.Column.Y})
-		return htpda.Step{Op: htpda.OpPop, Result: ladderResult{ladderArgs: loc.ladderArgs, Climbed: true}}
+		return a.succeed(lw, loc, EventLadderClimbed, fmt.Sprintf("climbed %d blocks by ladder", at.Y-loc.Column.Y), at.Y-loc.Column.Y)
 	case loc.Waiting:
 		if tick-loc.Ask.Tick >= ladderTunables.AskTicks {
 			return a.fail(lw, loc, "no answer")
@@ -257,10 +276,7 @@ func (a ladderActivity) advance(lw *fsmWorld, loc ladderLocal) htpda.Step {
 	var intent *civquestv1.AgentIntent
 	switch move.Op {
 	case vertical.ClimbHang:
-		intent = &civquestv1.AgentIntent{AgentId: lw.agentID(), Action: &civquestv1.AgentIntent_BuildBlock{BuildBlock: &civquestv1.BuildBlockIntent{
-			TargetVoxel:      &civquestv1.BlockPosProto{X: int32(move.Cell.X), Y: int32(move.Cell.Y), Z: int32(move.Cell.Z)},
-			BlockStateString: ladderItem + "[facing=" + move.Facing + "]",
-		}}}
+		intent = hangLadder(lw.agentID(), move)
 	case vertical.ClimbRung, vertical.ClimbStepOff:
 		if loc.Idle >= ladderTunables.IdleWalks {
 			return a.fail(lw, loc, "climbing got no higher")
@@ -276,6 +292,13 @@ func (a ladderActivity) advance(lw *fsmWorld, loc ladderLocal) htpda.Step {
 	}
 	loc.Ask, loc.Waiting = ladderAsk{Op: move.Op, Y: move.Cell.Y, Tick: tick}, true
 	return htpda.Step{Op: htpda.OpStay, Next: loc, Lease: lease, Intents: []*civquestv1.AgentIntent{intent}}
+}
+
+func hangLadder(agentID string, move vertical.ClimbMove) *civquestv1.AgentIntent {
+	return &civquestv1.AgentIntent{AgentId: agentID, Action: &civquestv1.AgentIntent_BuildBlock{BuildBlock: &civquestv1.BuildBlockIntent{
+		TargetVoxel:      &civquestv1.BlockPosProto{X: int32(move.Cell.X), Y: int32(move.Cell.Y), Z: int32(move.Cell.Z)},
+		BlockStateString: ladderItem + "[facing=" + move.Facing + "]",
+	}}}
 }
 
 // stock makes ladders at the wall: a table in reach (set down, or made first), then batches until

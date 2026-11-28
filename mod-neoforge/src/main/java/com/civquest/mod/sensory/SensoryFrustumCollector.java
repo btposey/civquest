@@ -394,6 +394,10 @@ public class SensoryFrustumCollector {
         immediateSamples.add(feetPos.above(2)); // Overhead jump clearance
         // A body on a ladder, all but up to the next rung, hangs and steps off a cell higher (cq-htv.1)
         immediateSamples.add(feetPos.above(3));
+        // The agent's own column below: the wall a ladder would hang on after a descent (cq-htv.4)
+        for (int depth = 1; depth <= 4; depth++) {
+            immediateSamples.add(feetPos.below(depth));
+        }
         for (net.minecraft.core.Direction dir : net.minecraft.core.Direction.Plane.HORIZONTAL) {
             // Distance 1: feet, eye, and headroom
             immediateSamples.add(feetPos.relative(dir));
