@@ -200,6 +200,25 @@ func (s *AgentState) unbreakable(b *civquestv1.VisibleBlock, tick int64) bool {
 	return s.unbreakableLocked(b, tick)
 }
 
+// blockArrivalTolerance is the arrival tolerance of a walk to a block that is to be broken.
+const blockArrivalTolerance = 2
+
+// walkToBlockOver reports that the walk to block b is over: walking brings the agent no nearer,
+// whether b is beside it or over its head.
+func walkToBlockOver(pos *civquestv1.Vec3, b *civquestv1.BlockPosProto) bool {
+	return walkArrives(pos, &civquestv1.Vec3{X: float64(b.X) + 0.5, Y: float64(b.Y), Z: float64(b.Z) + 0.5}, blockArrivalTolerance)
+}
+
+// breakOrWalk is what the owner of a block to be broken does with it from pos (cq-029). close is
+// the owner's own measure of near enough. A block is broken when it is close, or from where the
+// walk to it ends, as far as the mod's reach allows; spent reports that the walk is over and the
+// block still out of reach, so the owner must give it up and not walk again.
+func breakOrWalk(pos *civquestv1.Vec3, b *civquestv1.BlockPosProto, close bool) (now, spent bool) {
+	over := walkToBlockOver(pos, b)
+	now = (close || over) && withinBreakReach(pos, b)
+	return now, over && !now
+}
+
 // withinBreakReach is the mod's reach rule for starting a break (cq-gpa.9).
 func withinBreakReach(pos *civquestv1.Vec3, b *civquestv1.BlockPosProto) bool {
 	return vertical.ReachableAABB(vertical.Vec3{X: pos.X, Y: pos.Y, Z: pos.Z}, vertical.DefaultEyeHeight, vertical.DefaultReach,

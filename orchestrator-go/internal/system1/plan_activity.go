@@ -673,7 +673,13 @@ func (x *planExec) gatherMine(step plan.Step) (*civquestv1.AgentIntent, bool) {
 		x.l.Target = planTarget{Kind: "mine", Pos: c, Chosen: x.tick}
 	}
 	dx, dy, dz := float64(c[0])+0.5-pos.X, float64(c[1])+0.5-pos.Y, float64(c[2])+0.5-pos.Z
-	if dx*dx+dy*dy+dz*dz <= directiveReachRadius*directiveReachRadius && math.Abs(dy) <= 3.0 {
+	now, spent := breakOrWalk(pos, best.Pos,
+		dx*dx+dy*dy+dz*dz <= directiveReachRadius*directiveReachRadius && math.Abs(dy) <= 3.0)
+	if spent {
+		x.st().MarkWorkstationUnreachableLocked(c[0], c[1], c[2], x.tick)
+		return nil, true // another block next step
+	}
+	if now {
 		if x.l.LastAction != 0 && x.tick >= x.l.LastAction && x.tick-x.l.LastAction < planActionTicks {
 			return nil, true
 		}

@@ -338,7 +338,12 @@ func evaluateDirectiveMineStone(
 	}
 	if bestBlock != nil {
 		dy := math.Abs(float64(bestBlock.Pos.Y) + 0.5 - pos.Y)
-		if bestDistSq <= directiveReachRadius*directiveReachRadius && dy <= 3.0 {
+		now, spent := breakOrWalk(pos, bestBlock.Pos, bestDistSq <= directiveReachRadius*directiveReachRadius && dy <= 3.0)
+		if spent {
+			state.MarkWorkstationUnreachableLocked(bestBlock.Pos.X, bestBlock.Pos.Y, bestBlock.Pos.Z, frame.WorldTick)
+			return nil // the chooser passes over it from the next step
+		}
+		if now {
 			if loc.LastActionTick > 0 && frame.WorldTick >= loc.LastActionTick &&
 				frame.WorldTick-loc.LastActionTick < directiveActionCooldownTicks {
 				return nil

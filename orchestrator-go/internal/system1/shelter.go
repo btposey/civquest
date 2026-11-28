@@ -333,7 +333,12 @@ func evaluateDuskNightOutpostShelterLocked(
 
 		if targetLog != nil {
 			prog.focusTree(targetLog.Pos.X, targetLog.Pos.Z)
-			if targetDistSq <= 20.25 && withinBreakReach(pos, targetLog.Pos) { // Within 4.5 blocks melee/harvest reach
+			now, spent := breakOrWalk(pos, targetLog.Pos, targetDistSq <= 20.25) // Within 4.5 blocks melee/harvest reach
+			if spent {
+				state.MarkWorkstationUnreachableLocked(targetLog.Pos.X, targetLog.Pos.Y, targetLog.Pos.Z, frame.WorldTick)
+				return nil
+			}
+			if now {
 				if state.mem.lastHarvestTick == 0 || frame.WorldTick < state.mem.lastHarvestTick || frame.WorldTick-state.mem.lastHarvestTick >= 20 {
 					state.mem.lastHarvestTick = frame.WorldTick
 					return &civquestv1.AgentIntent{
