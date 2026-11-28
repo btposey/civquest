@@ -1727,6 +1727,7 @@ public class AgentGameTest {
     private static final int LEAF_ARENA_Y = 130;
     private static final int FELL_ARENA_Y = 145;
     private static final int GROUND_ARENA_Y = 165;
+    private static final int TRENCH_ARENA_Y = 185;
     private static final int CAMPFIRE_ARENA_Y = 60;
     private static final int IDLE_POOL_ARENA_Y = 70;
     private static final int SURFACE_POOL_ARENA_Y = 80;
@@ -1836,6 +1837,50 @@ public class AgentGameTest {
                 .addIntents(AgentIntent.newBuilder().setNavigate(NavigateIntent.newBuilder().setArrivalTolerance(1)
                         .setTarget(Vec3.newBuilder().setX(to.getX() + 0.5).setY(to.getY()).setZ(to.getZ() + 0.5))))
                 .build();
+    }
+
+    // cq-fqp: in a one-wide water trench an agent walking to a place no higher than the water
+    // hung against the bank at the destination's height instead of climbing onto it.
+    @GameTest(template = "empty3x3x3", timeoutTicks = 400)
+    public static void testClimbsOutOfWaterTrenchToLowerGround(GameTestHelper helper) {
+        MinecraftServer server = helper.getLevel().getServer();
+        AgentEntityManager manager = new AgentEntityManager();
+        int y = TRENCH_ARENA_Y;
+        for (int x = -2; x <= 8; x++) {
+            // West of the trench a high wall; east a bank one block above the water, then lower ground.
+            int top = x <= -1 ? 5 : x == 0 ? 0 : x <= 2 ? 2 : x == 3 ? 1 : 0;
+            for (int z = -3; z <= 3; z++) {
+                boolean end = Math.abs(z) == 3 && x == 0;
+                for (int dy = 0; dy <= 6; dy++) {
+                    boolean water = x == 0 && !end && dy >= 1 && dy <= 2;
+                    helper.setBlock(new BlockPos(x, y + dy, z),
+                            water ? Blocks.WATER : dy <= (end ? 5 : top) ? Blocks.STONE : Blocks.AIR);
+                }
+            }
+        }
+        AgentEntity agent = spawnCoverageAgent(helper, manager, "agent-gt-trench", new BlockPos(2, y + 3, 0));
+        BlockPos in = helper.absolutePos(new BlockPos(0, y + 1, 0));
+        // Pressed into the corner of bank and trench end, as the stuck agent of play test sb2 was.
+        agent.moveTo(in.getX() + 0.7, in.getY() + 0.6, in.getZ() + 0.7);
+        BlockPos to = helper.absolutePos(new BlockPos(6, y + 1, 0));
+        manager.handleIntent(server, AgentIntent.newBuilder().setAgentId("agent-gt-trench")
+                .setNavigate(NavigateIntent.newBuilder().setArrivalTolerance(1)
+                        .setTarget(Vec3.newBuilder().setX(to.getX() + 0.5).setY(to.getY()).setZ(to.getZ() + 0.5)))
+                .build()).join();
+        // Straight out: five blocks take about 30 ticks, and chance bumps along the bank must not be needed.
+        double bank = helper.absolutePos(new BlockPos(1, y, 0)).getX();
+        for (int t = 0; t < 40; t++) {
+            agent.tick();
+        }
+        helper.assertTrue(!agent.isInWater() && agent.getX() > bank,
+                "The agent must climb out of the trench onto the bank, at " + agent.position() + " for " + to
+                        + " navigation=" + agent.getNavigator().getNavigationState());
+        for (int t = 0; t < 60; t++) {
+            agent.tick();
+        }
+        helper.assertTrue(agent.getX() > to.getX() - 1.0, "The agent must walk on to " + to + ", at " + agent.position());
+        manager.despawnAgent(server, "agent-gt-trench").join();
+        helper.succeed();
     }
 
     // cq-6l3: an agent with nothing to do in deep water sank and drowned.

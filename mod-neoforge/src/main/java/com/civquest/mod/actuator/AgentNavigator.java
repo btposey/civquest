@@ -1130,11 +1130,14 @@ public class AgentNavigator {
         double aimX = this.targetCoords.x;
         double aimZ = this.targetCoords.z;
         boolean waypointHigher = false;
+        boolean landStepAbove = false;
         if (!path.isEmpty()) {
             LocalPathPlanner.Cell c = path.get(0);
             aimX = c.x() + 0.5;
             aimZ = c.z() + 0.5;
             waypointHigher = c.y() > Mth.floor(currentPos.y + 0.1);
+            // Measured from the feet themselves: a swimmer must get right over the edge of a bank.
+            landStepAbove = c.y() > currentPos.y && !isBlockWater(level, new BlockPos(c.x(), c.y(), c.z()));
         } else if (climbablePos != null && Math.abs(dy) > 0.3) {
             if (!isVineClimbable || dy > 0.3) {
                 aimX = climbablePos.getX() + 0.5;
@@ -1372,7 +1375,11 @@ public class AgentNavigator {
                     // Gently damp downward drift without pulling the agent into deep water
                     vy = Math.max(vy * 0.5, 0.0);
                 }
-                if (this.agent.horizontalCollision && (stepUpOneBlock || this.targetCoords.y >= currentPos.y - 0.5)) {
+                // Climb onto a bank because the path says so, whatever the destination's height. The
+                // collision flag cannot say when: the vanilla tick moves the agent after this walk
+                // does, with the blocked speed zeroed, and clears it (cq-fqp).
+                if (landStepAbove
+                        || this.agent.horizontalCollision && this.targetCoords.y >= currentPos.y - 0.5) {
                     vy = Math.max(vy, 0.30);
                 }
             } else if (this.agent.onGround()) {
