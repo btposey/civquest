@@ -232,7 +232,10 @@ public class IntentActuator {
                 .isPresent();
     }
 
-    /** Admission while a batch is in flight: dedupe surveys, coalesce navigates, inline pocket crafts, else queue. */
+    /**
+     * Admission while a batch is in flight: dedupe surveys, coalesce navigates, let a break end a walk, inline
+     * pocket crafts, else queue.
+     */
     private void admitInFlight(AgentEntity agent, AgentMotorFSM fsm, Inbox inbox, IntentBatch queued) {
         if (allIntents(queued, AgentIntent::hasSurveyHorizon)
                 && (fsm.hasSweepFrame() || inbox.pending.stream().anyMatch(b -> anyIntent(b, AgentIntent::hasSurveyHorizon)))) {
@@ -243,6 +246,15 @@ public class IntentActuator {
             inbox.pending.addLast(queued);
             return;
         }
+        // A break is ordered from where the brain means to stand. Behind a walk still pathing it never
+        // started and was never reported, so the walk ends instead (cq-qh7).
+        if (allIntents(queued, IntentActuator::isHarvestBreak) && fsm.isOnlyWalking()) {
+            inbox.pending.removeIf(b -> allIntents(b, AgentIntent::hasNavigate) || allIntents(b, IntentActuator::isHarvestBreak));
+            inbox.pending.addFirst(queued);
+            fsm.endWalk("replaced by a break order");
+            pump(agent, fsm, inbox);
+            return;
+        }
         if (fsm.topMotor().filter(m -> m instanceof Sleep).isEmpty() && craft.isPocketCraftOnlyBatch(agent, queued)) {
             for (AgentIntent craftIntent : queued.getIntentsList()) {
                 craft.actuateCraftItem(agent, craftIntent.getCraftItem());
@@ -250,6 +262,11 @@ public class IntentActuator {
             return;
         }
         inbox.pending.addLast(queued);
+    }
+
+    private static boolean isHarvestBreak(AgentIntent intent) {
+        return intent.hasInteractBlock()
+                && intent.getInteractBlock().getInteractionType() == InteractBlockIntent.InteractionType.HARVEST_BREAK;
     }
 
     private static boolean allIntents(IntentBatch batch, java.util.function.Predicate<AgentIntent> p) {

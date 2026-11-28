@@ -134,6 +134,17 @@ public class AgentMotorFSM {
         return motorStack.snapshot().stream().anyMatch(f -> f.index() >= 0 && !isSuspender(f.motor()));
     }
 
+    /** True if all the stack holds of a batch is a walk, on top with no reflex over it. */
+    public boolean isOnlyWalking() {
+        return topMotor().filter(m -> m instanceof Move).isPresent()
+                && motorStack.snapshot().stream().allMatch(f -> f.index() < 0 || f.motor() instanceof Move);
+    }
+
+    /** Ends the walk on top, reporting it ABORTED with {@code reason}. */
+    public synchronized void endWalk(String reason) {
+        motorStack.popWhile(f -> f.index() >= 0 && f.motor() instanceof Move, reason, body());
+    }
+
     /** True if a routine frame (Mine/Move/Sweep) is on top and can be preempted by a reflex. */
     private boolean hasPreemptableFrame() {
         return topMotor().filter(m -> m instanceof Move || m instanceof Mine || m instanceof Sweep).isPresent();

@@ -1839,6 +1839,41 @@ public class AgentGameTest {
                 .build();
     }
 
+    // cq-qh7: a break ordered while a walk was still pathing waited behind it, unreported, and was
+    // sent again and again while the agent went nowhere.
+    @GameTest(template = "empty3x3x3")
+    public static void testBreakOrderEndsTheWalkUnderWay(GameTestHelper helper) {
+        MinecraftServer server = helper.getLevel().getServer();
+        AgentEntityManager manager = new AgentEntityManager();
+        stoneFloor(helper, -9, 9, FLIGHT_ARENA_Y);
+        BlockPos stone = new BlockPos(1, FLIGHT_ARENA_Y + 1, 1);
+        helper.setBlock(stone, Blocks.STONE);
+        AgentEntity agent = spawnCoverageAgent(helper, manager, "agent-gt-break", new BlockPos(0, FLIGHT_ARENA_Y + 1, 0));
+        agent.getInventory().add(new ItemStack(Items.STONE_PICKAXE));
+        BlockPos far = helper.absolutePos(new BlockPos(0, FLIGHT_ARENA_Y + 1, -9));
+        BlockPos at = helper.absolutePos(stone);
+        IntentActuator actuator = new IntentActuator();
+        actuator.submitBatch(agent, IntentBatch.newBuilder().setBatchId(1)
+                .addIntents(AgentIntent.newBuilder().setNavigate(NavigateIntent.newBuilder().setArrivalTolerance(1)
+                        .setTarget(Vec3.newBuilder().setX(far.getX() + 0.5).setY(far.getY()).setZ(far.getZ() + 0.5))))
+                .build());
+        actuator.submitBatch(agent, IntentBatch.newBuilder().setBatchId(2)
+                .addIntents(AgentIntent.newBuilder().setInteractBlock(InteractBlockIntent.newBuilder()
+                        .setPos(BlockPosProto.newBuilder().setX(at.getX()).setY(at.getY()).setZ(at.getZ()))
+                        .setInteractionType(InteractBlockIntent.InteractionType.HARVEST_BREAK)))
+                .build());
+        helper.assertTrue(actuator.getQueuedBatchCount(agent) == 0, "The break must not wait behind the walk");
+        for (int t = 0; t < 100; t++) {
+            agent.tick();
+            actuator.tick(agent);
+        }
+        helper.assertBlockPresent(Blocks.AIR, stone);
+        helper.assertTrue(actuator.getCurrentReceipt(agent).getBatchId() == 2L,
+                "The break must be reported, got " + actuator.getCurrentReceipt(agent));
+        manager.despawnAgent(server, "agent-gt-break").join();
+        helper.succeed();
+    }
+
     // cq-fqp: in a one-wide water trench an agent walking to a place no higher than the water
     // hung against the bank at the destination's height instead of climbing onto it.
     @GameTest(template = "empty3x3x3", timeoutTicks = 400)
