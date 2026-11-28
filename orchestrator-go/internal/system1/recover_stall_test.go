@@ -40,7 +40,7 @@ func TestRecover_RepeatedStallsBlacklistTarget(t *testing.T) {
 			if _, ok := r.result.(recovered); !ok {
 				t.Fatalf("episode %d: expected recovered, got %#v", episode, r.result)
 			}
-			if r.st.IsTargetUnreachable(fredTarget[0], fredTarget[1], fredTarget[2], tick+5) {
+			if r.st.IsDestinationShunned(fredTarget[0], fredTarget[1], fredTarget[2], tick+5) {
 				t.Fatalf("episode %d: blacklisted too early", episode)
 			}
 		} else {
@@ -51,7 +51,7 @@ func TestRecover_RepeatedStallsBlacklistTarget(t *testing.T) {
 	if _, ok := r.result.(recoverBlocked); !ok || r.topKind() != "stub" {
 		t.Fatalf("stalled target must give up at once, got %#v top=%s", r.result, r.topKind())
 	}
-	if !r.st.IsTargetUnreachable(fredTarget[0], fredTarget[1], fredTarget[2], tick) {
+	if !r.st.IsDestinationShunned(fredTarget[0], fredTarget[1], fredTarget[2], tick) {
 		t.Fatal("stalled target not blacklisted")
 	}
 }
@@ -70,7 +70,7 @@ func TestRecover_ProgressResetsStallCount(t *testing.T) {
 		}
 		tick += 40
 	}
-	if r.st.IsTargetUnreachable(rigTarget[0], rigTarget[1], rigTarget[2], tick) {
+	if r.st.IsDestinationShunned(rigTarget[0], rigTarget[1], rigTarget[2], tick) {
 		t.Fatal("a target being approached must not be blacklisted")
 	}
 }

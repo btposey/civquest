@@ -261,7 +261,7 @@ func evaluateBootstrapGoalsLocked(
 	recipeGraph := state.RecipeGraphLocked()
 
 	canCraft := state.mem.lastCraftTick == 0 || frame.WorldTick < state.mem.lastCraftTick || frame.WorldTick-state.mem.lastCraftTick >= 20
-	canPlace := state.mem.lastShelterPlaceTick == 0 || frame.WorldTick < state.mem.lastShelterPlaceTick || frame.WorldTick-state.mem.lastShelterPlaceTick >= 20
+	noNewTable := state.stationRefusedLocked(craftingTableItem, frame)
 
 	var nearestCraftingTable *civquestv1.VisibleBlock
 	var recalledTablePOI *db.AgentPOI
@@ -325,24 +325,11 @@ func evaluateBootstrapGoalsLocked(
 						}
 					}
 					return nil
-				} else if inv.hasCraftingTable {
+				} else if inv.hasCraftingTable && !noNewTable {
 					// Self-placement: when carrying a crafting table and none is within reach,
 					// place it immediately in front of the agent instead of trekking to a distant visible table.
-					if canPlace {
-						state.mem.lastShelterPlaceTick = frame.WorldTick
-						placePos := selectAdjacentCraftingTablePos(frame, pos)
-						return &civquestv1.AgentIntent{
-							AgentId: agentID,
-							Action: &civquestv1.AgentIntent_InteractBlock{
-								InteractBlock: &civquestv1.InteractBlockIntent{
-									Pos:             placePos,
-									InteractionType: civquestv1.InteractBlockIntent_PLACE_BLOCK,
-									BlockOrItemId:   "minecraft:crafting_table",
-								},
-							},
-						}
-					}
-					return nil
+					in, _ := state.placeStationLocked(agentID, craftingTableItem, frame, walk)
+					return in
 				} else if nearestCraftingTable != nil {
 					if navState == civquestv1.NavigationState_NAVIGATION_STATE_STUCK {
 						// We became stuck trying to reach this table! Mark it unreachable so we don't repeat this futile attempt.
@@ -369,7 +356,7 @@ func evaluateBootstrapGoalsLocked(
 						}
 					}
 					return nil
-				} else if tableStep, tableOK := recipeGraph.PlanNextStep("minecraft:crafting_table", invMap, false); tableOK && tableStep.CanExecuteNow {
+				} else if tableStep, tableOK := recipeGraph.PlanNextStep(craftingTableItem, invMap, false); !noNewTable && tableOK && tableStep.CanExecuteNow {
 					// Autonomous self-reliance: craft our own table in 2x2 pocket crafting
 					// if no reachable crafting table exists.
 					if canCraft && !walk.craftHeld(recipeGraph, tableStep.RecipeID, invMap, frame.WorldTick) {
@@ -513,102 +500,6 @@ func navigateToRecalledTreePOILocked(
 	return nil, true
 }
 
-// findNearestCraftingTableLocked locates the nearest reachable crafting table from visible blocks
-// or SpatialIndex POIs (ADR-022 / ADR-026). Caller must hold state.mu if state is non-nil.
-func findNearestCraftingTableLocked(
-	frame *civquestv1.TelemetryFrame,
-	pos *civquestv1.Vec3,
-	state *AgentState,
-) (*civquestv1.VisibleBlock, *db.AgentPOI, float64) {
-	var nearestCraftingTable *civquestv1.VisibleBlock
-	var recalledTablePOI *db.AgentPOI
-	bestTableDistSq := math.MaxFloat64
-	if frame == nil || pos == nil {
-		return nil, nil, bestTableDistSq
-	}
-
-	for _, b := range frame.InterestingBlocks {
-		if b == nil || b.Pos == nil {
-			continue
-		}
-		id := strings.ToLower(b.BlockId)
-		if !strings.Contains(id, "crafting_table") {
-			continue
-		}
-		dx := float64(b.Pos.X) + 0.5 - pos.X
-		dy := float64(b.Pos.Y) + 0.5 - pos.Y
-		dz := float64(b.Pos.Z) + 0.5 - pos.Z
-		// Reject tables vertically separated by > 3 blocks unless there is a gradual horizontal slope,
-		// or tables recently marked unreachable.
-		hDist := math.Hypot(dx, dz)
-		absDy := math.Abs(dy)
-		if absDy > 3.0 && hDist < absDy*1.5 {
-			continue
-		}
-		if state != nil && (state.IsWorkstationUnreachableLocked(b.Pos.X, b.Pos.Y, b.Pos.Z, frame.WorldTick) ||
-			state.IsTargetUnreachableLocked(float64(b.Pos.X)+0.5, float64(b.Pos.Y), float64(b.Pos.Z)+0.5, frame.WorldTick)) {
-			continue
-		}
-		dSq := dx*dx + dy*dy + dz*dz
-		if dSq < bestTableDistSq {
-			bestTableDistSq = dSq
-			nearestCraftingTable = b
-		}
-	}
-
-	// ADR-022 / ADR-026: If no reachable crafting table is visible in the frustum, query SpatialIndex.
-	if nearestCraftingTable == nil && state != nil {
-		if si := state.SpatialIndexLocked(); si != nil {
-			agentLayer := ClassifyElevationLayer(pos.Y, 64.0)
-			poi := si.FindNearestPOI(pos, POICategoryWorkstation, "minecraft:crafting_table", 64.0, agentLayer)
-			if poi == nil && (agentLayer == ElevationDugout || agentLayer == ElevationUnderground) {
-				// If underground without a local table, only target surface workstation if connected by a corridor.
-				originID := ""
-				if tracker := state.HabitTrailTrackerLocked(); tracker != nil {
-					originID = tracker.CurrentOriginPOIID()
-				}
-				if surfacePOI := si.FindNearestPOI(pos, POICategoryWorkstation, "minecraft:crafting_table", 64.0, ElevationSurface); surfacePOI != nil {
-					if originID != "" && si.HasCorridorBetween(originID, surfacePOI.POIID) {
-						poi = surfacePOI
-					}
-				}
-			} else if poi == nil {
-				poi = si.FindNearestPOI(pos, POICategoryWorkstation, "minecraft:crafting_table", 64.0, "")
-			}
-			if poi != nil && poi.Reliability >= 0.5 {
-				bpos := poiBlockPos(poi)
-				if !state.IsWorkstationUnreachableLocked(bpos.X, bpos.Y, bpos.Z, frame.WorldTick) &&
-					!state.isPOIUnreachableLocked(poi, frame.WorldTick) {
-					dx := poi.X - pos.X
-					dy := poi.Y + 0.5 - pos.Y
-					dz := poi.Z - pos.Z
-					hDist := math.Hypot(dx, dz)
-					absDy := math.Abs(dy)
-					if absDy <= 3.0 || hDist >= absDy*1.5 {
-						recalledTablePOI = poi
-						bestTableDistSq = dx*dx + dy*dy + dz*dz
-						nearestCraftingTable = &civquestv1.VisibleBlock{
-							Pos:     bpos,
-							BlockId: poi.BlockID,
-						}
-					}
-				}
-			}
-		}
-	}
-
-	return nearestCraftingTable, recalledTablePOI, bestTableDistSq
-}
-
-// isCraftingTableWithinReach returns true if a crafting table is within 4.5m reach and 2.5m vertical reach.
-func isCraftingTableWithinReach(table *civquestv1.VisibleBlock, distSq float64, pos *civquestv1.Vec3) bool {
-	if table == nil || table.Pos == nil || pos == nil {
-		return false
-	}
-	dy := math.Abs(float64(table.Pos.Y) + 0.5 - pos.Y)
-	return distSq <= 20.25 && dy <= 2.5
-}
-
 // craftLightSourceIntentLocked crafts a campfire (3x3 at reachable crafting table) or
 // pocket-crafts a torch (2x2) by querying the dynamic RecipeGraph (ADR-029).
 // Returns nil without emitting bogus craft intents when required materials or loaded recipes are absent.
@@ -672,67 +563,6 @@ func craftLightSourceIntentLocked(
 	return nil
 }
 
-func isEmptyPlacementBlock(frame *civquestv1.TelemetryFrame, x, y, z int32) bool {
-	b := FindVisibleBlockAt(frame, x, y, z)
-	if b == nil {
-		return true
-	}
-	id := strings.ToLower(strings.TrimSpace(b.BlockId))
-	return id == "" || id == "minecraft:air" || strings.HasSuffix(id, "_air")
-}
-
-func selectAdjacentCraftingTablePos(frame *civquestv1.TelemetryFrame, pos *civquestv1.Vec3) *civquestv1.BlockPosProto {
-	cx := int32(math.Floor(pos.X))
-	cy := int32(math.Floor(pos.Y))
-	cz := int32(math.Floor(pos.Z))
-
-	var candidates []*civquestv1.BlockPosProto
-	if frame != nil && frame.Status != nil {
-		yawRad := float64(frame.Status.Yaw) * math.Pi / 180.0
-		fx := -math.Sin(yawRad)
-		fz := math.Cos(yawRad)
-		frontX := int32(math.Floor(pos.X + fx*1.5))
-		frontZ := int32(math.Floor(pos.Z + fz*1.5))
-		if frontX != cx || frontZ != cz {
-			candidates = append(candidates, &civquestv1.BlockPosProto{X: frontX, Y: cy, Z: frontZ})
-		}
-	}
-	candidates = append(candidates,
-		&civquestv1.BlockPosProto{X: cx + 1, Y: cy, Z: cz},
-		&civquestv1.BlockPosProto{X: cx - 1, Y: cy, Z: cz},
-		&civquestv1.BlockPosProto{X: cx, Y: cy, Z: cz + 1},
-		&civquestv1.BlockPosProto{X: cx, Y: cy, Z: cz - 1},
-	)
-
-	for _, c := range candidates {
-		if isEmptyPlacementBlock(frame, c.X, c.Y, c.Z) {
-			return c
-		}
-	}
-	return candidates[0]
-}
-
-// placeRelocateDist is how far an agent steps when no cell beside it takes a placement.
-const placeRelocateDist = 4.0
-
-// placementCells lists distinct cells to try for a placement beside pos: the preferred one
-// first, then the other neighbours at foot height and one up.
-func placementCells(frame *civquestv1.TelemetryFrame, pos *civquestv1.Vec3) []*civquestv1.BlockPosProto {
-	first := selectAdjacentCraftingTablePos(frame, pos)
-	out := []*civquestv1.BlockPosProto{first}
-	seen := map[[3]int32]bool{{first.X, first.Y, first.Z}: true}
-	cx, cy, cz := int32(math.Floor(pos.X)), int32(math.Floor(pos.Y)), int32(math.Floor(pos.Z))
-	for _, d := range [][3]int32{{1, 0, 0}, {-1, 0, 0}, {0, 0, 1}, {0, 0, -1}, {1, 0, 1}, {-1, 0, -1}, {1, 0, -1}, {-1, 0, 1},
-		{1, 1, 0}, {-1, 1, 0}, {0, 1, 1}, {0, 1, -1}} {
-		c := [3]int32{cx + d[0], cy + d[1], cz + d[2]}
-		if !seen[c] {
-			seen[c] = true
-			out = append(out, &civquestv1.BlockPosProto{X: c[0], Y: c[1], Z: c[2]})
-		}
-	}
-	return out
-}
-
 type trunkCandidate struct {
 	tx     int32
 	tz     int32
@@ -783,7 +613,7 @@ func findNearestTreeTrunk(agentID string, frame *civquestv1.TelemetryFrame, pos 
 			continue
 		}
 		if state != nil && (state.IsTreeOnCooldownLocked(b.Pos.X, b.Pos.Z, frame.WorldTick) ||
-			state.IsTargetUnreachableLocked(float64(b.Pos.X)+0.5, float64(b.Pos.Y), float64(b.Pos.Z)+0.5, frame.WorldTick)) {
+			state.IsDestinationShunnedLocked(float64(b.Pos.X)+0.5, float64(b.Pos.Y), float64(b.Pos.Z)+0.5, frame.WorldTick)) {
 			continue
 		}
 		dx := float64(b.Pos.X) + 0.5 - pos.X
@@ -827,7 +657,7 @@ func findNearestTreeTrunk(agentID string, frame *civquestv1.TelemetryFrame, pos 
 						continue
 					}
 					bpos := poiBlockPos(poi)
-					if state.IsTreeOnCooldownLocked(bpos.X, bpos.Z, frame.WorldTick) || state.isPOIUnreachableLocked(poi, frame.WorldTick) {
+					if state.IsTreeOnCooldownLocked(bpos.X, bpos.Z, frame.WorldTick) || state.isPOIShunnedLocked(poi, frame.WorldTick) {
 						continue
 					}
 					if isUnderground {

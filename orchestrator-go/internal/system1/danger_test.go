@@ -15,18 +15,18 @@ func TestDanger_LingeringMobIsRememberedForADay(t *testing.T) {
 		&civquestv1.VisibleEntity{EntityId: 7, EntityType: "minecraft:drowned", IsHostile: true, Position: &civquestv1.Vec3{X: 40, Y: 63, Z: 0}},
 		&civquestv1.VisibleEntity{EntityId: 8, EntityType: "minecraft:zombie", IsHostile: true, Position: &civquestv1.Vec3{X: 0, Y: 64, Z: 60}},
 	))})
-	if !st.IsTargetUnreachable(45, 63, 3, 100+DangerMemoryTicks-1) {
+	if !st.IsDestinationShunned(45, 63, 3, 100+DangerMemoryTicks-1) {
 		t.Error("the Drowned's water is still dangerous a day later")
 	}
-	if st.IsTargetUnreachable(45, 63, 3, 100+DangerMemoryTicks) {
+	if st.IsDestinationShunned(45, 63, 3, 100+DangerMemoryTicks) {
 		t.Error("an old danger is forgotten")
 	}
-	if st.IsTargetUnreachable(0, 64, 60, 200) {
+	if st.IsDestinationShunned(0, 64, 60, 200) {
 		t.Error("a passing zombie that did no harm is not registered")
 	}
 	// Home stays reachable.
 	st.SetCollectiveSettlementSite(48, 64, 0)
-	if st.IsTargetUnreachable(48, 64, 0, 200) {
+	if st.IsDestinationShunned(48, 64, 0, 200) {
 		t.Error("an agent must be able to get home")
 	}
 }
@@ -122,7 +122,7 @@ func TestDanger_PolarBearsCount(t *testing.T) {
 	st := NewAgentState()
 	bear := &civquestv1.VisibleEntity{EntityId: 5, EntityType: "minecraft:polar_bear", Position: &civquestv1.Vec3{X: 30, Y: 63, Z: 0}}
 	observeDangers(&FSMContext{State: st, Frame: rf(100, 3000, withPos(0, 64, 0), withEntities(bear))})
-	if !st.IsTargetUnreachable(30, 63, 2, 200) {
+	if !st.IsDestinationShunned(30, 63, 2, 200) {
 		t.Error("ground beside a polar bear should be avoided")
 	}
 	st = NewAgentState()

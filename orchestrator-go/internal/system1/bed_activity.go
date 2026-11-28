@@ -123,7 +123,8 @@ func bedStep(ctx *FSMContext, bl *bedLocal) (intent *civquestv1.AgentIntent, wor
 	graph := st.RecipeGraphLocked()
 	table, _, tableDistSq := findNearestCraftingTableLocked(frame, pos, st)
 	inReach := isCraftingTableWithinReach(table, tableDistSq, pos)
-	facts := plan.Facts{Tick: tick, Inventory: inv, Table: plan.TableFacts{Near: inReach}, Recipes: graph}
+	noNew := st.stationRefusedLocked(craftingTableItem, frame)
+	facts := plan.Facts{Tick: tick, Inventory: inv, Table: plan.TableFacts{Near: inReach, NoNew: noNew}, Recipes: graph}
 	if table != nil && table.Pos != nil {
 		facts.Table.Known = true
 		facts.Table.Pos = plan.Pos{X: int(table.Pos.X), Y: int(table.Pos.Y), Z: int(table.Pos.Z)}
@@ -158,15 +159,8 @@ func bedStep(ctx *FSMContext, bl *bedLocal) (intent *civquestv1.AgentIntent, wor
 			if woolMissing || inv[step.Item] <= 0 {
 				continue
 			}
-			if last := st.mem.lastShelterPlaceTick; last != 0 && tick >= last && tick-last < bedActionCooldown {
-				return nil, true
-			}
-			st.mem.lastShelterPlaceTick = tick
-			return &civquestv1.AgentIntent{AgentId: ctx.AgentID, Action: &civquestv1.AgentIntent_InteractBlock{InteractBlock: &civquestv1.InteractBlockIntent{
-				Pos:             selectAdjacentCraftingTablePos(frame, pos),
-				InteractionType: civquestv1.InteractBlockIntent_PLACE_BLOCK,
-				BlockOrItemId:   step.Item,
-			}}}, true
+			in, refused := st.placeStationLocked(ctx.AgentID, step.Item, frame, &bl.Walk)
+			return in, !refused
 		case plan.StepCraft:
 			if woolMissing && strings.HasSuffix(step.Item, "_bed") {
 				return nil, false
@@ -213,7 +207,8 @@ func placeBedIntent(ctx *FSMContext, bl *bedLocal, st *AgentState, inv map[strin
 	if sp := st.ShelterPos; sp != nil {
 		x, y, z := float64(sp.X)+0.5, float64(sp.Y), float64(sp.Z)+0.5
 		d := math.Hypot(x-pos.X, z-pos.Z)
-		if d <= bedShelterSearchRadius && !st.IsTargetUnreachableLocked(x, y, z, frame.WorldTick) {
+		// A shelter the agent stands by is used; one to walk back to must be worth the walk.
+		if d <= bedShelterPlaceRadius || d <= bedShelterSearchRadius && !st.IsDestinationShunnedLocked(x, y, z, frame.WorldTick) {
 			if d > bedShelterPlaceRadius {
 				return bedNavigate(ctx.AgentID, frame, x, y, z)
 			}
@@ -248,7 +243,7 @@ func logGatherIntent(agentID string, frame *civquestv1.TelemetryFrame, pos *civq
 	for _, b := range frame.InterestingBlocks {
 		if b == nil || b.Pos == nil || !isLogBlockID(b.BlockId) || isElevatedCanopyOnlyLog(frame, pos, b) ||
 			st.unbreakableLocked(b, frame.WorldTick) ||
-			st.IsTargetUnreachableLocked(float64(b.Pos.X)+0.5, float64(b.Pos.Y), float64(b.Pos.Z)+0.5, frame.WorldTick) {
+			st.IsDestinationShunnedLocked(float64(b.Pos.X)+0.5, float64(b.Pos.Y), float64(b.Pos.Z)+0.5, frame.WorldTick) {
 			continue
 		}
 		d := math.Sqrt(math.Pow(float64(b.Pos.X)+0.5-pos.X, 2) + math.Pow(float64(b.Pos.Y)+0.5-pos.Y, 2) + math.Pow(float64(b.Pos.Z)+0.5-pos.Z, 2))

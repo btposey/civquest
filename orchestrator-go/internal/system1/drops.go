@@ -47,7 +47,7 @@ func nearbyDrop(state *AgentState, frame *civquestv1.TelemetryFrame, wanted func
 			continue
 		}
 		if _, item := gatherDropGood(e); !wanted(item) ||
-			(state != nil && state.IsTargetUnreachableLocked(e.Position.X, e.Position.Y, e.Position.Z, frame.WorldTick)) {
+			(state != nil && state.IsDestinationShunnedLocked(e.Position.X, e.Position.Y, e.Position.Z, frame.WorldTick)) {
 			continue
 		}
 		best, bestDist = e, d

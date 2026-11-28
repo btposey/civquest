@@ -390,7 +390,7 @@ func TestHarvestTreeTask_IgnoresZeroDisplacementCompletedAndBlacklistsOnFail(t *
 	if !res3.Done || res3.Phase != TaskPhaseFailed {
 		t.Fatalf("expected TaskPhaseFailed at ProgressTimeout=150, got %+v", res3)
 	}
-	if !state.IsTargetUnreachable(20.5, 64.0, 0.5, 250) {
+	if !state.IsDestinationShunned(20.5, 64.0, 0.5, 250) {
 		t.Fatalf("expected OnFail to blacklist (20.5, 64.0, 0.5) as unreachable")
 	}
 

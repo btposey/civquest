@@ -255,6 +255,8 @@ const (
 	// maxSleepAttempts bed interactions without falling asleep, 40 ticks apart, end the claim.
 	maxSleepAttempts   = 8
 	sleepRetryGapTicks = int64(200)
+	// bedUseReach is how near an agent gets into a bed from where it stands.
+	bedUseReach = 3.0
 )
 
 // EvaluateSleep evaluates bed navigation, sleeping in bed, and dawn awakening.
@@ -267,8 +269,8 @@ func EvaluateSleep(agentID string, frame *civquestv1.TelemetryFrame, state *Agen
 	var recalledBedPOI *db.AgentPOI
 	if state != nil {
 		if existingBed := state.GetAssignedBed(); existingBed != nil {
-			if state.IsTargetUnreachable(float64(existingBed.X)+0.5, float64(existingBed.Y), float64(existingBed.Z)+0.5, frame.WorldTick) {
-				state.abandonBed(agentID, frame.WorldTick)
+			if state.useRefused(frame.Status.Position, existingBed, bedUseReach, frame.WorldTick) {
+				state.abandonBed(agentID, frame.Status.Position, frame.WorldTick)
 			}
 		}
 		if state.bedReg() != nil {
@@ -281,7 +283,7 @@ func EvaluateSleep(agentID string, frame *civquestv1.TelemetryFrame, state *Agen
 				if b == nil || b.Pos == nil {
 					continue
 				}
-				if state.IsTargetUnreachable(float64(b.Pos.X)+0.5, float64(b.Pos.Y), float64(b.Pos.Z)+0.5, frame.WorldTick) {
+				if state.useRefused(frame.Status.Position, b.Pos, bedUseReach, frame.WorldTick) {
 					continue
 				}
 				id := strings.ToLower(b.BlockId)
@@ -384,7 +386,7 @@ func EvaluateSleep(agentID string, frame *civquestv1.TelemetryFrame, state *Agen
 		dz := float64(bedPos.Z) + 0.5 - agentPos.Z
 		dist := math.Sqrt(dx*dx + dy*dy + dz*dz)
 
-		if dist <= 3.0 {
+		if dist <= bedUseReach {
 			// In reach: enter bed with 40-tick interaction backoff to prevent packet spam
 			if state != nil {
 				lastSleep := state.GetLastSleepAttemptTick()
@@ -394,7 +396,7 @@ func EvaluateSleep(agentID string, frame *civquestv1.TelemetryFrame, state *Agen
 				if state.countSleepAttempt(frame.WorldTick) > maxSleepAttempts {
 					// The bed never lets the agent sleep (broken, blocked or taken): give it
 					// up rather than retry all night (cq-6l3.4).
-					state.abandonBed(agentID, frame.WorldTick)
+					state.abandonBed(agentID, frame.Status.Position, frame.WorldTick)
 					return nil
 				}
 			}
@@ -437,9 +439,9 @@ func EvaluateSleep(agentID string, frame *civquestv1.TelemetryFrame, state *Agen
 			target = poiAccessTarget(recalledBedPOI)
 		}
 		if state != nil {
-			if state.IsTargetUnreachable(target.X, target.Y, target.Z, frame.WorldTick) ||
-				state.IsTargetUnreachable(float64(bedPos.X)+0.5, float64(bedPos.Y), float64(bedPos.Z)+0.5, frame.WorldTick) {
-				state.abandonBed(agentID, frame.WorldTick)
+			if state.IsDestinationShunned(target.X, target.Y, target.Z, frame.WorldTick) ||
+				state.IsDestinationShunned(float64(bedPos.X)+0.5, float64(bedPos.Y), float64(bedPos.Z)+0.5, frame.WorldTick) {
+				state.abandonBed(agentID, frame.Status.Position, frame.WorldTick)
 				return nil
 			}
 		}

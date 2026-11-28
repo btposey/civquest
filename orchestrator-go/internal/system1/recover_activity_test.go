@@ -133,7 +133,7 @@ func TestRecover_CongestionYieldsNeverBlacklistsAndSecondResultGivesUp(t *testin
 	if !ok || b.Cause != CauseCongestion {
 		t.Fatalf("expected Blocked{Congestion}, got %#v", r.result)
 	}
-	if r.st.IsTargetUnreachable(rigTarget[0], rigTarget[1], rigTarget[2], 140) || len(r.fsm.recoverOutbox) != 0 {
+	if r.st.IsDestinationShunned(rigTarget[0], rigTarget[1], rigTarget[2], 140) || len(r.fsm.recoverOutbox) != 0 {
 		t.Fatal("congestion must never blacklist terrain or decay POIs")
 	}
 }
@@ -143,7 +143,7 @@ func TestRecover_TerrainSwitchedByEntityEvidenceNeverBlacklists(t *testing.T) {
 	r.stuck(110, terrainStuck(2))
 	r.stuck(115, peerStuck(3))         // a peer shows up mid-episode: the episode is congestion from now on
 	r.dispatch(300, nil, htpda.Tick{}) // lease expires
-	if r.st.IsTargetUnreachable(rigTarget[0], rigTarget[1], rigTarget[2], 310) || len(r.fsm.recoverOutbox) != 0 {
+	if r.st.IsDestinationShunned(rigTarget[0], rigTarget[1], rigTarget[2], 310) || len(r.fsm.recoverOutbox) != 0 {
 		t.Fatal("an episode that saw blocked_by_entity must not blacklist")
 	}
 }
@@ -162,11 +162,11 @@ func TestRecover_TwoTerrainGiveUpsBlacklistAndDecayPOI(t *testing.T) {
 		}
 	}
 	giveUp(110)
-	if r.st.IsTargetUnreachable(rigTarget[0], rigTarget[1], rigTarget[2], 215) {
+	if r.st.IsDestinationShunned(rigTarget[0], rigTarget[1], rigTarget[2], 215) {
 		t.Fatal("one give-up must not blacklist")
 	}
 	giveUp(300)
-	if !r.st.IsTargetUnreachable(rigTarget[0], rigTarget[1], rigTarget[2], 405) {
+	if !r.st.IsDestinationShunned(rigTarget[0], rigTarget[1], rigTarget[2], 405) {
 		t.Fatalf("%d give-ups must blacklist the target", recoverTunables.TerrainGiveUpsToBlacklist)
 	}
 	if got := r.fsm.DrainRecoverGiveUps(); len(got) != 2 || got[0].Blacklisted || !got[1].Blacklisted {

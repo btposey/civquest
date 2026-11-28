@@ -199,19 +199,19 @@ func TestSleep_TwoTerrainGiveUpsOnBedBlacklistAndClearAssignment(t *testing.T) {
 	tick(20, nil)
 	tick(30, terrainStuck(2)) // stuck receipt 1 -> orphan Recover
 	tick(135, nil)            // lease expired: give-up 1
-	if st.IsTargetUnreachable(-45.5, 79, 16.5, 140) || st.GetAssignedBed() == nil {
+	if st.IsDestinationShunned(-45.5, 79, 16.5, 140) || st.GetAssignedBed() == nil {
 		t.Fatal("one terrain give-up must still retry the bed")
 	}
 	tick(150, terrainStuck(3))
 	tick(260, nil) // give-up 2
-	if !st.IsTargetUnreachable(-45.5, 79, 16.5, 265) {
+	if !st.IsDestinationShunned(-45.5, 79, 16.5, 265) {
 		t.Fatal("two terrain give-ups must blacklist the bed access target")
 	}
 	tick(270, nil)
 	if st.GetAssignedBed() != nil {
 		t.Fatalf("assignment must be cleared once blacklisted, got %+v", st.GetAssignedBed())
 	}
-	if st.IsTargetUnreachable(-45.5, 79, 16.5, 270+DefaultUnreachableTargetTTL+300) {
+	if st.IsDestinationShunned(-45.5, 79, 16.5, 270+DefaultUnreachableTargetTTL+300) {
 		t.Fatal("the bed blacklist must expire after its TTL")
 	}
 }
@@ -223,7 +223,7 @@ func TestSleep_CongestionNeverBlacklistsAssignedBed(t *testing.T) {
 		tick(at, peerStuck(int64(2+i)))
 		tick(at+105, nil)
 	}
-	if st.IsTargetUnreachable(-45.5, 79, 16.5, 500) || st.GetAssignedBed() == nil {
+	if st.IsDestinationShunned(-45.5, 79, 16.5, 500) || st.GetAssignedBed() == nil {
 		t.Fatal("peer congestion must never blacklist the bed")
 	}
 	if len(fsm.DrainRecoverGiveUps()) != 0 {

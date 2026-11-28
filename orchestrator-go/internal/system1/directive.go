@@ -684,7 +684,6 @@ func canExecuteImmediateBootstrapCraftLocked(frame *civquestv1.TelemetryFrame, s
 
 	recipeGraph := state.RecipeGraphLocked()
 	lastCraftTick := state.mem.lastCraftTick
-	lastPlaceTick := state.mem.lastShelterPlaceTick
 
 	if recipeGraph.IsEmpty() {
 		return false
@@ -708,11 +707,11 @@ func canExecuteImmediateBootstrapCraftLocked(frame *civquestv1.TelemetryFrame, s
 			return true
 		}
 		if step.NeedsTable {
-			canPlace := lastPlaceTick == 0 || frame.WorldTick < lastPlaceTick || frame.WorldTick-lastPlaceTick >= 20
-			if inv.hasCraftingTable && canPlace {
+			noNewTable := state.stationRefusedLocked(craftingTableItem, frame)
+			if inv.hasCraftingTable && !noNewTable && !state.stationsLocked(frame).awaited(craftingTableItem, frame.WorldTick) {
 				return true
 			}
-			if tableStep, tableOK := recipeGraph.PlanNextStep("minecraft:crafting_table", invMap, false); tableOK && tableStep.CanExecuteNow {
+			if tableStep, tableOK := recipeGraph.PlanNextStep(craftingTableItem, invMap, false); !noNewTable && tableOK && tableStep.CanExecuteNow {
 				return true
 			}
 		}

@@ -147,8 +147,8 @@ func (s *AgentState) ensureOwnBed(agentID string, frame *civquestv1.TelemetryFra
 	s.releaseAbandonedBeds(agentID, frame.WorldTick)
 	if cur := s.GetAssignedBed(); cur != nil {
 		switch {
-		case s.bedUnreachable(cur, frame.WorldTick):
-			s.abandonBed(agentID, frame.WorldTick)
+		case s.useRefused(frame.GetStatus().GetPosition(), cur, bedUseReach, frame.WorldTick):
+			s.abandonBed(agentID, frame.GetStatus().GetPosition(), frame.WorldTick)
 		case s.bedConfirmedGone(frame, cur):
 			s.loseBed(agentID, cur)
 		case s.claimWholeBed(agentID, frame, cur):
@@ -174,7 +174,7 @@ func (s *AgentState) ensureOwnBed(agentID string, frame *civquestv1.TelemetryFra
 		if b == nil || b.Pos == nil || !strings.Contains(strings.ToLower(b.BlockId), "bed") {
 			continue
 		}
-		if s.IsTargetUnreachable(float64(b.Pos.X)+0.5, float64(b.Pos.Y), float64(b.Pos.Z)+0.5, frame.WorldTick) {
+		if s.useRefused(pos, b.Pos, bedUseReach, frame.WorldTick) {
 			continue
 		}
 		d := math.Hypot(pos.X-float64(b.Pos.X), pos.Z-float64(b.Pos.Z))
@@ -207,7 +207,7 @@ func (s *AgentState) BedAvailableFor(agentID string, frame *civquestv1.Telemetry
 		if b == nil || b.Pos == nil || !strings.Contains(strings.ToLower(b.BlockId), "bed") {
 			continue
 		}
-		if s.IsTargetUnreachable(float64(b.Pos.X)+0.5, float64(b.Pos.Y), float64(b.Pos.Z)+0.5, frame.WorldTick) ||
+		if s.useRefused(pos, b.Pos, bedUseReach, frame.WorldTick) ||
 			math.Hypot(pos.X-float64(b.Pos.X), pos.Z-float64(b.Pos.Z)) > bedClaimRadius || s.wholeBedTakenByOther(agentID, frame, b.Pos) {
 			continue
 		}

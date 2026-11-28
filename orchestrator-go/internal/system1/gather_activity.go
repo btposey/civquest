@@ -220,7 +220,7 @@ func bestGatherFind(agentID string, frame *civquestv1.TelemetryFrame, state *Age
 	defer state.mu.Unlock()
 	offer := func(f *gatherFind) {
 		if f.Dist <= gatherRadius && !skipped(f.Key) &&
-			!state.IsTargetUnreachableLocked(f.Pos[0], f.Pos[1], f.Pos[2], frame.WorldTick) && f.better(best) {
+			!state.IsDestinationShunnedLocked(f.Pos[0], f.Pos[1], f.Pos[2], frame.WorldTick) && f.better(best) {
 			best = f
 		}
 	}

@@ -285,6 +285,10 @@ func (fsm *AgentFSM) applyMemoryLocked(w *fsmWorld, writes []htpda.MemoryWrite) 
 		if fsm.planning.applyMemory(wr) {
 			continue
 		}
+		if m, ok := wr.(stationsRemembered); ok {
+			w.ctx.State.rememberStations(stationMemory(m))
+			continue
+		}
 		if b, ok := wr.(blockRefused); ok {
 			w.ctx.State.giveUpBlock(b.At, b.Tick)
 			continue

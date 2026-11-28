@@ -110,6 +110,7 @@ type TableFacts struct {
 	Known bool    // a table position is known (Pos valid)
 	Pos   Pos     // known table position
 	Dist  float64 // walking distance to Pos in blocks
+	NoNew bool    // no table is to be made or set down here
 }
 
 // Facts is the read-only snapshot a planner consumes. Inventory keys are

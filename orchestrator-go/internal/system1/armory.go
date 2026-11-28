@@ -1,7 +1,6 @@
 package system1
 
 import (
-	"math"
 	"strings"
 
 	"github.com/btposey/civquest/orchestrator-go/internal/db"
@@ -255,6 +254,7 @@ func EvaluateArmoryMaintenance(
 	cfg *xdg.AgentIdentityConfig,
 	state *AgentState,
 	civicDB *db.CivicRegistryDB,
+	walk *walkLocal,
 ) *civquestv1.AgentIntent {
 	if frame == nil || frame.Status == nil || frame.Status.Position == nil || state == nil {
 		return nil
@@ -350,62 +350,13 @@ func EvaluateArmoryMaintenance(
 
 	pos := frame.Status.Position
 
-	// 3. Find nearest reachable crafting table in frustum, or recall from SpatialIndex (ADR-022)
-	var nearestCraftingTable *civquestv1.VisibleBlock
-	var recalledTablePOI *db.AgentPOI
-	bestTableDistSq := math.MaxFloat64
-	for _, b := range frame.InterestingBlocks {
-		if b == nil || b.Pos == nil {
-			continue
-		}
-		id := strings.ToLower(b.BlockId)
-		if strings.Contains(id, "crafting_table") {
-			dx := float64(b.Pos.X) + 0.5 - pos.X
-			dy := float64(b.Pos.Y) + 0.5 - pos.Y
-			dz := float64(b.Pos.Z) + 0.5 - pos.Z
-			// Check reachability: reject tables vertically separated by > 3 blocks unless there is a gradual horizontal slope,
-			// or tables recently marked unreachable.
-			hDist := math.Hypot(dx, dz)
-			absDy := math.Abs(dy)
-			if absDy > 3.0 && hDist < absDy*1.5 {
-				continue
-			}
-			if state != nil && state.IsWorkstationUnreachable(b.Pos.X, b.Pos.Y, b.Pos.Z, frame.WorldTick) {
-				continue
-			}
-			dSq := dx*dx + dy*dy + dz*dz
-			if dSq < bestTableDistSq {
-				bestTableDistSq = dSq
-				nearestCraftingTable = b
-			}
-		}
-	}
-
-	if nearestCraftingTable == nil && state != nil {
-		if si := state.SpatialIndex(); si != nil {
-			if poi := si.FindNearestPOI(pos, POICategoryWorkstation, "minecraft:crafting_table", 64.0, ElevationSurface); poi != nil && poi.Reliability >= 0.5 {
-				bpos := poiBlockPos(poi)
-				if !state.IsWorkstationUnreachable(bpos.X, bpos.Y, bpos.Z, frame.WorldTick) {
-					dx := poi.X - pos.X
-					dy := poi.Y + 0.5 - pos.Y
-					dz := poi.Z - pos.Z
-					hDist := math.Hypot(dx, dz)
-					absDy := math.Abs(dy)
-					if absDy <= 3.0 || hDist >= absDy*1.5 {
-						recalledTablePOI = poi
-						bestTableDistSq = dx*dx + dy*dy + dz*dz
-						nearestCraftingTable = &civquestv1.VisibleBlock{
-							Pos:     bpos,
-							BlockId: poi.BlockID,
-						}
-					}
-				}
-			}
-		}
-	}
+	// 3. Find the nearest usable crafting table, in view or recalled (ADR-022)
+	state.mu.Lock()
+	nearestCraftingTable, recalledTablePOI, bestTableDistSq := findNearestCraftingTableLocked(frame, pos, state)
+	state.mu.Unlock()
 
 	if nearestCraftingTable != nil {
-		if bestTableDistSq <= 20.25 && math.Abs(float64(nearestCraftingTable.Pos.Y)+0.5-pos.Y) <= 2.5 {
+		if isCraftingTableWithinReach(nearestCraftingTable, bestTableDistSq, pos) {
 			// Craft at reachable table (<= 4.5 blocks reach, same level)
 			state.SetLastCraftTick(frame.WorldTick)
 			return &civquestv1.AgentIntent{
@@ -455,27 +406,18 @@ func EvaluateArmoryMaintenance(
 	}
 
 	// 4. Place crafting table from inventory if available
-	if mats.craftingTableCount > 0 {
-		lastPlace := state.GetLastShelterPlaceTick()
-		canPlace := lastPlace == 0 || frame.WorldTick < lastPlace || frame.WorldTick-lastPlace >= 20
-		if canPlace {
-			state.SetLastShelterPlaceTick(frame.WorldTick)
-			return &civquestv1.AgentIntent{
-				AgentId: agentID,
-				Action: &civquestv1.AgentIntent_InteractBlock{
-					InteractBlock: &civquestv1.InteractBlockIntent{
-						Pos:             selectAdjacentCraftingTablePos(frame, pos),
-						InteractionType: civquestv1.InteractBlockIntent_PLACE_BLOCK,
-						BlockOrItemId:   "minecraft:crafting_table",
-					},
-				},
-			}
-		}
+	state.mu.Lock()
+	defer state.mu.Unlock()
+	if state.stationRefusedLocked(craftingTableItem, frame) {
 		return nil
+	}
+	if mats.craftingTableCount > 0 {
+		in, _ := state.placeStationLocked(agentID, craftingTableItem, frame, walk)
+		return in
 	}
 
 	// Direct crafting fallback (portable 2x2, settlement workshop, or testing environment)
-	state.SetLastCraftTick(frame.WorldTick)
+	state.mem.lastCraftTick = frame.WorldTick
 	return &civquestv1.AgentIntent{
 		AgentId: agentID,
 		Action: &civquestv1.AgentIntent_CraftItem{

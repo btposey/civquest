@@ -107,7 +107,7 @@ func woolTargets(frame *civquestv1.TelemetryFrame, state *AgentState) (sheep, dr
 	pos := frame.Status.Position
 	sheepDist, dropDist = math.MaxFloat64, math.MaxFloat64
 	for _, e := range frame.VisibleEntities {
-		if e != nil && e.Position != nil && state.IsTargetUnreachable(e.Position.X, e.Position.Y, e.Position.Z, frame.WorldTick) {
+		if e != nil && e.Position != nil && state.IsDestinationShunned(e.Position.X, e.Position.Y, e.Position.Z, frame.WorldTick) {
 			continue
 		}
 		switch {

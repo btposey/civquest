@@ -1082,7 +1082,7 @@ func NewHarvestTreeTask(tx, ty, tz int32, stage Stage, startTick int64) *TaskSub
 			if state == nil || frame == nil {
 				return false
 			}
-			return state.IsTargetUnreachableLocked(float64(tx)+0.5, float64(ty), float64(tz)+0.5, frame.WorldTick)
+			return state.IsDestinationShunnedLocked(float64(tx)+0.5, float64(ty), float64(tz)+0.5, frame.WorldTick)
 		},
 		OnFail: func(state *AgentState, frame *civquestv1.TelemetryFrame, current *TaskSubroutine, reason string) {
 			if state != nil {

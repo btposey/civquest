@@ -836,7 +836,7 @@ func (a navigateActivity) Step(w htpda.World, local any, ev htpda.Event) htpda.S
 		if dx*dx+dz*dz <= loc.Radius*loc.Radius {
 			return htpda.Step{Op: htpda.OpPop, Result: navReached{Pos: [3]float64{pos.X, pos.Y, pos.Z}}}
 		}
-		if loc.Attempts > 0 && lw.ctx.State.IsTargetUnreachable(loc.Target[0], loc.Target[1], loc.Target[2], f.WorldTick) {
+		if loc.Attempts > 0 && lw.ctx.State.IsDestinationShunned(loc.Target[0], loc.Target[1], loc.Target[2], f.WorldTick) {
 			// The walking policy gave this leg up: treat it as a barrier and go around.
 			return htpda.Step{Op: htpda.OpPop, Result: navBlocked{Bearing: loc.Bearing, Pos: [3]float64{pos.X, pos.Y, pos.Z}}}
 		}

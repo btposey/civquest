@@ -470,7 +470,7 @@ func TestEvaluateSleep_TelemetryStuckDoesNotBlacklistAssignedBed(t *testing.T) {
 			t.Fatalf("stuck telemetry %d must keep navigating to the bed, got %+v", i, intent)
 		}
 	}
-	if state.IsTargetUnreachable(-45.5, 79.0, 16.5, 60) {
+	if state.IsDestinationShunned(-45.5, 79.0, 16.5, 60) {
 		t.Fatal("telemetry stuck must not blacklist the bed access target")
 	}
 }

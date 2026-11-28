@@ -103,7 +103,7 @@ func tickExplorationActivity(stage Stage, routine Routine, ctx *FSMContext, skil
 		if skillIntents, _, ok := reg.SelectAndExecuteSkill(skillCtx, ctx.Facts, "Armory"); ok && len(skillIntents) > 0 {
 			return appendNonNilIntents(nil, skillIntents)
 		}
-		if armoryIntent := EvaluateArmoryMaintenance(ctx.AgentID, ctx.Frame, ctx.Config, ctx.State, ctx.CivicDB); armoryIntent != nil {
+		if armoryIntent := EvaluateArmoryMaintenance(ctx.AgentID, ctx.Frame, ctx.Config, ctx.State, ctx.CivicDB, skillCtx.Walk); armoryIntent != nil {
 			return []*civquestv1.AgentIntent{armoryIntent}
 		}
 		if ctx.State != nil {
@@ -117,7 +117,7 @@ func tickExplorationActivity(stage Stage, routine Routine, ctx *FSMContext, skil
 			if skillIntents, _, ok := reg.SelectAndExecuteSkill(skillCtx, ctx.Facts, "Armory"); ok && len(skillIntents) > 0 {
 				return appendNonNilIntents(nil, skillIntents)
 			}
-			if armoryIntent := EvaluateArmoryMaintenance(ctx.AgentID, ctx.Frame, ctx.Config, ctx.State, ctx.CivicDB); armoryIntent != nil {
+			if armoryIntent := EvaluateArmoryMaintenance(ctx.AgentID, ctx.Frame, ctx.Config, ctx.State, ctx.CivicDB, skillCtx.Walk); armoryIntent != nil {
 				return []*civquestv1.AgentIntent{armoryIntent}
 			}
 		}

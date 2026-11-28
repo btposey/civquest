@@ -19,6 +19,7 @@ package eval
 import (
 	"fmt"
 	"math"
+	"slices"
 	"strings"
 
 	"github.com/btposey/civquest/orchestrator-go/internal/crafting"
@@ -62,6 +63,12 @@ type PlaytestSimConfig struct {
 	// NoRefusalReport leaves VisibleBlock.break_refused unset, so a refusal is learnt only
 	// from the failed receipt.
 	NoRefusalReport bool
+	// RefusePlacing makes every PLACE_BLOCK fail with a receipt, as the mod does for an
+	// occupied cell: the block stays in the pack.
+	RefusePlacing bool
+	// HidePlaced leaves placed blocks out of the frames' block lists (a full or stale list):
+	// the block is in the world, but the agent is never shown it.
+	HidePlaced bool
 }
 
 // SimVec is a plain position (proto Vec3 carries a lock and cannot be copied freely).
@@ -146,6 +153,8 @@ type PlaytestSim struct {
 	// refused is the failure report of a break the mod would not start, due next frame.
 	refused *civquestv1.IntentReceipt
 	batch   int64
+	// placeRefused marks the intent just applied as a placement refused (RefusePlacing).
+	placeRefused bool
 
 	Zombies []*SimZombie
 	// faunaState holds sheep, fish, drops and the fishing line (playtest_sim_fauna.go).
@@ -446,7 +455,7 @@ func (s *PlaytestSim) frameBlocks() []*civquestv1.VisibleBlock {
 			return
 		}
 		id, ok := s.World.Blocks[k]
-		if !ok || id == "" {
+		if !ok || id == "" || s.cfg.HidePlaced && slices.Contains(s.Placed, k) {
 			return
 		}
 		seen[k] = true
@@ -605,6 +614,12 @@ func (s *PlaytestSim) Step() SimStep {
 			s.refused = &civquestv1.IntentReceipt{BatchId: s.batch, FrameId: fi.Frame,
 				Status:        civquestv1.IntentReceipt_RECEIPT_STATUS_FAILED,
 				FailureReason: "HARVEST_BREAK failed (unbreakable, fluid, or out of reach)"}
+		}
+		if s.placeRefused {
+			s.placeRefused = false
+			s.refused = &civquestv1.IntentReceipt{BatchId: s.batch, FrameId: fi.Frame,
+				Status:        civquestv1.IntentReceipt_RECEIPT_STATUS_FAILED,
+				FailureReason: "place target cell is occupied"}
 		}
 	}
 	s.Steps = append(s.Steps, rec)
@@ -899,6 +914,10 @@ func (s *PlaytestSim) applyInteract(ib *civquestv1.InteractBlockIntent) {
 		item := ib.BlockOrItemId
 		if item == "" {
 			item = "minecraft:oak_planks"
+		}
+		if s.cfg.RefusePlacing {
+			s.placeRefused = true
+			return
 		}
 		s.placeBlock(k, item)
 	}

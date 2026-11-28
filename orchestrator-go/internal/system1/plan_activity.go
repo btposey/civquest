@@ -9,7 +9,7 @@ package system1
 //	                       to a recalled timber POI
 //	Gather(stone/ore)   -> navigate + HARVEST_BREAK on a visible block the held tool can drop
 //	Craft               -> CraftItem with the pending-craft latch (cq-dcx.2)
-//	Place               -> PLACE_BLOCK of the crafting table beside the agent
+//	Place               -> PLACE_BLOCK of the crafting table beside the agent (station_memory.go)
 //	Goto                -> Navigate to the known table
 //
 // Target commitment: a gather target is chosen once and held until it is reached (felled),
@@ -84,7 +84,6 @@ type planLocal struct {
 	Invalid    plan.Invalidation // last invalidation that forced a replan
 	Fails      int               // consecutive failed gather targets
 	Backoff    int64             // tree gathering is not attempted before this tick
-	PlaceTries int               // placements sent since the held item last left the inventory
 	Breaks     breakRecord       // refused_breaks.go
 }
 
@@ -259,6 +258,7 @@ func planFactsLocked(frame *civquestv1.TelemetryFrame, pos *civquestv1.Vec3, st 
 	}
 	table, _, dSq := findNearestCraftingTableLocked(frame, pos, st)
 	f.Table.Near = isCraftingTableWithinReach(table, dSq, pos)
+	f.Table.NoNew = st.stationRefusedLocked(craftingTableItem, frame)
 	if table != nil && table.Pos != nil {
 		f.Table.Known = true
 		f.Table.Pos = plan.Pos{X: int(table.Pos.X), Y: int(table.Pos.Y), Z: int(table.Pos.Z)}
@@ -380,34 +380,13 @@ func (x *planExec) craft(step plan.Step) (*civquestv1.AgentIntent, bool) {
 
 func (x *planExec) place(step plan.Step) (*civquestv1.AgentIntent, bool) {
 	if x.facts.Inventory[step.Item] <= 0 {
-		x.l.PlaceTries = 0
 		return nil, false
 	}
 	if x.dry {
 		return nil, true
 	}
-	st := x.st()
-	if last := st.mem.lastShelterPlaceTick; last != 0 && x.tick >= last && x.tick-last < planCraftThrottle {
-		return nil, true
-	}
-	st.mem.lastShelterPlaceTick = x.tick
-	// A placement that worked leaves the inventory; one that is still here failed, so try the
-	// next cell, and after the last one stand somewhere else (cq-6l3.17).
-	cells := placementCells(x.frame(), x.pos())
-	try := x.l.PlaceTries % (len(cells) + 1)
-	x.l.PlaceTries++
-	if try == len(cells) {
-		p, turn := x.pos(), float64(x.l.PlaceTries/(len(cells)+1))*math.Pi/2
-		return &civquestv1.AgentIntent{AgentId: x.agent(), Action: &civquestv1.AgentIntent_Navigate{Navigate: &civquestv1.NavigateIntent{
-			Target:          &civquestv1.Vec3{X: p.X + math.Cos(turn)*placeRelocateDist, Y: p.Y, Z: p.Z + math.Sin(turn)*placeRelocateDist},
-			SpeedMultiplier: 1.0, ArrivalTolerance: 1,
-		}}}, true
-	}
-	return &civquestv1.AgentIntent{AgentId: x.agent(), Action: &civquestv1.AgentIntent_InteractBlock{InteractBlock: &civquestv1.InteractBlockIntent{
-		Pos:             cells[try],
-		InteractionType: civquestv1.InteractBlockIntent_PLACE_BLOCK,
-		BlockOrItemId:   step.Item,
-	}}}, true
+	in, refused := x.st().placeStationLocked(x.agent(), step.Item, x.frame(), &x.l.Walk)
+	return in, !refused
 }
 
 func (x *planExec) gotoTable(p plan.Pos) (*civquestv1.AgentIntent, bool) {
@@ -463,7 +442,7 @@ func (x *planExec) trunkCandidates() []planTrunk {
 		}
 		k := [2]int32{b.Pos.X, b.Pos.Z}
 		if st.IsTreeOnCooldownLocked(k[0], k[1], x.tick) ||
-			st.IsTargetUnreachableLocked(float64(b.Pos.X)+0.5, float64(b.Pos.Y), float64(b.Pos.Z)+0.5, x.tick) ||
+			st.IsDestinationShunnedLocked(float64(b.Pos.X)+0.5, float64(b.Pos.Y), float64(b.Pos.Z)+0.5, x.tick) ||
 			x.mem.Depleted(trunkMark(k), spatialmem.KindTrunk, x.tick) {
 			continue
 		}

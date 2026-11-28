@@ -142,10 +142,12 @@ type receiptSlot struct {
 type agentMemory struct {
 	lastHarvestTick      int64 // any harvest action; read by unstuck/shelter throttles and liveness
 	lastCraftTick        int64 // craft throttle shared by bootstrap/shelter/armory/directive; liveness
-	lastShelterPlaceTick int64 // place throttle shared by bootstrap/shelter/armory/directive; liveness
+	lastShelterPlaceTick int64 // shelter placement throttle; liveness
 	telemetryFramesSeen  int64 // multi-increment quirk (ADR-036 section: replay pins it)
 	// failedTrees is durable tree-trunk knowledge with decay (failedTreeCooldownTicks).
 	failedTrees map[[2]int32]int64
+	// stations: setting stations down (station_memory.go).
+	stations stationMemory
 }
 
 // failedTreeCooldownTicks is how long a trunk that timed out or was unreachable stays blacklisted.
@@ -715,16 +717,6 @@ func (s *AgentState) GetLastShelterPlaceTick() int64 {
 	return s.mem.lastShelterPlaceTick
 }
 
-// SetLastShelterPlaceTick records the world tick when a shelter block/torch/campfire was placed.
-func (s *AgentState) SetLastShelterPlaceTick(tick int64) {
-	if s == nil {
-		return
-	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.mem.lastShelterPlaceTick = tick
-}
-
 // SetLastShelterTimeoutTick safely records the world tick of a shelter fallback timeout.
 func (s *AgentState) SetLastShelterTimeoutTick(tick int64) {
 	if s == nil {
@@ -1180,53 +1172,6 @@ func (s *AgentState) RecordTargetNavigationStuckLocked(x, y, z float64, worldTic
 	return giveUps <= 1, 1
 }
 
-// IsTargetUnreachable returns true if (x, y, z) is within 2.5m of an active blacklisted coordinate.
-func (s *AgentState) IsTargetUnreachable(x, y, z float64, worldTick int64) bool {
-	if s == nil {
-		return false
-	}
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	return s.IsTargetUnreachableLocked(x, y, z, worldTick)
-}
-
-// IsTargetUnreachableLocked returns true if (x, y, z) is blacklisted while s.mu is held.
-func (s *AgentState) IsTargetUnreachableLocked(x, y, z float64, worldTick int64) bool {
-	if s == nil {
-		return false
-	}
-	if s.endangeredLocked(x, z, worldTick) {
-		return true
-	}
-	for _, entry := range s.unreachableTargets {
-		if entry == nil || entry.blacklistUntil <= 0 {
-			continue
-		}
-		if worldTick >= entry.blacklistUntil {
-			continue
-		}
-		if unreachableCoordsMatch(entry.x, entry.y, entry.z, x, y, z) {
-			return true
-		}
-	}
-	return false
-}
-
-// isPOIUnreachableLocked returns true if either a POI's block coordinate or its access target is blacklisted.
-func (s *AgentState) isPOIUnreachableLocked(poi *db.AgentPOI, worldTick int64) bool {
-	if s == nil || poi == nil {
-		return false
-	}
-	if s.IsTargetUnreachableLocked(poi.X, poi.Y, poi.Z, worldTick) {
-		return true
-	}
-	acc := poiAccessTarget(poi)
-	if acc != nil && s.IsTargetUnreachableLocked(acc.X, acc.Y, acc.Z, worldTick) {
-		return true
-	}
-	return false
-}
-
 // findNearestReachablePOILocked returns the nearest active, reliable POI matching the filters
 // that is not currently blacklisted in unreachableTargets. Caller must hold s.mu.
 func (s *AgentState) findNearestReachablePOILocked(
@@ -1254,7 +1199,7 @@ func (s *AgentState) findNearestReachablePOILocked(
 		if blk != "" && !matchesPOIBlockID(p.BlockID, blk) {
 			continue
 		}
-		if s.isPOIUnreachableLocked(p, worldTick) {
+		if s.isPOIShunnedLocked(p, worldTick) {
 			continue
 		}
 		return p

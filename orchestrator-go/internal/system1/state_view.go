@@ -20,7 +20,7 @@ type StateView interface {
 	IsCivicPatrolActive() bool
 	IsEstablishingNewSettlement() bool
 	IsShelterOnCooldown(currentTick int64) bool
-	IsTargetUnreachable(x, y, z float64, worldTick int64) bool
+	useRefused(from *civquestv1.Vec3, b *civquestv1.BlockPosProto, reach float64, worldTick int64) bool
 	Routine() Routine
 	BaseStrategy() Strategy
 	SettlementEstablished() bool

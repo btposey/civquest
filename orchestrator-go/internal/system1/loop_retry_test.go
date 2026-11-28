@@ -9,25 +9,38 @@ import (
 )
 
 // cq-6l3.17: a crafting table that would not go down was sent to the same cell for nine minutes.
-func TestPlan_FailingPlacementTriesOtherCellsThenMoves(t *testing.T) {
+// cq-qdj: nor is it asked for without end; after two rounds the plan does something else.
+func TestPlan_FailingPlacementTriesOtherCellsThenMovesThenGivesUp(t *testing.T) {
 	st := NewAgentState()
 	l := planLocal{}
-	cells, moves := map[[3]int32]int{}, 0
-	for tick := int64(100); tick < 100+planCraftThrottle*30; tick += planCraftThrottle {
-		lw := &fsmWorld{ctx: &FSMContext{AgentID: "placer", State: st, Frame: rf(tick, 4000)}}
-		x := planExec{lw: lw, l: &l, tick: tick, facts: plan.Facts{Inventory: map[string]int{"minecraft:crafting_table": 1}}}
-		in, working := x.place(plan.Step{Kind: plan.StepPlace, Item: "minecraft:crafting_table"})
-		if !working || in == nil {
-			t.Fatalf("tick %d: placement must stay in progress, got %v %t", tick, in, working)
+	cells, moves, asks := map[[3]int32]int{}, 0, 0
+	for tick := int64(100); tick < 100+planCraftThrottle*60; tick += planCraftThrottle {
+		frame := rf(tick, 4000)
+		frame.Status.Inventory = []*civquestv1.ItemStackProto{item(0, craftingTableItem, 1)}
+		lw := &fsmWorld{ctx: &FSMContext{AgentID: "placer", State: st, Frame: frame}}
+		box := st.mem.stations
+		l.Walk.stations = &box
+		x := planExec{lw: lw, l: &l, tick: tick, facts: plan.Facts{Inventory: map[string]int{craftingTableItem: 1}}}
+		in, working := x.place(plan.Step{Kind: plan.StepPlace, Item: craftingTableItem})
+		st.rememberStations(box)
+		if !working {
+			if in != nil || asks < stationAsks {
+				t.Fatalf("tick %d: gave up after %d asks with %v", tick, asks, in)
+			}
+			continue
 		}
+		if in == nil {
+			t.Fatalf("tick %d: placement in progress without an ask", tick)
+		}
+		asks++
 		if p := in.GetInteractBlock().GetPos(); p != nil {
 			cells[[3]int32{p.X, p.Y, p.Z}]++
 		} else if in.GetNavigate() != nil {
 			moves++
 		}
 	}
-	if len(cells) < 8 || moves == 0 {
-		t.Fatalf("tried %d cells and moved %d times", len(cells), moves)
+	if len(cells) < 8 || moves != 1 || asks != stationAsks {
+		t.Fatalf("tried %d cells, moved %d times and asked %d times", len(cells), moves, asks)
 	}
 	for c, n := range cells {
 		if n > 3 {

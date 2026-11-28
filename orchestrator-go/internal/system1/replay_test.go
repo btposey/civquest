@@ -326,7 +326,7 @@ func uniformSurvey(ox, oz float64, tick int64) *civquestv1.HorizonSurveyReport {
 
 func probeUnreachable(x, y, z float64, tick func() int64) func(*AgentState) string {
 	return func(st *AgentState) string {
-		return fmt.Sprintf("unreachable(%.1f,%.0f,%.1f)=%t", x, y, z, st.IsTargetUnreachable(x, y, z, tick()))
+		return fmt.Sprintf("unreachable(%.1f,%.0f,%.1f)=%t", x, y, z, st.IsDestinationShunned(x, y, z, tick()))
 	}
 }
 

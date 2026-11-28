@@ -3,10 +3,15 @@ package system1
 // A destination given up stays given up (play test 8): two thirds of failed walks went to places
 // already marked unreachable, because the activity choosing them never asked.
 
-import civquestv1 "github.com/btposey/civquest/orchestrator-go/internal/proto/v1"
+import (
+	"math"
 
-// givenUpLocked reports whether (x, y, z) is blacklisted after failed walks. Unlike
-// IsTargetUnreachableLocked it says nothing of dangers near the place. s.mu must be held.
+	"github.com/btposey/civquest/orchestrator-go/internal/db"
+	civquestv1 "github.com/btposey/civquest/orchestrator-go/internal/proto/v1"
+)
+
+// givenUpLocked reports whether (x, y, z) is blacklisted after failed walks. It says nothing
+// of dangers near the place. s.mu must be held.
 func (s *AgentState) givenUpLocked(x, y, z float64, tick int64) bool {
 	for _, e := range s.unreachableTargets {
 		if e != nil && e.blacklistUntil > tick && unreachableCoordsMatch(e.x, e.y, e.z, x, y, z) {
@@ -24,6 +29,54 @@ func (s *AgentState) givenUp(x, y, z float64, tick int64) bool {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return s.givenUpLocked(x, y, z, tick)
+}
+
+// IsDestinationShunned reports a place the agent should not choose to go to: a walk to it was
+// given up, or it lies by a registered danger. It says nothing of what can be used from where
+// the agent already stands (cq-qdj).
+func (s *AgentState) IsDestinationShunned(x, y, z float64, tick int64) bool {
+	if s == nil {
+		return false
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.IsDestinationShunnedLocked(x, y, z, tick)
+}
+
+// IsDestinationShunnedLocked is IsDestinationShunned while s.mu is held.
+func (s *AgentState) IsDestinationShunnedLocked(x, y, z float64, tick int64) bool {
+	return s != nil && (s.endangeredLocked(x, z, tick) || s.givenUpLocked(x, y, z, tick))
+}
+
+// isPOIShunnedLocked reports that a POI's block or its access target is shunned.
+func (s *AgentState) isPOIShunnedLocked(poi *db.AgentPOI, tick int64) bool {
+	if s == nil || poi == nil {
+		return false
+	}
+	if s.IsDestinationShunnedLocked(poi.X, poi.Y, poi.Z, tick) {
+		return true
+	}
+	acc := poiAccessTarget(poi)
+	return acc != nil && s.IsDestinationShunnedLocked(acc.X, acc.Y, acc.Z, tick)
+}
+
+// useRefused reports a block not to be taken up from from. A walk to it that was given up
+// counts anywhere; a danger by it counts only when it is beyond reach, so that what the agent
+// stands beside does not stop existing.
+func (s *AgentState) useRefused(from *civquestv1.Vec3, b *civquestv1.BlockPosProto, reach float64, tick int64) bool {
+	if s == nil || b == nil {
+		return false
+	}
+	x, y, z := float64(b.X)+0.5, float64(b.Y), float64(b.Z)+0.5
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if s.givenUpLocked(x, y, z, tick) {
+		return true
+	}
+	if from != nil && math.Sqrt((x-from.X)*(x-from.X)+(y+0.5-from.Y)*(y+0.5-from.Y)+(z-from.Z)*(z-from.Z)) <= reach {
+		return false
+	}
+	return s.endangeredLocked(x, z, tick)
 }
 
 // walkGivenUpLocked reports that in is a walk to a place already given up.

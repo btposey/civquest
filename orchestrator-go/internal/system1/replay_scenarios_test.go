@@ -488,7 +488,7 @@ func scenarioSleepBedUnreachableBlacklists() replayScenario {
 	at := func(tick int64) *civquestv1.TelemetryFrame { return rf(tick, 19000+tick, withPos(-30, 86, 0)) }
 	probe := func(tick int64) func(*AgentState) string {
 		return func(st *AgentState) string {
-			return fmt.Sprintf("bedAssigned=%t unreachable=%t", st.GetAssignedBed() != nil, st.IsTargetUnreachable(-45.5, 79, 16.5, tick))
+			return fmt.Sprintf("bedAssigned=%t unreachable=%t", st.GetAssignedBed() != nil, st.IsDestinationShunned(-45.5, 79, 16.5, tick))
 		}
 	}
 	return replayScenario{

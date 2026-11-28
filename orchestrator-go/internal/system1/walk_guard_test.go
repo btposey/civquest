@@ -58,7 +58,7 @@ func TestWalk_ProgressingWalkIsNotGivenUp(t *testing.T) {
 			}
 		}
 	}
-	if st.IsTargetUnreachable(200.5, 64, 0.5, 900) || sent < 100 {
+	if st.IsDestinationShunned(200.5, 64, 0.5, 900) || sent < 100 {
 		t.Errorf("a walk making headway was given up: sent=%d", sent)
 	}
 }

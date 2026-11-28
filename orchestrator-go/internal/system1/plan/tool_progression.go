@@ -301,7 +301,7 @@ func rank(item string) int {
 
 // ensureTable makes a crafting table available for a 3x3 craft: nothing when
 // one is in reach, Place when carried, Goto when a known one is close enough,
-// otherwise craft a new one and Place it.
+// otherwise craft a new one and Place it. Under NoNew none is placed or made.
 func (s *sim) ensureTable(depth int) bool {
 	if s.tableOK {
 		return true
@@ -309,14 +309,14 @@ func (s *sim) ensureTable(depth int) bool {
 	t := s.f.Table
 	switch {
 	case t.Near:
-	case s.inv[itemTable] > 0:
+	case s.inv[itemTable] > 0 && !t.NoNew:
 		s.inv[itemTable]--
 		s.steps = append(s.steps, Step{Kind: StepPlace, Item: itemTable})
 	case t.Known && t.Dist <= MaxTableWalk && !math.IsNaN(t.Dist):
 		p := t.Pos
 		s.steps = append(s.steps, Step{Kind: StepGoto, Pos: &p})
 	default:
-		if !s.expand(itemTable, 1, depth) {
+		if t.NoNew || !s.expand(itemTable, 1, depth) {
 			return false
 		}
 		s.steps = append(s.steps, Step{Kind: StepPlace, Item: itemTable})

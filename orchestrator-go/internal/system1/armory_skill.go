@@ -140,7 +140,7 @@ func (s *ArmoryCraftingSkill) Execute(ctx *SkillContext, facts *FactGraph) ([]*c
 	if ctx == nil {
 		return nil, nil
 	}
-	intent := EvaluateArmoryMaintenance(ctx.AgentID, ctx.Frame, ctx.Config, ctx.State, ctx.CivicDB)
+	intent := EvaluateArmoryMaintenance(ctx.AgentID, ctx.Frame, ctx.Config, ctx.State, ctx.CivicDB, ctx.Walk)
 	if intent == nil {
 		return nil, nil
 	}

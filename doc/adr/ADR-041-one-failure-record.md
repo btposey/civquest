@@ -23,6 +23,7 @@ State at `b201b2a`, in `orchestrator-go/internal/system1`.
 | `unreachableTargets` | a place (2.5 block radius) | 2400 | `state.go`, `blacklist.go` |
 | `failedTrees` | a trunk | 600 | `state.go` |
 | `unreachableWorkstations` | a block: a workstation not reached, or one that would not break (added by cq-6nz, after the commit above) | 600 | `state.go` |
+| `mem.stations` | setting a station down: asks made from a spot, and the last one placed (added by cq-qdj) | until another ask replaces it | `station_memory.go` |
 | `w.skipped` | an activity, for the current tick | 1 tick | `kernel_adapter.go` |
 | kernel `idled` / `cooled` | a child that ended without progress | `cooled` is off (`NoProgressBackoff` = 0) | `htpda/hierarchy.go` |
 
@@ -68,7 +69,7 @@ type Failure struct {
 ```
 
 - Duration and match radius come from **one table** keyed by subject kind and reason. The first version copies today's values, so behaviour does not change.
-- Dangers stay a separate store (they are world knowledge shared with the clan). `Suppressed` consults them for places, as `IsTargetUnreachableLocked` does now.
+- Dangers stay a separate store (they are world knowledge shared with the clan). `Suppressed` consults them for places to travel to, as `IsDestinationShunnedLocked` does now; what is used from where the agent stands is not suppressed by a danger (cq-qdj).
 - All rows of the table above go, except `w.skipped`, which is removed in stage 5 if the kernel's within-dispatch rule covers it.
 
 ### 2. A refusal goes back to the owner

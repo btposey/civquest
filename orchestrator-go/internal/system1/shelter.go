@@ -302,7 +302,7 @@ func evaluateDuskNightOutpostShelterLocked(
 					continue
 				}
 				if state.unbreakableLocked(b, frame.WorldTick) || state.IsTreeOnCooldownLocked(b.Pos.X, b.Pos.Z, frame.WorldTick) ||
-					state.IsTargetUnreachableLocked(float64(b.Pos.X)+0.5, float64(b.Pos.Y), float64(b.Pos.Z)+0.5, frame.WorldTick) {
+					state.IsDestinationShunnedLocked(float64(b.Pos.X)+0.5, float64(b.Pos.Y), float64(b.Pos.Z)+0.5, frame.WorldTick) {
 					continue
 				}
 				dx := float64(b.Pos.X) + 0.5 - pos.X

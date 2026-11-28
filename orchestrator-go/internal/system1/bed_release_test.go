@@ -94,7 +94,7 @@ func TestBedRelease_UnreachableReleasedAfterHold(t *testing.T) {
 
 func TestBedRelease_AbandonedAccessTargetIsNotRetaken(t *testing.T) {
 	st, reg := bedOwnerAgent(t)
-	st.abandonBed("able", 20) // only the access target was blacklisted
+	st.abandonBed("able", nil, 20) // only the access target was blacklisted
 	if st.mayRecallBed("able", &civquestv1.BlockPosProto{X: 4, Y: 64, Z: 0}) {
 		t.Fatal("POI memory must not retake an abandoned bed")
 	}

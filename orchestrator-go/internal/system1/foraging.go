@@ -288,7 +288,7 @@ func evaluateForagingWithMemory(agentID string, frame *civquestv1.TelemetryFrame
 	bestDropDist := math.MaxFloat64
 	for _, e := range frame.VisibleEntities {
 		if !isFoodDropEntity(e) || e.Position == nil ||
-			state != nil && state.IsTargetUnreachableLocked(e.Position.X, e.Position.Y, e.Position.Z, frame.WorldTick) {
+			state != nil && state.IsDestinationShunnedLocked(e.Position.X, e.Position.Y, e.Position.Z, frame.WorldTick) {
 			continue
 		}
 		d := entityDistance(pos, e)
@@ -335,7 +335,7 @@ func evaluateForagingWithMemory(agentID string, frame *civquestv1.TelemetryFrame
 		if float64(b.Pos.Y)-pos.Y > 4.0 {
 			continue
 		}
-		if state != nil && state.IsTargetUnreachableLocked(float64(b.Pos.X)+0.5, float64(b.Pos.Y), float64(b.Pos.Z)+0.5, frame.WorldTick) ||
+		if state != nil && state.IsDestinationShunnedLocked(float64(b.Pos.X)+0.5, float64(b.Pos.Y), float64(b.Pos.Z)+0.5, frame.WorldTick) ||
 			state.unbreakableLocked(b, frame.WorldTick) {
 			continue
 		}
@@ -360,7 +360,7 @@ func evaluateForagingWithMemory(agentID string, frame *civquestv1.TelemetryFrame
 	bestAnimalDist := math.MaxFloat64
 	for _, e := range frame.VisibleEntities {
 		if !isPassiveFoodAnimal(e) ||
-			state != nil && e.Position != nil && state.IsTargetUnreachableLocked(e.Position.X, e.Position.Y, e.Position.Z, frame.WorldTick) {
+			state != nil && e.Position != nil && state.IsDestinationShunnedLocked(e.Position.X, e.Position.Y, e.Position.Z, frame.WorldTick) {
 			continue
 		}
 		d := entityDistance(pos, e)
@@ -517,8 +517,8 @@ func evaluateForagingWithMemory(agentID string, frame *civquestv1.TelemetryFrame
 					continue
 				}
 				acc := poiAccessTarget(cropPOI)
-				if state.IsTargetUnreachableLocked(cropPOI.X, cropPOI.Y, cropPOI.Z, frame.WorldTick) ||
-					(acc != nil && state.IsTargetUnreachableLocked(acc.X, acc.Y, acc.Z, frame.WorldTick)) {
+				if state.IsDestinationShunnedLocked(cropPOI.X, cropPOI.Y, cropPOI.Z, frame.WorldTick) ||
+					(acc != nil && state.IsDestinationShunnedLocked(acc.X, acc.Y, acc.Z, frame.WorldTick)) {
 					continue
 				}
 				d := math.Hypot(cropPOI.X-pos.X, cropPOI.Z-pos.Z)
@@ -551,8 +551,8 @@ func evaluateForagingWithMemory(agentID string, frame *civquestv1.TelemetryFrame
 					continue
 				}
 				acc := poiAccessTarget(contPOI)
-				if state.IsTargetUnreachableLocked(contPOI.X, contPOI.Y, contPOI.Z, frame.WorldTick) ||
-					(acc != nil && state.IsTargetUnreachableLocked(acc.X, acc.Y, acc.Z, frame.WorldTick)) {
+				if state.IsDestinationShunnedLocked(contPOI.X, contPOI.Y, contPOI.Z, frame.WorldTick) ||
+					(acc != nil && state.IsDestinationShunnedLocked(acc.X, acc.Y, acc.Z, frame.WorldTick)) {
 					continue
 				}
 				lastVisit := mem.Visited[contPOI.POIID]

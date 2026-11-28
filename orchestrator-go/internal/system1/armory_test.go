@@ -199,7 +199,7 @@ func TestEvaluateArmoryMaintenance_CraftArrows(t *testing.T) {
 		},
 	}
 
-	intent := EvaluateArmoryMaintenance("NightSentry", frame, cfg, state, nil)
+	intent := EvaluateArmoryMaintenance("NightSentry", frame, cfg, state, nil, nil)
 	if intent == nil {
 		t.Fatalf("expected crafting intent for arrows, got nil")
 	}
@@ -249,7 +249,7 @@ func TestEvaluateArmoryMaintenance_CraftTNT(t *testing.T) {
 		},
 	}
 
-	intent := EvaluateArmoryMaintenance("NightSentry", frame, cfg, state, nil)
+	intent := EvaluateArmoryMaintenance("NightSentry", frame, cfg, state, nil, nil)
 	if intent == nil {
 		t.Fatalf("expected crafting intent for TNT, got nil")
 	}
@@ -293,7 +293,7 @@ func TestEvaluateArmoryMaintenance_CraftWeaponsAndArmor(t *testing.T) {
 		},
 	}
 
-	intent1 := EvaluateArmoryMaintenance("NightSentry", frame1, cfg, state, nil)
+	intent1 := EvaluateArmoryMaintenance("NightSentry", frame1, cfg, state, nil, nil)
 	if intent1 == nil {
 		t.Fatalf("expected weapon crafting intent (shield), got nil")
 	}
@@ -322,7 +322,7 @@ func TestEvaluateArmoryMaintenance_CraftWeaponsAndArmor(t *testing.T) {
 		},
 	}
 
-	intent2 := EvaluateArmoryMaintenance("NightSentry", frame2, cfg, state, nil)
+	intent2 := EvaluateArmoryMaintenance("NightSentry", frame2, cfg, state, nil, nil)
 	if intent2 == nil {
 		t.Fatalf("expected armor crafting intent (iron_chestplate), got nil")
 	}
@@ -360,7 +360,7 @@ func TestEvaluateArmoryMaintenance_CraftingTableInteraction(t *testing.T) {
 		},
 	}
 
-	intentNearby := EvaluateArmoryMaintenance("NightSentry", frameNearby, cfg, state, nil)
+	intentNearby := EvaluateArmoryMaintenance("NightSentry", frameNearby, cfg, state, nil, nil)
 	if intentNearby == nil || intentNearby.GetCraftItem() == nil {
 		t.Fatalf("expected CraftItem intent at nearby table")
 	}
@@ -392,7 +392,7 @@ func TestEvaluateArmoryMaintenance_CraftingTableInteraction(t *testing.T) {
 		},
 	}
 
-	intentDistant := EvaluateArmoryMaintenance("NightSentry", frameDistant, cfg, state, nil)
+	intentDistant := EvaluateArmoryMaintenance("NightSentry", frameDistant, cfg, state, nil, nil)
 	if intentDistant == nil || intentDistant.GetNavigate() == nil {
 		t.Fatalf("expected Navigate intent to distant table, got %+v", intentDistant)
 	}
@@ -419,7 +419,7 @@ func TestEvaluateArmoryMaintenance_CraftingTableInteraction(t *testing.T) {
 		},
 	}
 
-	intentPlace := EvaluateArmoryMaintenance("NightSentry", framePlace, cfg, state, nil)
+	intentPlace := EvaluateArmoryMaintenance("NightSentry", framePlace, cfg, state, nil, nil)
 	if intentPlace == nil || intentPlace.GetInteractBlock() == nil {
 		t.Fatalf("expected InteractBlock intent to place crafting table, got %+v", intentPlace)
 	}
@@ -452,7 +452,7 @@ func TestEvaluateArmoryMaintenance_Sub5msExecution(t *testing.T) {
 	start := time.Now()
 	for i := 0; i < 1000; i++ {
 		state.SetLastCraftTick(0)
-		_ = EvaluateArmoryMaintenance("NightSentry", frame, cfg, state, nil)
+		_ = EvaluateArmoryMaintenance("NightSentry", frame, cfg, state, nil, nil)
 	}
 	elapsed := time.Since(start)
 	avgPerCall := elapsed / 1000
@@ -502,7 +502,7 @@ func TestEvaluateArmoryMaintenance_CraftingTableRecallFromSpatialIndex(t *testin
 		},
 	}
 
-	intent := EvaluateArmoryMaintenance("NightSentry", frame, cfg, state, nil)
+	intent := EvaluateArmoryMaintenance("NightSentry", frame, cfg, state, nil, nil)
 	if intent == nil || intent.GetNavigate() == nil || intent.GetNavigate().Target == nil {
 		t.Fatalf("expected NavigateIntent towards recalled crafting table, got %+v", intent)
 	}
@@ -514,7 +514,7 @@ func TestEvaluateArmoryMaintenance_CraftingTableRecallFromSpatialIndex(t *testin
 	// Within 4.5m -> craft at recalled table
 	frame.WorldTick = 900
 	frame.Status.Position = &civquestv1.Vec3{X: 39.5, Y: 64.0, Z: 10.5}
-	craftIntent := EvaluateArmoryMaintenance("NightSentry", frame, cfg, state, nil)
+	craftIntent := EvaluateArmoryMaintenance("NightSentry", frame, cfg, state, nil, nil)
 	if craftIntent == nil || craftIntent.GetCraftItem() == nil {
 		t.Fatalf("expected CraftItemIntent when within 4.5m of recalled table, got %+v", craftIntent)
 	}

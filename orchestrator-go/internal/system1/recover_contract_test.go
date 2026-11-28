@@ -67,7 +67,7 @@ func TestRecoverContract_RealTerrainReceiptSidestepsThenGivesUpAndBlacklists(t *
 	r := newRecoverRig(t, rigTarget)
 	giveUp(r, 110)
 	giveUp(r, 300)
-	if !r.st.IsTargetUnreachable(rigTarget[0], rigTarget[1], rigTarget[2], 405) {
+	if !r.st.IsDestinationShunned(rigTarget[0], rigTarget[1], rigTarget[2], 405) {
 		t.Fatal("two terrain give-ups on real Java facts must blacklist the target")
 	}
 }
@@ -82,7 +82,7 @@ func TestRecoverContract_RealCongestionReceiptNeverBlacklists(t *testing.T) {
 	if b, ok := r.result.(recoverBlocked); !ok || b.Cause != CauseCongestion {
 		t.Fatalf("second congestion must give up Blocked{Congestion}, got %#v", r.result)
 	}
-	if r.st.IsTargetUnreachable(rigTarget[0], rigTarget[1], rigTarget[2], 140) || len(r.fsm.recoverOutbox) != 0 {
+	if r.st.IsDestinationShunned(rigTarget[0], rigTarget[1], rigTarget[2], 140) || len(r.fsm.recoverOutbox) != 0 {
 		t.Fatal("congestion facts recorded from Java must never blacklist or decay POIs")
 	}
 }

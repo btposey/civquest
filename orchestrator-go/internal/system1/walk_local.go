@@ -47,6 +47,10 @@ type walkLocal struct {
 	// spatial is the agent's spatial memory (Memory, ADR-039), bound by the walk stepper for
 	// one step and cleared after it; read-only, never progress.
 	spatial spatialmem.Snapshot
+
+	// stations collects, for one step, what this frame asks of setting stations down
+	// (station_memory.go). stationStep binds it, clears it and turns it into a Memory write.
+	stations *stationMemory
 }
 
 func orFreshWalk(w *walkLocal) *walkLocal {

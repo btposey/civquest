@@ -90,10 +90,6 @@ func (s *AgentState) bedConfirmedGone(frame *civquestv1.TelemetryFrame, p *civqu
 	return tick-w.goneSince >= bedGoneTicks
 }
 
-func (s *AgentState) bedUnreachable(p *civquestv1.BlockPosProto, tick int64) bool {
-	return s.IsTargetUnreachable(float64(p.X)+0.5, float64(p.Y), float64(p.Z)+0.5, tick)
-}
-
 // heldBeds returns the claims the agent still counts as its bed (abandoned ones excluded).
 func (s *AgentState) heldBeds(reg BedRegistry, agentID string) ([][3]int32, error) {
 	owned, err := reg.BedOwnedBy(agentID)
@@ -167,17 +163,18 @@ func (s *AgentState) releaseAbandonedBeds(agentID string, tick int64) {
 	}
 }
 
-// abandonBed gives up the assigned bed as unreachable: the agent stops counting its claim,
-// which is released after bedAbandonHoldTicks, and the bed block itself is blacklisted so the
-// agent does not take it straight back when only its access target had been.
-func (s *AgentState) abandonBed(agentID string, tick int64) {
+// abandonBed gives up the assigned bed: the agent, standing at from, stops counting its claim,
+// which is released after bedAbandonHoldTicks. Unless something already keeps the agent from
+// taking that bed straight back (a walk to it given up, or a danger by it out of reach), the bed
+// block is given up too: it was only its access target, or it would not let the agent sleep.
+func (s *AgentState) abandonBed(agentID string, from *civquestv1.Vec3, tick int64) {
 	cur := s.GetAssignedBed()
 	s.ClearAssignedBed()
 	reg := s.bedReg()
 	if cur == nil || reg == nil {
 		return
 	}
-	if !s.bedUnreachable(cur, tick) {
+	if !s.useRefused(from, cur, bedUseReach, tick) {
 		s.MarkTargetUnreachable(float64(cur.X)+0.5, float64(cur.Y), float64(cur.Z)+0.5, tick, DefaultUnreachableTargetTTL)
 	}
 	held, err := s.heldBeds(reg, agentID)
@@ -259,7 +256,7 @@ func (s *AgentState) resumeOwnBed(agentID string, frame *civquestv1.TelemetryFra
 	var far, near *civquestv1.BlockPosProto
 	for _, o := range owned {
 		p := &civquestv1.BlockPosProto{X: o[0], Y: o[1], Z: o[2]}
-		if s.bedUnreachable(p, frame.WorldTick) {
+		if s.useRefused(frame.GetStatus().GetPosition(), p, bedUseReach, frame.WorldTick) {
 			s.abandonClaim(o, frame.WorldTick)
 			continue
 		}

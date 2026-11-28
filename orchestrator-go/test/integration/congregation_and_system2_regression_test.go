@@ -1149,7 +1149,7 @@ func TestIntegration_StuckHarvestTaskAndUnstuckQueueDrain_BlacklistsAndEscapes(t
 	posNow := carl.pos
 	carl.mu.Unlock()
 
-	blacklisted := carl.runtime.System1State().IsTargetUnreachable(-45.5, 86.0, -7.5, endTick)
+	blacklisted := carl.runtime.System1State().IsDestinationShunned(-45.5, 86.0, -7.5, endTick)
 	hasTask := carl.runtime.System1State().HasActiveTask()
 	_, taskKind, taskPhase, _ := carl.runtime.System1State().ActiveTaskInfo()
 
@@ -1182,13 +1182,14 @@ func TestIntegration_StuckHarvestTaskAndUnstuckQueueDrain_BlacklistsAndEscapes(t
 
 // zeroProgressResult is what runZeroProgressScenario observed.
 type zeroProgressResult struct {
-	pre300Calls     int32
-	totalCalls      int32
-	activeTaskAt300 bool
-	surveyCount     int
-	maxDist         float64
-	taskKind        string
-	stuckWindows    int
+	pre300Calls int32
+	totalCalls  int32
+	// stuckTaskEnded: the harvest task the agent began with was gone at some frame before +300.
+	stuckTaskEnded bool
+	surveyCount    int
+	maxDist        float64
+	taskKind       string
+	stuckWindows   int
 	// maxZeroProgressTicks is the longest run of ticks the agent spent within 1.5m of where the
 	// run of ticks began (zero net displacement), sampled once per frame.
 	maxZeroProgressTicks int64
@@ -1239,6 +1240,7 @@ func runZeroProgressScenario(t *testing.T, obstructedTrees [][2]int32, obstructe
 	)
 
 	var r zeroProgressResult
+	sawTask := false
 	anchor := carl.pos
 	anchorTick := startTick
 	for frameIdx := 0; frameIdx < preCheckFrames; frameIdx++ {
@@ -1252,8 +1254,12 @@ func runZeroProgressScenario(t *testing.T, obstructedTrees [][2]int32, obstructe
 		if worldTick-startTick < 296 {
 			r.pre300Calls = calls.Load()
 		}
-		if worldTick-startTick == 300 {
-			r.activeTaskAt300 = carl.runtime.System1State().HasActiveTask()
+		switch active := carl.runtime.System1State().HasActiveTask(); {
+		case worldTick-startTick >= 300:
+		case active:
+			sawTask = true
+		case sawTask:
+			r.stuckTaskEnded = true
 		}
 		carl.mu.Lock()
 		pos := carl.pos
@@ -1298,8 +1304,8 @@ func runZeroProgressScenario(t *testing.T, obstructedTrees [][2]int32, obstructe
 	r.hasTaskAtEnd = carl.runtime.System1State().HasActiveTask()
 	_, r.taskKind, _, _ = carl.runtime.System1State().ActiveTaskInfo()
 	r.totalCalls = calls.Load()
-	t.Logf("[DIAG-2B] carl zeroProgress: stuckWindows=%d activeTaskAt300=%v pre300Calls=%d totalCalls=%d dir=(%s,%v) hasTask=%v(%s) surveysEmitted=%d surveysCompleted=%d maxDist=%.1fm maxZeroProgressTicks=%d pos=(%.1f,%.1f)",
-		r.stuckWindows, r.activeTaskAt300, r.pre300Calls, r.totalCalls, dir.Action, dirActive,
+	t.Logf("[DIAG-2B] carl zeroProgress: stuckWindows=%d stuckTaskEnded=%v pre300Calls=%d totalCalls=%d dir=(%s,%v) hasTask=%v(%s) surveysEmitted=%d surveysCompleted=%d maxDist=%.1fm maxZeroProgressTicks=%d pos=(%.1f,%.1f)",
+		r.stuckWindows, r.stuckTaskEnded, r.pre300Calls, r.totalCalls, dir.Action, dirActive,
 		r.hasTaskAtEnd, r.taskKind, r.surveyCount, surveysCompleted, r.maxDist, r.maxZeroProgressTicks, posNow.X, posNow.Z)
 	return r
 }
@@ -1345,8 +1351,8 @@ func TestIntegration_ZeroProgressActiveTask_RecoversOnItsOwnAndMovesOn(t *testin
 	if r.stuckWindows < 1 {
 		t.Errorf("test setup error: carl never got stuck (stuckWindows=%d)", r.stuckWindows)
 	}
-	if r.activeTaskAt300 {
-		t.Errorf("harvest task still active at +300 ticks: the stuck task must have failed (Recover give-up)")
+	if !r.stuckTaskEnded {
+		t.Errorf("the first harvest task was still active at +300 ticks: the stuck task must have failed (Recover give-up)")
 	}
 	if r.surveyCount < 1 && r.maxDist <= 10.0 {
 		t.Errorf("agent did not move on after the task failed (surveys=%d, maxDist=%.1fm)", r.surveyCount, r.maxDist)

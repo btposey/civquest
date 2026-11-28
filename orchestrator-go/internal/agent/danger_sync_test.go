@@ -26,6 +26,6 @@ func TestDanger_SharedWithTheClan(t *testing.T) {
 	waitFor(t, "the clanmate to learn of the danger", func() bool {
 		second.tick += 200
 		second.frame(300, 300, nil)
-		return second.rt.System1State().IsTargetUnreachable(62, 63, 2, second.tick)
+		return second.rt.System1State().IsDestinationShunned(62, 63, 2, second.tick)
 	})
 }
