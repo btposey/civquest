@@ -1,9 +1,10 @@
 package system1
 
 // Remembered dangers (cq-gey.2). A mob that hurts an agent, or one that stays where it lives
-// (a Drowned in its water), marks its spot for a game day. The agent does not choose targets
-// there, walks round it, and having been hit keeps going until it is clear. Dangers are shared
-// with the clan (agent/danger_sync.go).
+// (a Drowned with a trident in its water), marks its spot for a game day. The agent does not
+// choose targets there, walks round it, and having been hit keeps going until it is clear.
+// Dangers are shared with the clan (agent/danger_sync.go). A Drowned without a trident is
+// only a fight: it leaves no mark (cq-knm).
 
 import (
 	"fmt"
@@ -36,7 +37,7 @@ const (
 
 // Danger is one registered mob danger.
 type Danger struct {
-	Kind    string // mob type without namespace, e.g. "drowned"
+	Kind    string // mob type without namespace, e.g. "drowned" (always one with a trident)
 	X, Y, Z float64
 	Seen    int64
 	shared  int64 // when this agent last told the clan
@@ -51,6 +52,12 @@ func lingers(kind string) bool {
 	}
 	return false
 }
+
+// marks reports whether meeting a mob of this kind is worth remembering. armed says it was
+// seen holding a trident, or struck with one.
+func marks(kind string, armed bool) bool { return kind != "drowned" || armed }
+
+func holdsTrident(e *civquestv1.VisibleEntity) bool { return mobKind(e.HeldItemId) == "trident" }
 
 func mobKind(entityType string) string {
 	t := strings.ToLower(strings.TrimSpace(entityType))
@@ -245,10 +252,13 @@ func observeDangers(ctx *FSMContext) {
 		ctx.State.NoteDanger(Danger{Kind: kind, X: at.X, Y: at.Y, Z: at.Z, Seen: f.WorldTick})
 	}
 	for _, e := range f.VisibleEntities {
+		if e == nil || e.Position == nil {
+			continue
+		}
 		// A polar bear is registered on sight although it only attacks when it chooses to.
-		if e != nil && e.Position != nil && lingers(mobKind(e.EntityType)) &&
-			(IsHostile(e) || mobKind(e.EntityType) == "polar_bear") {
-			note(mobKind(e.EntityType), e.Position)
+		if kind := mobKind(e.EntityType); lingers(kind) && marks(kind, holdsTrident(e)) &&
+			(IsHostile(e) || kind == "polar_bear") {
+			note(kind, e.Position)
 		}
 	}
 	hit := f.LastDamageTaken
@@ -258,14 +268,19 @@ func observeDangers(ctx *FSMContext) {
 	// Anything that is not a person and does harm is a danger, hostile by nature or not.
 	byMob := hit.SourceType == civquestv1.DamageSourceType_DAMAGE_SOURCE_TYPE_MOB ||
 		hit.SourceType == civquestv1.DamageSourceType_DAMAGE_SOURCE_TYPE_ARROW
+	// A thrown trident names its thrower, who may be out of sight by the time it lands.
+	threw := hit.DamageType == "trident"
 	for _, e := range f.VisibleEntities {
 		if e != nil && e.Position != nil && e.EntityId == hit.AttackerEntityId && (IsHostile(e) || byMob && !isPlayerEntity(e)) {
-			note(mobKind(e.EntityType), e.Position)
+			if kind := mobKind(e.EntityType); marks(kind, threw || holdsTrident(e)) {
+				note(kind, e.Position)
+			}
 			return
 		}
 	}
-	// Unseen attacker: mark where the blow landed, if it was a mob's.
-	if kind := mobKind(hit.AttackerName); kind != "" && (byMob || IsHostile(&civquestv1.VisibleEntity{EntityType: kind})) {
+	// Unseen attacker: mark where the blow landed, if it was a mob's. A Drowned that only
+	// struck by hand is not known to hold a trident.
+	if kind := mobKind(hit.AttackerName); kind != "" && marks(kind, threw) && (byMob || IsHostile(&civquestv1.VisibleEntity{EntityType: kind})) {
 		note(kind, f.Status.Position)
 	}
 }

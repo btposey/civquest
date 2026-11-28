@@ -8,7 +8,8 @@ import (
 	"github.com/btposey/civquest/orchestrator-go/internal/xdg"
 )
 
-// cq-gey.2: a Drowned one member sees, the whole clan avoids for a game day.
+// cq-gey.2: a Drowned with a trident that one member sees, the whole clan avoids for a game
+// day. One without is not told to anyone (cq-knm).
 func TestDanger_SharedWithTheClan(t *testing.T) {
 	res := xdg.NewResolver(xdg.WithCustomRoot(t.TempDir()))
 	civic, err := db.OpenCivicRegistryDBForClan(res, "pioneers")
@@ -19,8 +20,12 @@ func TestDanger_SharedWithTheClan(t *testing.T) {
 
 	first := newSettler(t, res, civic, "aria")
 	first.see(0, 0, func(f *civquestv1.TelemetryFrame) {
-		f.VisibleEntities = []*civquestv1.VisibleEntity{{EntityId: 7, EntityType: "minecraft:drowned", IsHostile: true,
-			Position: &civquestv1.Vec3{X: 60, Y: 63, Z: 0}, Distance: 60}}
+		f.VisibleEntities = []*civquestv1.VisibleEntity{
+			{EntityId: 8, EntityType: "minecraft:drowned", IsHostile: true,
+				Position: &civquestv1.Vec3{X: -60, Y: 63, Z: 0}, Distance: 60},
+			{EntityId: 7, EntityType: "minecraft:drowned", HeldItemId: "minecraft:trident", IsHostile: true,
+				Position: &civquestv1.Vec3{X: 60, Y: 63, Z: 0}, Distance: 60},
+		}
 	})
 	second := newSettler(t, res, civic, "bert")
 	waitFor(t, "the clanmate to learn of the danger", func() bool {
@@ -28,4 +33,7 @@ func TestDanger_SharedWithTheClan(t *testing.T) {
 		second.frame(300, 300, nil)
 		return second.rt.System1State().IsDestinationShunned(62, 63, 2, second.tick)
 	})
+	if got := second.rt.System1State().Dangers(second.tick); len(got) != 1 {
+		t.Errorf("the clan learnt %+v, want only the trident", got)
+	}
 }

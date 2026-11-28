@@ -8,11 +8,11 @@ import (
 	"github.com/btposey/civquest/orchestrator-go/internal/xdg"
 )
 
-// cq-gey.2: a Drowned stays registered for a game day and its ground is not walked into.
+// cq-gey.2: a Drowned with a trident stays registered for a game day and its ground is not walked into.
 func TestDanger_LingeringMobIsRememberedForADay(t *testing.T) {
 	st := NewAgentState()
 	observeDangers(&FSMContext{State: st, Frame: rf(100, 3000, withPos(0, 64, 0), withEntities(
-		&civquestv1.VisibleEntity{EntityId: 7, EntityType: "minecraft:drowned", IsHostile: true, Position: &civquestv1.Vec3{X: 40, Y: 63, Z: 0}},
+		&civquestv1.VisibleEntity{EntityId: 7, EntityType: "minecraft:drowned", HeldItemId: "minecraft:trident", IsHostile: true, Position: &civquestv1.Vec3{X: 40, Y: 63, Z: 0}},
 		&civquestv1.VisibleEntity{EntityId: 8, EntityType: "minecraft:zombie", IsHostile: true, Position: &civquestv1.Vec3{X: 0, Y: 64, Z: 60}},
 	))})
 	if !st.IsDestinationShunned(45, 63, 3, 100+DangerMemoryTicks-1) {
@@ -76,7 +76,7 @@ func TestDanger_HitAgentKeepsFleeingWhenTheAttackerDropsFromSight(t *testing.T) 
 		f := rf(at, 5000, append([]fo{withPos(x, 63, 0), withInv(survivalKit()...)}, opts...)...)
 		return fsm.Tick(&FSMContext{AgentID: "fred", State: st, Config: cfg, Frame: f})
 	}
-	drowned := &civquestv1.VisibleEntity{EntityId: 77, EntityType: "minecraft:drowned", IsHostile: true, Position: &civquestv1.Vec3{X: 8, Y: 63, Z: 0}, Distance: 8}
+	drowned := &civquestv1.VisibleEntity{EntityId: 77, EntityType: "minecraft:drowned", HeldItemId: "minecraft:trident", IsHostile: true, Position: &civquestv1.Vec3{X: 8, Y: 63, Z: 0}, Distance: 8}
 	f := rf(100, 5000, withPos(0, 63, 0), withInv(survivalKit()...), withEntities(drowned), withHP(12))
 	f.LastDamageTaken = &civquestv1.DamageEvent{SourceType: civquestv1.DamageSourceType_DAMAGE_SOURCE_TYPE_MOB, AttackerName: "Drowned", AttackerEntityId: 77, DamageAmount: 8}
 	fsm.Tick(&FSMContext{AgentID: "fred", State: st, Config: cfg, Frame: f})
@@ -161,5 +161,45 @@ func TestDanger_HungerDoesNotLeadBackToTheDrowned(t *testing.T) {
 	st.NoteDanger(Danger{Kind: "drowned", X: 30, Y: 62, Z: 0, Seen: 100})
 	if !st.waterUnsafe(&civquestv1.Vec3{}, 200) || st.waterUnsafe(&civquestv1.Vec3{X: -60}, 200) {
 		t.Error("no fishing near a Drowned, fishing well away from it")
+	}
+}
+
+// cq-knm: a Drowned without a trident is only a fight, seen or felt, and the clan hears nothing.
+func TestDanger_OrdinaryDrownedLeavesNoMark(t *testing.T) {
+	drowned := &civquestv1.VisibleEntity{EntityId: 7, EntityType: "minecraft:drowned", IsHostile: true,
+		HeldItemId: "minecraft:fishing_rod", Position: &civquestv1.Vec3{X: 6, Y: 63, Z: 0}}
+	hit := &civquestv1.DamageEvent{SourceType: civquestv1.DamageSourceType_DAMAGE_SOURCE_TYPE_MOB,
+		DamageType: "mob", AttackerName: "Drowned", AttackerEntityId: 7, DamageAmount: 3}
+	for name, f := range map[string]*civquestv1.TelemetryFrame{
+		"seen":        rf(100, 3000, withPos(0, 64, 0), withEntities(drowned)),
+		"hit, seen":   rf(100, 3000, withPos(0, 64, 0), withEntities(drowned)),
+		"hit, unseen": rf(100, 3000, withPos(0, 64, 0)),
+	} {
+		if name != "seen" {
+			f.LastDamageTaken = hit
+		}
+		st := NewAgentState()
+		observeDangers(&FSMContext{State: st, Frame: f})
+		if got := st.Dangers(100); len(got) != 0 || len(st.DrainFreshDangers()) != 0 {
+			t.Errorf("%s: registered %+v", name, got)
+		}
+		if st.waterUnsafe(&civquestv1.Vec3{}, 100) {
+			t.Errorf("%s: the water is still fit to fish", name)
+		}
+	}
+}
+
+// cq-knm: a thrown trident tells of its thrower although the Drowned is out of sight.
+func TestDanger_ThrownTridentMarksAnUnseenDrowned(t *testing.T) {
+	st := NewAgentState()
+	f := rf(100, 3000, withPos(10, 64, 10))
+	f.LastDamageTaken = &civquestv1.DamageEvent{SourceType: civquestv1.DamageSourceType_DAMAGE_SOURCE_TYPE_ARROW,
+		DamageType: "trident", AttackerName: "Drowned", AttackerEntityId: 7, DamageAmount: 8}
+	observeDangers(&FSMContext{State: st, Frame: f})
+	if got := st.DrainFreshDangers(); len(got) != 1 || got[0].Kind != "drowned" || got[0].X != 10 {
+		t.Fatalf("shared %+v", got)
+	}
+	if !st.waterUnsafe(&civquestv1.Vec3{}, 100) {
+		t.Error("no fishing near a trident")
 	}
 }
