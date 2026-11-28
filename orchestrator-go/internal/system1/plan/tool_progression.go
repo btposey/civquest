@@ -2,6 +2,7 @@ package plan
 
 import (
 	"math"
+	"slices"
 	"sort"
 
 	"github.com/btposey/civquest/orchestrator-go/internal/crafting"
@@ -100,7 +101,12 @@ func planToolProgression(f Facts) ([]Step, []BOMLine, []string) {
 	}
 	sort.Strings(unplannable)
 	steps, bom := mergeGathers(st.steps)
-	return steps, bom, unplannable
+	// The ladder reserve needs nothing gathered, so it does not wait behind a gather.
+	at := slices.IndexFunc(steps, func(s Step) bool { return s.Kind == StepGather })
+	if at < 0 {
+		at = len(steps)
+	}
+	return slices.Insert(steps, at, ladderSteps(f, st.inv)...), bom, unplannable
 }
 
 // expand schedules qty of item, consuming held inventory first. It reports
