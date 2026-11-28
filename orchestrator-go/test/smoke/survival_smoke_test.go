@@ -12,9 +12,6 @@ import (
 	civquestv1 "github.com/btposey/civquest/orchestrator-go/internal/proto/v1"
 	"github.com/btposey/civquest/orchestrator-go/internal/system1"
 	"github.com/btposey/civquest/orchestrator-go/internal/xdg"
-
-	"github.com/btposey/civquest/orchestrator-go/internal/system1/watchdog"
-	"github.com/btposey/civquest/orchestrator-go/internal/system1/watchdog/watchdogtest"
 )
 
 func newSim(t *testing.T, id, profession string, cfg eval.TimeWarpConfig) *eval.TimeWarpSimulation {
@@ -127,14 +124,18 @@ func TestSmoke_WalkReachesNavigationTargets(t *testing.T) {
 func TestSmoke_PatrolMovesBetweenWaypoints(t *testing.T) {
 	sim := newSim(t, "guard1", "GUARD", eval.TimeWarpConfig{InitialTimeOfDay: 1200, InitialInventory: survivalKit()})
 	st := sim.Runtime().System1State()
-	watchdogtest.Expect(t, sim.Runtime().AgentFSM(), watchdog.NoProgress, "shelter", "cq-3sa.5: a guard resting by day holds shelter doing nothing")
 	st.SetHomeOrigin(&civquestv1.Vec3{X: 0.5, Y: 64, Z: 0.5})
 	consecrate(st)
 	distinct := map[[2]int]bool{}
 	maxDist := 0.0
+	rested := false
 	for i := 0; i < 1200; i++ {
 		if err := sim.Step(4); err != nil {
 			t.Fatal(err)
+		}
+		// A guard sleeps by day: with nothing left to do at its shelter it says it rests.
+		for _, f := range sim.Runtime().AgentFSM().ActivityFrames() {
+			rested = rested || f.Kind == "shelter" && f.Rest != ""
 		}
 		p := sim.CurrentPosition()
 		maxDist = math.Max(maxDist, math.Hypot(p.X-0.5, p.Z-0.5))
@@ -143,6 +144,9 @@ func TestSmoke_PatrolMovesBetweenWaypoints(t *testing.T) {
 				distinct[[2]int{int(nav.Target.X), int(nav.Target.Z)}] = true
 			}
 		}
+	}
+	if !rested {
+		t.Fatal("the guard's quiet stretch at its shelter was never declared a rest")
 	}
 	if len(distinct) < 3 {
 		t.Fatalf("patrol issued only %d distinct waypoints, want >= 3", len(distinct))

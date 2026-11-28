@@ -389,18 +389,7 @@ func evaluateDuskNightOutpostShelterLocked(
 	}
 
 	// 2. Check if a campfire, torch, or lantern is nearby within 8.0 blocks
-	hasNearbyLight := false
-	for _, b := range frame.InterestingBlocks {
-		if b != nil && b.Pos != nil {
-			id := strings.ToLower(b.BlockId)
-			if strings.Contains(id, "campfire") || strings.Contains(id, "torch") || strings.Contains(id, "lantern") {
-				if math.Hypot(pos.X-float64(b.Pos.X), pos.Z-float64(b.Pos.Z)) <= 8.0 {
-					hasNearbyLight = true
-					break
-				}
-			}
-		}
-	}
+	hasNearbyLight := lightNearby(frame, pos)
 
 	// Only a light that stays resets the count: one placed in water shows for a moment and is
 	// washed away (play test 8: placed 625 times in a night).
@@ -549,6 +538,21 @@ func evaluateDuskNightOutpostShelterLocked(
 	}
 
 	return nil
+}
+
+// lightNearby reports a campfire, torch or lantern in view within 8 blocks.
+func lightNearby(frame *civquestv1.TelemetryFrame, pos *civquestv1.Vec3) bool {
+	for _, b := range frame.GetInterestingBlocks() {
+		if b == nil || b.Pos == nil {
+			continue
+		}
+		id := strings.ToLower(b.BlockId)
+		if (strings.Contains(id, "campfire") || strings.Contains(id, "torch") || strings.Contains(id, "lantern")) &&
+			math.Hypot(pos.X-float64(b.Pos.X), pos.Z-float64(b.Pos.Z)) <= 8.0 {
+			return true
+		}
+	}
+	return false
 }
 
 func findNearestReliableHabitationPOI(pos *civquestv1.Vec3, state *AgentState, preferredBlock string, worldTick int64) *db.AgentPOI {

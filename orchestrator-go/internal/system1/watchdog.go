@@ -47,6 +47,14 @@ type watchdogState struct {
 	attempts map[htpda.Kind]attempt
 	// reported is when each condition was last reported.
 	reported map[reportKey]int64
+	// resting is the declared rest last seen on top of the stack (rest.go).
+	resting declaredWait
+}
+
+type declaredWait struct {
+	activity htpda.Kind
+	why      string
+	since    int64
 }
 
 // refusal is an activity's current run of withheld walks.
@@ -228,7 +236,8 @@ func (w *fsmWorld) interruptionOver(kind htpda.Kind, halted bool) {
 }
 
 // watchStandstill reports an agent that has got nowhere through a stretch of daylight. Night
-// camp, sleep, fishing, the idle pause and emergencies are waits that are meant.
+// camp, sleep, fishing, the idle pause, emergencies and a rest the top frame declares
+// (rest.go) are waits that are meant.
 func (fsm *AgentFSM) watchStandstill(w *fsmWorld) {
 	pos := w.pos()
 	if pos == nil || w.ctx == nil || w.ctx.Frame == nil || w.ctx.Frame.Status == nil || fsm.kernel == nil {
@@ -241,8 +250,10 @@ func (fsm *AgentFSM) watchStandstill(w *fsmWorld) {
 	}
 	p := &fsm.watch.progress
 	tod := w.ctx.Frame.TimeOfDay % 24000
+	resting, why := fsm.declaredRest()
+	fsm.noteRest(w, resting, why)
 	meant := tod >= 11500 || w.ctx.Frame.Status.IsSleeping || fishingLineCast(w.ctx.Frame) ||
-		w.ctx.State != nil && w.ctx.State.Strategy() == StrategyIdle
+		w.ctx.State != nil && w.ctx.State.Strategy() == StrategyIdle || why != ""
 	if meant {
 		p.restart(pos, w.tick)
 		return

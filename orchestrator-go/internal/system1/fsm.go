@@ -202,6 +202,7 @@ type ActivityFrameView struct {
 	Band      uint8  `json:"band"`
 	Parent    uint64 `json:"parent,omitempty"`
 	StartTick int64  `json:"start_tick"`
+	Rest      string `json:"rest,omitempty"` // why the frame is resting (rest.go)
 }
 
 // FSMResult encapsulates the output of an FSM tick in the Two-Tier HFSM.
@@ -382,7 +383,7 @@ func (fsm *AgentFSM) ActivityFrames() []ActivityFrameView {
 	frames := fsm.activities()
 	out := make([]ActivityFrameView, 0, len(frames))
 	for _, f := range frames {
-		out = append(out, ActivityFrameView{ID: uint64(f.ID), Kind: string(f.Kind()), Band: uint8(f.Band), Parent: uint64(f.Parent), StartTick: f.Lease.StartTick})
+		out = append(out, ActivityFrameView{ID: uint64(f.ID), Kind: string(f.Kind()), Band: uint8(f.Band), Parent: uint64(f.Parent), StartTick: f.Lease.StartTick, Rest: restOf(f.Local)})
 	}
 	return out
 }

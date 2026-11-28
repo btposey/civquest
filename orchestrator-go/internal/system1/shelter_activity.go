@@ -9,6 +9,7 @@ package system1
 // derived: Local while the frame runs, the banked store count afterwards.
 
 import (
+	"math"
 	"strings"
 
 	"github.com/btposey/civquest/orchestrator-go/internal/blueprints"
@@ -40,11 +41,17 @@ type shelterLocal struct {
 	// WalkIndex and Walks count the walks made to get within reach of one block.
 	WalkIndex, Walks int
 	WalkTick         int64
+	// Rest is why the frame is resting this step, "" when it is not (rest.go); QuietSince is
+	// the tick the frame last fell quiet (0 while it is asking for things).
+	Rest       string
+	QuietSince int64
 	// TreeLocked/TreeX/TreeZ: the trunk this frame's timber sourcing is focused on (private to
 	// the Shelter frame; the frame's existence is the lock).
 	TreeLocked   bool
 	TreeX, TreeZ int32
 }
+
+func (l shelterLocal) rest() string { return l.Rest }
 
 // targetTree returns the focused trunk (nil-safe: no frame bound means no focus).
 func (l *shelterLocal) targetTree() (locked bool, x, z int32) {
@@ -311,6 +318,7 @@ func (shelterActivity) tick(lw *fsmWorld) ([]FSMIntent, bool) {
 // skill context and the updated Local becomes the next Local.
 func (a shelterActivity) run(lw *fsmWorld, local any) htpda.Step {
 	sl, _ := local.(shelterLocal)
+	sl.Rest = "" // declared afresh by each step that still means it
 	if sl.complete() {
 		if home := lw.walkHome(&sl); home != nil {
 			return htpda.Step{Op: htpda.OpStay, Intents: home, Next: sl}
@@ -323,14 +331,60 @@ func (a shelterActivity) run(lw *fsmWorld, local any) htpda.Step {
 	lw.skillCtx.Shelter = nil
 	intents := unwrapFSMIntents(fi)
 	if !done {
+		prog.QuietSince = 0
 		return htpda.Step{Op: htpda.OpStay, Intents: intents, Next: prog}
 	}
-	// Nothing to emit this tick. With progress or materials in hand the build is merely
-	// waiting (place/craft throttle, pathing): hold the frame instead of dropping progress.
+	// Nothing to emit this tick. With progress or materials in hand the frame is held instead
+	// of dropping progress: the build is waiting (place/craft throttle, pathing), or, with
+	// nothing left to do here, the agent rests and says so. Any other quiet is a fault the
+	// watchdog reports.
 	if hasShelterWork(lw.ctx, prog) {
+		if tick := lw.Tick(); prog.QuietSince == 0 || tick < prog.QuietSince {
+			prog.QuietSince = tick
+		} else if tick-prog.QuietSince >= shelterRestAfter {
+			prog.Rest = lw.shelterRest(prog)
+		}
 		return htpda.Step{Op: htpda.OpStay, Next: prog}
 	}
 	return a.exit(lw, prog, intents, len(intents) > 0 || !a.fallThrough(lw))
+}
+
+// shelterRestAfter is how long the frame must have asked for nothing before the quiet can be
+// a rest: longer than the pacing of any send, so work being tried again and again never is.
+const shelterRestAfter = int64(100)
+
+// shelterRestReach is how near the shelter site counts as being there: the distance within
+// which no walk to it is asked for.
+const shelterRestReach = 4.0
+
+// shelterRest says why a Shelter frame with nothing to ask for is resting, or "". It is a rest
+// only in the SLEEP routine (the routine ending ends it), at the shelter site, standing on dry
+// ground with no walk under way, with nothing held to build with and no light waiting to go up.
+// Materials that do not get used, a light that will not stay and a site not reached are faults.
+func (lw *fsmWorld) shelterRest(l shelterLocal) string {
+	ctx := lw.ctx
+	if lw.fsm.currentRoutine != RoutineSleep || ctx == nil || ctx.Frame == nil || l.Pos == nil {
+		return ""
+	}
+	s := ctx.Frame.Status
+	pos := s.GetPosition()
+	if pos == nil || s.GetIsInWater() || s.GetNavigationEnclosed() ||
+		s.GetNavigationState() == civquestv1.NavigationState_NAVIGATION_STATE_PATHING ||
+		s.GetNavigationState() == civquestv1.NavigationState_NAVIGATION_STATE_STUCK {
+		return ""
+	}
+	if math.Hypot(pos.X-float64(l.Pos.X)-0.5, pos.Z-float64(l.Pos.Z)-0.5) > shelterRestReach ||
+		math.Abs(pos.Y-float64(l.Pos.Y)) > shelterRestReach {
+		return ""
+	}
+	inv := inspectBootstrapInventory(s.Inventory)
+	if !l.complete() && (inv.logCount > 0 || inv.buildingBlockCount > 0) {
+		return ""
+	}
+	if inv.hasLight && !lightNearby(ctx.Frame, pos) {
+		return ""
+	}
+	return "SLEEP routine at the shelter site with nothing left to build or light"
 }
 
 // Construction progress (blueprint quadrant block index) is a value-type Local owned by whoever
