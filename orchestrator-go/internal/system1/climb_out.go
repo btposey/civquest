@@ -2,12 +2,16 @@ package system1
 
 // Climbing out (play test 9): an agent in a pocket whose walls were not beside it found nothing
 // to dig, and walked at random into them for fifty minutes. It now works a cell at a time along
-// one heading until it meets a wall, and cuts steps up it (recover_activity.go).
+// one heading until it meets a wall, and climbs it by ladder (cq-htv.1) or, lacking the wood,
+// cuts steps up it (recover_activity.go).
 
 import (
 	"math"
 
+	"github.com/btposey/civquest/orchestrator-go/internal/crafting"
 	civquestv1 "github.com/btposey/civquest/orchestrator-go/internal/proto/v1"
+	"github.com/btposey/civquest/orchestrator-go/internal/system1/htpda"
+	"github.com/btposey/civquest/orchestrator-go/internal/system1/vertical"
 )
 
 // climbLockTTL keeps a climb's heading across the steps and the work between them.
@@ -67,6 +71,70 @@ func (loc recoverLocal) towardsWall(agentID string, frame *civquestv1.TelemetryF
 		return nil, false
 	}
 	return recoverStep(agentID, x, by, z), true
+}
+
+// sideSet is a set of the four sides of a cell.
+type sideSet uint8
+
+const allSides sideSet = 15
+
+func sideOf(dx, dz int32) sideSet {
+	for i, d := range CardinalDirs {
+		if d[0] == dx && d[1] == dz {
+			return 1 << i
+		}
+	}
+	return 0
+}
+
+// ladderWall picks the wall for a climbing Recover to ladder (ladder_activity.go): the side it
+// is working towards if that will do, or the next. Without one, or without ladders or the wood
+// for them, steps are cut.
+func (loc recoverLocal) ladderWall(lw *fsmWorld, f *civquestv1.TelemetryFrame, pos *civquestv1.Vec3) (ladderArgs, bool) {
+	if !loc.Climb || loc.NoLadder == allSides {
+		return ladderArgs{}, false
+	}
+	st := lw.ctx.State
+	st.mu.RLock()
+	table, _, distSq := findNearestCraftingTableLocked(f, pos, st)
+	graph := st.RecipeGraphLocked()
+	st.mu.RUnlock()
+	inv := crafting.InventoryMapFromProtos(f.Status.Inventory)
+	if inv[ladderItem] == 0 && (graph.IsEmpty() || !canLadder(inv, isCraftingTableWithinReach(table, distSq, pos))) {
+		return ladderArgs{}, false
+	}
+	dx, dz := loc.DirX, loc.DirZ
+	if !loc.Locked {
+		dx, dz = 0, 1
+	}
+	for turn := 0; turn < 4; turn, dx, dz = turn+1, -dz, dx {
+		if loc.NoLadder&sideOf(dx, dz) == 0 && vertical.Climbable(ladderCell(pos), int(dx), int(dz), frameSolid(f)) {
+			return ladderArgs{DirX: dx, DirZ: dz}, true
+		}
+	}
+	return ladderArgs{}, false
+}
+
+// onChildDone takes back from a ladder climb. Up on the ledge, the agent is out of this fix;
+// otherwise that side is not laddered again and Recover has a fresh lease to do otherwise.
+func (a recoverActivity) onChildDone(lw *fsmWorld, loc recoverLocal, e htpda.ChildDone) htpda.Step {
+	loc.Emitted = false
+	if e.Child != activityKindLadder {
+		return a.advance(lw, loc)
+	}
+	r, ok := e.Result.(ladderResult)
+	if ok && r.Climbed {
+		loc.NoLadder = 0
+		return a.pop(loc, recovered{})
+	}
+	if failed := sideOf(r.DirX, r.DirZ); ok && failed != 0 {
+		loc.NoLadder |= failed
+	} else {
+		loc.NoLadder = allSides // refused or timed out: no telling which wall to blame
+	}
+	st := a.advance(lw, loc)
+	st.Lease = &htpda.Lease{StartTick: lw.Tick(), DeadlineTick: lw.Tick() + recoverTunables.LeaseTicks}
+	return st
 }
 
 // recoverStep walks into exactly the cell (x, y, z).

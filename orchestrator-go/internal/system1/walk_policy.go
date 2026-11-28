@@ -38,11 +38,17 @@ func near(a, b [3]float64) bool {
 	return math.Abs(a[0]-b[0]) < walkSameDist && math.Abs(a[1]-b[1]) < walkSameDist && math.Abs(a[2]-b[2]) < walkSameDist
 }
 
+// steersItself names the kinds whose walks are exact moves out of trouble: they are neither
+// bent round a danger nor withheld.
+func steersItself(kind htpda.Kind) bool {
+	return kind == activityKindEmergency || kind == activityKindRecover || kind == activityKindLadder
+}
+
 // routeRoundDanger bends a walk that would cross a registered danger to a waypoint beside it;
 // the activity sends its walk again from there. Emergency and Recover steer for themselves.
 func routeRoundDanger(w *fsmWorld, kind htpda.Kind, nav *civquestv1.NavigateIntent) {
 	pos := w.pos()
-	if pos == nil || w.ctx == nil || w.ctx.State == nil || kind == activityKindEmergency || kind == activityKindRecover {
+	if pos == nil || w.ctx == nil || w.ctx.State == nil || steersItself(kind) {
 		return
 	}
 	to := [3]float64{nav.Target.X, nav.Target.Y, nav.Target.Z}
@@ -55,8 +61,7 @@ func routeRoundDanger(w *fsmWorld, kind htpda.Kind, nav *civquestv1.NavigateInte
 // walkAllowedLocked records frame's walk to nav and reports whether it may still be sent.
 func (fsm *AgentFSM) walkAllowedLocked(w *fsmWorld, frame htpda.FrameID, kind htpda.Kind, nav *civquestv1.NavigateIntent) bool {
 	pos := w.pos()
-	if pos == nil || nav.Target == nil || w.ctx == nil || w.ctx.State == nil ||
-		kind == activityKindEmergency || kind == activityKindRecover {
+	if pos == nil || nav.Target == nil || w.ctx == nil || w.ctx.State == nil || steersItself(kind) {
 		return true
 	}
 	target := [3]float64{nav.Target.X, nav.Target.Y, nav.Target.Z}

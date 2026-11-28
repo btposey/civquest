@@ -167,7 +167,9 @@ func detectBlockHazard(f *civquestv1.TelemetryFrame) *blockHazard {
 	for _, d := range horizontalDirs {
 		sampled = sampled || !columnEmpty(fx+d[0], fz+d[1])
 	}
-	if sampled && at(fx, fy-1, fz) != "" {
+	// On a ladder an open side is no edge.
+	onLadder := strings.Contains(at(fx, fy, fz)+at(fx, fy-1, fz), "ladder")
+	if sampled && !onLadder && at(fx, fy-1, fz) != "" {
 		fracX, fracZ := p.X-float64(fx)-0.5, p.Z-float64(fz)-0.5
 		var awayX, awayZ float64
 		atEdge := false

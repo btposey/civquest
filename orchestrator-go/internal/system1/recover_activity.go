@@ -157,6 +157,8 @@ type recoverEscapeLock struct {
 	Tick       int64
 	// Climb: a way up is being cut, which keeps the heading from one step to the next.
 	Climb bool
+	// NoLadder: the sides a ladder climb has failed on, which are not laddered again.
+	NoLadder sideSet
 	// Clear releases the lock (the agent moved: Recover popped recovered).
 	Clear bool
 }
@@ -207,6 +209,7 @@ type recoverLocal struct {
 	LastEmit     int64
 	Emitted      bool // an attempt's intent is in flight
 	Locked       bool // enclosed dig direction lock
+	NoLadder     sideSet
 	DirX, DirZ   int32
 	LastDig      int64
 	NavNotBefore int64 // enclosed: a failed step-out waits before the next one (digging does not)
@@ -314,7 +317,7 @@ func (recoverActivity) Init(w htpda.World, args any) (any, htpda.Lease) {
 	}
 	if lw := asFSMWorld(w); lw != nil {
 		if l := lw.fsm.escapeLock; l != nil && a.Cause == CauseEnclosed && w.Tick()-l.Tick < l.ttl() {
-			loc.Locked, loc.DirX, loc.DirZ, loc.Climb = true, l.DirX, l.DirZ, l.Climb
+			loc.Locked, loc.DirX, loc.DirZ, loc.Climb, loc.NoLadder = true, l.DirX, l.DirZ, l.Climb, l.NoLadder
 		}
 		if a.Cause == CauseEnclosed && lw.fsm.notePocket(lw.pos(), w.Tick()) {
 			loc.Climb = true
@@ -352,7 +355,9 @@ func (a recoverActivity) step(w htpda.World, local any, ev htpda.Event) htpda.St
 		return htpda.Step{Op: htpda.OpPop}
 	case htpda.Expired:
 		return a.giveUp(lw, loc)
-	case htpda.ChildDone, htpda.Resumed:
+	case htpda.ChildDone:
+		return a.onChildDone(lw, loc, e)
+	case htpda.Resumed:
 		// A preemptor (emergency) held the motor: whatever was in flight is gone.
 		loc.Emitted = false
 		return a.advance(lw, loc)
@@ -457,6 +462,10 @@ func (a recoverActivity) advance(lw *fsmWorld, loc recoverLocal) htpda.Step {
 		intent = recoverNav(lw.agentID(), loc.Target[0], loc.Target[1], loc.Target[2], 2)
 		loc.Attempts++
 	case CauseEnclosed:
+		if args, ok := loc.ladderWall(lw, f, pos); ok {
+			loc.Locked, loc.DirX, loc.DirZ = true, args.DirX, args.DirZ
+			return htpda.Step{Op: htpda.OpPush, Child: activityKindLadder, Args: args, Next: loc}
+		}
 		var isNav bool
 		intent, isNav = loc.enclosedStep(lw.agentID(), f, pos, tick, &loc, unbreakable)
 		if intent == nil || (isNav && tick < loc.NavNotBefore) {
@@ -501,13 +510,13 @@ func (recoverActivity) pop(loc recoverLocal, result any) htpda.Step {
 	switch {
 	case loc.Locked && loc.Climb:
 		// One step up a staircase is not out of the pocket: the next episode carries on.
-		st.Memory = []htpda.MemoryWrite{recoverEscapeLock{DirX: loc.DirX, DirZ: loc.DirZ, Climb: true}}
+		st.Memory = []htpda.MemoryWrite{recoverEscapeLock{DirX: loc.DirX, DirZ: loc.DirZ, Climb: true, NoLadder: loc.NoLadder}}
 	case ok:
 		// The agent is moving again (the retired unstuck's movement-unlock): the heading lock
 		// is released so the next episode derives its direction afresh.
 		st.Memory = []htpda.MemoryWrite{recoverEscapeLock{Clear: true}}
 	case loc.Locked && loc.Cause == CauseEnclosed:
-		st.Memory = []htpda.MemoryWrite{recoverEscapeLock{DirX: loc.DirX, DirZ: loc.DirZ, Tick: loc.LastDig}}
+		st.Memory = []htpda.MemoryWrite{recoverEscapeLock{DirX: loc.DirX, DirZ: loc.DirZ, Tick: loc.LastDig, NoLadder: loc.NoLadder}}
 	}
 	return st
 }

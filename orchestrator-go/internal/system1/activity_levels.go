@@ -23,6 +23,7 @@ var activityLevels = map[htpda.Kind]htpda.Level{
 	activityKindWool:               htpda.LevelTask,
 	activityKindGather:             htpda.LevelObjective,
 	activityKindSurvey:             htpda.LevelStep,
+	activityKindLadder:             htpda.LevelStep,
 	activityKindNavigate:           htpda.LevelStep,
 	activityKindEmergency:          htpda.LevelInterrupt,
 	activityKindRecover:            htpda.LevelInterrupt,
@@ -36,3 +37,4 @@ func (navigateActivity) Level() htpda.Level   { return activityLevels[activityKi
 func (emergencyActivity) Level() htpda.Level  { return activityLevels[activityKindEmergency] }
 func (recoverActivity) Level() htpda.Level    { return activityLevels[activityKindRecover] }
 func (deadActivity) Level() htpda.Level       { return activityLevels[activityKindDead] }
+func (ladderActivity) Level() htpda.Level     { return activityLevels[activityKindLadder] }

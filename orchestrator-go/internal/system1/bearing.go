@@ -37,15 +37,15 @@ func (fsm *AgentFSM) withheld(w *fsmWorld, kind htpda.Kind, nav *civquestv1.Navi
 	}
 }
 
-// takesFreshBearing reports whether kind's walks are subject to the rule. Emergency and
-// Recover steer for themselves; an expedition's legs already survey between them, and the plan
+// takesFreshBearing reports whether kind's walks are subject to the rule. Those that steer
+// for themselves are not; an expedition's legs already survey between them, and the plan
 // hands a dead end to an expedition.
 func takesFreshBearing(kind htpda.Kind) bool {
 	switch kind {
-	case activityKindEmergency, activityKindRecover, activityKindExpedition, activityKindNavigate, activityKindPlan:
+	case activityKindExpedition, activityKindNavigate, activityKindPlan:
 		return false
 	}
-	return true
+	return !steersItself(kind)
 }
 
 // holdForScan applies the rule to one outgoing walk: it returns the survey to send in the

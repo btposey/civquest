@@ -145,7 +145,8 @@ func unwrapFSMIntents(in []FSMIntent) []*civquestv1.AgentIntent {
 // come from the PriorityTable (activity_priorities.go).
 func newActivityKernel(managed []waterfallActivity) *htpda.Kernel {
 	acts := []htpda.Activity{goalActivity{StrategyExplore}, goalActivity{StrategySettle}, goalActivity{StrategyProfession},
-		goalActivity{StrategyIdle}, emergencyActivity{}, deadActivity{}, expeditionActivity{}, surveyActivity{}, navigateActivity{}, recoverActivity{}}
+		goalActivity{StrategyIdle}, emergencyActivity{}, deadActivity{}, expeditionActivity{}, surveyActivity{}, navigateActivity{}, recoverActivity{},
+		ladderActivity{}}
 	for _, m := range managed {
 		acts = append(acts, m)
 	}
