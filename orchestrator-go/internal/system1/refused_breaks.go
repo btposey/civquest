@@ -1,8 +1,8 @@
 package system1
 
 // A break the mod will not do changes what its owner does (cq-6nz). In sandbox play test sb2 an
-// agent in water asked for the same blocks 3900 times: the mod breaks nothing with fluid against
-// it, and the failed receipt was read by nobody.
+// agent in water asked for the same blocks 3900 times: the mod then broke nothing with fluid
+// against it (now only lava, cq-vl2), and the failed receipt was read by nobody.
 //
 //   - Choosers pass over blocks the mod reports as refused (VisibleBlock.break_refused).
 //   - Every frame that breaks blocks keeps a record in its own Local and counts the failure

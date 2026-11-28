@@ -377,12 +377,14 @@ func (s *PlaytestSim) Submerged() bool {
 	return isSimWater(s.World.Blocks[cellOf(s.Pos.X, s.Pos.Y+simEyeHeight, s.Pos.Z)])
 }
 
-// fluidAt mirrors the mod's BlockBreaker: a block that is fluid, or has fluid against any
-// face, is not broken.
-func (s *PlaytestSim) fluidAt(k BlockPosKey) bool {
-	for _, d := range [...][3]int32{{0, 0, 0}, {1, 0, 0}, {-1, 0, 0}, {0, 1, 0}, {0, -1, 0}, {0, 0, 1}, {0, 0, -1}} {
-		id := s.World.Blocks[BlockPosKey{X: k.X + d[0], Y: k.Y + d[1], Z: k.Z + d[2]}]
-		if isSimWater(id) || strings.Contains(id, "lava") {
+// breakRefusedAt mirrors the mod's BlockBreaker: a block that is fluid, or has lava against
+// any face, is not broken. Water against a face does not stop a break.
+func (s *PlaytestSim) breakRefusedAt(k BlockPosKey) bool {
+	if id := s.World.Blocks[k]; isSimWater(id) || strings.Contains(id, "lava") {
+		return true
+	}
+	for _, d := range [...][3]int32{{1, 0, 0}, {-1, 0, 0}, {0, 1, 0}, {0, -1, 0}, {0, 0, 1}, {0, 0, -1}} {
+		if strings.Contains(s.World.Blocks[BlockPosKey{X: k.X + d[0], Y: k.Y + d[1], Z: k.Z + d[2]}], "lava") {
 			return true
 		}
 	}
@@ -461,7 +463,7 @@ func (s *PlaytestSim) frameBlocks() []*civquestv1.VisibleBlock {
 		seen[k] = true
 		out = append(out, &civquestv1.VisibleBlock{
 			Pos: &civquestv1.BlockPosProto{X: k.X, Y: k.Y, Z: k.Z}, BlockId: id, BlockStateString: s.World.BlockStates[k],
-			BreakRefused: !s.cfg.NoRefusalReport && s.fluidAt(k),
+			BreakRefused: !s.cfg.NoRefusalReport && s.breakRefusedAt(k),
 		})
 	}
 	f := cellOf(s.Pos.X, s.Pos.Y+0.01, s.Pos.Z)
@@ -899,7 +901,7 @@ func (s *PlaytestSim) applyInteract(ib *civquestv1.InteractBlockIntent) {
 		reach := s.withinReach(k, simBlockReach)
 		hasPick := s.CountSuffix("_pickaxe") > 0
 		h := SimHarvest{Tick: s.Tick, Cell: k, BlockID: id, Existed: exists, InReach: reach, HadTool: hasPick, Inv: s.InventorySummary()}
-		h.Refused = exists && (!reach || s.fluidAt(k))
+		h.Refused = exists && (!reach || s.breakRefusedAt(k))
 		if exists && !h.Refused {
 			drop := harvestDrop(id, hasPick)
 			h.NoDrop = isToolGatedStone(id) && !hasPick

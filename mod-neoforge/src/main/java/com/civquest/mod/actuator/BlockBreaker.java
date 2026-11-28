@@ -12,7 +12,8 @@ import net.minecraft.world.level.block.state.BlockState;
 /**
  * Tick-based block breaking for an {@link AgentEntity}: equips the best tool from the inventory,
  * accumulates vanilla destroy progress per tick, swings the arm while mining, shows crack stages,
- * and finally destroys the block. Refuses fluids, lava-adjacent blocks, bedrock and void edges.
+ * and finally destroys the block. Refuses fluids and waterlogged blocks, blocks with lava against a face,
+ * bedrock and void edges. A block with water against it is broken, as a player may.
  */
 public class BlockBreaker {
     /** Vanilla survival block interaction range, measured from the eye to the nearest point of the block. */
@@ -62,7 +63,10 @@ public class BlockBreaker {
         return pos;
     }
 
-    /** Whether it is safe and permitted to break {@code p}. */
+    /**
+     * Whether it is safe and permitted to break {@code p}. Telemetry reports the same answer
+     * ({@code VisibleBlock.break_refused}), and Go's simulator mirrors it.
+     */
     public static boolean isBreakable(Level level, BlockPos p) {
         if (level == null || p == null || !level.hasChunkAt(p) || p.getY() <= level.getMinBuildHeight() + 1) {
             return false;
@@ -74,7 +78,7 @@ public class BlockBreaker {
         }
         for (Direction d : Direction.values()) {
             BlockState n = level.getBlockState(p.relative(d));
-            if (n != null && n.getFluidState() != null && !n.getFluidState().isEmpty()) {
+            if (n != null && n.getFluidState() != null && n.getFluidState().is(FluidTags.LAVA)) {
                 return false;
             }
         }

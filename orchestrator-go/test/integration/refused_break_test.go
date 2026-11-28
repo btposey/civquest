@@ -2,7 +2,8 @@ package integration
 
 // Play test sb2 (cq-6nz): bert stood in water for 36 minutes asking to break blocks the mod
 // would not start (they had water against them), once every 8 ticks, about 3900 times. The
-// failed receipt changed nothing in the plan or in Recover.
+// failed receipt changed nothing in the plan or in Recover. Since cq-vl2 the mod refuses only
+// lava, so the closed loop sets lava against the near stone.
 
 import (
 	"math"
@@ -45,10 +46,10 @@ func pickaxeKit() []*civquestv1.ItemStackProto {
 	}
 }
 
-// The sb2 case in the closed loop: the nearest stone stands in water, dry stone lies further
-// off. The agent must leave the refused stone and mine the other, whether the mod says
-// beforehand that it will refuse or the agent learns it from the failed receipts.
-func TestSandbox2_RefusedStoneInWaterIsLeftForDryStone(t *testing.T) {
+// The sb2 case in the closed loop: the nearest stone lies over lava, dry stone further off.
+// The agent must leave the refused stone and mine the other, whether the mod says beforehand
+// that it will refuse or the agent learns it from the failed receipts.
+func TestSandbox2_RefusedStoneOverLavaIsLeftForDryStone(t *testing.T) {
 	for _, tc := range []struct {
 		name       string
 		unreported bool
@@ -58,9 +59,9 @@ func TestSandbox2_RefusedStoneInWaterIsLeftForDryStone(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			w := groundWorld(40)
-			w.Blocks[eval.BlockPosKey{X: 0, Y: 64, Z: 0}] = "minecraft:water"
-			for _, k := range []eval.BlockPosKey{{X: 1, Y: 64, Z: 0}, {X: -1, Y: 64, Z: 0}, {X: 0, Y: 64, Z: 1}} {
+			for _, k := range []eval.BlockPosKey{{X: 2, Y: 64, Z: 0}, {X: -2, Y: 64, Z: 0}, {X: 0, Y: 64, Z: 2}} {
 				w.Blocks[k] = "minecraft:stone"
+				w.Blocks[eval.BlockPosKey{X: k.X, Y: k.Y - 1, Z: k.Z}] = "minecraft:lava"
 			}
 			w.AddStoneOutcrop(7, 7, 3, 2)
 			s := eval.NewPlaytestSim(eval.PlaytestSimConfig{
@@ -90,6 +91,34 @@ func TestSandbox2_RefusedStoneInWaterIsLeftForDryStone(t *testing.T) {
 				t.Errorf("no stone from the dry outcrop (inventory: %s)\n%s", s.InventorySummary(), traceTail(s, len(s.Steps)-30, len(s.Steps)))
 			}
 		})
+	}
+}
+
+// cq-vl2: water against a block is no bar. The sb2 pocket again, the agent standing in water
+// with stone beside it and no other stone anywhere: it mines that stone.
+func TestSandbox2_StoneBesideWaterIsMined(t *testing.T) {
+	w := groundWorld(40)
+	w.Blocks[eval.BlockPosKey{X: 0, Y: 64, Z: 0}] = "minecraft:water"
+	stones := []eval.BlockPosKey{{X: 1, Y: 64, Z: 0}, {X: -1, Y: 64, Z: 0}, {X: 0, Y: 64, Z: 1}}
+	for _, k := range stones {
+		w.Blocks[k] = "minecraft:stone"
+	}
+	s := eval.NewPlaytestSim(eval.PlaytestSimConfig{
+		Profession: "EXPLORER", Stage: system1.StageBootstrap, World: w, TimeOfDay: 2000,
+		Start: eval.SimVec{X: 0.5, Y: 64, Z: 0.5}, Inventory: pickaxeKit(),
+	})
+	s.Run(simTicksPerMinute)
+
+	broken := 0
+	for _, h := range s.Harvests {
+		if h.Refused {
+			t.Errorf("a break beside water was refused: %v", h.Cell)
+		} else if h.Existed && slices.Contains(stones, h.Cell) {
+			broken++
+		}
+	}
+	if broken == 0 {
+		t.Errorf("no stone beside the water was mined (inventory: %s)\n%s", s.InventorySummary(), traceTail(s, 0, 40))
 	}
 }
 
