@@ -112,17 +112,22 @@ func (planActivity) Init(w htpda.World, _ any) (any, htpda.Lease) {
 	return l, htpda.Lease{}
 }
 
-// eligible: the bootstrap window (Bootstrap / Colonize), a recipe graph, and an open goal.
+// eligible: the bootstrap window (Bootstrap / Colonize), a recipe graph, and an open goal. A
+// settled agent has the window too, in which the plan prepares only the ladder reserve (cq-htv.4).
 func (planActivity) eligible(lw *fsmWorld) bool {
 	ctx := lw.ctx
 	if ctx == nil || ctx.Frame == nil || ctx.Frame.Status == nil || ctx.Frame.Status.Position == nil || ctx.State == nil {
 		return false
 	}
 	stage := lw.fsm.currentStage
-	if stage != StageBootstrap && stage != StageColonize {
-		return false
+	var open bool
+	switch stage {
+	case StageBootstrap, StageColonize:
+		open = isBootstrapActivityEligible(stage, lw.fsm.currentRoutine, ctx)
+	case StageSettlement:
+		open = isBootstrapWindowOpen(lw.fsm.currentRoutine, ctx)
 	}
-	if !isBootstrapActivityEligible(stage, lw.fsm.currentRoutine, ctx) || hasSurvivalPreemption(ctx.Frame) {
+	if !open || hasSurvivalPreemption(ctx.Frame) {
 		return false
 	}
 	p := lw.probePlan()
@@ -257,6 +262,8 @@ func planFactsLocked(frame *civquestv1.TelemetryFrame, pos *civquestv1.Vec3, st 
 		Inventory: crafting.InventoryMapFromProtos(frame.Status.Inventory),
 		Recipes:   st.RecipeGraphLocked(),
 		ToolGate:  planToolGate,
+		// A settled agent's plan prepares the reserve and nothing else.
+		ReserveOnly: st.stage == StageSettlement,
 	}
 	table, _, dSq := findNearestCraftingTableLocked(frame, pos, st)
 	f.Table.Near = isCraftingTableWithinReach(table, dSq, pos)

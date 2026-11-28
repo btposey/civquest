@@ -124,6 +124,8 @@ type Facts struct {
 	// ("" for none). Nil uses DefaultToolGate. system1 can adapt its
 	// block->tool model (RequirementForBlock/CraftTargetForRequirement) here.
 	ToolGate func(item string) string
+	// ReserveOnly limits the tool progression to the ladder reserve (ladders.go).
+	ReserveOnly bool
 }
 
 // MaxTableWalk is the farthest known table (blocks) worth walking to instead

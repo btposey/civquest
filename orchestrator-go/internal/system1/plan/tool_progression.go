@@ -101,6 +101,9 @@ func planToolProgression(f Facts) ([]Step, []BOMLine, []string) {
 	}
 	sort.Strings(unplannable)
 	steps, bom := mergeGathers(st.steps)
+	if f.ReserveOnly {
+		return ladderSteps(f, st.inv), nil, nil
+	}
 	// The ladder reserve needs nothing gathered, so it does not wait behind a gather.
 	at := slices.IndexFunc(steps, func(s Step) bool { return s.Kind == StepGather })
 	if at < 0 {
