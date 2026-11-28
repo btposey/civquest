@@ -276,11 +276,11 @@ type AgentFSM struct {
 	walks            map[htpda.FrameID]walkWatch // walk_policy.go
 	spots            []gaveUpHere                // where recoveries gave up (trapped.go)
 	planning         planningMemory              // spatial Memory + banked plan (plan_memory.go, ADR-039)
-	// eventSink receives playtest diagnostics (playtest_events.go); nil disables them.
-	eventSink      EventSink
-	vitalsEmitted  bool
-	lastVitalsTick int64
-	stuckGuard     // stonewall.go, climb_out.go
+	eventSink        EventSink                   // playtest diagnostics (playtest_events.go); nil disables them
+	vitalsEmitted    bool
+	lastVitalsTick   int64
+	climbMemory                    // climb_out.go
+	watch            watchdogState // watchdog.go
 	// scanAt is when a survey was last put in a walk's place (bearing.go).
 	scanAt int64
 	// What the logs last reported (diag.go).

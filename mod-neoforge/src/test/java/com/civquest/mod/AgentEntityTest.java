@@ -877,6 +877,10 @@ public class AgentEntityTest {
         float progressBeforeHit = agent.getBreaker().getProgress();
         assertTrue(progressBeforeHit > 0.0f, "Breaking progress must advance before interruption");
         assertInstanceOf(com.civquest.mod.actuator.motor.Mine.class, agent.getMotorFSM().topMotor().orElse(null));
+        // The brain tells slow mining from standing still by this (ADR-041 section 4).
+        IntentReceipt mining = actuator.getCurrentReceipt(agent);
+        assertEquals(IntentReceipt.ReceiptStatus.RECEIPT_STATUS_EXECUTING, mining.getStatus());
+        assertEquals(progressBeforeHit, (float) mining.getFacts().getProgress(), 1e-6f);
 
         // Simulate mob attack hitting the agent -> triggers hurt() reflex preemption
         Zombie attacker = mock(Zombie.class);

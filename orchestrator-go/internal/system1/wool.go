@@ -190,6 +190,14 @@ func EvaluateWool(agentID string, frame *civquestv1.TelemetryFrame, state *Agent
 	}}}
 }
 
+// waiting reports a walk this frame sent that is still under way, or an action cooling down.
+func (l woolLocal) waiting(frame *civquestv1.TelemetryFrame) bool {
+	if l.LastTargetKey != "" && frame.Status.NavigationState == civquestv1.NavigationState_NAVIGATION_STATE_PATHING {
+		return true
+	}
+	return l.LastActionTick > 0 && frame.WorldTick >= l.LastActionTick && frame.WorldTick-l.LastActionTick < woolActionCooldownTicks
+}
+
 // woolActivity bids while wool is wanted and a sheep or wool drop is in view.
 type woolActivity struct{ frameBase }
 
@@ -231,7 +239,9 @@ func (a woolActivity) run(lw *fsmWorld, local any) htpda.Step {
 	if intent := EvaluateWool(lw.ctx.AgentID, lw.ctx.Frame, lw.ctx.State, &wl); intent != nil {
 		intents = []*civquestv1.AgentIntent{intent}
 	}
-	if len(intents) == 0 && !lw.holds() {
+	// Waiting for its own walk or blow is not having nothing to do: leaving then, and being
+	// pushed again a frame later, was the pattern of every approach to a sheep.
+	if len(intents) == 0 && !lw.holds() && !wl.waiting(lw.ctx.Frame) {
 		return popFrame(lw, a.kind, nil, true)
 	}
 	return htpda.Step{Op: htpda.OpStay, Intents: intents, Next: wl}

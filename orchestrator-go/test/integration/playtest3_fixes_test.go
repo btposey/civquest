@@ -13,6 +13,9 @@ import (
 	"github.com/btposey/civquest/orchestrator-go/internal/eval"
 	civquestv1 "github.com/btposey/civquest/orchestrator-go/internal/proto/v1"
 	"github.com/btposey/civquest/orchestrator-go/internal/system1"
+
+	"github.com/btposey/civquest/orchestrator-go/internal/system1/watchdog"
+	"github.com/btposey/civquest/orchestrator-go/internal/system1/watchdog/watchdogtest"
 )
 
 // A live frame arrives every few ticks. These bounds are generous so a loaded machine does
@@ -113,6 +116,7 @@ func TestPlaytest3_02_BedPlanWithoutLogsDoesNotCraftBlindly(t *testing.T) {
 		Start: eval.SimVec{X: 0.5, Y: 64, Z: 0.5}, Inventory: inv,
 		Setup: func(st *system1.AgentState) { st.SetBedRegistry(civic) },
 	})
+	watchdogtest.Expect(t, s.FSM, watchdog.Thrash, "bed", "cq-3sa.2: bed bids with nothing to do")
 	bedTicks := 0
 	for elapsed := int64(0); elapsed < 2*simTicksPerMinute; elapsed += 4 {
 		if s.Step().Top == "bed" {

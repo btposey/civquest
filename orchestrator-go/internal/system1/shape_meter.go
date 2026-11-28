@@ -42,12 +42,20 @@ type stackRecord struct {
 	Violations []string `json:"violations,omitempty"` // "reason|under>kind"
 	Depth      int      `json:"depth,omitempty"`      // deepest stack seen
 	GivenUp    int      `json:"given_up,omitempty"`   // walks stopped for going nowhere
+	Watchdog   []string `json:"watchdog,omitempty"`   // "condition|activity"
 }
 
 type stackMeter struct{ pending stackRecord }
 
 // walkGivenUp counts a walk the walking policy stopped.
 func (m *stackMeter) walkGivenUp() { m.pending.GivenUp++ }
+
+// watchdog counts a report of a stuck agent. It is written at once: a stuck agent may never
+// change its stack again.
+func (m *stackMeter) watchdog(key string) {
+	m.pending.Watchdog = append(m.pending.Watchdog, key)
+	m.flush()
+}
 
 // note folds one dispatch into the pending record.
 func (m *stackMeter) note(tick bool, fx htpda.Effects) {
@@ -76,7 +84,16 @@ func (m *stackMeter) note(tick bool, fx htpda.Effects) {
 	if p.Push == nil && p.Idle == nil && p.Violations == nil && p.GivenUp == 0 && p.Ticks < meterFlushTicks {
 		return
 	}
-	if line, err := json.Marshal(p); err == nil {
+	m.flush()
+}
+
+// flush writes and clears the pending record.
+func (m *stackMeter) flush() {
+	out := meterOutput()
+	if out == nil {
+		return
+	}
+	if line, err := json.Marshal(m.pending); err == nil {
 		_, _ = out.Write(append(line, '\n'))
 	}
 	m.pending = stackRecord{}

@@ -12,6 +12,9 @@ import (
 	civquestv1 "github.com/btposey/civquest/orchestrator-go/internal/proto/v1"
 	"github.com/btposey/civquest/orchestrator-go/internal/system1"
 	"github.com/btposey/civquest/orchestrator-go/internal/xdg"
+
+	"github.com/btposey/civquest/orchestrator-go/internal/system1/watchdog"
+	"github.com/btposey/civquest/orchestrator-go/internal/system1/watchdog/watchdogtest"
 )
 
 func newSim(t *testing.T, id, profession string, cfg eval.TimeWarpConfig) *eval.TimeWarpSimulation {
@@ -124,6 +127,7 @@ func TestSmoke_WalkReachesNavigationTargets(t *testing.T) {
 func TestSmoke_PatrolMovesBetweenWaypoints(t *testing.T) {
 	sim := newSim(t, "guard1", "GUARD", eval.TimeWarpConfig{InitialTimeOfDay: 1200, InitialInventory: survivalKit()})
 	st := sim.Runtime().System1State()
+	watchdogtest.Expect(t, sim.Runtime().AgentFSM(), watchdog.NoProgress, "shelter", "cq-3sa.5: a guard resting by day holds shelter doing nothing")
 	st.SetHomeOrigin(&civquestv1.Vec3{X: 0.5, Y: 64, Z: 0.5})
 	consecrate(st)
 	distinct := map[[2]int]bool{}

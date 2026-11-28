@@ -40,48 +40,6 @@ func TestPlaytest9_StepOutOfTheWayGivenUpIsNotAskedFor(t *testing.T) {
 	}
 }
 
-// Whoever asks: an activity that only asks for withheld walks gives way, and says so once.
-func TestPlaytest9_ActivityRefusedForLongGivesWay(t *testing.T) {
-	fsm := NewAgentFSMWithRegistry(StageSettlement, nil, NewDefaultEngineRegistry())
-	events := countEvents(fsm)
-	w := &fsmWorld{fsm: fsm}
-	for w.tick = 100; w.tick < 100+refusalPatience; w.tick += 4 {
-		fsm.refused(w, activityKindShelter)
-	}
-	if w.stonewalled(activityKindShelter) {
-		t.Fatal("gave way before its patience ran out")
-	}
-	fsm.refused(w, activityKindShelter)
-	if !w.stonewalled(activityKindShelter) || events[EventStandstill] != 1 {
-		t.Fatalf("stonewalled=%v events=%v", w.stonewalled(activityKindShelter), events)
-	}
-	// Something done in between starts the patience again.
-	for w.tick = 5000; w.tick < 5000+2*refusalPatience; w.tick += 100 {
-		fsm.refused(w, activityKindForaging)
-		fsm.served(activityKindForaging)
-	}
-	if w.stonewalled(activityKindForaging) {
-		t.Error("an activity that found other work was made to give way")
-	}
-}
-
-// An objective that holds the stack through the day without moving or doing anything gives way.
-func TestPlaytest9_DaytimeStandstillGivesWay(t *testing.T) {
-	fsm := NewAgentFSMWithRegistry(StageSettlement, nil, NewDefaultEngineRegistry())
-	st := NewAgentState()
-	cfg := xdg.DefaultAgentIdentityConfig("stander")
-	cfg.Profession = "EXPLORER"
-	events := countEvents(fsm)
-	for tick := int64(100); tick < 100+3*standstillTicks; tick += 4 {
-		f := makeArbiterTestFrame(tick, 2000, 20, fullSurvivalKitInv(), nil)
-		f.Status.NavigationState = civquestv1.NavigationState_NAVIGATION_STATE_PATHING // says it walks, never moves
-		fsm.Tick(&FSMContext{AgentID: "stander", State: st, Config: cfg, Frame: f})
-	}
-	if events[EventStandstill] == 0 {
-		t.Errorf("no activity gave way after standing still all morning: %v", events)
-	}
-}
-
 // Play test 9: with a finished cabin elsewhere, agents stood out the night wherever work ended.
 func TestPlaytest9_FinishedCabinIsWalkedHomeToAtNight(t *testing.T) {
 	for _, stage := range []State{StageBootstrap, StageSettlement} {
@@ -123,5 +81,33 @@ func TestPlaytest9_GivenUpScoutingLegIsReplaced(t *testing.T) {
 	next := EvaluateScoutingDirect("scout", frame, pos, st, cfg, walk).GetNavigate()
 	if next == nil || next.Target.X == first.Target.X && next.Target.Z == first.Target.Z {
 		t.Errorf("leg after giving up %v = %v, want a different one", first.Target, next.GetTarget())
+	}
+}
+
+// A directive's scouting waypoint that has been given up is dropped for another, and the
+// forager does not choose a heading it has given up: both asked for it for ever once nothing
+// took them off the stack (cq-3sa.1).
+func TestGivenUpWaypointsAreReplaced(t *testing.T) {
+	pos := &civquestv1.Vec3{X: 0.5, Y: 64, Z: 0.5}
+	frame := makeArbiterTestFrame(1000, 2000, 20, nil, nil)
+	st := NewAgentState()
+	loc := &directiveLocal{}
+	first := evaluateDirectiveScoutOutwardLocked("scout", frame, pos, 0, st, loc, 100).GetNavigate()
+	st.RecordTargetNavigationStuck(first.Target.X, first.Target.Y, first.Target.Z, 1004, DefaultUnreachableTargetTTL, 1)
+	frame = makeArbiterTestFrame(1200, 2000, 20, nil, nil)
+	next := evaluateDirectiveScoutOutwardLocked("scout", frame, pos, 0, st, loc, 100).GetNavigate()
+	if next == nil || next.Target.X == first.Target.X && next.Target.Z == first.Target.Z {
+		t.Errorf("directive waypoint after giving up %v = %v, want a different one", first.Target, next.GetTarget())
+	}
+
+	st, mem := NewAgentState(), &forageLocal{}
+	frame = makeArbiterTestFrame(1000, 2000, 4, nil, nil)
+	walk := EvaluateForaging("forager", frame, st, mem).GetNavigate()
+	st.RecordTargetNavigationStuck(walk.Target.X, walk.Target.Y, walk.Target.Z, 1004, DefaultUnreachableTargetTTL, 1)
+	// The same spot and the same memory of ground covered, so the same first choice.
+	frame = makeArbiterTestFrame(1000+forageExploreCooldownTicks*2, 2000, 4, nil, nil)
+	again := EvaluateForaging("forager", frame, st, &forageLocal{}).GetNavigate()
+	if again == nil || st.givenUp(again.Target.X, again.Target.Y, again.Target.Z, frame.WorldTick) {
+		t.Errorf("forager chose %v again after giving up %v", again.GetTarget(), walk.Target)
 	}
 }

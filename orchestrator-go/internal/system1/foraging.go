@@ -618,11 +618,14 @@ func evaluateForagingWithMemory(agentID string, frame *civquestv1.TelemetryFrame
 		mem.ExploreHeadingRad = noveltyHeading(mem.Spatial, pos.X, pos.Z, mem.ExploreHeadingRad, forageExploreStepDist, frame.WorldTick, forageHeadingOffsets)
 	}
 	// Hunger is no reason to walk back to the Drowned (playtest 5): take the first heading that
-	// does not close on a danger.
+	// does not close on a danger, nor lead to a place already given up (the walk there is only
+	// withheld, and from the same spot the same heading would be chosen for ever).
 	if state != nil {
 		for _, off := range append([]float64{0}, forageHeadingOffsets...) {
 			h := mem.ExploreHeadingRad + off
-			if !state.towardDangerLocked(pos.X, pos.Z, pos.X+math.Cos(h)*forageExploreStepDist, pos.Z+math.Sin(h)*forageExploreStepDist, frame.WorldTick) {
+			x, z := pos.X+math.Cos(h)*forageExploreStepDist, pos.Z+math.Sin(h)*forageExploreStepDist
+			if !state.towardDangerLocked(pos.X, pos.Z, x, z, frame.WorldTick) &&
+				!state.givenUpLocked(math.Round(x*10)/10, pos.Y, math.Round(z*10)/10, frame.WorldTick) {
 				mem.ExploreHeadingRad = h
 				break
 			}

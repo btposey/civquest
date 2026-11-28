@@ -300,7 +300,7 @@ func evaluateDirectiveGatherTimber(
 		return nil
 	}
 
-	return evaluateDirectiveScoutOutwardLocked(agentID, frame, pos, navState, loc, dir.IssuedTick)
+	return evaluateDirectiveScoutOutwardLocked(agentID, frame, pos, navState, state, loc, dir.IssuedTick)
 }
 
 func evaluateDirectiveMineStone(
@@ -403,7 +403,7 @@ func evaluateDirectiveMineStone(
 		}
 	}
 
-	return evaluateDirectiveScoutOutwardLocked(agentID, frame, pos, navState, loc, dir.IssuedTick)
+	return evaluateDirectiveScoutOutwardLocked(agentID, frame, pos, navState, state, loc, dir.IssuedTick)
 }
 
 func evaluateDirectiveSocialize(
@@ -523,10 +523,12 @@ func evaluateDirectiveScoutOutwardLocked(
 	frame *civquestv1.TelemetryFrame,
 	pos *civquestv1.Vec3,
 	navState civquestv1.NavigationState,
+	state *AgentState,
 	loc *directiveLocal,
 	issuedTick int64,
 ) *civquestv1.AgentIntent {
-	if loc.ScoutTarget == nil ||
+	// A waypoint given up is replaced like one reached: asked for again it is only withheld.
+	if t := loc.ScoutTarget; t == nil || state.givenUpLocked(t.X, t.Y, t.Z, frame.WorldTick) ||
 		math.Hypot(pos.X-loc.ScoutTarget.X, pos.Z-loc.ScoutTarget.Z) <= 4.0 ||
 		navState == civquestv1.NavigationState_NAVIGATION_STATE_ARRIVED {
 		loc.ScoutTarget = computeDirectiveFrontierWaypoint(agentID, issuedTick+int64(loc.ScoutStep), pos)

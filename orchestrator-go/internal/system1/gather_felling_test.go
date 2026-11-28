@@ -8,12 +8,16 @@ import (
 
 	civquestv1 "github.com/btposey/civquest/orchestrator-go/internal/proto/v1"
 	"github.com/btposey/civquest/orchestrator-go/internal/xdg"
+
+	"github.com/btposey/civquest/orchestrator-go/internal/system1/watchdog"
+	"github.com/btposey/civquest/orchestrator-go/internal/system1/watchdog/watchdogtest"
 )
 
 // A felling that ends at once (live: the task was dropped as soon as it was framed, 800 times
 // in ten minutes) is not started again for the same trunk.
 func TestGather_FellingThatEndsAtOnceIsNotRestarted(t *testing.T) {
 	fsm := NewAgentFSMWithRegistry(StageBootstrap, nil, NewDefaultEngineRegistry())
+	watchdogtest.Expect(t, fsm, watchdog.NoProgress, activityKindExploration, "stuck on purpose: the agent never moves")
 	st := NewAgentState()
 	cfg := xdg.DefaultAgentIdentityConfig("feller")
 	pushes := countPushes(fsm)

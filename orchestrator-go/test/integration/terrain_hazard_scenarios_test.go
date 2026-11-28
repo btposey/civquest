@@ -10,6 +10,9 @@ import (
 	civquestv1 "github.com/btposey/civquest/orchestrator-go/internal/proto/v1"
 	"github.com/btposey/civquest/orchestrator-go/internal/system1"
 	"github.com/btposey/civquest/orchestrator-go/internal/xdg"
+
+	"github.com/btposey/civquest/orchestrator-go/internal/system1/watchdog"
+	"github.com/btposey/civquest/orchestrator-go/internal/system1/watchdog/watchdogtest"
 )
 
 func TestIntegration_BarrenDesertBiome_MultiHopUntilOasisDiscovery(t *testing.T) {
@@ -740,6 +743,8 @@ func TestIntegration_AlpineMountainPassAndUndergroundCaveRecovery(t *testing.T) 
 			res, nil, nil, world, false,
 		)
 		defer sa.close()
+		watchdogtest.Expect(t, sa.runtime.AgentFSM(), watchdog.Thrash, "plan",
+			"cq-3sa.4: plan and bootstrap's expedition pull the agent back and forth")
 
 		const tickDelta = int64(4)
 		for frameIdx := 0; frameIdx < 250; frameIdx++ {

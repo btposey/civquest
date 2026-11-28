@@ -13,7 +13,7 @@ import (
 
 // eventLevels is each event category's level (logging package); anything not listed is DEBUG.
 var eventLevels = map[string]logging.Level{
-	"BRAIN_STALL": logging.Error,
+	"BRAIN_STALL": logging.Error, system1.EventWatchdog: logging.Error,
 
 	"DEATH": logging.Warn, system1.EventDamage: logging.Warn, "DIALOGUE_ERROR": logging.Warn,
 	"LLM_ERROR": logging.Warn, "CONTEMPLATION_FAILED": logging.Warn,
@@ -28,7 +28,7 @@ var eventLevels = map[string]logging.Level{
 	system1.EventTaskEnd: logging.Info, system1.EventTaskDropped: logging.Info,
 	system1.EventDanger: logging.Info, system1.EventUnreachable: logging.Info,
 	system1.EventTreeFailed: logging.Info, system1.EventStandGiveUp: logging.Info, system1.EventBlockGivenUp: logging.Info,
-	system1.EventWalkGivenUp: logging.Info, system1.EventRescan: logging.Info, system1.EventStandstill: logging.Warn,
+	system1.EventWalkGivenUp: logging.Info, system1.EventRescan: logging.Info,
 }
 
 // DebugEvent represents a single structured JSONL event emitted during playtesting

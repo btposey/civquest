@@ -87,6 +87,7 @@ func (fsm *AgentFSM) walkAllowedLocked(w *fsmWorld, frame htpda.FrameID, kind ht
 	w.ctx.State.MarkTargetUnreachable(target[0], target[1], target[2], w.tick, DefaultUnreachableTargetTTL)
 	w.ctx.State.wantFreshBearing("a walk was going nowhere")
 	fsm.meter.walkGivenUp()
+	fsm.attempting(kind, describeWalk(nav)+", going nowhere", w.tick)
 	if fsm.eventSink != nil {
 		fsm.eventSink(w.tick, EventWalkGivenUp, fmt.Sprintf("%s after %d sends", kind, watch.sends), map[string]any{
 			"activity": string(kind), "target": target[:], "position": here[:], "sends": watch.sends, "since_tick": watch.since})

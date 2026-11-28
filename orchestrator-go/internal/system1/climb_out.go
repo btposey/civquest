@@ -23,6 +23,9 @@ const (
 	pocketRadius   = 6.0
 )
 
+// climbMemory is where recent enclosed recoveries began.
+type climbMemory struct{ pockets []gaveUpHere }
+
 // notePocket records an enclosed recovery at pos and reports whether to climb.
 func (fsm *AgentFSM) notePocket(pos *civquestv1.Vec3, tick int64) bool {
 	if pos == nil {

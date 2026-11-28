@@ -180,8 +180,9 @@ public class AgentMotorFSM {
     }
 
     /**
-     * Receipt snapshot: EXECUTING (PREEMPTED_BY_REFLEX under a reflex) with live facts while a batch has
-     * frames on the stack, otherwise the last settled batch receipt.
+     * Receipt snapshot: EXECUTING (PREEMPTED_BY_REFLEX under a reflex) with live facts (a walk's
+     * navigation facts, a break's progress) while a batch has frames on the stack, otherwise the last
+     * settled batch receipt.
      */
     public IntentReceipt getCurrentReceipt() {
         int depth = getStackDepth();
@@ -206,6 +207,10 @@ public class AgentMotorFSM {
                 if (live != null) {
                     b.setFacts(live);
                 }
+            }
+            // How far the break has got: slow mining shows it is getting somewhere.
+            if (depth == 0 && batchFrame.motor() instanceof Mine mine && mine.progress() > 0) {
+                b.setFacts(MotorFacts.newBuilder().setProgress(mine.progress()).build());
             }
             return b.build();
         }

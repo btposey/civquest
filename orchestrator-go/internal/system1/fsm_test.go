@@ -8,6 +8,9 @@ import (
 	"github.com/btposey/civquest/orchestrator-go/internal/db"
 	civquestv1 "github.com/btposey/civquest/orchestrator-go/internal/proto/v1"
 	"github.com/btposey/civquest/orchestrator-go/internal/xdg"
+
+	"github.com/btposey/civquest/orchestrator-go/internal/system1/watchdog"
+	"github.com/btposey/civquest/orchestrator-go/internal/system1/watchdog/watchdogtest"
 )
 
 func TestFSM_InitialState(t *testing.T) {
@@ -22,6 +25,7 @@ func TestFSM_StateTransitions(t *testing.T) {
 	fsm := NewAgentFSM(StageBootstrap, func(from, to State, reason string) {
 		transitions = append(transitions, string(from)+"->"+string(to))
 	})
+	watchdogtest.Expect(t, fsm, watchdog.Thrash, activityKindBootstrap, "cq-3sa.3: bootstrap bids in colonize with nothing to do")
 
 	state := NewAgentState()
 
@@ -540,6 +544,7 @@ func TestFSM_RestDoesNotTransitionToShelterWhenComplete(t *testing.T) {
 
 func TestFSM_BootstrapStaysInBootstrapUntilKitCollected(t *testing.T) {
 	fsm := NewAgentFSM(StateBootstrap, nil)
+	watchdogtest.Expect(t, fsm, watchdog.NoProgress, activityKindBootstrap, "stuck on purpose: the agent never moves for 1500 ticks")
 	state := NewAgentState()
 
 	ctx := &FSMContext{
@@ -584,6 +589,7 @@ func TestFSM_BootstrapStaysInBootstrapUntilKitCollected(t *testing.T) {
 
 func TestFSM_SettlementTransitionsToColonizeWhenEstablishingNewSettlement(t *testing.T) {
 	fsm := NewAgentFSM(StageSettlement, nil)
+	watchdogtest.Expect(t, fsm, watchdog.Thrash, activityKindBootstrap, "cq-3sa.3: bootstrap bids in colonize with nothing to do")
 	state := NewAgentState()
 
 	ctx := &FSMContext{

@@ -5,12 +5,16 @@ import (
 
 	civquestv1 "github.com/btposey/civquest/orchestrator-go/internal/proto/v1"
 	"github.com/btposey/civquest/orchestrator-go/internal/xdg"
+
+	"github.com/btposey/civquest/orchestrator-go/internal/system1/watchdog"
+	"github.com/btposey/civquest/orchestrator-go/internal/system1/watchdog/watchdogtest"
 )
 
 // Live smoke (cq-6l3.22): a hungry agent was sent to the same food drop 69 times while it stood
 // still, because the path never started and nothing counted the attempts.
 func TestWalk_FoodDropThatCannotBeReachedIsGivenUp(t *testing.T) {
 	fsm := NewAgentFSMWithRegistry(StageSettlement, nil, NewDefaultEngineRegistry())
+	watchdogtest.Expect(t, fsm, watchdog.NoProgress, activityKindForaging, "stuck on purpose: the agent never moves")
 	st := NewAgentState()
 	cfg := xdg.DefaultAgentIdentityConfig("stranded")
 	cfg.Profession = "FARMER"

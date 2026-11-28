@@ -225,7 +225,7 @@ func (fsm *AgentFSM) dispatchLocked(w *fsmWorld, ev htpda.Event) []FSMIntent {
 					}
 					fsm.navTargets[em.Frame] = [3]float64{nav.Target.X, nav.Target.Y, nav.Target.Z}
 				}
-				fsm.served(em.Kind)
+				fsm.sent(w, em.Frame, em.Kind, in)
 				out = append(out, FSMIntent{Intent: in, Frame: uint64(em.Frame), Priority: em.Kind == activityKindEmergency || isEatIntent(in)})
 			}
 		}
@@ -384,9 +384,13 @@ func (fsm *AgentFSM) tickActivitiesLocked(ctx *FSMContext, reg *EngineRegistry, 
 	var out []FSMIntent
 	fsm.emitVitalsLocked(ctx, w.tick)
 	fsm.observeFrameLocked(ctx, w.tick)
+	fsm.observeProgress(w)
 	defer fsm.emitDiagnosticsLocked(ctx, w.tick)
 	if ctx != nil && ctx.Frame != nil {
-		if r := ctx.Frame.GetReceipt(); fsm.admitReceiptLocked(r) {
+		r := ctx.Frame.GetReceipt()
+		fsm.observeBreaking(w, r)
+		if fsm.admitReceiptLocked(r) {
+			fsm.observeReceipt(w, r)
 			w.receipt = r
 			rev := htpda.Receipt{Frame: htpda.FrameID(r.GetFrameId()), Status: r.GetStatus(), Facts: motorFacts(r.GetFacts())}
 			fsm.emitReceiptLocked(w.tick, r)
@@ -409,7 +413,7 @@ func (fsm *AgentFSM) tickActivitiesLocked(ctx *FSMContext, reg *EngineRegistry, 
 	for i := 0; i < maxRefill && w.refill && fsm.kernel.Depth() == 0; i++ {
 		out = append(out, fsm.dispatchLocked(w, htpda.Tick{})...)
 	}
-	fsm.watchStandstill(w, out)
+	fsm.watchStandstill(w)
 	return out
 }
 

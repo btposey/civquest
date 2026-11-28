@@ -8,6 +8,9 @@ import (
 
 	civquestv1 "github.com/btposey/civquest/orchestrator-go/internal/proto/v1"
 	"github.com/btposey/civquest/orchestrator-go/internal/xdg"
+
+	"github.com/btposey/civquest/orchestrator-go/internal/system1/watchdog"
+	"github.com/btposey/civquest/orchestrator-go/internal/system1/watchdog/watchdogtest"
 )
 
 // TestTwoTierHFSM_StageTransitions verifies the formal Tier 1 Macro Strategic Stage transitions:
@@ -22,6 +25,7 @@ func TestTwoTierHFSM_StageTransitions(t *testing.T) {
 	fsm := NewAgentFSM(StageBootstrap, func(from, to State, reason string) {
 		stageTransitions = append(stageTransitions, string(from)+"->"+string(to))
 	})
+	watchdogtest.Expect(t, fsm, watchdog.Thrash, activityKindBootstrap, "cq-3sa.3: bootstrap bids in colonize with nothing to do")
 
 	state := NewAgentState()
 	cfg := &xdg.AgentIdentityConfig{

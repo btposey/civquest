@@ -47,6 +47,19 @@ def loops(ev):
     kind, n = max(pushes.items(), key=lambda kv: kv[1], default=("", 0))
     return longest, (n, kind), worst, int(beds), food
 
+def watchdog(ev):
+    """The agent's own report of being stuck (WATCHDOG events), one line per condition and activity."""
+    seen = {}
+    for e in sorted(ev, key=lambda e: e["timestamp"]):
+        if e["category"] != "WATCHDOG":
+            continue
+        d = e.get("details") or {}
+        key = (d.get("condition", "?"), d.get("activity", "?"))
+        first = seen.setdefault(key, {"n": 0, "tick": e.get("world_tick"), "why": d.get("why", ""), "attempting": d.get("attempting", "")})
+        first["n"] += 1
+    return [f"WATCHDOG {c} on {act}, reported {f['n']}x, first at tick {f['tick']}: {f['why']}; attempting: {f['attempting']}"
+            for (c, act), f in seen.items()]
+
 def frozen(ev):
     """Longest time (s) an agent claimed to be walking while its position never changed."""
     walking, at, since, longest = False, None, None, 0.0
@@ -70,7 +83,7 @@ for line in open(events_path):
     try: e = json.loads(line)
     except ValueError: continue
     by[e.get("agent_id")].append(e)
-failed = []
+failed, stuck_flags = [], []
 print(f"{'agent':8} {'events':>7} {'silent_s':>8} {'stalls':>6} {'stuck':>6} {'moved':>6} {'repeat':>6}  top crafts")
 log = open(server_log, errors="replace").read()
 deaths = dict(re.findall(r"AgentEntity died: agentId='([^']+)'.*?cause='([^']*)'", log))
@@ -108,6 +121,12 @@ for a in agents:
     if still > 60: failed.append(f"{a}: sent '{action}' {still} times without moving")
     if beds > 15: failed.append(f"{a}: tried to sleep {beds} times")
     if smoke and food > 12 and not dead: failed.append(f"{a}: never got hungry, the hunger phase did not work")
+    # A watchdog firing is a bug: the agent was stuck and nothing rescued it (ADR-041 section 4).
+    reports = [f"{a}: {line}" for line in watchdog(ev)]
+    failed.extend(reports)
+    stuck_flags.extend(reports)
+fired = collections.Counter((e.get("details") or {}).get("condition", "?") for a in agents for e in by.get(a, []) if e["category"] == "WATCHDOG")
+print(f"watchdog reports: {sum(fired.values())}" + "".join(f", {c} {n}" for c, n in sorted(fired.items())))
 print(f"server: {log.count('Dropping telemetry frames')} backpressure warnings, {log.count(chr(39) + ' spoke in chat')} agent chat lines")
 # A run on treeless ground (open ocean) exercises little: say so rather than pass quietly.
 crafted = sum(1 for a in agents if any("recipe=" in e.get("summary", "") for e in by.get(a, [])))
@@ -134,6 +153,7 @@ if model:
 else:
     print("chat: skipped (no model endpoint)")
 print(f"phases (UTC): start {start_iso}, hunger {hungry_iso}, night {night_iso}, end {end_iso}")
+for f in stuck_flags: print("FLAG", f)
 for f in failed: print("FAIL", f)
 print("RESULT:", "FAIL" if failed else "PASS")
 sys.exit(1 if failed else 0)

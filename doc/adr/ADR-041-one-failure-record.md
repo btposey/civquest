@@ -1,7 +1,7 @@
 # ADR-041: One failure record, and refusals returned to their owner
 
 ## Status
-Proposed (2026-11-27), awaiting review. No code has changed. Finishes [ADR-040](./ADR-040-goal-driven-activity-hierarchy.md) §4 ("one rule against churn") and builds the `Memory` home of [ADR-036](./ADR-036-frame-local-state-and-pure-step.md) §1. Tracked by `cq-3sa`.
+Proposed (2026-11-27), awaiting review, except as follows. **Stage 1 is partly done** (`cq-3sa.1`): the watchdog only reports (§4), and `stonewalls`, the fresh-look request and the thrash back-off are deleted. Still to do from stage 1: the ratchet tests of §5 (`AgentFSM` field list, state calls, sizes with ceilings reset). Faults the watchdog exposed are `cq-3sa.2` to `cq-3sa.6`. No other stage has started. The Context section describes the code as it was before `cq-3sa.1`. Finishes [ADR-040](./ADR-040-goal-driven-activity-hierarchy.md) §4 ("one rule against churn") and builds the `Memory` home of [ADR-036](./ADR-036-frame-local-state-and-pure-step.md) §1. Tracked by `cq-3sa`.
 
 ## Summary
 

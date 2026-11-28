@@ -6,6 +6,9 @@ import (
 	"github.com/btposey/civquest/orchestrator-go/internal/system1/htpda"
 
 	"github.com/btposey/civquest/orchestrator-go/internal/xdg"
+
+	"github.com/btposey/civquest/orchestrator-go/internal/system1/watchdog"
+	"github.com/btposey/civquest/orchestrator-go/internal/system1/watchdog/watchdogtest"
 )
 
 func countPushes(fsm *AgentFSM) map[string]int {
@@ -39,6 +42,7 @@ func TestForaging_DirectiveWithNothingToFindBacksOff(t *testing.T) {
 // An agent without a bed and with nothing to make one from pushed the bed plan every tick.
 func TestBed_NothingToProgressBacksOff(t *testing.T) {
 	fsm := NewAgentFSMWithRegistry(StageSettlement, nil, NewDefaultEngineRegistry())
+	watchdogtest.Expect(t, fsm, watchdog.Thrash, activityKindBed, "cq-3sa.2: bed bids with nothing to do")
 	st := NewAgentState()
 	st.SetBedRegistry(newFakeBedRegistry())
 	cfg := xdg.DefaultAgentIdentityConfig("bedless")

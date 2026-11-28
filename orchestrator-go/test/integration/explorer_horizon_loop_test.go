@@ -22,6 +22,9 @@ import (
 	"github.com/btposey/civquest/orchestrator-go/internal/system2"
 	"github.com/btposey/civquest/orchestrator-go/internal/xdg"
 	_ "modernc.org/sqlite"
+
+	"github.com/btposey/civquest/orchestrator-go/internal/system1/watchdog"
+	"github.com/btposey/civquest/orchestrator-go/internal/system1/watchdog/watchdogtest"
 )
 
 type worldBlockKey struct {
@@ -1338,6 +1341,12 @@ func TestIntegration_SixNightExplorers_SurveyDisperseBlacklistAndRendezvous(t *t
 		)
 		sa.runtime.System1State().SetRendezvousOrigin(-30.0, 86.0, 0.0)
 		agents = append(agents, sa)
+	}
+	for _, sa := range agents {
+		switch sa.id {
+		case "bert", "carl", "dave", "earl":
+			watchdogtest.Expect(t, sa.runtime.AgentFSM(), watchdog.Thrash, "bed", "cq-3sa.2: bed bids with nothing to do")
+		}
 	}
 	defer func() {
 		for _, sa := range agents {

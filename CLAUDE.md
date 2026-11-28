@@ -65,6 +65,7 @@ This protocol applies when ending a Beads implementation workflow. It is subordi
 cd orchestrator-go && go test -count=1 ./...
 ```
 - Runs 100% offline/hermetic (live-LLM and live-Minecraft integration tests are gated behind build tags).
+- **A stuck agent fails the run.** The System 1 watchdog only reports (ADR-041 section 4): a refused activity, daylight without progress, or thrashing work fails every test package that runs agents (`watchdogtest.Main` in `TestMain`). Fix the cause in the owning activity; never tune the watchdog or add a rescue. A test that leaves an agent stuck on purpose, or shows a fault already filed, declares it with `watchdogtest.Expect`, which fails once the firing stops.
 
 ### Go Race Detector (System 1 & Agent Runtime)
 ```bash
@@ -101,7 +102,7 @@ cd orchestrator-go && go test -tags livellm -v ./test/integration -run TestLiveL
 ./scripts/live-agent-smoke.sh               # 6 real agents, 10 min, throwaway server and XDG sandbox
 ```
 - Runs on a fixed world seed (`SEED` overrides it), so results are comparable between runs; play still varies.
-- Three phases: morning, forced hunger, night. Fails on a stalled or silent brain, an unanswered chat, an action repeated without moving, a long emergency, an activity pushed and popped over and over, endless bed attempts, or an agent dying to the world (drowning, fire, falls, hunger). Simulation fixtures can differ from the live server (recipes, terrain), so run this as well.
+- Three phases: morning, forced hunger, night. Fails on a stalled or silent brain, an unanswered chat, an action repeated without moving, a long emergency, an activity pushed and popped over and over, endless bed attempts, any watchdog report (the `FLAG ... WATCHDOG` lines: an agent refused, standing still or thrashing, which nothing rescues), or an agent dying to the world (drowning, fire, falls, hunger). Simulation fixtures can differ from the live server (recipes, terrain), so run this as well.
 
 ### Sandbox Play Test (watch agents play, without touching the install)
 ```bash
@@ -110,7 +111,7 @@ DAYS=3 ./scripts/sandbox-playtest.sh        # length in in-game days (24000 worl
 AGENTS="able bert" DAYS=0.1 ./scripts/sandbox-playtest.sh
 ```
 - Same throwaway server and XDG sandbox as the smoke (`scripts/lib/live-sandbox.sh`), but in its own game directory: world, agents, clan records and server config are new every run. `SEED` overrides the seed.
-- Nothing is forced (no hunger, time changes or chat) and nothing passes or fails; interrupt to stop early. `difficulty`, `view-distance` and `simulation-distance` come from the install's `server.properties` (read only; default normal, 10, 10).
+- Nothing is forced (no hunger, time changes or chat) and nothing passes or fails; the summary's `FLAG` lines include every watchdog report. Interrupt to stop early. `difficulty`, `view-distance` and `simulation-distance` come from the install's `server.properties` (read only; default normal, 10, 10).
 - Every run that got as far as starting the server, interrupted or not, is archived to `~/.local/share/civquest-playtests/<date>-sbN/`: `config`, `share`, `state` (agent logs, events, `server.log`), `server` (world, logs, properties), `deployed-commit.txt` (plus `uncommitted.diff` if the tree was dirty), `run.txt` and the per-agent `summary.txt`.
 - Never writes to `~/.local/share/civquest`, `~/.config/civquest` or `~/.local/state/civquest`, and does not start or stop the install's server or daemon.
 - **No player joins:** agents count as players (cq-1ey), so mobs spawn and despawn and crops and saplings grow round each agent within the vanilla radius (128 blocks), as in a connected play test. **Limit:** phantoms never spawn for agents (cq-quf), and nothing a human does (chat, trade, gifts) happens.

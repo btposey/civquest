@@ -13,6 +13,9 @@ import (
 	civquestv1 "github.com/btposey/civquest/orchestrator-go/internal/proto/v1"
 	"github.com/btposey/civquest/orchestrator-go/internal/system1"
 	"github.com/btposey/civquest/orchestrator-go/internal/xdg"
+
+	"github.com/btposey/civquest/orchestrator-go/internal/system1/watchdog"
+	"github.com/btposey/civquest/orchestrator-go/internal/system1/watchdog/watchdogtest"
 )
 
 const (
@@ -101,6 +104,9 @@ type refusingRig struct {
 	suffocate  bool // unattributed damage lands every frame
 	enclosed   bool
 	setup      func(*system1.AgentState)
+	// stuckUnder are the activities this agent, which cannot move, is reported standing
+	// still under; stuckLater are reported only in the longer run.
+	stuckUnder, stuckLater []string
 }
 
 type refusedSend struct {
@@ -121,7 +127,15 @@ func (r refusingRig) run(t *testing.T, ticks int64) map[refusedSend][]int64 {
 	if r.food == 0 {
 		r.food = 20
 	}
+	stuck := r.stuckUnder
+	if ticks > 3000 {
+		stuck = append(slices.Clone(stuck), r.stuckLater...)
+	}
+	for _, activity := range stuck {
+		watchdogtest.Expect(t, fsm, watchdog.NoProgress, activity, "stuck on purpose: the agent cannot move and every break is refused")
+	}
 	var receipt *civquestv1.IntentReceipt
+	var survey *civquestv1.HorizonSurveyReport
 	var batch int64
 	out := map[refusedSend][]int64{}
 	for tick := int64(1000); tick < 1000+ticks; tick += 4 {
@@ -135,10 +149,16 @@ func (r refusingRig) run(t *testing.T, ticks int64) map[refusedSend][]int64 {
 			frame.LastDamageTaken = &civquestv1.DamageEvent{DamageAmount: 1}
 		}
 		receipt = nil
+		if survey != nil {
+			st.IngestHorizonSurveyReport(survey, tick)
+			frame.HorizonSurvey, survey = survey, nil
+		}
 		res := fsm.Tick(&system1.FSMContext{AgentID: "bert", State: st, Config: cfg, Frame: frame})
 		for _, in := range res.Intents {
 			batch++
 			switch a := in.Intent.GetAction().(type) {
+			case *civquestv1.AgentIntent_SurveyHorizon:
+				survey = openPlains(tick)
 			case *civquestv1.AgentIntent_InteractBlock:
 				if a.InteractBlock.InteractionType != civquestv1.InteractBlockIntent_HARVEST_BREAK {
 					continue
@@ -185,18 +205,22 @@ func refusingRigs() []namedRig {
 	beside := [][3]int32{{2, 64, 0}, {-2, 64, 0}, {0, 64, 2}}
 	rigs := []namedRig{
 		{"stone beside an explorer", refusingRig{stage: system1.StageBootstrap, profession: "EXPLORER", inv: pickaxeKit(),
-			timeOfDay: 2000, blocks: visible("minecraft:stone", beside...)}},
+			timeOfDay: 2000, blocks: visible("minecraft:stone", beside...),
+			stuckUnder: []string{"bootstrap"}, stuckLater: []string{"gather"}}},
 		{"directive mines stone", refusingRig{stage: system1.StageSettlement, profession: "EXPLORER", inv: pickaxeKit(),
-			timeOfDay: 3000, blocks: visible("minecraft:stone", beside...),
+			timeOfDay: 3000, blocks: visible("minecraft:stone", beside...), stuckUnder: []string{"strategic_directive"},
 			setup: func(st *system1.AgentState) {
 				st.SetStrategicDirective(system1.DirectiveActionMineStone, "stone", "gather cobblestone", 90, 1_000_000)
 			}}},
 		{"gather takes a find", refusingRig{stage: system1.StageSettlement, profession: "EXPLORER", inv: pickaxeKit(),
-			timeOfDay: 3000, blocks: visible("minecraft:coal_ore", beside...)}},
+			timeOfDay: 3000, blocks: visible("minecraft:coal_ore", beside...),
+			stuckUnder: []string{"bootstrap"}, stuckLater: []string{"gather"}}},
 		{"foraging picks berries", refusingRig{stage: system1.StageSettlement, profession: "EXPLORER", inv: pickaxeKit(),
-			timeOfDay: 3000, food: 8, blocks: visible("minecraft:sweet_berry_bush", beside...)}},
+			timeOfDay: 3000, food: 8, blocks: visible("minecraft:sweet_berry_bush", beside...),
+			stuckUnder: []string{"foraging"}}},
 		{"timber beside the agent", refusingRig{stage: system1.StageBootstrap, profession: "EXPLORER",
-			timeOfDay: 2000, blocks: visible("minecraft:oak_log", [3]int32{2, 64, 0}, [3]int32{2, 65, 0}, [3]int32{-2, 64, 0})}},
+			timeOfDay: 2000, blocks: visible("minecraft:oak_log", [3]int32{2, 64, 0}, [3]int32{2, 65, 0}, [3]int32{-2, 64, 0}),
+			stuckUnder: []string{"bootstrap"}}},
 		{"recover digs out", refusingRig{stage: system1.StageBootstrap, profession: "EXPLORER", inv: pickaxeKit(),
 			timeOfDay: 11800, enclosed: true, blocks: walled("minecraft:grass_block")}},
 		{"emergency digs free", refusingRig{stage: system1.StageBootstrap, profession: "EXPLORER", inv: pickaxeKit(),
@@ -246,4 +270,15 @@ func TestSandbox2_ReportedRefusalsAreNeverAskedFor(t *testing.T) {
 			}
 		})
 	}
+}
+
+// openPlains answers a survey as the mod would: open country all round.
+func openPlains(tick int64) *civquestv1.HorizonSurveyReport {
+	r := &civquestv1.HorizonSurveyReport{OriginX: 0.5, OriginY: 64, OriginZ: 0.5, CompletedTick: tick, MaxRange: 64}
+	for i := int32(0); i < 36; i++ {
+		rad := float64(i*10) * math.Pi / 180
+		r.Sectors = append(r.Sectors, &civquestv1.HorizonSector{SectorIndex: i, BearingDeg: float32(i * 10), HitDistance: 64,
+			FeatureType: "OPEN_PLAINS", HitBlockId: "minecraft:air", HitX: -math.Sin(rad) * 64, HitY: 64, HitZ: math.Cos(rad) * 64, OpenHorizon: true})
+	}
+	return r
 }

@@ -9,6 +9,7 @@ import argparse, collections, json, sys
 def score(records, tests):
     ticks, depth, given_up = 0, 0, 0
     push, idle, viol = collections.Counter(), collections.Counter(), collections.Counter()
+    stuck = collections.Counter()
     for line in open(records, errors="replace"):
         try:
             r = json.loads(line)
@@ -20,6 +21,7 @@ def score(records, tests):
         push.update(r.get("push", []))
         idle.update(r.get("idle", []))
         viol.update(r.get("violations", []))
+        stuck.update(r.get("watchdog", []))
     by_rule = collections.Counter()
     for key, n in viol.items():
         by_rule[key.split("|")[0]] += n
@@ -28,6 +30,8 @@ def score(records, tests):
         "ticks": ticks,
         "max_depth": depth,
         "walks_given_up": given_up,
+        "watchdog_firings": sum(stuck.values()),
+        "watchdog_by_condition_activity": dict(stuck.most_common()),
         "pushes_per_1000_ticks": per_k(sum(push.values())),
         "idle_pops_per_1000_ticks": per_k(sum(idle.values())),
         "violations_per_1000_ticks": per_k(sum(viol.values())),
@@ -63,7 +67,7 @@ def main():
             json.dump(s, f, indent=2)
             f.write("\n")
     base = json.load(open(a.compare)) if a.compare else {}
-    rows = ["ticks", "max_depth", "pushes_per_1000_ticks", "idle_pops_per_1000_ticks", "violations_per_1000_ticks", "walks_given_up", "tests_passed"]
+    rows = ["ticks", "max_depth", "pushes_per_1000_ticks", "idle_pops_per_1000_ticks", "violations_per_1000_ticks", "walks_given_up", "watchdog_firings", "tests_passed"]
     print(f"{'measure':34}{'baseline':>12}{'now':>12}")
     for k in rows:
         if k in s:
@@ -74,6 +78,9 @@ def main():
             print("  FAIL", t)
     for k in sorted(set(s["violations_by_rule"]) | set(base.get("violations_by_rule", {}))):
         print(f"{k[:34]:34}{str(base.get('violations_by_rule', {}).get(k, 0 if base else '-')):>12}{s['violations_by_rule'].get(k, 0):>12}")
+    print("watchdog reports (condition | activity), including those tests declare:")
+    for k, n in s["watchdog_by_condition_activity"].items():
+        print(f"  {n:8}  {k}")
     print("most frequent violations (rule | under>pushed):")
     for k, n in list(s["top_violations"].items())[:10]:
         print(f"  {n:8}  {k}")
