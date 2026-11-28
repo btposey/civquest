@@ -383,6 +383,16 @@ func (c *CivicRegistryDB) initSchema(ctx context.Context) error {
 		PRIMARY KEY (world_id, x, y, z)
 	);
 	CREATE INDEX IF NOT EXISTS idx_world_bed_claims_owner ON world_bed_claims(world_id, owner_agent_id);
+
+	CREATE TABLE IF NOT EXISTS world_plot_claims (
+		world_id TEXT NOT NULL,
+		owner_agent_id TEXT NOT NULL,
+		x INTEGER NOT NULL,
+		z INTEGER NOT NULL,
+		half INTEGER NOT NULL,
+		claimed_tick INTEGER NOT NULL DEFAULT 0,
+		PRIMARY KEY (world_id, owner_agent_id)
+	);
 	`
 	if _, err := c.db.ExecContext(ctx, schema); err != nil {
 		return err

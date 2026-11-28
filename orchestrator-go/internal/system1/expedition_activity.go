@@ -1115,10 +1115,12 @@ func (s *AgentState) applyHomesteadClaim(p [3]float64) {
 	posVec := &civquestv1.Vec3{X: p[0], Y: p[1], Z: p[2]}
 	s.homeOrigin = posVec
 	s.currentOutpost = posVec
-	s.ShelterPos = &civquestv1.BlockPosProto{
-		X: int32(math.Floor(p[0])),
-		Y: int32(math.Floor(p[1])),
-		Z: int32(math.Floor(p[2])),
+	if s.CabinBuilt == 0 { // a cabin already begun stays where it is (shelter_site.go)
+		s.ShelterPos = &civquestv1.BlockPosProto{
+			X: int32(math.Floor(p[0])),
+			Y: int32(math.Floor(p[1])),
+			Z: int32(math.Floor(p[2])),
+		}
 	}
 	s.goals.ImmediateGoal = "CLAIM_HOMESTEAD: Stake solo homestead and build shelter at discovered site"
 }

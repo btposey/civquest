@@ -135,27 +135,47 @@ type tendMove struct {
 	Walk         *civquestv1.Vec3
 	Door         bool // the cell is the doorway's: leaving depends on it
 	Hold         bool
+	// Centre is where to stand in the shelter, Mark the cell a failed walk is held against and
+	// Rest what a hold declares.
+	Centre *civquestv1.Vec3
+	Mark   *civquestv1.BlockPosProto
+	Rest   string
+	// Pitch starts a temporary shelter there and Forget ends one (shelter_bivouac.go).
+	Pitch  lightPos3
+	Forget bool
 }
 
 func (m tendMove) none() bool {
-	return m.Break == nil && m.Place == nil && m.Craft == "" && m.Walk == nil && !m.Hold
+	return m.Break == nil && m.Place == nil && m.Craft == "" && m.Walk == nil && !m.Hold && !m.Pitch.Set && !m.Forget
 }
 
-// cabinMoveLocked chooses what to do about the openings of the finished cabin. state.mu held.
-func (lw *fsmWorld) cabinMoveLocked(t cabinTend) tendMove {
-	s, frame := lw.ctx.State, lw.Frame()
-	pos, site := lw.pos(), s.ShelterPos
-	if frame == nil || pos == nil || site == nil ||
+func (lw *fsmWorld) sheltering() bool {
+	return skillIsDuskOrNight(lw.skillCtx, lw.ctx.Facts) || lw.fsm.currentRoutine == RoutineSleep
+}
+
+// shelterMoveLocked chooses what to do about a temporary shelter, or else about the openings of
+// the finished cabin. state.mu held.
+func (lw *fsmWorld) shelterMoveLocked(t cabinTend) tendMove {
+	s, frame, pos := lw.ctx.State, lw.Frame(), lw.pos()
+	if frame == nil || frame.Status == nil || pos == nil {
+		return tendMove{}
+	}
+	sheltering := lw.sheltering()
+	if m, ok := lw.bivouacMoveLocked(t, sheltering); ok {
+		return m
+	}
+	site := s.ShelterPos
+	if !s.cabinCompleteLocked() || site == nil ||
 		math.Hypot(pos.X-float64(site.X)-0.5, pos.Z-float64(site.Z)-0.5) > tendRange || math.Abs(pos.Y-float64(site.Y)) > 4 {
 		return tendMove{}
 	}
-	sheltering := skillIsDuskOrNight(lw.skillCtx, lw.ctx.Facts) || lw.fsm.currentRoutine == RoutineSleep
 	// With a bed elsewhere the night is not spent here, so the way is not shut.
 	keepIn := sheltering && (s.AssignedBed == nil || insideCabin(&civquestv1.Vec3{X: float64(s.AssignedBed.X), Y: float64(s.AssignedBed.Y), Z: float64(s.AssignedBed.Z)}, site))
 	inside := insideCabin(pos, site)
 	openings := lookAtOpenings(frame, pos, site)
 	held := heldItemIDs(frame.Status.Inventory)
 	inv := inspectBootstrapInventory(frame.Status.Inventory)
+	centre, mark := cabinCentre(site), blueprintDoorway(site)
 	block := ""
 	if inv.buildingBlockCount > 0 {
 		block = cabinBlock(blueprints.BlockOakPlanks, frame.Status.Inventory, inv.placeableBlockID)
@@ -180,7 +200,7 @@ func (lw *fsmWorld) cabinMoveLocked(t cabinTend) tendMove {
 		if have || isDoor && (!keepIn || !inside) {
 			for i := len(o.Cells) - 1; i >= 0; i-- {
 				if c := o.Cells[i]; c.Stand == standsTemporary && reach(c.At) && (isDoor || !failed(c.At)) {
-					return tendMove{Break: c.At, Block: c.Block, Door: isDoor}
+					return tendMove{Break: c.At, Block: c.Block, Door: isDoor, Centre: centre}
 				}
 			}
 		}
@@ -204,18 +224,19 @@ func (lw *fsmWorld) cabinMoveLocked(t cabinTend) tendMove {
 		_, have := blueprints.FittingFill(door.State, held)
 		switch {
 		case inside && door.any(standsUnseen):
-			return tendMove{Walk: cabinCentre(site)} // look from where the whole doorway shows
+			return tendMove{Walk: centre, Mark: mark} // look from where the whole doorway shows
 		case keepIn && !inside && (block != "" || have) && !failed(door.Cells[0].At):
 			if door.any(standsUnseen) {
-				return tendMove{Walk: cabinDoorstep(site)}
+				return tendMove{Walk: cabinDoorstep(site), Mark: mark}
 			}
-			return tendMove{Walk: cabinCentre(site)}
+			return tendMove{Walk: centre, Mark: mark}
 		}
 	}
 	if craft := lw.cabinCraftLocked(openings, held, inv, t, keepIn); craft != "" {
 		return tendMove{Craft: craft}
 	}
-	return tendMove{Hold: keepIn && inside && door.any(standsTemporary)}
+	return tendMove{Hold: keepIn && inside && door.any(standsTemporary),
+		Rest: "sheltering in the cabin behind a blocked doorway until morning"}
 }
 
 // cabinCraftLocked is the first unfitted opening whose fitting can be made without walking off.
@@ -257,29 +278,34 @@ func withinReachOf(pos *civquestv1.Vec3, b *civquestv1.BlockPosProto, reach floa
 	return dx*dx+dy*dy+dz*dz <= reach*reach
 }
 
-// tendsCabin reports that the finished cabin's openings want something done now.
-func (lw *fsmWorld) tendsCabin() bool {
+// tendsShelter reports that a temporary shelter or the finished cabin's openings want
+// something done now.
+func (lw *fsmWorld) tendsShelter() bool {
 	if lw.ctx == nil || lw.ctx.State == nil || lw.fsm == nil {
 		return false
 	}
 	s := lw.ctx.State
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.CabinBuilt < blueprints.CabinTotalBlocks {
-		return false
-	}
-	return !lw.cabinMoveLocked(cabinTend{Failed: s.construction.site.Tend}).none()
+	return !lw.shelterMoveLocked(cabinTend{Failed: s.construction.site.Tend}).none()
 }
 
-// tendCabin is one step of the Shelter frame on a finished cabin; ok is false when the openings
-// want nothing.
-func (lw *fsmWorld) tendCabin(l *shelterLocal) (intents []*civquestv1.AgentIntent, ok bool) {
+// tendShelter is one step of the Shelter frame on a temporary shelter or a finished cabin; ok
+// is false when neither wants anything, and done asks the frame to end so the site is banked.
+func (lw *fsmWorld) tendShelter(l *shelterLocal) (intents []*civquestv1.AgentIntent, done, ok bool) {
 	s := lw.ctx.State
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	m := lw.cabinMoveLocked(l.Tend)
-	if m.none() {
-		return nil, false
+	m := lw.shelterMoveLocked(l.Tend)
+	switch {
+	case m.none():
+		return nil, false, false
+	case m.Pitch.Set:
+		l.Bivouac, l.Tend = m.Pitch, cabinTend{Failed: l.Tend.Failed}
+		return nil, true, true
+	case m.Forget:
+		l.Bivouac, l.Tend = lightPos3{}, cabinTend{}
+		return nil, true, true
 	}
 	frame, tick, t := lw.Frame(), lw.Tick(), &l.Tend
 	navState := frame.Status.GetNavigationState()
@@ -290,10 +316,13 @@ func (lw *fsmWorld) tendCabin(l *shelterLocal) (intents []*civquestv1.AgentInten
 		}
 		return []*civquestv1.AgentIntent{in}
 	}
+	if m.Walk == nil {
+		t.Walks = 0 // only walks that lead nowhere are counted against the bound
+	}
 	switch {
 	case m.Hold:
 		if !pathing && !frame.Status.GetIsInWater() {
-			l.Rest = "sheltering in the cabin behind a blocked doorway until morning"
+			l.Rest = m.Rest
 		}
 	case m.Craft != "":
 		if t.Cell != (lightPos3{}) || l.Fit.Index != -1 {
@@ -305,7 +334,7 @@ func (lw *fsmWorld) tendCabin(l *shelterLocal) (intents []*civquestv1.AgentInten
 			t.Failed.Timber = inv.logCount*4 + inv.planksCount + 1
 			l.Fit = fittingJob{}
 		}
-		return send(in), true
+		return send(in), false, true
 	case m.Walk != nil:
 		if pathing || t.Walked != 0 && tick >= t.Walked && tick-t.Walked < fittingWalk {
 			break
@@ -314,10 +343,9 @@ func (lw *fsmWorld) tendCabin(l *shelterLocal) (intents []*civquestv1.AgentInten
 		t.Walks++
 		if t.Walks >= tendAsks {
 			// No way in or to a view of the doorway was found: leave it until the day turns.
-			t.Failed.Cell = lightSite(blueprintDoorway(s.ShelterPos))
-			t.Failed.Sheltering = skillIsDuskOrNight(lw.skillCtx, lw.ctx.Facts) || lw.fsm.currentRoutine == RoutineSleep
+			t.Failed.Cell, t.Failed.Sheltering = lightSite(m.Mark), lw.sheltering()
 		}
-		return send(recoverStep(lw.agentID(), int32(math.Floor(m.Walk.X)), int32(m.Walk.Y), int32(math.Floor(m.Walk.Z)))), true
+		return send(stepInto(lw.agentID(), m.Walk)), false, true
 	default:
 		if t.Sent != 0 && tick >= t.Sent && tick-t.Sent < tendPace {
 			break
@@ -334,22 +362,39 @@ func (lw *fsmWorld) tendCabin(l *shelterLocal) (intents []*civquestv1.AgentInten
 			t.Asks = 0
 			if m.Door && m.Break != nil {
 				// Never given up, or the agent is shut in: ask again from the middle of the room.
-				return send(recoverStep(lw.agentID(), s.ShelterPos.X, s.ShelterPos.Y+1, s.ShelterPos.Z)), true
+				return send(stepInto(lw.agentID(), m.Centre)), false, true
 			}
-			t.Failed.Cell = lightSite(at)
-			t.Failed.Sheltering = skillIsDuskOrNight(lw.skillCtx, lw.ctx.Facts) || lw.fsm.currentRoutine == RoutineSleep
+			t.Failed.Cell, t.Failed.Sheltering = lightSite(at), lw.sheltering()
 		}
 		return send(&civquestv1.AgentIntent{AgentId: lw.agentID(), Action: &civquestv1.AgentIntent_InteractBlock{
 			InteractBlock: &civquestv1.InteractBlockIntent{Pos: at, InteractionType: kind, BlockOrItemId: m.Block},
-		}}), true
+		}}), false, true
 	}
-	return nil, true
+	return nil, false, true
+}
+
+// stepInto walks into exactly the cell at to.
+func stepInto(agentID string, to *civquestv1.Vec3) *civquestv1.AgentIntent {
+	return recoverStep(agentID, int32(math.Floor(to.X)), int32(math.Floor(to.Y)), int32(math.Floor(to.Z)))
 }
 
 // blueprintDoorway is the lower cell of the template's doorway at site.
 func blueprintDoorway(site *civquestv1.BlockPosProto) *civquestv1.BlockPosProto {
 	d := blueprints.CabinOpenings()[0].Cells[0]
 	return &civquestv1.BlockPosProto{X: site.X + d[0], Y: site.Y + d[1], Z: site.Z + d[2]}
+}
+
+func (s *AgentState) cabinCompleteLocked() bool { return s.CabinBuilt >= blueprints.CabinTotalBlocks }
+
+func (s *AgentState) bivouac() lightPos3 {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.construction.site.Bivouac
+}
+
+// sheltered reports that pos is in a shelter of the agent's own.
+func (s *AgentState) sheltered(pos *civquestv1.Vec3) bool {
+	return insideCabin(pos, s.ownCabin()) || inBivouac(pos, s.bivouac())
 }
 
 // ownCabin is the site of the agent's finished cabin, or nil.
@@ -364,8 +409,23 @@ func (s *AgentState) ownCabin() *civquestv1.BlockPosProto {
 // blocks of the doorway are broken, and from inside the way out is walked. handled is false when
 // the doorway is not what stands in the way, and ordinary recovery may go on.
 func (loc *recoverLocal) doorwayStep(lw *fsmWorld, f *civquestv1.TelemetryFrame, pos *civquestv1.Vec3) (in *civquestv1.AgentIntent, handled bool) {
+	if loc.Cause == CauseCongestion {
+		return nil, false
+	}
+	breakCell := func(at *civquestv1.BlockPosProto, id string) *civquestv1.AgentIntent {
+		return recoverBreak(lw.agentID(), &civquestv1.VisibleBlock{Pos: at, BlockId: id})
+	}
+	if b := lw.ctx.State.bivouac(); inBivouac(pos, b) {
+		for i := bivouacBlocks - 1; i >= bivouacDoor; i-- {
+			at := bivouacCell(b, i)
+			if v := FindVisibleBlockAt(f, at.X, at.Y, at.Z); v != nil && isSuffocatingBlock(v.BlockId) {
+				return breakCell(at, v.BlockId), true
+			}
+		}
+		return nil, false
+	}
 	site := lw.ctx.State.ownCabin()
-	if site == nil || loc.Cause == CauseCongestion {
+	if site == nil {
 		return nil, false
 	}
 	inside := insideCabin(pos, site)
@@ -374,12 +434,9 @@ func (loc *recoverLocal) doorwayStep(lw *fsmWorld, f *civquestv1.TelemetryFrame,
 		return nil, false
 	}
 	door := lookAtOpenings(f, pos, site)[0]
-	breakCell := func(c openingCell) *civquestv1.AgentIntent {
-		return recoverBreak(lw.agentID(), &civquestv1.VisibleBlock{Pos: c.At, BlockId: c.Block})
-	}
 	for i := len(door.Cells) - 1; i >= 0; i-- {
 		if c := door.Cells[i]; c.Stand == standsTemporary && withinReachOf(pos, c.At, tendReach) {
-			return breakCell(c), true
+			return breakCell(c.At, c.Block), true
 		}
 	}
 	if !inside {
@@ -387,7 +444,7 @@ func (loc *recoverLocal) doorwayStep(lw *fsmWorld, f *civquestv1.TelemetryFrame,
 	}
 	walk := func(to *civquestv1.Vec3) (*civquestv1.AgentIntent, bool) {
 		loc.Attempts++
-		return recoverStep(lw.agentID(), int32(math.Floor(to.X)), int32(to.Y), int32(math.Floor(to.Z))), true
+		return stepInto(lw.agentID(), to), true
 	}
 	switch {
 	case door.any(standsUnseen) || door.any(standsTemporary):
@@ -395,7 +452,7 @@ func (loc *recoverLocal) doorwayStep(lw *fsmWorld, f *civquestv1.TelemetryFrame,
 	case loc.Attempts < doorwayWalks:
 		return walk(cabinDoorstep(site))
 	case door.any(standsFitting) && withinReachOf(pos, door.Cells[0].At, tendReach):
-		return breakCell(door.Cells[0]), true
+		return breakCell(door.Cells[0].At, door.Cells[0].Block), true
 	}
 	return nil, false
 }

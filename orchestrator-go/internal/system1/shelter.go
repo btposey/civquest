@@ -123,10 +123,16 @@ func evaluateDuskNightOutpostShelterLocked(
 		isShelterComplete = prog.complete()
 	}
 
+	// A settled agent's cabin stands on its plot (shelter_site.go), and a cabin once begun is
+	// the one to go back to.
+	_, settled := state.settlementLocked()
+	sited := prog.Pos != nil && (settled || prog.BuildIndex > 0) && nearBlock(pos, prog.Pos, homeRange)
+	timberTrip := settled && !isShelterComplete && state.timberTripLocked(frame, pos, inv)
+
 	// If the Explorer has traveled > 32 blocks from the current outpost along their path of travel,
 	// carries shelter/light materials, and no known habitation POI exists within 64 blocks,
 	// establish a new Forward Outpost.
-	if hasShelterMaterials && !fitting.fetching() && recalledHabPOI == nil && outpost != nil && math.Hypot(pos.X-outpost.X, pos.Z-outpost.Z) > 32.0 {
+	if hasShelterMaterials && !settled && prog.BuildIndex == 0 && !fitting.fetching() && recalledHabPOI == nil && outpost != nil && math.Hypot(pos.X-outpost.X, pos.Z-outpost.Z) > 32.0 {
 		newOutpost := &civquestv1.Vec3{X: pos.X, Y: pos.Y, Z: pos.Z}
 		state.currentOutpost = newOutpost
 		state.homeOrigin = newOutpost
@@ -136,8 +142,6 @@ func evaluateDuskNightOutpostShelterLocked(
 			Y: int32(math.Floor(pos.Y)),
 			Z: int32(math.Floor(pos.Z)),
 		}
-		// A new outpost starts a new cabin.
-		prog.BuildIndex, prog.Phase = 0, 0
 		isShelterComplete = false
 		// Reset lastMapNodeID so EvaluateTopologicalMapping records this sector as OUTPOST
 		state.lastMapNodeID = ""
@@ -151,7 +155,7 @@ func evaluateDuskNightOutpostShelterLocked(
 	targetX := pos.X
 	targetY := pos.Y
 	targetZ := pos.Z
-	if recalledHabPOI != nil && !fitting.fetching() && (hasShelterMaterials || isShelterComplete || strings.Contains(strings.ToLower(recalledHabPOI.BlockID), "bed")) &&
+	if recalledHabPOI != nil && !sited && !fitting.fetching() && (hasShelterMaterials || isShelterComplete || strings.Contains(strings.ToLower(recalledHabPOI.BlockID), "bed")) &&
 		(prog.Pos == nil || math.Hypot(pos.X-float64(prog.Pos.X), pos.Z-float64(prog.Pos.Z)) > 32.0) {
 		accessTarget := poiAccessTarget(recalledHabPOI)
 		if math.Hypot(pos.X-recalledHabPOI.X, pos.Z-recalledHabPOI.Z) > 4.0 && !poiWalkOver(pos, recalledHabPOI) && !isStuckOrEnclosed {
@@ -174,7 +178,7 @@ func evaluateDuskNightOutpostShelterLocked(
 			return nil
 		}
 	}
-	if prog.Pos != nil && (isShelterComplete || math.Hypot(pos.X-float64(prog.Pos.X), pos.Z-float64(prog.Pos.Z)) <= 32.0) {
+	if prog.Pos != nil && (sited || isShelterComplete || math.Hypot(pos.X-float64(prog.Pos.X), pos.Z-float64(prog.Pos.Z)) <= 32.0) {
 		targetX = float64(prog.Pos.X) + 0.5
 		targetY = float64(prog.Pos.Y)
 		targetZ = float64(prog.Pos.Z) + 0.5
@@ -190,7 +194,7 @@ func evaluateDuskNightOutpostShelterLocked(
 	if distToShelter > 4.0 && state.givenUpLocked(targetX, targetY, targetZ, frame.WorldTick) {
 		return nil // no way back was found: neither walk there nor build at it from here
 	}
-	if (hasShelterMaterials || isShelterComplete) && !fitting.fetching() && distToShelter > 4.0 && !isStuckOrEnclosed {
+	if (hasShelterMaterials || isShelterComplete) && !fitting.fetching() && !timberTrip && distToShelter > 4.0 && !isStuckOrEnclosed {
 		if navState == civquestv1.NavigationState_NAVIGATION_STATE_PATHING {
 			return nil
 		}

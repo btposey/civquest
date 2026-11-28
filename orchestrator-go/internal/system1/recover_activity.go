@@ -321,7 +321,7 @@ func (recoverActivity) Init(w htpda.World, args any) (any, htpda.Lease) {
 		if l := lw.fsm.escapeLock; l != nil && a.Cause == CauseEnclosed && w.Tick()-l.Tick < l.ttl() {
 			loc.Locked, loc.DirX, loc.DirZ, loc.Climb, loc.NoLadder = true, l.DirX, l.DirZ, l.Climb, l.NoLadder
 		}
-		indoors := lw.ctx != nil && lw.ctx.State != nil && insideCabin(lw.pos(), lw.ctx.State.ownCabin())
+		indoors := lw.ctx != nil && lw.ctx.State != nil && lw.ctx.State.sheltered(lw.pos())
 		if a.Cause == CauseEnclosed && !indoors && lw.fsm.notePocket(lw.pos(), w.Tick()) >= pocketsBeforeClimb(lw.Frame(), lw.pos()) {
 			loc.Climb = true
 		}

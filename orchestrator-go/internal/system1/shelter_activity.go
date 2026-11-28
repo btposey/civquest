@@ -45,6 +45,9 @@ type shelterLocal struct {
 	Fit fittingJob
 	// Tend is the work on the finished cabin's doorway and windows (shelter_openings.go).
 	Tend cabinTend
+	// Rejected are the plots passed over (shelter_site.go) and Bivouac the temporary shelter.
+	Rejected rejectedPlots
+	Bivouac  lightPos3
 	// Rest is why the frame is resting this step, "" when it is not (rest.go); QuietSince is
 	// the tick the frame last fell quiet (0 while it is asking for things).
 	Rest       string
@@ -107,6 +110,9 @@ type shelterStore struct {
 type siteMemory struct {
 	Lights shelterLights
 	Tend   tendMark // an ask about the openings that failed
+	// Rejected and Bivouac: shelter_site.go, shelter_bivouac.go.
+	Rejected rejectedPlots
+	Bivouac  lightPos3
 }
 
 // shelterLights counts the light placements that have not shown up at the cabin site At. It
@@ -151,7 +157,7 @@ func seedShelterLocalLocked(s *AgentState) shelterLocal {
 
 // withSite adds what the store remembers about the cabin site: lights and openings.
 func (l shelterLocal) withSite(v siteMemory) shelterLocal {
-	l.Tend.Failed = v.Tend
+	l.Tend.Failed, l.Rejected, l.Bivouac = v.Tend, v.Rejected, v.Bivouac
 	if v.Lights.At == lightSite(l.Pos) {
 		l.LightTries = v.Lights.Tries
 	}
@@ -159,7 +165,8 @@ func (l shelterLocal) withSite(v siteMemory) shelterLocal {
 }
 
 func (l shelterLocal) storeWrite() htpda.StoreWrite {
-	return shelterStore{Pos: l.Pos, Built: l.BuildIndex, Site: siteMemory{Lights: shelterLights{At: lightSite(l.Pos), Tries: l.LightTries}, Tend: l.Tend.Failed}}
+	return shelterStore{Pos: l.Pos, Built: l.BuildIndex, Site: siteMemory{Lights: shelterLights{At: lightSite(l.Pos), Tries: l.LightTries}, Tend: l.Tend.Failed,
+		Rejected: l.Rejected, Bivouac: l.Bivouac}}
 }
 
 // applyShelterStore applies a Shelter frame's Store effect to the durable store.
@@ -232,8 +239,11 @@ func (shelterActivity) eligible(lw *fsmWorld) bool {
 	if directiveBuildsShelter(stage, routine, ctx) && !skillIsShelterComplete(skillCtx, ctx.Facts) && !skillIsShelterOnCooldown(skillCtx, ctx.Facts) {
 		return true // a BUILD_SHELTER directive biases toward Shelter, which places the blocks
 	}
-	if lw.tendsCabin() {
-		return true // the finished cabin's doorway or a window (shelter_openings.go)
+	if lw.tendsShelter() {
+		return true // a temporary shelter, or the finished cabin's doorway or a window
+	}
+	if ctx.State.noCabinFromHere(ctx.Frame.Status.Position) {
+		return false // no cabin is started or reached from here (shelter_site.go)
 	}
 	if skillIsShelterComplete(skillCtx, ctx.Facts) && lw.homeBound() {
 		return true // walk home: standing out the night wherever work ended helps nothing
@@ -334,19 +344,28 @@ func (shelterActivity) tick(lw *fsmWorld) ([]FSMIntent, bool) {
 func (a shelterActivity) run(lw *fsmWorld, local any) htpda.Step {
 	sl, _ := local.(shelterLocal)
 	sl.Rest = "" // declared afresh by each step that still means it
+	if sl.complete() && lw.ctx.State.GetCabinBuilt() < blueprints.CabinTotalBlocks {
+		return a.exit(lw, sl, nil, true) // banked first: what follows reads it
+	}
+	if intents, done, ok := lw.tendShelter(&sl); ok {
+		if done {
+			return a.exit(lw, sl, nil, true)
+		}
+		return htpda.Step{Op: htpda.OpStay, Intents: intents, Next: sl}
+	}
 	if sl.complete() {
-		if lw.ctx.State.GetCabinBuilt() < blueprints.CabinTotalBlocks {
-			return a.exit(lw, sl, nil, true) // banked first: what follows reads it
-		}
-		if intents, ok := lw.tendCabin(&sl); ok {
-			return htpda.Step{Op: htpda.OpStay, Intents: intents, Next: sl}
-		}
 		if home := lw.walkHome(&sl); home != nil {
 			return htpda.Step{Op: htpda.OpStay, Intents: home, Next: sl}
 		}
 		return a.exit(lw, sl, nil, true)
 	}
 	prog := sl
+	switch intents, verdict := lw.siteCabin(&prog); verdict {
+	case siteWait:
+		return htpda.Step{Op: htpda.OpStay, Intents: intents, Next: prog}
+	case siteNone:
+		return a.exit(lw, prog, nil, !a.fallThrough(lw))
+	}
 	lw.skillCtx.Shelter = &prog
 	fi, done := a.tick(lw)
 	lw.skillCtx.Shelter = nil

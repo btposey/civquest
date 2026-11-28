@@ -1278,6 +1278,7 @@ func TestFSM_BootstrapNightWithLogsBuildsShelterAndGatesCircadianOnceComplete(t 
 		state := NewAgentState()
 		consecrateSettlement(state)
 		state.SetRecipeGraph(newTestRecipeGraph())
+		// The agent stands on its plot, the first of the ring round the site (cq-3ru).
 		cfg := xdg.DefaultAgentIdentityConfig("earl")
 		cfg.Profession = "EXPLORER"
 
@@ -1293,7 +1294,7 @@ func TestFSM_BootstrapNightWithLogsBuildsShelterAndGatesCircadianOnceComplete(t 
 					Health:          20,
 					MaxHealth:       20,
 					FoodLevel:       20,
-					Position:        &civquestv1.Vec3{X: 0.5, Y: 64, Z: 0.5},
+					Position:        &civquestv1.Vec3{X: 0.5, Y: 64, Z: -9.5},
 					NavigationState: civquestv1.NavigationState_NAVIGATION_STATE_IDLE,
 					Inventory: []*civquestv1.ItemStackProto{
 						{Slot: 0, ItemId: "minecraft:oak_log", Count: 4},
